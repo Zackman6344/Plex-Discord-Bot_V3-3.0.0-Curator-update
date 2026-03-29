@@ -1,0 +1,4 @@
+module.exports = {
+  'botToken'      : '',
+	'geminiApiKey': ''
+};
