@@ -2,6 +2,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const keys = require('../config/keys.js');
 const PlexAPI = require('plex-api');
 const plexConfig = require('../config/plex.js');
+const handleAIError = require('../helpers/aiErrorHandler.js');
 
 const genAI = new GoogleGenerativeAI(keys.geminiApiKey);
 const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
@@ -47,7 +48,7 @@ module.exports = {
     name: 'vibe',
     command: {
         usage: '!vibe [setting or mood] + [optional: duration or track count]',
-        description: 'Instantly generate and queue a thematic playlist based on a vibe',
+        description: 'Instantly generate and queue a thematic playlist based on a vibe using deep Plex tag filtering.',
         process: async function(...args) {
             let msg = null;
             let commandArgs = [];
@@ -90,12 +91,15 @@ module.exports = {
                 Tasks:
                 1. Extract the core vibe/setting.
                 2. Determine if the user asked for a specific number of tracks OR a target duration in minutes. If neither, return null.
-                3. Generate an EXHAUSTIVE array of keywords, genres, instruments, and sonic themes.
+                3. Deduce the implied genres, moods, and styles to search a music database. Keep arrays small (2-4 words each).
+                CRITICAL: If the user explicitly names a specific genre or style (e.g., "bardcore", "synthwave"), you MUST include that exact word in the 'genres' or 'styles' array!
 
                 Output ONLY a raw JSON object exactly like this:
                 {
                     "vibe": "the core setting",
-                    "keywords": ["word1", "word2"],
+                    "genres": ["synthwave", "electronic"],
+                    "moods": ["energetic", "dark"],
+                    "styles": ["driving", "instrumental"],
                     "trackCount": 5,
                     "durationMinutes": null
                 }
@@ -103,12 +107,12 @@ module.exports = {
 
                 const typeResult = await model.generateContent(typePrompt);
                 const typeMatch = typeResult.response.text().match(/\{[\s\S]*\}/);
-                const typeData = typeMatch ? JSON.parse(typeMatch[0]) : { vibe: rawInput, keywords: [], trackCount: null, durationMinutes: null };
+                const typeData = typeMatch ? JSON.parse(typeMatch[0]) : { vibe: rawInput, genres: [], moods: [], styles: [], trackCount: null, durationMinutes: null };
 
                 let constraintText = "Standard DJ Mix";
                 let aiTargetInstructions = "between 3 and 6 tracks";
 
-                // THE UPGRADE: Apply TTRPG Overrides
+                // Apply constraints overrides
                 if (isTTRPG) {
                     constraintText = "TTRPG Background Ambiance (Up to 20 Tracks)";
                     aiTargetInstructions = "up to 20 tracks (aim for exactly 20 if possible). FOCUS ENTIRELY on instrumental, atmospheric, or cinematic tracks that serve as excellent background music without distracting the players.";
@@ -121,7 +125,7 @@ module.exports = {
                     aiTargetInstructions = `roughly ${estimatedTracks} tracks`;
                 }
 
-                await statusMsg.edit(`🎵 **Vibe:** \`${typeData.vibe}\` | **Target:** \`${constraintText}\`\n⏳ *Connecting to The Nerdgasm Plex server...*`);
+                await statusMsg.edit(`🎵 **Vibe:** \`${typeData.vibe}\` | **Target:** \`${constraintText}\`\n⏳ *Cross-referencing Plex tags with: ${[...(typeData.genres || []), ...(typeData.moods || [])].join(", ")}...*`);
 
                 const sections = await plex.query('/library/sections');
                 const targetSection = sections.MediaContainer.Directory.find(sec => sec.type === 'artist');
@@ -133,38 +137,86 @@ module.exports = {
                 const libraryData = await plex.query(`/library/sections/${targetSection.key}/all?type=10`);
                 const allItems = libraryData.MediaContainer.Metadata || [];
 
-                let filteredItems = [];
-                const lowerKeywords = typeData.keywords.map(k => k.toLowerCase());
+                if (allItems.length === 0) {
+                    return statusMsg.edit(`❌ The music library is empty!`);
+                }
 
-                allItems.forEach(item => {
+                // ==========================================
+                // THE NEW DEEP METADATA CROSS-FILTER
+                // ==========================================
+                const rawInputLower = rawInput.toLowerCase();
+
+                // Prepare searchable terms from the user's prompt by removing generic filler
+                const fillerWords = ['of', 'the', 'and', 'in', 'a', 'some', 'music', 'mix', 'playlist', 'for', 'my', 'hour', 'minutes', 'mins'];
+                const searchTerms = rawInputLower.split(/\s+/).filter(w => w.length > 2 && !fillerWords.includes(w));
+
+                let scoredItems = allItems.map(item => {
+                    let score = 0;
+
+                    let tGenres = item.Genre ? item.Genre.map(g => g.tag.toLowerCase()) : [];
+                    let tMoods = item.Mood ? item.Mood.map(m => m.tag.toLowerCase()) : [];
+                    let tStyles = item.Style ? item.Style.map(s => s.tag.toLowerCase()) : [];
+
                     const title = item.title || "Unknown Title";
                     const artist = item.grandparentTitle || "Unknown Artist";
                     const album = item.parentTitle || "Unknown Album";
-                    const summary = `A song by ${artist} from the album ${album}.`;
 
-                    const lowerTitle = title.toLowerCase();
-                    const lowerSummary = summary.toLowerCase();
+                    // EXPLICIT REQUEST BOOST:
+                    // If the user's raw input directly contains a tag that exists in Plex, prioritize it MASSIVELY
+                    tGenres.forEach(tg => { if (tg.length > 2 && rawInputLower.includes(tg)) score += 15; });
+                    tStyles.forEach(ts => { if (ts.length > 2 && rawInputLower.includes(ts)) score += 10; });
+                    tMoods.forEach(tm => { if (tm.length > 2 && rawInputLower.includes(tm)) score += 5; });
 
-                    if (lowerKeywords.some(keyword => lowerTitle.includes(keyword) || lowerSummary.includes(keyword)) || lowerKeywords.length === 0) {
-                        filteredItems.push({ title, artist, album });
-                    }
+                    // DIRECT METADATA BOOST:
+                    // If any important keyword from the prompt is in the artist name, title, or album, rocket it to the top.
+                    searchTerms.forEach(term => {
+                        if (artist.toLowerCase().includes(term)) score += 20;
+                        if (title.toLowerCase().includes(term)) score += 20;
+                        if (album.toLowerCase().includes(term)) score += 10;
+                    });
+
+                    // Also boost if AI-deduced genres or styles appear directly in the title
+                    if (typeData.genres) typeData.genres.forEach(g => { if(title.toLowerCase().includes(g.toLowerCase())) score += 15; });
+                    if (typeData.styles) typeData.styles.forEach(s => { if(title.toLowerCase().includes(s.toLowerCase())) score += 10; });
+
+                    // Score matching AI-deduced tags
+                    if (typeData.genres) typeData.genres.forEach(g => { if(tGenres.some(tg => tg.includes(g.toLowerCase()))) score += 3; });
+                    if (typeData.moods) typeData.moods.forEach(m => { if(tMoods.some(tm => tm.includes(m.toLowerCase()))) score += 1; });
+                    if (typeData.styles) typeData.styles.forEach(s => { if(tStyles.some(ts => ts.includes(s.toLowerCase()))) score += 1; });
+
+                    // Catch-all: check title/album just in case it explicitly contains the AI's core vibe word
+                    if (title.toLowerCase().includes(typeData.vibe.toLowerCase())) score += 2;
+
+                    return { title, artist, album, score };
                 });
 
+                // Filter down to tracks that scored points
+                let filteredItems = scoredItems.filter(item => item.score > 0);
+
                 if (filteredItems.length === 0) {
+                    // Fallback to all items if the tags yielded zero results
                     filteredItems = allItems.map(item => ({
                         title: item.title || "Unknown",
-                        artist: item.grandparentTitle || "Unknown"
+                        artist: item.grandparentTitle || "Unknown",
+                        album: item.parentTitle || "Unknown"
                     }));
+                } else {
+                    // Sort by highest matching scores first
+                    filteredItems.sort((a, b) => b.score - a.score);
                 }
 
-                let catalog = filteredItems.sort(() => 0.5 - Math.random()).slice(0, 3000);
+                // SHRINK THE POOL: Take only the top 60 best matches so perfect matches aren't diluted by hundreds of "close enough" matches
+                let topMatches = filteredItems.slice(0, 60);
+                let catalog = topMatches.sort(() => 0.5 - Math.random());
 
                 await statusMsg.edit(`🎵 **Vibe:** \`${typeData.vibe}\`\n⏳ *The AI Game Master is building your ambiance...*`);
 
                 const curatorPrompt = `
                 You are an expert DJ and Game Master. The core vibe is: "${typeData.vibe}"
 
-                Analyze this catalog of songs (JSON) and select ${aiTargetInstructions} that establish this atmosphere perfectly.
+                CRITICAL INSTRUCTION: If the requested vibe is a highly specific niche genre (e.g., "bardcore", "cyberpunk", "lo-fi"), you MUST strictly reject mainstream, standard artists (e.g., no Bob Dylan or Mumford & Sons for "bardcore") even if they share adjacent acoustic/folk tags in the catalog. ONLY select artists and tracks that genuinely belong to the requested specific niche.
+
+                Analyze this catalog of highly relevant songs (JSON) and select ${aiTargetInstructions} that establish this atmosphere perfectly.
                 ${JSON.stringify(catalog)}
 
                 Output ONLY a raw JSON object exactly like this:
@@ -232,8 +284,7 @@ module.exports = {
                 }
 
             } catch (err) {
-                console.error(err);
-                statusMsg.edit("❌ *I hit a snag trying to generate that playlist.*").catch(() => {});
+                handleAIError(err, statusMsg, "❌ *The AI director walked off set. Try again!*");
             }
         }
     }

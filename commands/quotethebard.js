@@ -4,6 +4,7 @@ const PlexAPI = require('plex-api');
 const plexConfig = require('../config/plex.js');
 const fs = require('fs');
 const path = require('path');
+const handleAIError = require('../helpers/aiErrorHandler.js');
 
 const genAI = new GoogleGenerativeAI(keys.geminiApiKey);
 const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
@@ -26,6 +27,15 @@ function loadLeaderboard() {
 
 function saveLeaderboard(data) {
     fs.writeFileSync(leaderboardFile, JSON.stringify(data, null, 4));
+}
+
+// THE FIX: Mathematically perfect Fisher-Yates shuffle
+function shuffleArray(array) {
+    for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+    }
+    return array;
 }
 
 // Global state tracker
@@ -160,10 +170,10 @@ module.exports = {
                 genre = searchTarget;
             }
 
-            // DYNAMIC SAMPLE SIZING
-            // If they want a specific genre, cast a wider net (150) so the AI can find one.
-            // If completely random, choke it down to 15 to prevent popularity bias.
-            let sampleSize = genre ? 150 : 15;
+            // DYNAMIC SAMPLE SIZING REBALANCED
+            // Instead of passing 150 items (which causes the AI to always pick the most famous track),
+            // we pass a very strict, highly randomized small chunk to FORCE variety.
+            let sampleSize = genre ? 30 : 6;
 
             // ==========================================
             // THE QUOTE THE BARD GAME
@@ -193,7 +203,8 @@ module.exports = {
                     }
 
                     const fallbackCatalog = allItems.map(item => ({ title: item.title, artist: item.grandparentTitle || item.originalTitle || "Unknown" }));
-                    catalog = fallbackCatalog.sort(() => 0.5 - Math.random()).slice(0, sampleSize);
+                    // Use perfect randomizer instead of biased JS sort
+                    catalog = shuffleArray(fallbackCatalog).slice(0, sampleSize);
 
                 } else {
                     const sections = await plex.query('/library/sections');
@@ -211,7 +222,8 @@ module.exports = {
                     }
 
                     const fallbackCatalog = allItems.map(item => ({ title: item.title, artist: item.grandparentTitle || "Unknown" }));
-                    catalog = fallbackCatalog.sort(() => 0.5 - Math.random()).slice(0, sampleSize);
+                    // Use perfect randomizer instead of biased JS sort
+                    catalog = shuffleArray(fallbackCatalog).slice(0, sampleSize);
                 }
 
                 await statusMsg.edit(`📜 **Summoning the Bard...**\n⏳ *Translating a track into Shakespearean English (Difficulty: ${difficulty.toUpperCase()})...*`);
@@ -241,6 +253,7 @@ module.exports = {
 
                 Task:
                 1. Select ONE song from the provided list that you know the lyrics to. You MUST pick from this specific list.
+                CRITICAL INSTRUCTION: If there are multiple options, AVOID picking the most famous/popular song. Pick something unexpected from the provided options to keep the game fresh.
                 2. Translate a section of its lyrics into formal, archaic Shakespearean English.
                     - Easy: Translate the most famous, recognizable chorus.
                     - Medium: Translate a standard verse.
@@ -335,7 +348,11 @@ module.exports = {
 
             } catch (err) {
                 console.error(err);
-                statusMsg.edit("❌ *The Bard dropped his lute. Try running the command again!*").catch(() => {});
+                if (err.message && (err.message.includes("503") || err.message.includes("high demand") || err.message.includes("Service Unavailable"))) {
+                    statusMsg.edit("⚠️ *The Bard's tavern is completely packed right now! (Google Gemini API is experiencing high traffic). Please try again in a few moments!*").catch(() => {});
+                } else {
+                    statusMsg.edit("❌ *The Bard dropped his lute. Try running the command again!*").catch(() => {});
+                }
             }
         }
     }

@@ -2,6 +2,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const keys = require('../config/keys.js');
 const PlexAPI = require('plex-api');
 const plexConfig = require('../config/plex.js');
+const handleAIError = require('../helpers/aiErrorHandler.js');
 
 const genAI = new GoogleGenerativeAI(keys.geminiApiKey);
 const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
@@ -229,8 +230,7 @@ module.exports = {
                 await msg.channel.send(reply);
 
             } catch (err) {
-                console.error(err);
-                statusMsg.edit("❌ *My quill snapped while writing the quest lore. Try again!*").catch(() => {});
+                handleAIError(err, statusMsg, "❌ *The AI director walked off set. Try again!*");
             }
         }
     }

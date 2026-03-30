@@ -4,6 +4,7 @@ const PlexAPI = require('plex-api');
 const plexConfig = require('../config/plex.js');
 const fs = require('fs');
 const path = require('path');
+const handleAIError = require('../helpers/aiErrorHandler.js');
 
 const genAI = new GoogleGenerativeAI(keys.geminiApiKey);
 const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
@@ -202,8 +203,7 @@ module.exports = {
                 });
 
             } catch (err) {
-                console.error(err);
-                statusMsg.edit("❌ *My trivia notes caught on fire. Try running `!trivia` again!*").catch(() => {});
+                handleAIError(err, statusMsg, "❌ *The AI director walked off set. Try again!*");
             }
         }
     }

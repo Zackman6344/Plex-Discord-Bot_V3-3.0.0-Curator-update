@@ -2,6 +2,7 @@ const PlexAPI = require('plex-api');
 const plexConfig = require('../config/plex.js');
 const fs = require('fs');
 const path = require('path');
+const handleAIError = require('../helpers/aiErrorHandler.js');
 
 const plex = new PlexAPI({
     hostname: plexConfig.hostname,
@@ -282,8 +283,7 @@ module.exports = {
                 });
 
             } catch (err) {
-                console.error(err);
-                statusMsg.edit("❌ *The vault doors jammed. Try running the command again!*").catch(() => {});
+                handleAIError(err, statusMsg, "❌ *The AI director walked off set. Try again!*");
             }
         }
     }
