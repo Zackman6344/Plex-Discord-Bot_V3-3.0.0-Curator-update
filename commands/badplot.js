@@ -7,7 +7,7 @@ const path = require('path');
 const handleAIError = require('../helpers/aiErrorHandler.js');
 
 const genAI = new GoogleGenerativeAI(keys.geminiApiKey);
-const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
+const model = genAI.getGenerativeModel({ model: "gemini-3.1-pro-preview" });
 
 const plex = new PlexAPI({
     hostname: plexConfig.hostname,
@@ -119,24 +119,29 @@ module.exports = {
 
                 await statusMsg.edit(`🎲 **Bad Plot Initializing...**\n⏳ *Target locked. The AI is writing the worst synopsis possible...*`);
 
-                const badPlotPrompt = `
-                You are playing a game of "Explain a Film/Show Plot Badly" for a Discord server.
-                The secret ${targetType} you have selected is: "${target.title}" (${target.year || "Unknown Year"}).
-                Here is the official synopsis: "${target.summary}"
+const badPlotPrompt = `You are a cynical, deadpan trivia host who explains movie and TV plots by focusing exclusively on the most unhinged, mundane, or legally questionable decisions the characters make.
 
-                Write exactly 3 sentences that explain the plot of this ${targetType} as badly, hilariously, and misleadingly as possible, while remaining technically accurate.
-                DO NOT use the title, obvious character names (unless heavily obscured), or obvious subtitle words.
-                Sentence 1: The most vague, bizarre oversimplification.
-                Sentence 2: Adds a weird detail about the setting or a character's questionable life choices.
-                Sentence 3: The final punchline that makes it slightly more obvious without giving it away directly.
+The secret ${targetType} is: "${target.title}" (${target.year || "Unknown Year"}).
+Official Synopsis: "${target.summary}"
 
-                Output ONLY a raw JSON object exactly like this:
-                {
-                    "sentence1": "First bad plot sentence.",
-                    "sentence2": "Second bad plot sentence.",
-                    "sentence3": "Third bad plot sentence."
-                }
-                `;
+Your task: Write exactly 3 sentences explaining this plot as misleadingly and hilariously as possible, while remaining 100% technically accurate.
+
+CRITICAL RULES:
+1. NO PROPER NOUNS: Never use the title, character names, specific fictional locations (e.g., say "a severe workplace hazard" instead of "The Death Star"), or recognizable franchise jargon.
+2. NO ASSISTANT SPEAK: Do not use generic movie trailer voices (e.g., "In a world where..."). Use dry, observant, deadpan humor.
+3. THE TROPES: Frame epic/magical events as HR violations, property damage, or a severe lack of therapy. Frame romances as stalking or poor communication.
+
+STRUCTURE:
+Sentence 1: A bizarre, hyper-literal oversimplification of the inciting incident.
+Sentence 2: Highlight a weird secondary detail, a questionable life choice, or the sheer collateral damage of the plot.
+Sentence 3: The punchline. Make it slightly more obvious to reward clever players, but still completely sideways.
+
+Output STRICTLY a raw, valid JSON object with NO markdown formatting, NO markdown code blocks, and NO conversational text. It must match this exact structure:
+{
+    "sentence1": "string",
+    "sentence2": "string",
+    "sentence3": "string"
+}`;
 
                 const aiResult = await model.generateContent(badPlotPrompt);
                 const jsonMatch = aiResult.response.text().match(/\{[\s\S]*\}/);

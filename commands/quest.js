@@ -5,7 +5,7 @@ const plexConfig = require('../config/plex.js');
 const handleAIError = require('../helpers/aiErrorHandler.js');
 
 const genAI = new GoogleGenerativeAI(keys.geminiApiKey);
-const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
+const model = genAI.getGenerativeModel({ model: "gemini-3.1-pro-preview" });
 
 const plex = new PlexAPI({
     hostname: plexConfig.hostname,
