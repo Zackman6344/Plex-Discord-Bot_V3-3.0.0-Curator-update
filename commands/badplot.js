@@ -1,27 +1,20 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-const keys = require('../config/keys.js');
-const PlexAPI = require('plex-api');
-const plexConfig = require('../config/plex.js');
 const fs = require('fs');
 const path = require('path');
+const config = require('../config/config.js');
+const { getModel, DEFAULT_MODEL } = require('../helpers/geminiAPI.js');
+const { getPlex } = require('../helpers/plexClient.js');
 const handleAIError = require('../helpers/aiErrorHandler.js');
+const clueCache = require('../helpers/clueCache.js');
+const logger = require('../helpers/logger.js');
 
-const genAI = new GoogleGenerativeAI(keys.geminiApiKey);
-const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
-
-const plex = new PlexAPI({
-    hostname: plexConfig.hostname,
-    port: plexConfig.port,
-    https: plexConfig.https,
-    token: plexConfig.token,
-    options: plexConfig.options
-});
+const model = getModel();
+const plex = getPlex();
 
 // A helper function to strip punctuation for extremely forgiving answer checking
 const cleanString = (str) => str.toLowerCase().replace(/[^\w\s]/g, '').trim();
 
 // Separate Leaderboard File Path for the Bad Plot game
-const leaderboardFile = path.join(__dirname, '../config/badplot_leaderboard.json');
+const leaderboardFile = path.join(__dirname, '../data/badplot_leaderboard.json');
 
 // Helper to load the leaderboard from the disk
 function loadLeaderboard() {
@@ -52,7 +45,7 @@ module.exports = {
                 }
             }
 
-            if (!msg) return console.error("Critical Error: Could not locate the Discord message object!");
+            if (!msg) return logger.error("Critical Error: Could not locate the Discord message object!");
 
             const subCommand = commandArgs.join(" ").trim().toLowerCase();
 
@@ -119,34 +112,41 @@ module.exports = {
 
                 await statusMsg.edit(`🎲 **Bad Plot Initializing...**\n⏳ *Target locked. The AI is writing the worst synopsis possible...*`);
 
-                const badPlotPrompt = `
-                You are playing a game of "Explain a Film/Show Plot Badly" for a Discord server.
-                The secret ${targetType} you have selected is: "${target.title}" (${target.year || "Unknown Year"}).
-                Here is the official synopsis: "${target.summary}"
+const badPlotPrompt = `You are a cynical, deadpan trivia host who explains movie and TV plots by focusing exclusively on the most unhinged, mundane, or legally questionable decisions the characters make.
 
-                Write exactly 3 sentences that explain the plot of this ${targetType} as badly, hilariously, and misleadingly as possible, while remaining technically accurate.
-                DO NOT use the title, obvious character names (unless heavily obscured), or obvious subtitle words.
-                Sentence 1: The most vague, bizarre oversimplification.
-                Sentence 2: Adds a weird detail about the setting or a character's questionable life choices.
-                Sentence 3: The final punchline that makes it slightly more obvious without giving it away directly.
+The secret ${targetType} is: "${target.title}" (${target.year || "Unknown Year"}).
+Official Synopsis: "${target.summary}"
 
-                Output ONLY a raw JSON object exactly like this:
-                {
-                    "sentence1": "First bad plot sentence.",
-                    "sentence2": "Second bad plot sentence.",
-                    "sentence3": "Third bad plot sentence."
-                }
-                `;
+Your task: Write exactly 3 sentences explaining this plot as misleadingly and hilariously as possible, while remaining 100% technically accurate.
 
-                const aiResult = await model.generateContent(badPlotPrompt);
-                const jsonMatch = aiResult.response.text().match(/\{[\s\S]*\}/);
-                if (!jsonMatch) throw new Error("Failed to parse AI JSON");
+CRITICAL RULES:
+1. NO PROPER NOUNS: Never use the title, character names, specific fictional locations (e.g., say "a severe workplace hazard" instead of "The Death Star"), or recognizable franchise jargon.
+2. NO ASSISTANT SPEAK: Do not use generic movie trailer voices (e.g., "In a world where..."). Use dry, observant, deadpan humor.
+3. THE TROPES: Frame epic/magical events as HR violations, property damage, or a severe lack of therapy. Frame romances as stalking or poor communication.
 
-                const clues = JSON.parse(jsonMatch[0]);
+STRUCTURE:
+Sentence 1: A bizarre, hyper-literal oversimplification of the inciting incident.
+Sentence 2: Highlight a weird secondary detail, a questionable life choice, or the sheer collateral damage of the plot.
+Sentence 3: The punchline. Make it slightly more obvious to reward clever players, but still completely sideways.
+
+Output STRICTLY a raw, valid JSON object with NO markdown formatting, NO markdown code blocks, and NO conversational text. It must match this exact structure:
+{
+    "sentence1": "string",
+    "sentence2": "string",
+    "sentence3": "string"
+}`;
+
+                const cacheTarget = { title: target.title, year: target.year, type: target.type, plexKey: target.key };
+                const clues = await clueCache.getOrGenerate(cacheTarget, 'badplot', async () => {
+                    const aiResult = await model.generateContent(badPlotPrompt);
+                    const jsonMatch = aiResult.response.text().match(/\{[\s\S]*\}/);
+                    if (!jsonMatch) throw new Error("Failed to parse AI JSON");
+                    return JSON.parse(jsonMatch[0]);
+                }, DEFAULT_MODEL);
 
                 await statusMsg.delete().catch(() => {});
 
-                await msg.channel.send(`🚨 **EXPLAIN A PLOT BADLY HAS STARTED!** 🚨\nI have selected a secret **${targetType}** from The Nerdgasm server. You have 3 minutes to guess the title before it's revealed!\n\n🕐 **Part 1:** *${clues.sentence1}*`);
+                await msg.channel.send(`🚨 **EXPLAIN A PLOT BADLY HAS STARTED!** 🚨\nI have selected a secret **${targetType}** from the ${config.serverName} server. You have 3 minutes to guess the title before it's revealed!\n\n🕐 **Part 1:** *${clues.sentence1}*`);
 
                 const filter = m => !m.author.bot;
                 const collector = msg.channel.createMessageCollector({ filter, time: 180000 });

@@ -1,3 +1,5 @@
+const logger = require('../helpers/logger.js');
+
 const pageSize = 10;
 var offset = 0;
 
@@ -35,7 +37,7 @@ module.exports = {
                   embedObj.fields[2].value += music.album + '\n\n';
               }
             } catch (err) {
-                console.error(err);
+                logger.error('list section query failed:', err);
             }
           }
       }

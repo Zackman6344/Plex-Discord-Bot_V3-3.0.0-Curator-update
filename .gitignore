@@ -1,2 +1,7 @@
 /node_modules
 /playlists
+
+# Secret config — copy from the .example files and fill in locally.
+# These should never be committed because they contain bot tokens and Plex tokens.
+/config/keys.js
+/config/plex.js

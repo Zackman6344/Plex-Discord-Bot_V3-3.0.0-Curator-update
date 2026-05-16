@@ -1,79 +1,155 @@
-Plex Discord Bot (AI Upgrade)
+# Plex Discord Bot (AI Upgrade)
 
-Note: This is my own personal upgrade of the Plex Discord bot (v2) originally made by danxfisher. He should have all the credit for starting this project. The v2 was updated by irbyk and should have credit for moving the project forward.
+> This is my personal upgrade of the [Plex Discord Bot v2](https://github.com/danxfisher/Plex-Discord-Bot) originally made by **danxfisher** and updated by **irbyk**. They get all the credit for starting this project and moving it forward — I'm just bolting on AI features, modernizing dependencies, and adding game/trivia stuff.
 
-The things I've changed and updated are as follows, friends! I should mention this bot has been "vibecoded" to speed things up, though I do know what I've done and have an awareness of what I've changed. If you don't like it, I apologize, use v2.
-
-Requirements: You'll need a Gemini API key to plug into the keys.js file. The default model is set to Gemini 2.5 Flash, and to use some of the new features you'll need to put some money in. Some features are not AI dependent, you'll have to figure them out yourselves until I can get around to better documentation. I do apologize if it references my specific media library, submit an issue request so I know.
+This bot has been "vibecoded" to speed things up, though I do know what I've changed and have an awareness of what's in here. If you don't vibe with it, use v2.
 
 A multipurpose Discord bot designed to integrate your Plex media server with your Discord community. It handles media requests, library searching, interactive movie trivia, and high-quality music playback directly from your server.
 
-📚 Command Directory
+## Requirements
 
-🎮 Games & Trivia
+- **Node.js 18 or newer.** Node 16 is EOL and the bot now uses discord.js v14, which requires 18+.
+- A Discord bot token (see the V2 setup section below for how to get one).
+- *(Optional)* A **Gemini API key** — required for any AI command (`!trivia`, `!curator`, `!vibe`, `!identify`, `!quest`, `!hitster`, etc.). Without it, music and basic Plex commands still work; AI commands will fail at the API call.
+- *(Optional)* A running [**Tautulli**](https://tautulli.com/) instance for `!stats`.
+- *(Optional)* A **Playnite HTTP server** on the host PC for `!game`, `!launch`, `!backlog`, and the gaming-history half of `!profile`.
 
-!trivia - Classic movie & TV show plot trivia.
+Some features cost money to use (Gemini API beyond the free tier). Non-AI features don't. If you find the bot referencing my specific media library somewhere, open an issue so I can pull it out.
 
-!badplot - Guess the movie from a terrible, sarcastic summary.
+## Setup
 
-!castingcouch - Guess the project based on vague job descriptions for the actors.
+After cloning and running `npm install`, set up your three config files. **Two of them are gitignored on purpose** so your tokens never end up in version control — copy the templates and fill them in locally:
 
-!quotethebard - Guess the song translated into Shakespearean English.
+```
+cp config/keys.example.js config/keys.js
+cp config/plex.example.js config/plex.js
+```
 
-!releasesurvival - A rapid-fire Higher or Lower release year survival game.
+(On Windows, `copy config\keys.example.js config\keys.js` etc.)
 
-!rumor - Guess the modern movie rewritten as a tabletop tavern quest hook.
+Then edit each one as below.
 
-!reviewbomb - Guess the movie based on an unhinged, petty 1-star review.
+**`config/keys.js`** — secrets:
 
-!survive - An interactive text-adventure. Can you survive the movie's plot?
+```js
+module.exports = {
+  'botToken'    : 'YOUR_DISCORD_BOT_TOKEN',
+  'geminiApiKey': 'YOUR_GEMINI_API_KEY'   // leave blank to disable AI commands
+};
+```
 
-🎵 Music & Audio Controls
+**`config/plex.js`** — your Plex server. Get your token via [these instructions](https://support.plex.tv/hc/en-us/articles/204059436-Finding-an-authentication-token-X-Plex-Token). Anything in `options` can be set to whatever you want:
 
-!play [song/url] - Add a song to the queue.
+```js
+module.exports = {
+  'hostname'    : 'PLEX_LOCAL_IP_OR_HOSTNAME',
+  'port'        : '32400',
+  'https'       : false,
+  'token'       : 'PLEX_TOKEN',
+  'managedUser' : '',                       // reserved for a future feature
+  'options'     : {
+    'identifier': 'APP_IDENTIFIER',
+    'product'   : 'APP_PRODUCT_NAME',
+    'version'   : 'APP_VERSION_NUMBER',
+    'deviceName': 'APP_DEVICE_NAME',
+    'platform'  : 'Discord',
+    'device'    : 'Discord'
+  }
+};
+```
 
-!pause / !resume / !stop / !skip - Standard playback controls.
+**`config/config.js`** — feature toggles and display:
 
-!volume [1-100] - Adjust the bot's volume.
+```js
+module.exports = {
+  'listenChannel'   : '',                  // limit bot to one channel name; empty = listen everywhere
+  'commandPrefix'   : '!',                 // command prefix character(s)
+  'playlistsDir'    : 'playlists/',        // where custom user playlists are stored on disk
+  'language'        : 'lang/en.js',
+  'youtube_quality' : 'lowestaudio',
 
-!loop / !shuffle - Modify how the queue plays.
+  'serverName'      : 'My Plex Server',    // shown in stats/help/request messages
 
-!viewqueue / !clearqueue - Manage the current playlist.
+  'ownerId'         : '',                  // your Discord user ID — gates owner-only Playnite commands and DM alerts
+  'launchRoleId'    : '',                  // optional Discord role allowed to use !launch
 
-!song / !album / !artist / !youtube - Search for specific audio.
+  'playniteEnabled' : false,               // toggle Playnite integration
+  'tautulliEnabled' : false,               // toggle Tautulli integration
+  'tautulliApiKey'  : '',
+  'tautulliUrl'     : ''                   // e.g. http://localhost:8181
+};
+```
 
-!playlist - Access the custom playlist manager (create, add, play).
+Then start the bot:
 
-!mood [mood] - Provides a random song list matching your given mood.
+```
+node index.js
+```
 
-🍿 Plex & Media Utilities
+The console needs to stay open for the bot to keep running. The Docker setup in this repo uses Node 20.
 
-!request - Anonymously request movies, shows, or albums for the Plex server.
+## 📚 Command Directory
 
-!curator - Get custom-tailored media recommendations.
+Type any command by itself (e.g. `!hitster`, `!playlist`) to open its specific menu.
 
-!groupwatch - A multiplayer curator to find the perfect movie for a group to watch.
+### 🤖 AI Arcade & Minigames
 
-!quest - Generates a custom movie marathon based on a specific theme.
+- `!hitster` — Competitive turn-based music timeline game. Guess the release year!
+- `!trivia` — Classic movie & TV show plot trivia.
+- `!badplot` — Guess the movie from the AI's terrible, sarcastic summary.
+- `!castingcouch` — Guess the project based on vague job descriptions for the actors.
+- `!quotethebard` — Guess the song translated into Shakespearean English.
+- `!releasesurvival` — Rapid-fire *Higher or Lower* release year survival game.
+- `!rumor` — Guess the modern movie rewritten as a D&D tavern quest hook.
+- `!reviewbomb` — Guess the movie based on an unhinged, petty 1-star review.
+- `!survive` — Interactive text-adventure. Can you survive the movie's plot?
 
-!identify - Find that "tip of your tongue" movie from a vague description.
+### 🎵 Music & Audio Controls
 
-!vibe - Generate a playlist or media queue based on a specific vibe.
+- `!play [song/url]` — Add a song to the queue.
+- `!pause` / `!resume` / `!stop` / `!skip` — Standard playback controls.
+- `!volume [1-100]` — Adjust the bot's volume.
+- `!loop` / `!shuffle` — Modify how the queue plays.
+- `!viewqueue` / `!clearqueue` — Manage the current playlist.
+- `!song` / `!album` / `!artist` — Search Plex for specific audio.
+- `!youtube [url or search]` — Play a YouTube URL, or search and play the top result.
+- `!playlist` — Access the custom playlist manager (create, add, play).
+- `!mood [mood]` — Random song matching your given mood.
 
-!library - View or search the server's libraries.
+### 🍿 Plex & Media Utilities
 
-!random - Roll the dice for a random music pick.
+- `!request` — Anonymously request movies, shows, or albums for the server.
+- `!curator` — Custom-tailored AI media recommendations.
+- `!groupwatch` — Multiplayer curator to find a movie a group can agree on.
+- `!quest` — Custom movie marathon based on a theme.
+- `!identify` — Find that "tip of your tongue" movie from a vague description.
+- `!vibe` — Generate a playlist or media queue based on a vibe.
+- `!library` — View or search server libraries.
+- `!random` — Random media pick.
 
-💬 Support & Community
+### 🛠️ Owner / Admin commands
 
-If you have questions about this specific version or if you want to see it in action, my personal discord is: https://discord.gg/dakj4au
+- `!diag` *(alias: `!plextest`)* — Full diagnostic: Plex, Gemini, Tautulli, Playnite. Bot also runs this every 15 minutes in the background and DMs the owner (if `ownerId` is set) on any status transition.
+- `!stats` — Combined Plex (via Tautulli) + Playnite statistics.
+- `!profile` — AI-generated D&D character sheet based on your gaming history.
+- `!game [title]` — Search the host's game library and show metadata.
+- `!launch [title]` — Boot a game on the host PC.
+- `!backlog` — Random unplayed game from the library.
 
-If you are feeling generous, I have a Patreon! I do random things and post there. So far I've released a couple of Minecraft addons, a BO3 Twitch integration tool (forked and fixed from someone else) and this, I suppose.
-🔗 www.patreon.com/zackman634
-(There's a free tier, but active members of my community or paid Patreon members get access to my personal Plex server!)
+> Most of these are gated on `playniteEnabled` and/or `ownerId` in `config/config.js`.
+
+## 💬 Support & Community
+
+If you have questions about this specific version or want to see it in action, my personal Discord: <https://discord.gg/dakj4au>
+
+If you're feeling generous, I have a Patreon — random projects (Minecraft addons, a BO3 Twitch integration tool, and this thing). 🔗 [www.patreon.com/zackman634](https://www.patreon.com/zackman634). There's a free tier; active community members or paid patrons get access to my personal Plex server.
+
+---
 
 <details>
 <summary><b>Click here to view the original Bot Instructions and Readme from V2</b></summary>
+
+> ⚠️ The text below is preserved from the original V2 README. A few specifics are now out of date in this fork — most notably **Node.js 16 is no longer supported (use 18+)**, the `keys.js` file now also takes a `geminiApiKey`, and the Dockerfile here uses `node:20`. The current setup is documented at the top of this README.
 
 Original README
 

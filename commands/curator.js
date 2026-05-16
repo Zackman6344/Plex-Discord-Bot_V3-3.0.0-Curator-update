@@ -1,19 +1,11 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-const keys = require('../config/keys.js');
-const PlexAPI = require('plex-api');
-const plexConfig = require('../config/plex.js');
+const config = require('../config/config.js');
+const { getModel } = require('../helpers/geminiAPI.js');
+const { getPlex } = require('../helpers/plexClient.js');
 const handleAIError = require('../helpers/aiErrorHandler.js');
+const logger = require('../helpers/logger.js');
 
-const genAI = new GoogleGenerativeAI(keys.geminiApiKey);
-const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
-
-const plex = new PlexAPI({
-    hostname: plexConfig.hostname,
-    port: plexConfig.port,
-    https: plexConfig.https,
-    token: plexConfig.token,
-    options: plexConfig.options
-});
+const model = getModel();
+const plex = getPlex();
 
 module.exports = {
     name: 'curate',
@@ -30,7 +22,7 @@ module.exports = {
                 }
             }
 
-            if (!msg) return console.error("Critical Error: Could not locate the Discord message object!");
+            if (!msg) return logger.error("Critical Error: Could not locate the Discord message object!");
 
             // Added 'intent' to track whether the AI is filtering or answering trivia
             let session = {
@@ -99,7 +91,7 @@ module.exports = {
                         const typeMatch = typeResult.response.text().match(/\{[\s\S]*\}/);
                         const typeData = typeMatch ? JSON.parse(typeMatch[0]) : { type: "movie", keywords: [] };
 
-                        await statusMsg.edit(`🔍 **Curator Status:**\n✅ Mood decoded (${typeData.type})\n✅ Massive net cast with **${typeData.keywords.length} direct keywords**\n⏳ *Connecting to The Nerdgasm Plex server...*`);
+                        await statusMsg.edit(`🔍 **Curator Status:**\n✅ Mood decoded (${typeData.type})\n✅ Massive net cast with **${typeData.keywords.length} direct keywords**\n⏳ *Connecting to the ${config.serverName} Plex server...*`);
 
                         const sections = await plex.query('/library/sections');
                         const targetSection = sections.MediaContainer.Directory.find(sec => sec.type === typeData.type);

@@ -1,19 +1,10 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-const keys = require('../config/keys.js');
-const PlexAPI = require('plex-api');
-const plexConfig = require('../config/plex.js');
+const { getModel } = require('../helpers/geminiAPI.js');
+const { getPlex } = require('../helpers/plexClient.js');
 const handleAIError = require('../helpers/aiErrorHandler.js');
+const logger = require('../helpers/logger.js');
 
-const genAI = new GoogleGenerativeAI(keys.geminiApiKey);
-const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
-
-const plex = new PlexAPI({
-    hostname: plexConfig.hostname,
-    port: plexConfig.port,
-    https: plexConfig.https,
-    token: plexConfig.token,
-    options: plexConfig.options
-});
+const model = getModel();
+const plex = getPlex();
 
 // Prevent multiple campaigns running in the same channel at once
 const activeGames = new Set();
@@ -36,7 +27,7 @@ module.exports = {
                 }
             }
 
-            if (!msg) return console.error("Critical Error: Could not locate the Discord message object!");
+            if (!msg) return logger.error("Critical Error: Could not locate the Discord message object!");
 
             const rawInput = commandArgs.join(" ").trim().toLowerCase();
             const words = rawInput.split(" ");

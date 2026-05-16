@@ -1,19 +1,11 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-const keys = require('../config/keys.js');
-const PlexAPI = require('plex-api');
-const plexConfig = require('../config/plex.js');
+const config = require('../config/config.js');
+const { getModel } = require('../helpers/geminiAPI.js');
+const { getPlex } = require('../helpers/plexClient.js');
 const handleAIError = require('../helpers/aiErrorHandler.js');
+const logger = require('../helpers/logger.js');
 
-const genAI = new GoogleGenerativeAI(keys.geminiApiKey);
-const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
-
-const plex = new PlexAPI({
-    hostname: plexConfig.hostname,
-    port: plexConfig.port,
-    https: plexConfig.https,
-    token: plexConfig.token,
-    options: plexConfig.options
-});
+const model = getModel();
+const plex = getPlex();
 
 module.exports = {
     name: 'sonic',
@@ -33,7 +25,7 @@ module.exports = {
                 }
             }
 
-            if (!msg) return console.error("Critical Error: Could not locate the Discord message object!");
+            if (!msg) return logger.error("Critical Error: Could not locate the Discord message object!");
 
             const rawInput = commandArgs.join(" ").trim();
             if (!rawInput) {
@@ -82,7 +74,7 @@ module.exports = {
                 }
 
                 let displayTarget = typeData.isSpecificSong ? `Anchor: ${typeData.specificQuery}` : `Vibe: ${typeData.vibe}`;
-                await statusMsg.edit(`🎵 **Target:** \`${displayTarget}\` | **Length:** \`${constraintText}\`\n⏳ *Pulling library files from The Nerdgasm...*`);
+                await statusMsg.edit(`🎵 **Target:** \`${displayTarget}\` | **Length:** \`${constraintText}\`\n⏳ *Pulling library files from ${config.serverName}...*`);
 
                 const sections = await plex.query('/library/sections');
                 const targetSection = sections.MediaContainer.Directory.find(sec => sec.type === 'artist');
@@ -208,7 +200,7 @@ module.exports = {
                         return statusMsg.edit(`❌ **Sonic Analysis Failed:** I found the anchor track (**${aiAnchor.title}**), but Plex has not sonically analyzed it yet! Try a different vibe or specific song.`);
                     }
                 } catch (e) {
-                    console.error("Sonic API error:", e);
+                    logger.error('Sonic API error:', e);
                     return statusMsg.edit(`❌ **API Error:** The Plex server rejected the Sonic query for **${aiAnchor.title}**.`);
                 }
 

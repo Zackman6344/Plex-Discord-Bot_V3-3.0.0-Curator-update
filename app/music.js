@@ -1,72 +1,34 @@
 module.exports = function(client, bot) {
   // plex commands -------------------------------------------------------------
   const plexCommands = require('../commands');
+  const logger = require('../helpers/logger.js');
+  const { startHealthMonitor } = require('../helpers/healthMonitor.js');
   // when bot is ready
-  client.once('ready', function() {
-    console.log('bot ready');
-    console.log('logged in as: ' + client.user.tag);
-
-    plexCommands['plextest'].process(bot);
+  client.once('clientReady', function() {
+    logger.info(`Bot ready — logged in as ${client.user.tag}`);
+    startHealthMonitor(client);
   });
 
   // when message is sent to discord
   client.on('messageCreate', function(message){
-    
-      var msg = message.content;//.toLowerCase();
 
-      if (msg.startsWith(bot.config.caracteres_commande)){
-        if(bot.config.canal_ecoute == '' || message.channel.name == bot.config.canal_ecoute) {
-            var cmdTxt = msg.split(/\s+/)[0].substring(bot.config.caracteres_commande.length, msg.length).toLowerCase();
-            var query = msg.substring(cmdTxt.length+2);
-            if(cmdTxt === "?") {
-              if(query) {
-                /*let cmdTxtAide = query.split(" ");
-                let cmdAide = plexCommands[cmdTxtAide[0]];
-                if(cmdAide) {
-                  cmdAide.usage(message, cmdTxtAide.slice(1));
-                } else{*/
-                  message.reply(bot.language.MUSIC_HELP_1.format({caracteres_commande : bot.config.caracteres_commande}),{tts: true});
-                //}
-                return ;
-              }
-              for (let command in plexCommands){
-                  let embedObj = {
-                           
-                              color: 4251856,
-                              fields:
-                              [
-                                  {
-                                      name: bot.language.COMMAND,
-                                      value: bot.config.caracteres_commande + command + ' ' + plexCommands[command].usage,
-                                      inline: true
-                                  },
-                                  {
-                                      name: bot.language.DESCRIPTION,
-                                      value: plexCommands[command].description,
-                                      inline: true
-                                  }
-                              ],
-                              footer: {
-                                  text: ''
-                              },
-                          
-                  };
-                  message.channel.send({ content: '\n**' + command + ' :**\n\n', embeds: [embedObj] });
-              }
-              return ;
-            }
-            
+      var msg = message.content;
+
+      if (msg.startsWith(bot.config.commandPrefix)){
+        if(bot.config.listenChannel == '' || message.channel.name == bot.config.listenChannel) {
+            var cmdTxt = msg.split(/\s+/)[0].substring(bot.config.commandPrefix.length, msg.length).toLowerCase();
+            var query = msg.substring(cmdTxt.length + bot.config.commandPrefix.length + 1);
+
+            // !? is registered as an alias of !help via commands/index.js's alias mechanism,
+            // so the normal dispatch below picks it up.
             var cmd = plexCommands[cmdTxt];
-            
+
             if (cmd){
               try {
                 cmd.process(bot, client, message, query);
-                if (process.catch !== undefined) {
-                  process.catch(err => console.log(e));
-                }
               }
               catch (e) {
-                console.log(e);
+                logger.error(`Command "${cmdTxt}" threw:`, e);
               }
             }
             else {
@@ -74,6 +36,6 @@ module.exports = function(client, bot) {
             }
         }
       }
-    
+
   });
 };

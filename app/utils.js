@@ -7,8 +7,9 @@ function stop(bot, client) {
 
 function start(){
     // packages --------------------------------------------------------------------
-    const { Client, Intents } = require('discord.js');
+    const { Client, GatewayIntentBits, Partials } = require('discord.js');
     const Bot = require('./bot.js');
+    const logger = require('../helpers/logger.js');
     // my keys ---------------------------------------------------------------------
     var keys = require('../config/keys.js');
 
@@ -16,15 +17,15 @@ function start(){
 
     const client = new Client({
        intents: [
-          Intents.FLAGS.GUILDS,
-          Intents.FLAGS.GUILD_MESSAGES,
-          Intents.FLAGS.GUILD_VOICE_STATES,
-          Intents.FLAGS.MESSAGE_CONTENT,
-          Intents.FLAGS.DIRECT_MESSAGES // <-- ADDED: Allows the bot to receive DMs
+          GatewayIntentBits.Guilds,
+          GatewayIntentBits.GuildMessages,
+          GatewayIntentBits.GuildVoiceStates,
+          GatewayIntentBits.MessageContent,
+          GatewayIntentBits.DirectMessages // <-- ADDED: Allows the bot to receive DMs
        ],
        partials: [
-          'CHANNEL', // <-- ADDED: Forces the bot to listen to uncached DM channels
-          'MESSAGE'
+          Partials.Channel, // <-- ADDED: Forces the bot to listen to uncached DM channels
+          Partials.Message
        ]
     });
     const bot = new Bot(client);
@@ -35,14 +36,25 @@ function start(){
 
     async function quitter(){
        try {
-          console.log('Bot shutdown');
+          logger.info('Bot shutdown');
           stop(bot, client);
        } catch (e){
-          console.error(e.toString());
+          logger.error('Error during shutdown:', e);
        } finally {
           process.exit(0);
        }
     }
+
+    // Catch anything that escapes a try/catch or a .catch() so the bot doesn't die mid-session.
+    // Node's default would crash the process on an uncaught exception; for a long-running bot we'd
+    // rather log it loudly and keep running.
+    process.on('uncaughtException', (err, origin) => {
+        logger.error(`Uncaught exception (${origin}):`, err && err.stack ? err.stack : err);
+    });
+
+    process.on('unhandledRejection', (reason) => {
+        logger.error('Unhandled promise rejection:', reason && reason.stack ? reason.stack : reason);
+    });
 
     process.on('SIGTERM', quitter);
 

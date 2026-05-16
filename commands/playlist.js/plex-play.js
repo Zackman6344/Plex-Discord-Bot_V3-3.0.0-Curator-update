@@ -1,4 +1,5 @@
 const fs = require('fs');
+const logger = require('../../helpers/logger.js');
 
 //https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Math/random
 function getRandomInt(max) {
@@ -31,7 +32,7 @@ module.exports = {
       try {
         await bot.findPlaylist(playlistName, message, random);
       } catch (err){
-        console.error(err);
+        logger.error('plex-play failed:', err);
         message.reply(`The playlist "${playlistName}" was not found on plex.`);
       }
     }

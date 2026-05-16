@@ -21,13 +21,13 @@ module.exports = {
       else {
         artist = bot.tracks[songNumber].grandparentTitle;
       }
-      let musique = {
+      let track = {
         query : bot.plexQuery,
         artiste : artist,
         titre : title,
         cle : key
       };
-      bot.ajoutPlaylist(bot.botPlaylist, musique, message);
+      bot.addToPlaylist(bot.botPlaylist, track, message);
     }
   }
 };

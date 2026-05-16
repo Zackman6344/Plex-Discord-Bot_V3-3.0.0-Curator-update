@@ -1,18 +1,10 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-const keys = require('../config/keys.js');
-const PlexAPI = require('plex-api');
-const plexConfig = require('../config/plex.js');
+const config = require('../config/config.js');
+const { getModel } = require('../helpers/geminiAPI.js');
+const { getPlex } = require('../helpers/plexClient.js');
+const logger = require('../helpers/logger.js');
 
-const genAI = new GoogleGenerativeAI(keys.geminiApiKey);
-const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
-
-const plex = new PlexAPI({
-    hostname: plexConfig.hostname,
-    port: plexConfig.port,
-    https: plexConfig.https,
-    token: plexConfig.token,
-    options: plexConfig.options
-});
+const model = getModel({ model: "gemini-2.5-pro" });
+const plex = getPlex();
 
 const promptUser = async (channel, authorId, text, time = 60000) => {
     if (text) await channel.send(text);
@@ -40,12 +32,12 @@ module.exports = {
                 }
             }
 
-            if (!msg) return console.error("Critical Error: Could not locate the Discord message object!");
+            if (!msg) return logger.error("Critical Error: Could not locate the Discord message object!");
 
             const affirmitiveWords = ['yes', 'y', 'yeah', 'yep', 'vault', 'sure', 'i think so'];
             const negativeWords = ['no', 'n', 'nope', 'nah', 'wrong'];
 
-            let ans1 = await promptUser(msg.channel, msg.author.id, `🕵️ **Detective Mode Standby!**\n<@${msg.author.id}>, before I start digging, are you sure you saw this on **The Nerdgasm**?\n\n*(Reply with **Yes** to only search our server, or **No** to search all of existence)*`);
+            let ans1 = await promptUser(msg.channel, msg.author.id, `🕵️ **Detective Mode Standby!**\n<@${msg.author.id}>, before I start digging, are you sure you saw this on **${config.serverName}**?\n\n*(Reply with **Yes** to only search our server, or **No** to search all of existence)*`);
 
             if (!ans1) return msg.channel.send("🕵️ *Case suspended. You took too long to answer! Run `!identify` to try again.*");
             let vaultOnly = affirmitiveWords.includes(ans1.toLowerCase());
@@ -64,7 +56,7 @@ module.exports = {
 
                 try {
                     if (vaultOnly) {
-                        await statusMsg.edit(`🔍 **Detective Mode [VAULT RESTRICTED]**\n⏳ *Casting a keyword net over The Nerdgasm...*`);
+                        await statusMsg.edit(`🔍 **Detective Mode [VAULT RESTRICTED]**\n⏳ *Casting a keyword net over ${config.serverName}...*`);
 
                         const typePrompt = `
                         The user is vaguely describing media: "${rawInput}"
@@ -283,7 +275,7 @@ module.exports = {
                             continue;
                         }
 
-                        await statusMsg.edit(`🔍 **Detective Mode:**\n✅ Identified as **${aiData.title}** (${aiData.year})\n⏳ *Checking The Nerdgasm vault to see if we have it...*`);
+                        await statusMsg.edit(`🔍 **Detective Mode:**\n✅ Identified as **${aiData.title}** (${aiData.year})\n⏳ *Checking the ${config.serverName} vault to see if we have it...*`);
 
                         const sections = await plex.query('/library/sections');
                         let targetType = aiData.type;
@@ -319,7 +311,7 @@ module.exports = {
                         reply += `🧠 **Trivia:** *${aiData.trivia}*\n\n`;
 
                         if (isOwned) {
-                            reply += `✅ **Vault Status:** Good news! **${aiData.title}** is currently sitting in The Nerdgasm vault ready to watch.`;
+                            reply += `✅ **Vault Status:** Good news! **${aiData.title}** is currently sitting in the ${config.serverName} vault ready to watch.`;
                         } else {
                             reply += `❌ **Vault Status:** Bad news! We don't have this one in the archives yet. You might have to put in a request for it.`;
                         }
@@ -329,7 +321,7 @@ module.exports = {
                     }
 
                 } catch (err) {
-                    console.error(err);
+                    logger.error('identify failed:', err);
                     statusMsg.edit("❌ *My brain short-circuited trying to decode that memory. Try again!*").catch(() => {});
                     isSearching = false;
                 }

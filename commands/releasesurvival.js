@@ -1,20 +1,14 @@
-const PlexAPI = require('plex-api');
-const plexConfig = require('../config/plex.js');
 const fs = require('fs');
 const path = require('path');
+const { getPlex } = require('../helpers/plexClient.js');
 const handleAIError = require('../helpers/aiErrorHandler.js');
+const logger = require('../helpers/logger.js');
 
-const plex = new PlexAPI({
-    hostname: plexConfig.hostname,
-    port: plexConfig.port,
-    https: plexConfig.https,
-    token: plexConfig.token,
-    options: plexConfig.options
-});
+const plex = getPlex();
 
 // THE FIX: Dynamic Leaderboard File Paths
 function getLeaderboardFile(category) {
-    return path.join(__dirname, `../config/survival_${category}_leaderboard.json`);
+    return path.join(__dirname, `../data/survival_${category}_leaderboard.json`);
 }
 
 function loadLeaderboard(category) {
@@ -49,7 +43,7 @@ module.exports = {
                 }
             }
 
-            if (!msg) return console.error("Critical Error: Could not locate the Discord message object!");
+            if (!msg) return logger.error("Critical Error: Could not locate the Discord message object!");
 
             const rawInput = commandArgs.join(" ").trim().toLowerCase();
             const words = rawInput.split(" ");

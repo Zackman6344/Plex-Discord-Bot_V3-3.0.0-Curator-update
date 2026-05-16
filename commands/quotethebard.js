@@ -1,24 +1,16 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-const keys = require('../config/keys.js');
-const PlexAPI = require('plex-api');
-const plexConfig = require('../config/plex.js');
 const fs = require('fs');
 const path = require('path');
+const config = require('../config/config.js');
+const { getModel } = require('../helpers/geminiAPI.js');
+const { getPlex } = require('../helpers/plexClient.js');
 const handleAIError = require('../helpers/aiErrorHandler.js');
+const logger = require('../helpers/logger.js');
 
-const genAI = new GoogleGenerativeAI(keys.geminiApiKey);
-const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
-
-const plex = new PlexAPI({
-    hostname: plexConfig.hostname,
-    port: plexConfig.port,
-    https: plexConfig.https,
-    token: plexConfig.token,
-    options: plexConfig.options
-});
+const model = getModel();
+const plex = getPlex();
 
 const cleanString = (str) => str.toLowerCase().replace(/[^\w\s]/g, '').trim();
-const leaderboardFile = path.join(__dirname, '../config/bard_leaderboard.json');
+const leaderboardFile = path.join(__dirname, '../data/bard_leaderboard.json');
 
 function loadLeaderboard() {
     if (!fs.existsSync(leaderboardFile)) return {};
@@ -59,7 +51,7 @@ module.exports = {
                 }
             }
 
-            if (!msg) return console.error("Critical Error: Could not locate the Discord message object!");
+            if (!msg) return logger.error("Critical Error: Could not locate the Discord message object!");
 
             const rawInput = commandArgs.join(" ").trim().toLowerCase();
             const words = rawInput.split(" ");
@@ -287,7 +279,7 @@ module.exports = {
 
                 await statusMsg.delete().catch(() => {});
 
-                await msg.channel.send(`🚨 **QUOTE THE BARD HAS STARTED!** 🚨\nI have selected a secret track from The Nerdgasm server. You have 5 minutes to guess the **Song Title**!\n*(Difficulty: ${difficulty.toUpperCase()} | ${displayModeText})*\n\n📜 **Clue 1 (The Verse):**\n> *"${aiData.lyrics}"*`);
+                await msg.channel.send(`🚨 **QUOTE THE BARD HAS STARTED!** 🚨\nI have selected a secret track from the ${config.serverName} server. You have 5 minutes to guess the **Song Title**!\n*(Difficulty: ${difficulty.toUpperCase()} | ${displayModeText})*\n\n📜 **Clue 1 (The Verse):**\n> *"${aiData.lyrics}"*`);
 
                 const filter = m => !m.author.bot;
                 const collector = msg.channel.createMessageCollector({ filter, time: 300000 });
@@ -347,7 +339,7 @@ module.exports = {
                 });
 
             } catch (err) {
-                console.error(err);
+                logger.error('quotethebard failed:', err);
                 if (err.message && (err.message.includes("503") || err.message.includes("high demand") || err.message.includes("Service Unavailable"))) {
                     statusMsg.edit("⚠️ *The Bard's tavern is completely packed right now! (Google Gemini API is experiencing high traffic). Please try again in a few moments!*").catch(() => {});
                 } else {

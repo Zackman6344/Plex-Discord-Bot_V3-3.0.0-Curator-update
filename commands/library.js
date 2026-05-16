@@ -104,8 +104,8 @@ module.exports = {
           } else {
             embedObj = {
                 color: 0xff0000,
-                description: 'No loaded library. Type `' + bot.config.caracteres_commande + 'library add` to add all the libraries.\n Type `'
-                + bot.config.caracteres_commande + 'library add <key>` to only add the library with the given key.' ,
+                description: 'No loaded library. Type `' + bot.config.commandPrefix + 'library add` to add all the libraries.\n Type `'
+                + bot.config.commandPrefix + 'library add <key>` to only add the library with the given key.' ,
             };
           }
           message.channel.send({ embeds: [embedObj] });

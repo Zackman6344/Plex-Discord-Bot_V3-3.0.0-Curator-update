@@ -11,7 +11,7 @@ module.exports = {
             return ;
         }
         
-        fs.readdir(bot.config.dossier_playlists, function (err, files) {
+        fs.readdir(bot.config.playlistsDir, function (err, files) {
             if (err) {
                 message.reply(bot.language.PLAYLIST_ERROR_FOLDER);
                 throw err

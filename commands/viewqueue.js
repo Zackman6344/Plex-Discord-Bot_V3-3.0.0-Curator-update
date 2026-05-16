@@ -19,7 +19,7 @@ module.exports = {
           }
           embedObj.description += messageLines;
         }
-        messageLines = bot.language.VIEWQUEUE_INFO.format({caracteres_commande : bot.config.caracteres_commande}) ;
+        messageLines = bot.language.VIEWQUEUE_INFO.format({commandPrefix : bot.config.commandPrefix}) ;
         if (embedObj.description.length + messageLines.length > descriptionLengthMax) {
             message.channel.send({ embeds: [Object.assign({}, embedObj)] });
             embedObj.description = '';
