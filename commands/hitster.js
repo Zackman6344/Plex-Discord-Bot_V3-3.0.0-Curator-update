@@ -1,17 +1,11 @@
 const fs = require('fs');
 const path = require('path');
-const plexConfig = require('../config/plex.js');
-const PlexAPI = require('plex-api');
+const { getPlex } = require('../helpers/plexClient.js');
+const logger = require('../helpers/logger.js');
 
-const plex = new PlexAPI({
-    hostname: plexConfig.hostname,
-    port: plexConfig.port,
-    https: plexConfig.https,
-    token: plexConfig.token,
-    options: plexConfig.options
-});
+const plex = getPlex();
 
-const statsFile = path.join(__dirname, '../config/hitster_stats.json');
+const statsFile = path.join(__dirname, '../data/hitster_stats.json');
 
 function loadStats() {
     if (!fs.existsSync(statsFile)) return {};
@@ -359,7 +353,7 @@ async function executeTurn(game, bot, message, allTracks, client) {
                 m.react('✅');
                 bonusRecap.push(`🟢 ${dispName}: +${game.settings.bonusValue} pt (${type})`);
                 revealedText += `\n> **${type.charAt(0).toUpperCase() + type.slice(1)}:** *${targetObj[type] || "Unknown"}* (Guessed by ${dispName})`;
-                turnMsg.edit(baseMessageText + `\n\n🔍 **Revealed Details:**${revealedText}`).catch(e => console.error(e));
+                turnMsg.edit(baseMessageText + `\n\n🔍 **Revealed Details:**${revealedText}`).catch(e => logger.error('hitster edit failed:', e));
             } else {
                 game.scores[userId] -= game.settings.bonusValue;
                 m.react('❌');

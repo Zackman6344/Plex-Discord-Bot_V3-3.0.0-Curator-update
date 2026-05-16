@@ -1,3 +1,5 @@
+const logger = require('../helpers/logger.js');
+
 module.exports = {
   name : 'pause',
   command : {
@@ -8,10 +10,10 @@ module.exports = {
         bot.dispatcher.pause(true); // pause song
         bot.isPaused = true;
         bot.dispatcher.on('debug',  (info) => {
-          console.log(`Dispatcher : ${info}`);
+          logger.debug(`Dispatcher: ${info}`);
         });
         bot.dispatcher.on('error',  (err) => {
-          console.error(`Dispatcher : ${err}`);
+          logger.error(`Dispatcher error: ${err}`);
         });
         var embedObj = {
             color: 16424969,

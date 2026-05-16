@@ -1,4 +1,6 @@
 // helpers/playniteAPI.js
+const logger = require('./logger.js');
+
 module.exports = {
     getLibrary: async function() {
         try {
@@ -15,7 +17,7 @@ module.exports = {
             if (err.cause?.code === 'ECONNREFUSED' || err.message.includes('fetch failed')) {
                 return { error: 'OFFLINE' };
             }
-            console.error("Playnite API Connection Failed:", err.message);
+            logger.error('Playnite API connection failed:', err.message);
             return null;
         }
     }, // <-- Comma separates the functions
@@ -36,7 +38,7 @@ module.exports = {
             if (err.cause?.code === 'ECONNREFUSED' || err.message.includes('fetch failed')) {
                 return { error: 'OFFLINE' };
             }
-            console.error("Playnite Search API Connection Failed:", err.message);
+            logger.error('Playnite search API connection failed:', err.message);
             return null;
         }
     }, // <-- Comma separates the functions
@@ -54,7 +56,7 @@ module.exports = {
             if (err.cause?.code === 'ECONNREFUSED' || err.message.includes('fetch failed')) {
                 return { error: 'OFFLINE' };
             }
-            console.error("Playnite Launch API Failed:", err.message);
+            logger.error('Playnite launch API failed:', err.message);
             return null;
         }
     },
@@ -71,7 +73,7 @@ module.exports = {
                 if (err.cause?.code === 'ECONNREFUSED' || err.message.includes('fetch failed')) {
                     return { error: 'OFFLINE' };
                 }
-                console.error("Playnite Stats API Failed:", err.message);
+                logger.error('Playnite stats API failed:', err.message);
                 return null;
             }
         }

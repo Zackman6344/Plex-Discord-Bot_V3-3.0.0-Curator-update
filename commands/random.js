@@ -1,3 +1,5 @@
+const logger = require('../helpers/logger.js');
+
 module.exports = {
   name : 'random',
   command : {
@@ -8,7 +10,7 @@ module.exports = {
         try {
           await bot.findRandomTracksOnPlex(message);
         } catch (err){
-          console.log(err);
+          logger.error('random failed:', err);
         }
       } else {
         message.reply('random don\'t take argument.');

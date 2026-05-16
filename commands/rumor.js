@@ -1,27 +1,20 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-const keys = require('../config/keys.js');
-const PlexAPI = require('plex-api');
-const plexConfig = require('../config/plex.js');
 const fs = require('fs');
 const path = require('path');
+const config = require('../config/config.js');
+const { getModel, DEFAULT_MODEL } = require('../helpers/geminiAPI.js');
+const { getPlex } = require('../helpers/plexClient.js');
 const handleAIError = require('../helpers/aiErrorHandler.js');
+const clueCache = require('../helpers/clueCache.js');
+const logger = require('../helpers/logger.js');
 
-const genAI = new GoogleGenerativeAI(keys.geminiApiKey);
-const model = genAI.getGenerativeModel({ model: "gemini-3.1-pro-preview" });
-
-const plex = new PlexAPI({
-    hostname: plexConfig.hostname,
-    port: plexConfig.port,
-    https: plexConfig.https,
-    token: plexConfig.token,
-    options: plexConfig.options
-});
+const model = getModel();
+const plex = getPlex();
 
 // A helper function to strip punctuation for extremely forgiving answer checking
 const cleanString = (str) => str.toLowerCase().replace(/[^\w\s]/g, '').trim();
 
 // Separate Leaderboard File Path for the Tavern Rumor game
-const leaderboardFile = path.join(__dirname, '../config/rumor_leaderboard.json');
+const leaderboardFile = path.join(__dirname, '../data/rumor_leaderboard.json');
 
 // Helper to load the leaderboard from the disk
 function loadLeaderboard() {
@@ -52,7 +45,7 @@ module.exports = {
                 }
             }
 
-            if (!msg) return console.error("Critical Error: Could not locate the Discord message object!");
+            if (!msg) return logger.error("Critical Error: Could not locate the Discord message object!");
 
             const subCommand = commandArgs.join(" ").trim().toLowerCase();
 
@@ -79,7 +72,7 @@ module.exports = {
             // ==========================================
             // THE TAVERN RUMOR GAME
             // ==========================================
-            let statusMsg = await msg.channel.send(`🍻 **Pulling up a chair...**\n⏳ *Eavesdropping on the patrons in The Nerdgasm server...*`);
+            let statusMsg = await msg.channel.send(`🍻 **Pulling up a chair...**\n⏳ *Eavesdropping on the patrons in the ${config.serverName} server...*`);
 
             try {
                 const sections = await plex.query('/library/sections');
@@ -141,11 +134,13 @@ module.exports = {
                 }
                 `;
 
-                const aiResult = await model.generateContent(rumorPrompt);
-                const jsonMatch = aiResult.response.text().match(/\{[\s\S]*\}/);
-                if (!jsonMatch) throw new Error("Failed to parse AI JSON");
-
-                const clues = JSON.parse(jsonMatch[0]);
+                const cacheTarget = { title: target.title, year: target.year, type: target.type, plexKey: target.key };
+                const clues = await clueCache.getOrGenerate(cacheTarget, 'rumor', async () => {
+                    const aiResult = await model.generateContent(rumorPrompt);
+                    const jsonMatch = aiResult.response.text().match(/\{[\s\S]*\}/);
+                    if (!jsonMatch) throw new Error("Failed to parse AI JSON");
+                    return JSON.parse(jsonMatch[0]);
+                }, DEFAULT_MODEL);
 
                 await statusMsg.delete().catch(() => {});
 

@@ -1,23 +1,23 @@
 const packageJson = require('../package.json');
+const logger = require('../helpers/logger.js');
+const { runHealthCheck, formatHealthCheck } = require('../helpers/healthCheck.js');
+
 module.exports = {
-  name : 'plextest',
+  name : 'diag',
+  aliases : ['plextest'],
   command : {
     usage: '',
-    description: 'test plex at bot start up to make sure everything is working',
-    process: function(bot, client, message) {
-      bot.plex.query('/').then(function(result) {
-        if(message) {
-          message.reply('name: ' + result.MediaContainer.friendlyName +'\nv: ' + result.MediaContainer.version + '\n'+
-          'Bot version : ' + packageJson.version);
-        }
-        else {
-          console.log('name: ' + result.MediaContainer.friendlyName);
-          console.log('v: ' + result.MediaContainer.version);
-          console.log('bot version: ' + packageJson.version);
-        }
-      }, function(err) {
-        console.log('ya done fucked up');
-      });
+    description: 'Full diagnostic — checks Plex, Gemini, Tautulli, and Playnite connectivity.',
+    process: async function(bot, client, message) {
+      const results = await runHealthCheck();
+      const formatted = formatHealthCheck(results);
+      const header = `Bot v${packageJson.version} — boot diagnostic`;
+
+      if (message) {
+        message.reply(`🩺 **${header}**\n\`\`\`\n${formatted}\n\`\`\``);
+      } else {
+        logger.info(`${header}:\n${formatted}`);
+      }
     }
   }
 };

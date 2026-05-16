@@ -1,6 +1,6 @@
 // commands/backlog.js
 const playnite = require('../helpers/playniteAPI.js');
-const { MessageEmbed } = require('discord.js');
+const { EmbedBuilder } = require('discord.js');
 const config = require('../config/config.js');
 
 module.exports = {
@@ -9,21 +9,15 @@ module.exports = {
         usage: '!backlog',
         description: 'Randomly selects an unplayed game from your Playnite library.',
         process: async function(bot, client, msg) {
-                if (!config.playniteEnabled) {
-                    return msg.channel.send("❌ **Playnite Integration is currently disabled** in the bot's config.");
-                }
-                // 1. The Config & Setup Gatekeeper
-                            if (!config.playniteEnabled) {
-                                return msg.channel.send("❌ **Playnite Integration is currently disabled** in the bot's config.");
-                            }
-
-                            // Forces the person hosting the bot to configure their ID before the module activates
-                            if (!config.ownerId || config.ownerId === 'YOUR_DISCORD_ID_HERE' || config.ownerId === '') {
-                                return msg.channel.send("⚙️ **Configuration Required:** The bot owner must set their `ownerId` in the config file before Playnite features can be used.");
-                            }
-
-                            // Note: We removed the msg.author.id check here! Anyone in the server can now use this command.
             if (!msg) return;
+
+            if (!config.playniteEnabled) {
+                return msg.channel.send("❌ **Playnite Integration is currently disabled** in the bot's config.");
+            }
+
+            if (!config.ownerId || config.ownerId === 'YOUR_DISCORD_ID_HERE' || config.ownerId === '') {
+                return msg.channel.send("⚙️ **Configuration Required:** The bot owner must set their `ownerId` in the config file before Playnite features can be used.");
+            }
 
             let statusMsg = await msg.channel.send("🎲 *Digging through your Playnite library...*");
 
@@ -44,7 +38,7 @@ module.exports = {
             const randomPick = unplayedGames[Math.floor(Math.random() * unplayedGames.length)];
 
             // Format an embed to look nice
-            const gameEmbed = new MessageEmbed()
+            const gameEmbed = new EmbedBuilder()
                 .setColor('#FF5733') // Playnite orange
                 .setTitle('🎮 The Backlog Chooser Has Spoken')
                 .setDescription(`Stop scrolling and go play:\n\n**${randomPick.Name}**`)

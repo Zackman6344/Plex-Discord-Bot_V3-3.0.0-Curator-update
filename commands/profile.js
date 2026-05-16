@@ -1,13 +1,13 @@
 // commands/profile.js
 const fs = require('fs');
 const path = require('path');
-const { MessageEmbed } = require('discord.js');
+const { EmbedBuilder } = require('discord.js');
 const gemini = require('../helpers/geminiAPI.js');
 const playnite = require('../helpers/playniteAPI.js');
 const config = require('../config/config.js');
 
-const statsFilePath = path.join(__dirname, '..', 'playtime_stats.json');
-const sheetsFilePath = path.join(__dirname, '..', 'character_sheets.json');
+const statsFilePath = path.join(__dirname, '..', 'data', 'playtime_stats.json');
+const sheetsFilePath = path.join(__dirname, '..', 'data', 'character_sheets.json');
 
 // Standard D&D 5e XP Thresholds
 const xpThresholds = [0, 300, 900, 2700, 6500, 14000, 23000, 34000, 48000, 64000, 85000, 100000, 120000, 140000, 165000, 195000, 225000, 265000, 305000, 355000];
@@ -130,13 +130,15 @@ module.exports = {
                 featsString += `**${feat.name}:** ${feat.description}\n\n`;
             });
 
-            const embed = new MessageEmbed()
+            const embed = new EmbedBuilder()
                 .setColor('#D4AF37')
                 .setTitle(`🛡️ ${msg.author.username} - Level ${level} ${finalSheet.class}`)
                 .setDescription(`*${finalSheet.alignment}*\n\n**Total XP:** ${totalXP.toLocaleString()} / ${level < 20 ? xpThresholds[level].toLocaleString() : 'MAX'}`)
-                .addField('📊 Base Stats', statsString, false)
-                .addField('✨ Custom Feats', featsString, false)
-                .addField('📖 Backstory', finalSheet.backstory, false);
+                .addFields(
+                    { name: '📊 Base Stats', value: statsString, inline: false },
+                    { name: '✨ Custom Feats', value: featsString, inline: false },
+                    { name: '📖 Backstory', value: finalSheet.backstory, inline: false }
+                );
 
             // Tailor the footer based on the data source
             if (isOwner) {

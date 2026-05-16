@@ -14,8 +14,8 @@ module.exports = {
             message.reply(bot.language.ERROR_TOO_MANY_ARGS);
             return ;
         }
-        var nomFichier = bot.config.dossier_playlists+args[0]+'.playlist';
-        if(!fs.existsSync(nomFichier)) {
+        var playlistFile = bot.config.playlistsDir + args[0] + '.playlist';
+        if(!fs.existsSync(playlistFile)) {
             message.reply(bot.language.PLAYLIST_UNKNOW);
         } else {
           let embedObj = {
@@ -31,7 +31,7 @@ module.exports = {
                       text: ''
                   },
           };
-          fs.readFile(nomFichier, 'utf8', async function readFileCallback(err, data){
+          fs.readFile(playlistFile, 'utf8', async function readFileCallback(err, data){
                   if (err){
                       await message.reply(bot.language.OPEN_PLAYLIST_ERROR);
                       throw err;
@@ -49,9 +49,9 @@ module.exports = {
                       return;
                   }
 
-                  playlist.musiques.forEach(function (musique){
+                  playlist.musiques.forEach(function (track){
                       indice++;
-                      let ligne = bot.language.PLAYLIST_PRINT_INFO.format({index : indice, title : musique.titre, artist : musique.artiste}) + '\n';
+                      let ligne = bot.language.PLAYLIST_PRINT_INFO.format({index : indice, title : track.titre, artist : track.artiste}) + '\n';
                       if (embedObj.fields[0].value.length + ligne.length > 1024) {
                         message.channel.send({ content: '\n**' + args[0] + (!premier ? '(' + bot.language.NEXT +')' : '') + ' :**\n\n', embeds: [Object.assign({}, embedObj)] });
                         embedObj.fields[0].value = '';

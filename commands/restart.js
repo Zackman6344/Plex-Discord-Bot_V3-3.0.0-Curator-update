@@ -1,3 +1,5 @@
+const logger = require('../helpers/logger.js');
+
 module.exports = {
   name : 'restart',
   command : {
@@ -6,7 +8,7 @@ module.exports = {
     process: function(bot, client, message) {
         const { start, stop } = require('../app/utils.js');
         stop(bot, client);
-        console.log("Bot restart.")
+        logger.info('Bot restarting...');
         start();
     }
   }

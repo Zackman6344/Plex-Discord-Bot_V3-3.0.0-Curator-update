@@ -1,8 +1,10 @@
 const fs = require('fs');
 const path = require('path');
+const config = require('../config/config.js');
+const logger = require('../helpers/logger.js');
 
 // File path for storing the requests
-const requestsFile = path.join(__dirname, '../config/plex_requests.json');
+const requestsFile = path.join(__dirname, '../data/plex_requests.json');
 
 // Helper to load requests from the disk
 function loadRequests() {
@@ -33,7 +35,7 @@ module.exports = {
                 }
             }
 
-            if (!msg) return console.error("Critical Error: Could not locate the Discord message object!");
+            if (!msg) return logger.error("Critical Error: Could not locate the Discord message object!");
 
             const rawInput = commandArgs.join(" ").trim();
             const words = rawInput.split(" ");
@@ -44,7 +46,7 @@ module.exports = {
             // ==========================================
             if (!action || action === 'menu' || action === 'help') {
                 const menuText = `
-🍿 **The Nerdgasm Request Board** 🍿
+🍿 **${config.serverName} Request Board** 🍿
 *Request movies, TV shows, or albums for the server!*
 
 **Commands:**
@@ -110,7 +112,7 @@ module.exports = {
                     return dmChannel.send(`✅ **Request Logged!**\nYour request for **${title}** has been added to the board as ID **#${newId}**. I will send you a DM here when it's added to the server!`);
 
                 } catch (err) {
-                    console.error(err);
+                    logger.error('request DM failed:', err);
                     return msg.channel.send(`❌ <@${msg.author.id}>, I couldn't send you a DM! Please make sure your server privacy settings allow direct messages from bots, then try again.`);
                 }
             }
@@ -186,10 +188,10 @@ module.exports = {
                     try {
                         const targetUser = await msg.client.users.fetch(removedRequest.userId);
                         if (targetUser) {
-                            targetUser.send(`🎉 **Good news!**\nYour Plex request for **${removedRequest.title}** has been fulfilled and is now available to watch/listen on The Nerdgasm! Enjoy!`).catch(() => {});
+                            targetUser.send(`🎉 **Good news!**\nYour Plex request for **${removedRequest.title}** has been fulfilled and is now available to watch/listen on ${config.serverName}! Enjoy!`).catch(() => {});
                         }
                     } catch (err) {
-                        console.error("Could not send completion DM to user.");
+                        logger.error('Could not send completion DM to user.');
                     }
                     return;
                 } else {

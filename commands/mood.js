@@ -1,3 +1,5 @@
+const logger = require('../helpers/logger.js');
+
 module.exports = {
   name : 'mood',
   command : {
@@ -9,7 +11,7 @@ module.exports = {
         try {
           await bot.playOneMood(query, message);
         } catch (err){
-          console.log(err);
+          logger.error('mood failed:', err);
         }
       } else {
         message.reply(bot.language.PLAY_FAIL);

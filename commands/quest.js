@@ -1,19 +1,11 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-const keys = require('../config/keys.js');
-const PlexAPI = require('plex-api');
-const plexConfig = require('../config/plex.js');
+const config = require('../config/config.js');
+const { getModel } = require('../helpers/geminiAPI.js');
+const { getPlex } = require('../helpers/plexClient.js');
 const handleAIError = require('../helpers/aiErrorHandler.js');
+const logger = require('../helpers/logger.js');
 
-const genAI = new GoogleGenerativeAI(keys.geminiApiKey);
-const model = genAI.getGenerativeModel({ model: "gemini-3.1-pro-preview" });
-
-const plex = new PlexAPI({
-    hostname: plexConfig.hostname,
-    port: plexConfig.port,
-    https: plexConfig.https,
-    token: plexConfig.token,
-    options: plexConfig.options
-});
+const model = getModel();
+const plex = getPlex();
 
 const promptUser = async (channel, authorId, text, time = 60000) => {
     if (text) await channel.send(text);
@@ -41,7 +33,7 @@ module.exports = {
                 }
             }
 
-            if (!msg) return console.error("Critical Error: Could not locate the Discord message object!");
+            if (!msg) return logger.error("Critical Error: Could not locate the Discord message object!");
 
             // STAGE 1: Choose the Library Realm
             let libAns = await promptUser(msg.channel, msg.author.id, `🗺️ **Quest Board Accessed!**\n<@${msg.author.id}>, which realm are we charting a course through today?\n\n*(Reply with **Movies**, **TV**, **Both**, or **Music**)*`);
@@ -102,7 +94,7 @@ module.exports = {
                 let safeCount = Math.min(typeData.targetCount, 10);
                 if (safeCount < 1) safeCount = 3;
 
-                await statusMsg.edit(`📜 **Quest Theme:** \`${typeData.theme}\` | **Length:** \`${safeCount} chapters\`\n✅ Netted **${typeData.keywords.length} keywords**\n⏳ *Connecting to The Nerdgasm Plex server...*`);
+                await statusMsg.edit(`📜 **Quest Theme:** \`${typeData.theme}\` | **Length:** \`${safeCount} chapters\`\n✅ Netted **${typeData.keywords.length} keywords**\n⏳ *Connecting to the ${config.serverName} Plex server...*`);
 
                 // 2. FETCH AND PRE-FILTER PLEX LIBRARIES
                 const sections = await plex.query('/library/sections');

@@ -2,13 +2,13 @@
 const playnite = require('../helpers/playniteAPI.js');
 const tautulli = require('../helpers/tautulliAPI.js');
 const config = require('../config/config.js');
-const { MessageEmbed } = require('discord.js');
+const { EmbedBuilder } = require('discord.js');
 
 module.exports = {
     name: 'stats',
     command: {
         usage: '!stats',
-        description: 'Displays global statistics for both Playnite and The Nerdgasm media server.',
+        description: `Displays global statistics for both Playnite and the ${config.serverName} media server.`,
         process: async function(bot, client, msg) {
             if (!msg) return;
 
@@ -17,7 +17,7 @@ module.exports = {
                 return msg.channel.send("⚙️ **Configuration Required:** The bot owner must set their `ownerId` in the config file.");
             }
 
-            let statusMsg = await msg.channel.send("📊 *Crunching database numbers for The Nerdgasm...*");
+            let statusMsg = await msg.channel.send(`📊 *Crunching database numbers for ${config.serverName}...*`);
 
             const [playniteStats, plexStats] = await Promise.all([
                 playnite.getStats(),
@@ -63,34 +63,36 @@ module.exports = {
             if (plexStats) physicalShelves = Math.ceil((plexStats.movies + plexStats.shows) / 25);
 
             // --- BUILD THE EMBED ---
-            const statsEmbed = new MessageEmbed()
+            const statsEmbed = new EmbedBuilder()
                 .setColor('#E5A00D')
-                .setTitle('📊 The Nerdgasm Server Statistics')
+                .setTitle(`📊 ${config.serverName} Server Statistics`)
                 .setDescription('Global metrics across local gaming and media hosting.')
+                .addFields(
+                    // PLEX SECTION
+                    { name: '🎬 Plex: Total Movies', value: plexStats ? `${plexStats.movies.toLocaleString()}` : 'Offline', inline: true },
+                    { name: '📺 Plex: TV Shows', value: plexStats ? `${plexStats.shows.toLocaleString()}` : 'Offline', inline: true },
+                    { name: '▶️ Plex: All-Time Streams', value: plexStats ? `${plexStats.streams.toLocaleString()}` : 'Offline', inline: true },
 
-                // PLEX SECTION
-                .addField('🎬 Plex: Total Movies', plexStats ? `${plexStats.movies.toLocaleString()}` : 'Offline', true)
-                .addField('📺 Plex: TV Shows', plexStats ? `${plexStats.shows.toLocaleString()}` : 'Offline', true)
-                .addField('▶️ Plex: All-Time Streams', plexStats ? `${plexStats.streams.toLocaleString()}` : 'Offline', true)
+                    { name: '━━━━━━━━━━━━━━━━━━━━', value: '━━━━━━━━━━━━━━━━━━━━', inline: false },
 
-                .addField('━━━━━━━━━━━━━━━━━━━━', '━━━━━━━━━━━━━━━━━━━━', false)
+                    // PLAYNITE SECTION
+                    { name: '📚 Playnite: Total Games', value: `${playniteStats.TotalGames.toLocaleString()}`, inline: true },
+                    { name: '⏱️ Playnite: Total Playtime', value: `${totalHours} Hours`, inline: true },
+                    { name: '📈 Playnite: Library Played', value: `${playniteStats.PlayedGames.toLocaleString()} Titles (${playedPercent}%)`, inline: true },
+                    { name: '🏆 Top 3 Most Played Games', value: topGamesText, inline: false },
 
-                // PLAYNITE SECTION
-                .addField('📚 Playnite: Total Games', `${playniteStats.TotalGames.toLocaleString()}`, true)
-                .addField('⏱️ Playnite: Total Playtime', `${totalHours} Hours`, true)
-                .addField('📈 Playnite: Library Played', `${playniteStats.PlayedGames.toLocaleString()} Titles (${playedPercent}%)`, true)
-                .addField('🏆 Top 3 Most Played Games', topGamesText, false)
+                    { name: '━━━━━━━━━━━━━━━━━━━━', value: '━━━━━━━━━━━━━━━━━━━━', inline: false },
 
-                .addField('━━━━━━━━━━━━━━━━━━━━', '━━━━━━━━━━━━━━━━━━━━', false)
-
-                // FUN FACTS SECTION
-                .addField('🧠 The Nerdgasm Fun Facts',
-                    `• You have spent **${daysWasted} full days** of your life playing PC games.\n` +
-                    `• **${topGamePercent}%** of your entire gaming history is just playing *${topGameName}*.\n` +
-                    `• Your Backlog Anxiety Index™ is **${backlogAnxiety}%** (Unplayed games).\n` +
-                    `• If your Plex library was physical DVDs, you would need **${physicalShelves.toLocaleString()} shelves** to store it.`,
-                false)
-
+                    // FUN FACTS SECTION
+                    {
+                        name: `🧠 ${config.serverName} Fun Facts`,
+                        value: `• You have spent **${daysWasted} full days** of your life playing PC games.\n` +
+                            `• **${topGamePercent}%** of your entire gaming history is just playing *${topGameName}*.\n` +
+                            `• Your Backlog Anxiety Index™ is **${backlogAnxiety}%** (Unplayed games).\n` +
+                            `• If your Plex library was physical DVDs, you would need **${physicalShelves.toLocaleString()} shelves** to store it.`,
+                        inline: false
+                    }
+                )
                 .setFooter({ text: 'Data pulled live from local APIs.' });
 
             await statusMsg.edit({ content: " ", embeds: [statsEmbed] });

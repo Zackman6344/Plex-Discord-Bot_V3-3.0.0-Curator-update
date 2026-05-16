@@ -1,7 +1,7 @@
 // commands/game.js
 const playnite = require('../helpers/playniteAPI.js');
 const config = require('../config/config.js');
-const { MessageEmbed } = require('discord.js');
+const { EmbedBuilder } = require('discord.js');
 
 module.exports = {
     name: 'game',
@@ -71,7 +71,7 @@ module.exports = {
                     return `**${index + 1}.** ${g.Name}\n> 🛒 **${store}** |  📊 **${percent}%** Metadata`;
                 }).join('\n\n');
 
-                const listEmbed = new MessageEmbed()
+                const listEmbed = new EmbedBuilder()
                     .setColor('#202225')
                     .setTitle(`Multiple Games Found for "${query}"`)
                     .setDescription(`Please type the **number** of the game you meant:\n\n${optionsText}`)
@@ -133,7 +133,7 @@ module.exports = {
             if (cleanDesc.length > 3900) cleanDesc = cleanDesc.substring(0, 3900) + '\n\n*...[Description Truncated]*';
 
             // --- 5. BUILD THE MEGA EMBED ---
-            const gameEmbed = new MessageEmbed()
+            const gameEmbed = new EmbedBuilder()
                 .setColor('#202225')
                 .setTitle(`🎮 ${game.Name} (${game.ReleaseYear || 'N/A'})`)
                 .setDescription(cleanDesc)

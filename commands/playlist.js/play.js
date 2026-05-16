@@ -19,51 +19,51 @@ module.exports = {
         message.reply(bot.language.ERROR_TOO_MANY_ARGS);
         return ;
       }
-      let aleatoire = false;
+      let shuffle = false;
       if(args.length == 2) {
         if(args[1] != '-r') {
           message.reply(bot.language.PLAYLIST_PLAY_R_ERROR);
           return ;
         }
-        aleatoire = true;
+        shuffle = true;
       }
-      let nomFichier = bot.config.dossier_playlists+args[0]+'.playlist';
-      if(!fs.existsSync(nomFichier)) {
+      let playlistFile = bot.config.playlistsDir + args[0] + '.playlist';
+      if(!fs.existsSync(playlistFile)) {
         message.reply(bot.language.PLAYLIST_UNKNOW);
       } else {
-        fs.readFile(nomFichier, 'utf8', async function readFileCallback(err, data){
+        fs.readFile(playlistFile, 'utf8', async function readFileCallback(err, data){
           if (err){
             await message.reply(bot.language.OPEN_PLAYLIST_ERROR);
             throw err;
           }
           let playlist = JSON.parse(data);
-          if(aleatoire){
+          if(shuffle){
             for(let i = 0; i < playlist.musiques.length; i++) {
               let j = getRandomInt(playlist.musiques.length);
               let inter = playlist.musiques[j];
               playlist.musiques[j] = playlist.musiques[i];
               playlist.musiques[i] = inter;
-              
             }
           }
-          playlist.musiques.forEach(function (musique){
-            let musiqueFormat = {'artist' : musique.artiste, 'title': musique.titre};
-            if(musique.cle) {
-              musiqueFormat.key = musique.cle;
+          // On-disk track keys (artiste/titre/cle) kept as-is for playlist file compatibility.
+          playlist.musiques.forEach(function (track){
+            let queued = {'artist' : track.artiste, 'title': track.titre};
+            if(track.cle) {
+              queued.key = track.cle;
             } else {
-              musiqueFormat.url = musique.url;
+              queued.url = track.url;
             }
-            bot.songQueue.push(musiqueFormat);
+            bot.songQueue.push(queued);
           });
-          
+
           if(bot.isPlaying){
             await message.reply(bot.language.PLAYLIST_PLAY_SUCCES);
-            if(aleatoire) {
-              message.channel.send(bot.config.caracteres_commande + 'viewqueue');
+            if(shuffle) {
+              message.channel.send(bot.config.commandPrefix + 'viewqueue');
             }
           } else {
-            if(aleatoire) {
-              await message.channel.send(bot.config.caracteres_commande + 'viewqueue');
+            if(shuffle) {
+              await message.channel.send(bot.config.commandPrefix + 'viewqueue');
             }
             bot.playSong(message);
           }

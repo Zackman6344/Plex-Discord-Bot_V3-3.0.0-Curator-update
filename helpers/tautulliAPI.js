@@ -1,5 +1,6 @@
 // helpers/tautulliAPI.js
 const config = require('../config/config.js');
+const logger = require('./logger.js');
 
 module.exports = {
     getLibraryStats: async function() {
@@ -41,7 +42,7 @@ module.exports = {
             };
 
         } catch (err) {
-            console.error("Tautulli API Connection Failed:", err.message);
+            logger.error('Tautulli API connection failed:', err.message);
             return null;
         }
     }

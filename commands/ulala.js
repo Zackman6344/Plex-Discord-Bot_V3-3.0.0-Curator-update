@@ -1,3 +1,5 @@
+const logger = require('../helpers/logger.js');
+
 var ulalaPlaying = false;
 
 module.exports = {
@@ -12,14 +14,14 @@ module.exports = {
         let nom = "Ulala Voicemod";
         if(ulalaPlaying){
           bot.isPlaying = true;
-          let musique = {"url" : "https://www.youtube.com/watch?v=ElzlUMlu4G0"};
+          let track = {"url" : "https://www.youtube.com/watch?v=ElzlUMlu4G0"};
           let ulala = async function() {
             if(ulalaPlaying) {
               try {
-                bot.jouerUneMusique(musique, message.member.voice.channel, ulala);
+                bot.jouerUneMusique(track, message.member.voice.channel, ulala);
               } catch (e){
-                console.error(e);
-                musique = {"url" : "https://www.youtube.com/watch?v=ElzlUMlu4G0"};
+                logger.error('ulala failed:', e);
+                track = {"url" : "https://www.youtube.com/watch?v=ElzlUMlu4G0"};
                 ulala();
               }
             }

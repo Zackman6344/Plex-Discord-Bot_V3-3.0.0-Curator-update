@@ -14,11 +14,11 @@ module.exports = {
           message.reply(bot.language.PLAYLIST_CREATE_TOO_MANY_ARG);
           return ;
         }
-        let nomFichier = bot.config.dossier_playlists+args[0]+'.playlist';
-		if(!fs.existsSync(bot.config.dossier_playlists)) {
-			fs.mkdirSync(bot.config.dossier_playlists, {recursive: true});
+        let playlistFile = bot.config.playlistsDir+args[0]+'.playlist';
+		if(!fs.existsSync(bot.config.playlistsDir)) {
+			fs.mkdirSync(bot.config.playlistsDir, {recursive: true});
 		}
-        if(fs.existsSync(nomFichier)) {
+        if(fs.existsSync(playlistFile)) {
           message.reply(bot.language.PLAYLIST_CREATE_ERROR_ALREADY_EXIST);
         } else {
           let playlist = {
@@ -26,7 +26,7 @@ module.exports = {
             musiques : []
           };
           let json = JSON.stringify(playlist);
-          fs.writeFile(nomFichier, json, 'utf8', async function (err) {
+          fs.writeFile(playlistFile, json, 'utf8', async function (err) {
               if (err) {
                   await message.reply(bot.language.PLAYLIST_CREATE_ERROR_IO);
                   throw err;

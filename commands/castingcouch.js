@@ -1,27 +1,20 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-const keys = require('../config/keys.js');
-const PlexAPI = require('plex-api');
-const plexConfig = require('../config/plex.js');
 const fs = require('fs');
 const path = require('path');
+const config = require('../config/config.js');
+const { getModel, DEFAULT_MODEL } = require('../helpers/geminiAPI.js');
+const { getPlex } = require('../helpers/plexClient.js');
 const handleAIError = require('../helpers/aiErrorHandler.js');
+const clueCache = require('../helpers/clueCache.js');
+const logger = require('../helpers/logger.js');
 
-const genAI = new GoogleGenerativeAI(keys.geminiApiKey);
-const model = genAI.getGenerativeModel({ model: "gemini-3.1-pro-preview" });
-
-const plex = new PlexAPI({
-    hostname: plexConfig.hostname,
-    port: plexConfig.port,
-    https: plexConfig.https,
-    token: plexConfig.token,
-    options: plexConfig.options
-});
+const model = getModel();
+const plex = getPlex();
 
 // Forgiving answer checking
 const cleanString = (str) => str.toLowerCase().replace(/[^\w\s]/g, '').trim();
 
 // Separate Leaderboard File Path for Casting Couch
-const leaderboardFile = path.join(__dirname, '../config/castingcouch_leaderboard.json');
+const leaderboardFile = path.join(__dirname, '../data/castingcouch_leaderboard.json');
 
 // Helper to load the leaderboard
 function loadLeaderboard() {
@@ -52,7 +45,7 @@ module.exports = {
                 }
             }
 
-            if (!msg) return console.error("Critical Error: Could not locate the Discord message object!");
+            if (!msg) return logger.error("Critical Error: Could not locate the Discord message object!");
 
             const subCommand = commandArgs.join(" ").trim().toLowerCase();
 
@@ -147,15 +140,17 @@ module.exports = {
                 }
                 `;
 
-                const aiResult = await model.generateContent(castingPrompt);
-                const jsonMatch = aiResult.response.text().match(/\{[\s\S]*\}/);
-                if (!jsonMatch) throw new Error("Failed to parse AI JSON");
-
-                const clues = JSON.parse(jsonMatch[0]);
+                const cacheTarget = { title: target.title, year: target.year, type: target.type, plexKey: target.key };
+                const clues = await clueCache.getOrGenerate(cacheTarget, 'castingcouch', async () => {
+                    const aiResult = await model.generateContent(castingPrompt);
+                    const jsonMatch = aiResult.response.text().match(/\{[\s\S]*\}/);
+                    if (!jsonMatch) throw new Error("Failed to parse AI JSON");
+                    return JSON.parse(jsonMatch[0]);
+                }, DEFAULT_MODEL);
 
                 await statusMsg.delete().catch(() => {});
 
-                await msg.channel.send(`🚨 **THE CASTING COUCH HAS OPENED!** 🚨\nI have selected a secret **${targetType}** from The Nerdgasm server. You have 3 minutes to figure out what project connects these actors!\n\n🕐 **Actor 1:** ${clues.clue1}`);
+                await msg.channel.send(`🚨 **THE CASTING COUCH HAS OPENED!** 🚨\nI have selected a secret **${targetType}** from the ${config.serverName} server. You have 3 minutes to figure out what project connects these actors!\n\n🕐 **Actor 1:** ${clues.clue1}`);
 
                 const filter = m => !m.author.bot;
                 const collector = msg.channel.createMessageCollector({ filter, time: 180000 });

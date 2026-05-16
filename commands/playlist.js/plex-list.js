@@ -1,4 +1,5 @@
 const fs = require('fs');
+const logger = require('../../helpers/logger.js');
 
 //https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Math/random
 function getRandomInt(max) {
@@ -39,7 +40,7 @@ module.exports = {
 		});
 		message.channel.send({ content: '\n**' + bot.language.PLAYLIST + ' :**\n\n', embeds: [embedObj] });
       } catch (err){
-        console.error(err);
+        logger.error('plex-list failed:', err);
         message.reply(`No playlist exist on Plex.`);
       }
     }

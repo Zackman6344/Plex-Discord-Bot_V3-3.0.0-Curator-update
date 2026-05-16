@@ -14,12 +14,12 @@ module.exports = {
             message.reply(bot.language.ERROR_TOO_MANY_ARGS);
             return ;
         }
-        var nomFichier = bot.config.dossier_playlists+args[0]+'.playlist';
-        if(!fs.existsSync(nomFichier)) {
+        var playlistFile = bot.config.playlistsDir + args[0] + '.playlist';
+        if(!fs.existsSync(playlistFile)) {
             message.reply(bot.language.PLAYLIST_UNKNOW);
             return
         }
-        fs.unlink(nomFichier, (err) => {
+        fs.unlink(playlistFile, (err) => {
             if (err){
                 message.reply(bot.language.PLAYLIST_REMOVE_ERROR);
                 throw err;

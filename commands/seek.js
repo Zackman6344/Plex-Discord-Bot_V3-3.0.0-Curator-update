@@ -56,7 +56,7 @@ module.exports = {
             }
 
             if (!query) {
-                return message.reply(`Please provide a time to seek to (e.g., \`${bot.config.caracteres_commande}seek 1:30\`).`);
+                return message.reply(`Please provide a time to seek to (e.g., \`${bot.config.commandPrefix}seek 1:30\`).`);
             }
 
             const ms = parseToMilliseconds(query.trim().toLowerCase());

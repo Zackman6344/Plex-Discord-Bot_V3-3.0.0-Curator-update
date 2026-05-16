@@ -1,7 +1,7 @@
 // commands/launch.js
 const playnite = require('../helpers/playniteAPI.js');
 const config = require('../config/config.js');
-const { MessageEmbed } = require('discord.js');
+const { EmbedBuilder } = require('discord.js');
 
 module.exports = {
     name: 'launch',
@@ -57,7 +57,7 @@ module.exports = {
                 const maxResults = results.slice(0, 10);
                 const optionsText = maxResults.map((g, index) => `**${index + 1}.** ${g.Name} (${g.Source || "Local"})`).join('\n');
 
-                const listEmbed = new MessageEmbed()
+                const listEmbed = new EmbedBuilder()
                     .setColor('#FF0000') // Red for "Action/Launch"
                     .setTitle(`⚠️ Multiple Games Found`)
                     .setDescription(`Please confirm which game you want to **launch**:\n\n${optionsText}`)

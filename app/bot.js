@@ -1,13 +1,11 @@
 'use strict';
 // Bot module ------------------------------------------------------------------
 const EventEmitter = require('events');
-const PlexAPI = require('plex-api');
 const fs = require('fs');
-const ytdl = require('ytdl-core');
+const ytdl = require('@distube/ytdl-core');
 const config = require('../config/config');
-const xml2json = require('xml2js');
-const request = require('request');
-const fetch = require('node-fetch');
+const logger = require('../helpers/logger.js');
+const { getPlex } = require('../helpers/plexClient.js');
 const { Readable } = require('stream');
 const {
 	NoSubscriberBehavior,
@@ -22,7 +20,6 @@ const {
 const language = require('../'+config.language);
 // plex constants ------------------------------------------------------------
 const plexConfig = require('../config/plex');
-const { channel } = require('diagnostics_channel');
 const PLEX_PLAY_START = (plexConfig.https ? 'https://' : 'http://') + plexConfig.hostname + ':' + plexConfig.port;
 const PLEX_PLAY_END = '?X-Plex-Token=' + plexConfig.token;
 
@@ -41,21 +38,9 @@ class Bot extends EventEmitter{
 				this.language = language;
 				this.config = config;
 
-				// plex client ---------------------------------------------------------------
-				this.plex = new PlexAPI({
-											hostname: plexConfig.hostname,
-											port: plexConfig.port,
-											token: plexConfig.token,
-											https: plexConfig.https,
-											options: {
-												identifier: plexConfig.options.identifier,
-												product: plexConfig.options.product,
-												version: plexConfig.options.version,
-												iceName: plexConfig.options.deviceName,
-												platform: plexConfig.options.platform,
-												device: plexConfig.options.device
-											}
-				});
+				// plex client — shared instance from helpers/plexClient.js so the Bot and command
+				// files all hit the same connection pool.
+				this.plex = getPlex();
 				// plex variables ------------------------------------------------------------
 				this.tracks = null;
 				this.plexQuery = null;
@@ -272,9 +257,7 @@ class Bot extends EventEmitter{
 		}
 		for (const entry of res.MediaContainer.Metadata) {
 			if (entry.title.toLowerCase().includes(query.toLowerCase())) {
-				
-				const url = PLEX_PLAY_START + entry.key + PLEX_PLAY_END;
-				this.loadPlaylist(url, message, random);
+				this.loadPlaylist(entry.key, message, random);
 				message.reply(`The playlist "${entry.title}" has been loaded.`);
 				return ;
 			}
@@ -286,49 +269,34 @@ class Bot extends EventEmitter{
 	/**
 	 *
 	 */
-	async loadPlaylist(url, message, random=false) {
+	async loadPlaylist(key, message, random=false) {
+		try {
+			const res = await this.plex.query(key);
+			const tracks = res.MediaContainer.Metadata || [];
 
-		request(url, (err, res, body) => {
-			xml2json.parseString(body.toString('utf8'), {}, (err, jsonObj) => {
+			for (const track of tracks) {
+				this.songQueue.push(this.trackToMusic(track));
+			}
 
-				const tracks = jsonObj.MediaContainer.Track;
-				const resultSize = jsonObj.MediaContainer.$.size;
+			if (random) {
+				let h = 0;
+				if (this.isPlaying)
+					h = 1;
 
-				for (let i = 0; i < resultSize;i++) {
-					const track = tracks[i].$
-
-					const key = tracks[i].Media[0].Part[0].$.key;
-					
-					const title = track.title;
-					const album = track.parentTitle;
-					let artist = '';
-					if ('originalTitle' in track) {
-						artist = track.originalTitle;
-					}
-					else {
-						artist = track.grandparentTitle;
-					}
-					this.songQueue.push({'artist' : artist, 'title': title, 'album': album, 'key': key});
+				for(let i = h; i < this.songQueue.length; i++) {
+					const j = getRandomNumber(this.songQueue.length -1) + h;
+					const inter = this.songQueue[j];
+					this.songQueue[j] = this.songQueue[i];
+					this.songQueue[i] = inter;
 				}
+			}
 
-				if (random) {
-					let h = 0;
-					if (this.isPlaying)
-						h = 1;
-					
-					for(let i = h; i < this.songQueue.length; i++) {
-						const j = getRandomNumber(this.songQueue.length -1) + h;
-						const inter = this.songQueue[j];
-						this.songQueue[j] = this.songQueue[i];
-						this.songQueue[i] = inter;
-					}
-				}
-
-				if(!this.isPlaying) {
-					this.playSong(message);
-				}
-			});
-		});
+			if(!this.isPlaying) {
+				this.playSong(message);
+			}
+		} catch (err) {
+			logger.error('loadPlaylist failed:', err);
+		}
 	}
 
 	/**
@@ -338,9 +306,8 @@ class Bot extends EventEmitter{
 		// Album : type = 9
 		const res = await this.findTracksOnPlex(query, 0, 10, 9);
 		try {
-			let key = res.MediaContainer.Metadata[0].key;
-			let url = PLEX_PLAY_START + key + PLEX_PLAY_END;
-			this.loadAlbum(url, message);
+			const key = res.MediaContainer.Metadata[0].key;
+			this.loadAlbum(key, message);
 		} catch (err) {
 			throw new Error('The album was not found.');
 		}
@@ -349,31 +316,21 @@ class Bot extends EventEmitter{
 	/**
 	 *
 	 */
-	loadAlbum(url, message) {
-		request(url, (err, res, body) => {
-			xml2json.parseString(body.toString('utf8'), {}, (err, jsonObj) => {
-				const tracks = jsonObj.MediaContainer.Track;
-				const resultSize = jsonObj.MediaContainer.$.size;
-				
-				for (let i = 0; i < resultSize;i++) {
-					const track = tracks[i].$
-					const key = tracks[i].Media[0].Part[0].$.key;
-					const title = track.title;
-					const album = track.parentTitle;
-					let artist = '';
-					if ('originalTitle' in track) {
-						artist = track.originalTitle;
-					}
-					else {
-						artist = track.grandparentTitle;
-					}
-					this.songQueue.push({'artist' : artist, 'title': title, 'album': album, 'key': key});
-				}
-				if(!this.isPlaying) {
-					this.playSong(message);
-				}
-			});
-		});
+	async loadAlbum(key, message) {
+		try {
+			const res = await this.plex.query(key);
+			const tracks = res.MediaContainer.Metadata || [];
+
+			for (const track of tracks) {
+				this.songQueue.push(this.trackToMusic(track));
+			}
+
+			if(!this.isPlaying) {
+				this.playSong(message);
+			}
+		} catch (err) {
+			logger.error('loadAlbum failed:', err);
+		}
 	}
 
 	/**
@@ -405,14 +362,14 @@ class Bot extends EventEmitter{
 					}
 					messageLines += language.BOT_FIND_SONG_INFO_MUSIC.format({index : t+1, artist : artist, title : this.tracks[t].title}) + '\n';
 				}
-				messageLines += language.BOT_FIND_SONG_INFO.format({caracteres_commande: this.config.caracteres_commande});
+				messageLines += language.BOT_FIND_SONG_INFO.format({commandPrefix: this.config.commandPrefix});
 				message.reply(messageLines);
 			}
 			else {
 				message.reply(language.BOT_FIND_SONG_ERROR);
 			}
 		} catch(err) {
-			console.error(err);
+			logger.error('findSong failed:', err);
 		};
 	}
 
@@ -542,8 +499,18 @@ class Bot extends EventEmitter{
 						message.channel.send({ content: language.BOT_PLAYSONG_SUCCES, embeds: [embedObj] });
 					}
 				});
+				this.dispatcher.on('error', (err) => {
+					logger.error('AudioPlayer error:', err.message || err);
+					try { readstream.destroy(); } catch (_) {}
+					const failed = this.songQueue[0];
+					const label = failed && failed.title ? `**${failed.title}**` : 'this track';
+					if (message && message.channel) {
+						message.channel.send(`⚠️ Playback failed for ${label}. Skipping.`).catch(() => {});
+					}
+					dispatcherFunc();
+				});
 				readstream.on('finish', dispatcherFunc)
-				readstream.on('error', (err) => console.error(err));
+				readstream.on('error', (err) => logger.error('Read stream error:', err));
 				/*
 				.on('start', () => {
 						if(!this.songQueue[0].played) {
@@ -615,23 +582,24 @@ class Bot extends EventEmitter{
 	/**
 	 *
 	 */
-	async ajoutPlaylist(nomPlaylist, musique, message) {
-		const nomFichier = this.config.dossier_playlists + nomPlaylist + '.playlist';
-		// I need to cahnge the fs call to fs.promises.
-		fs.readFile(nomFichier, 'utf8', async (err, data) => {
+	async addToPlaylist(playlistName, track, message) {
+		const playlistFile = this.config.playlistsDir + playlistName + '.playlist';
+		// On-disk playlist JSON keys (musiques/nom/titre/artiste) are intentionally left in their
+		// original form to avoid breaking existing playlist files. Code-level names are English.
+		fs.readFile(playlistFile, 'utf8', async (err, data) => {
 			if (err){
 					await message.reply(language.OPEN_PLAYLIST_ERROR);
 					throw err;
 			}
 			const playlist = JSON.parse(data);
-			playlist.musiques.push(musique); 
+			playlist.musiques.push(track);
 			const json = JSON.stringify(playlist);
-			fs.writeFile(nomFichier, json, 'utf8', async (err, written, string) => {
+			fs.writeFile(playlistFile, json, 'utf8', async (err, written, string) => {
 					if(err) {
 							await message.reply(language.WRITTING_PLAYLIST_ERROR);
 							throw err;
 					}
-					message.reply(language.ADD_SONG_TO_PLAYLIST_SUCCES.format({title : musique.titre, artist : musique.artiste, playlist_name : playlist.nom}));
+					message.reply(language.ADD_SONG_TO_PLAYLIST_SUCCES.format({title : track.titre, artist : track.artiste, playlist_name : playlist.nom}));
 			});
 		});
 	}
