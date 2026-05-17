@@ -21,6 +21,9 @@ module.exports = function(client, bot) {
 
   // PREFIX path — original !-prefix command dispatcher, unchanged behavior.
   client.on('messageCreate', function(message){
+      // Ignore messages from bots (including this bot itself). Removes the risk
+      // that prefix-style text the bot ever emits re-triggers the dispatcher.
+      if (message.author && message.author.bot) return;
 
       var msg = message.content;
 
@@ -53,6 +56,24 @@ module.exports = function(client, bot) {
   // through the same plexCommands map. Commands that declare a `.slash` block
   // are reachable via `/name`; ones without it remain prefix-only.
   client.on('interactionCreate', async function(interaction){
+    // Autocomplete is its own interaction type. Respond empty when no handler
+    // is declared so Discord stops the loading spinner instead of timing out.
+    if (interaction.isAutocomplete && interaction.isAutocomplete()) {
+      const acCmd = plexCommands[interaction.commandName];
+      const handler = acCmd && acCmd.slash && acCmd.slash.autocomplete;
+      if (typeof handler !== 'function') {
+        try { await interaction.respond([]); } catch (_) {}
+        return;
+      }
+      try {
+        await handler(interaction, bot, client);
+      } catch (err) {
+        logger.error(`Autocomplete for /${interaction.commandName} threw:`, err.message || err);
+        try { await interaction.respond([]); } catch (_) {}
+      }
+      return;
+    }
+
     if (!interaction.isChatInputCommand || !interaction.isChatInputCommand()) return;
 
     const name = interaction.commandName;
