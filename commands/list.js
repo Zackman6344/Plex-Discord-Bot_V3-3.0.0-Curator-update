@@ -8,6 +8,28 @@ module.exports = {
   command : {
     usage: '<search/reset> <name?>',
     description: 'Print list of song.',
+
+    slash: {
+
+        description: "Browse the song library",
+
+        subcommands: [
+
+            { name: "page", description: "Show the next page", options: [] },
+
+            { name: "search", description: "Search for songs",
+
+                options: [
+
+                    { name: "query", type: "STRING", description: "Search query", required: true }
+
+                ] },
+
+            { name: "reset", description: "Reset pagination", options: [] }
+
+        ]
+
+    },
     process: async function(bot, client, message, query) {
       if(Object.keys(bot.cache_library).length === 0) {
         await bot.loadLibrary();

@@ -5,6 +5,9 @@ module.exports = {
   command : {
     usage: '',
     description: 'pauses current song if one is playing',
+    slash: {
+      description: 'Pause the current song'
+    },
     process: function(bot, client, message) {
       if (bot.isPlaying) {
         bot.dispatcher.pause(true); // pause song

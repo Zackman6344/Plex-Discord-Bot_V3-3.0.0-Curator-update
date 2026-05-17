@@ -106,6 +106,9 @@ module.exports = {
     command: {
         usage: '!hitster [start|join|add|stop|set|settings|stats]',
         description: 'Play a competitive turn-based music timeline game.',
+        slash: {
+            description: 'Competitive turn-based music timeline game'
+        },
         process: async function(bot, client, message, query) {
             const channelId = message.channel.id;
             const args = query ? query.trim().split(/\s+/) : [];

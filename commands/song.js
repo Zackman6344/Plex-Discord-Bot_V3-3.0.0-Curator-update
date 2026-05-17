@@ -3,6 +3,18 @@ module.exports = {
   command : {
     usage: '',
     description: 'displays current song',
+
+    slash: {
+
+        description: "Search the Plex library for a song",
+
+        options: [
+
+            { name: "query", type: "STRING", description: "Song title or artist", required: true }
+
+        ]
+
+    },
     process: function(bot, client, message) {
       let messageLines = '';
       if (bot.songQueue.length > 0) {

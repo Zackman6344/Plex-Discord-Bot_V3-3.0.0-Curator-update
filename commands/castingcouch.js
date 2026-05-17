@@ -32,6 +32,13 @@ module.exports = {
     command: {
         usage: '!castingcouch [optional: "leaderboard"]',
         description: 'Start a 3-minute game of Casting Couch, or view the server leaderboard.',
+        slash: {
+            description: 'Guess the project from vague actor job descriptions',
+            subcommands: [
+                { name: 'game', description: 'Start a new game', options: [] },
+                { name: 'leaderboard', description: 'View the leaderboard', options: [] }
+            ]
+        },
         process: async function(...args) {
             let msg = null;
             let commandArgs = [];

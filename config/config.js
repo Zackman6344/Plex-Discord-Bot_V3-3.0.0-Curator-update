@@ -14,6 +14,10 @@ module.exports = {
 
   // Bot owner — needed for owner-only features (Playnite host commands, master profile).
   'ownerId' : '',
+  // Guild ID for slash command registration during development/testing. If set,
+  // slash commands register in this guild only (instant) instead of globally
+  // (1-hour propagation). Leave blank once you're ready for global registration.
+  'testGuildId' : '',
   // Optional Discord role ID that can also use !launch. Leave blank to restrict to owner.
   'launchRoleId' : '',
 

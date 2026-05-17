@@ -8,6 +8,9 @@ module.exports = {
   command : {
     usage: '',
     description: 'shuffle the queue (don\'t move the first song in the queue).',
+    slash: {
+      description: 'Shuffle the current queue'
+    },
     process: function(bot, client, message, query) {
         bot.beginWorking();
         for(let i = 1; i < bot.songQueue.length; i++) {

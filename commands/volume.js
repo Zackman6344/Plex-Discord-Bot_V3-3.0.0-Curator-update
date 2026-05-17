@@ -3,6 +3,18 @@ module.exports = {
   command : {
     usage: '<real or \'?\'>',
     description: 'Set the volume to the given real, who need to between 0 and 100 (1 stand for normal volume, 2 for the double, 0.5 for the half).\n Type \'?\' to get the current volume.',
+
+    slash: {
+
+        description: "Adjust the bot volume (1-100)",
+
+        options: [
+
+            { name: "level", type: "INTEGER", description: "Volume 1-100", required: true }
+
+        ]
+
+    },
     process: function(bot, client, message, query) {
       if(query == "?") {
         message.reply(bot.language.VOLUME_HELP.format({volume : bot.volume}));

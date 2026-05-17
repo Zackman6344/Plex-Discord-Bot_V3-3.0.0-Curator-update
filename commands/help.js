@@ -8,6 +8,9 @@ module.exports = {
     command: {
         usage: '!help',
         description: `Displays the main command directory for the ${config.serverName} bot.`,
+        slash: {
+            description: 'Show the bot command directory'
+        },
         process: async function(...args) {
             let msg = null;
             for (let i = 0; i < args.length; i++) {

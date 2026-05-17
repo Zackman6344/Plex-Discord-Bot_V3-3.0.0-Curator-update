@@ -5,6 +5,9 @@ module.exports = {
   command : {
     usage: '',
     description: 'bot will join voice channel and play a random song.',
+    slash: {
+      description: 'Play a random song from the library'
+    },
     process: async function(bot, client, message, query) {
       if (query.length == 0) {
         try {

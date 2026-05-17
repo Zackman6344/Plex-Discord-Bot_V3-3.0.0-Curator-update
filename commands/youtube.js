@@ -7,6 +7,12 @@ module.exports = {
   command : {
     usage : '<url or search>',
     description : 'play a youtube url, or search youtube and play the top result (audio only).',
+    slash: {
+      description: 'Play a YouTube URL or search and play the top result',
+      options: [
+        { name: 'query', type: 'STRING', description: 'URL or search terms', required: true }
+      ]
+    },
     process : async function(bot, client, message, query) {
       if (!query || !query.trim()) {
         return message.reply("Give me a YouTube URL or something to search for.");

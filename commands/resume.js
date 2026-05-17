@@ -3,6 +3,9 @@ module.exports = {
   command : {
     usage: '',
     description: 'resume after pause.',
+    slash: {
+      description: 'Resume the paused song'
+    },
     process: function(bot, client, message) {
       if(bot.isPaused) {
         bot.dispatcher.unpause();

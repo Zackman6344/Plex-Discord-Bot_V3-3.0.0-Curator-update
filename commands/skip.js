@@ -3,6 +3,9 @@ module.exports = {
   command : {
     usage: '?<int>',
     description: 'skips the current song if one is playing and plays the next song in queue if it exists',
+    slash: {
+      description: 'Skip the current song'
+    },
     process: function(bot, client, message, query) {
       let nombreSkip = 1;
       if(query) {

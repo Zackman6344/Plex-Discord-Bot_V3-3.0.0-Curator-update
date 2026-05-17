@@ -17,6 +17,18 @@ module.exports = {
     command: {
         usage: '!profile [update/regen]',
         description: 'Generates your AI-crafted D&D character sheet based on gaming history.',
+
+        slash: {
+
+            description: "AI D&D character sheet from your gaming history",
+
+            options: [
+
+                { name: "mode", type: "STRING", description: "update or regen (default: show current sheet)", required: false }
+
+            ]
+
+        },
         process: async function(bot, client, msg) {
             if (!msg) return;
 

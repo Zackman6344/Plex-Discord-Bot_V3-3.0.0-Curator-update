@@ -8,6 +8,9 @@ module.exports = {
     command: {
         usage: '!backlog',
         description: 'Randomly selects an unplayed game from your Playnite library.',
+        slash: {
+            description: 'Random unplayed game from your Playnite library'
+        },
         process: async function(bot, client, msg) {
             if (!msg) return;
 

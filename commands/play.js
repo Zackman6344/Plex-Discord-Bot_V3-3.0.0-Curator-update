@@ -3,6 +3,12 @@ module.exports = {
   command : {
     usage: '<song title or artist>',
     description: 'bot will join voice channel and play song if one song available.  if more than one, bot will return a list to choose from',
+    slash: {
+      description: 'Play a song from your Plex library (joins your voice channel)',
+      options: [
+        { name: 'song', type: 'STRING', description: 'Song title, artist, or query', required: false }
+      ]
+    },
     process: function(bot, client, message, query) {
       // if song request exists
       if (query.length > 0) {

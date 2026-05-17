@@ -14,6 +14,9 @@ module.exports = {
     command: {
         usage: '!survive',
         description: 'Open the Main Menu for the Survive the Scene campaign.',
+        slash: {
+            description: 'Interactive text-adventure based on a movie plot'
+        },
         process: async function(...args) {
             let msg = null;
             let commandArgs = [];

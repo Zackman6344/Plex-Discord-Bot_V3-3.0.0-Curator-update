@@ -32,6 +32,13 @@ module.exports = {
     command: {
         usage: '!trivia [optional: "leaderboard"]',
         description: 'Start a 3-minute trivia game, or view the server leaderboard.',
+        slash: {
+            description: 'Start a 3-minute trivia game or view the leaderboard',
+            subcommands: [
+                { name: 'game', description: 'Start a new trivia game', options: [] },
+                { name: 'leaderboard', description: 'View the server leaderboard', options: [] }
+            ]
+        },
         process: async function(...args) {
             let msg = null;
             let commandArgs = [];

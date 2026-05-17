@@ -22,6 +22,22 @@ module.exports = {
     command: {
         usage: '!request [add/list/complete/remove/ask]',
         description: 'Manage media requests for the Plex server via DMs.',
+        slash: {
+            description: 'Manage media requests for the server',
+            subcommands: [
+                { name: 'add',      description: 'File a new request (the bot will DM you for details)', options: [] },
+                { name: 'list',     description: 'View the anonymous request board', options: [] },
+                { name: 'complete', description: '(Admin) Mark a request as fulfilled',
+                  options: [{ name: 'id', type: 'INTEGER', description: 'Request ID', required: true }] },
+                { name: 'remove',   description: '(Admin) Delete a request',
+                  options: [{ name: 'id', type: 'INTEGER', description: 'Request ID', required: true }] },
+                { name: 'ask',      description: '(Admin) Anonymously DM the requester for clarification',
+                  options: [
+                    { name: 'id',       type: 'INTEGER', description: 'Request ID', required: true },
+                    { name: 'question', type: 'STRING',  description: 'Question to forward', required: true }
+                  ] }
+            ]
+        },
         process: async function(...args) {
             let msg = null;
             let commandArgs = [];
