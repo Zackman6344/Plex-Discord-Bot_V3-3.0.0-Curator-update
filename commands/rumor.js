@@ -32,6 +32,13 @@ module.exports = {
     command: {
         usage: '!rumor [optional: "leaderboard"]',
         description: 'Start a 3-minute game of Tavern Rumors, or view the server leaderboard.',
+        slash: {
+            description: 'Guess the movie rewritten as a D&D tavern hook',
+            subcommands: [
+                { name: 'game', description: 'Start a new game', options: [] },
+                { name: 'leaderboard', description: 'View the leaderboard', options: [] }
+            ]
+        },
         process: async function(...args) {
             let msg = null;
             let commandArgs = [];

@@ -22,6 +22,9 @@ module.exports = {
     command: {
         usage: '!identify',
         description: 'An interactive detective wizard to decode a vague memory of a piece of media.',
+        slash: {
+            description: 'Identify a movie from a vague description (interactive)'
+        },
         process: async function(...args) {
             let msg = null;
 

@@ -30,6 +30,13 @@ module.exports = {
     command: {
         usage: '!releasesurvival [start] [movies/shows/albums]',
         description: 'A rapid-fire Higher or Lower release year survival game.',
+        slash: {
+            description: 'Rapid-fire higher-or-lower release year game',
+            subcommands: [
+                { name: 'game', description: 'Start a new game', options: [] },
+                { name: 'leaderboard', description: 'View the leaderboard', options: [] }
+            ]
+        },
         process: async function(...args) {
             let msg = null;
             let commandArgs = [];

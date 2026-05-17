@@ -12,6 +12,9 @@ module.exports = {
     command: {
         usage: '!groupwatch',
         description: 'Start a 60-second group vote to find a compromise for media night',
+        slash: {
+            description: 'Multiplayer curator: find a movie a group agrees on'
+        },
         process: async function(...args) {
             let msg = null;
             for (let i = 0; i < args.length; i++) {

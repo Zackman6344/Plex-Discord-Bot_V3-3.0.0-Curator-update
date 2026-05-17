@@ -29,6 +29,9 @@ module.exports = {
   command: {
     usage: '',
     description: 'Generates and saves a level 1 D&D character based on your Plex and Playnite habits.',
+    slash: {
+      description: 'Generate a Level 1 D&D character from your media habits'
+    },
     process: async function(bot, client, message, query) {
       try {
         const waitMsg = await message.reply("🎲 Consulting the dimensional weave... (This might take a few seconds)");

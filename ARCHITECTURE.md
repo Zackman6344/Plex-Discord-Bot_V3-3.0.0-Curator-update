@@ -112,7 +112,10 @@ Two signature styles coexist in the codebase:
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `logger.js`                | Tiny no-deps leveled logger (`debug`/`info`/`warn`/`error`) with ISO timestamps. Level set via `LOG_LEVEL` env var. Default: `info`.    |
 | `geminiAPI.js`             | Centralized Gemini SDK. Exports `DEFAULT_MODEL`, `getGenAI()`, `getModel(options?)`, and `generateCharacterSheet(...)`. **Single place to change the model name.** |
-| `plexClient.js`            | Memoized Plex client. `getPlex()` returns a single shared `PlexAPI` instance.                                                          |
+| `plexClient.js`            | Memoized Plex client. `getPlex()` returns a single shared `PlexAPI` instance for the bot's *default* account.                          |
+| `plexHome.js`              | Handles Plex Home managed-user switching for the `!playlist plex-copy` / `plex-list <user>` flows. Uses `plexConfig.homeOwnerToken` against plex.tv's `/api/v2/home/users/<id>/switch` endpoint; caches switched clients in memory by `(discordUserId, plexUsername)` for 30 minutes. See "Plex multi-account auth" below. |
+| `slashRegistry.js`         | Collects each command's `slash` metadata (if declared), builds Discord ApplicationCommand JSON, registers with Discord on boot. Per-guild when `config.testGuildId` is set, global otherwise. Also exports `buildQueryString(interaction, slashSpec)` for the dispatcher. |
+| `interactionAdapter.js`    | Wraps a Discord `ChatInputCommandInteraction` to look like a `Message` so existing command process functions work unchanged against slash commands. First `.reply()` / `.channel.send()` routes through `interaction.editReply()`; subsequent calls use the real channel. See "Slash commands" below. |
 | `aiErrorHandler.js`        | `handleAIError(err, statusMsg, defaultMsg)` for AI commands; replies with an inferred reason (503 / 429 / bad key / 404 / network / SyntaxError) or the command-specific fallback. Also exports `inferReason(err)` as a pure function. |
 | `clueCache.js`             | Persistent XML clue cache for AI minigames. `getOrGenerate(media, minigame, fn, model)` checks `data/clues/<slug>-<year>.xml` first; on miss runs `fn` and appends the result as a new variant. Multiple variants per (media, minigame) accumulate; lookups pick one at random. See "AI clue cache" section below. |
 | `healthCheck.js`           | Validates config + tries each integration (Plex/Gemini/Tautulli/Playnite). Returns a structured `{config, plex, gemini, tautulli, playnite}` result. Used by `!diag` and the boot monitor. |
@@ -134,7 +137,7 @@ Three files in `config/`. The two with secrets are **gitignored**; templates are
 | ---------------------- | -------- | -------------------------------------------------------------------------- |
 | `config/config.js`     | yes      | Feature flags + display strings: `commandPrefix`, `listenChannel`, `playlistsDir`, `serverName`, `ownerId`, `launchRoleId`, `playniteEnabled`, `tautulliEnabled` + `tautulliApiKey` + `tautulliUrl`, `language`, `youtube_quality`. |
 | `config/keys.js`       | **no**   | `botToken` (Discord) + `geminiApiKey` (Gemini). Copy from `keys.example.js`. |
-| `config/plex.js`       | **no**   | Plex `hostname`, `port`, `https`, `token`, `managedUser`, `options`. Copy from `plex.example.js`. |
+| `config/plex.js`       | **no**   | Plex `hostname`, `port`, `https`, `token` (the bot's default user), `homeOwnerToken` (optional, only for cross-account playlist features), `managedUser`, `options`. Copy from `plex.example.js`. |
 
 The boot health check validates the critical keys in `config.js` (`commandPrefix`, `language`, `serverName`, `playlistsDir`) and prints a loud warning if any are missing.
 
@@ -160,6 +163,85 @@ All persistent runtime state lives under `data/`. The directory is created if mi
 | `data/survival_<category>_leaderboard.json` | `commands/releasesurvival.js` |
 
 Custom user playlists are separate — they live in `playlists/<name>.playlist` (gitignored). On-disk shape uses legacy French keys (`musiques`, `nom`, `titre`, `artiste`, `cle`) for backward compatibility with older playlist files; code reads/writes them using English variable names internally.
+
+### Slash commands
+
+The bot supports both `!`-prefix and `/`-slash invocations for the same commands. Both paths dispatch through the same `plexCommands` map. The slash path is opt-in per command: any command that declares a `slash` block in its export becomes reachable via `/name`, while commands without one stay prefix-only.
+
+**Per-command shape:**
+
+```js
+module.exports = {
+    name: 'play',
+    command: {
+        usage: '<song>',
+        description: 'Add a song to the queue',     // prefix help text
+        slash: {                                    // optional — opt-in slash registration
+            description: 'Add a song to the queue', // 1-100 chars, shown in Discord's UI
+            options: [
+                { name: 'song', type: 'STRING', description: 'Song name', required: false }
+            ]
+        },
+        process: async function(bot, client, message, query) { ... }
+    }
+};
+```
+
+For subcommand patterns (e.g. `/playlist create`, `/playlist play`), use `subcommands` instead of `options`:
+
+```js
+slash: {
+    description: 'Manage custom playlists',
+    subcommands: [
+        { name: 'create', description: 'Create a new playlist',
+          options: [{ name: 'name', type: 'STRING', required: true, description: '...' }] },
+        ...
+    ]
+}
+```
+
+**Boot-time registration.** On `clientReady`, `app/music.js` calls `slashRegistry.registerAll(client, plexCommands)`. The helper:
+1. Walks the loaded commands, dedupes aliases by object identity, validates names against Discord's `^[\w-]{1,32}$` rule.
+2. Builds Discord's `ApplicationCommand` JSON for each (mapping string type names like `'STRING'` to the numeric enum values discord.js expects).
+3. If `config.testGuildId` is set, registers via `guild.commands.set()` (instant). Otherwise registers globally via `client.application.commands.set()` (up to 1 hour to propagate). Use the test-guild path during development to avoid the wait.
+
+**Dispatch.** `app/music.js`'s `interactionCreate` handler:
+1. Filters to chat-input commands only.
+2. Looks up the command in `plexCommands` and confirms it has a `slash` block.
+3. Calls `interaction.deferReply()` immediately (Discord's 3-second acknowledgement window).
+4. Builds a `query` string from the interaction's options, in the same shape the prefix dispatcher produces (so the existing parser code in each command works).
+5. Wraps the interaction in `interactionAdapter.adaptInteraction()` → a Message-shaped facade.
+6. Calls `cmd.process(bot, client, fakeMessage, query)` — same signature the prefix dispatcher uses.
+
+**The adapter contract** (`helpers/interactionAdapter.js`): the first call to `message.reply(...)` or `message.channel.send(...)` routes through `interaction.editReply(...)`, which appears in chat as the bot's response to the slash command. Subsequent calls go through the real `interaction.channel.send(...)`. That means commands like `!trivia` (which post a "Loading..." status, then edit it, then post game messages) work unchanged: the initial `channel.send` becomes the slash command's primary response, then the game's follow-up messages are normal channel posts.
+
+**What's wired in phase 1:** `/help`, `/diag` (+ legacy alias `plextest`), `/play`, `/trivia` (with `game`/`leaderboard` subcommands), `/playlist` (12 subcommands), `/request` (5 subcommands).
+
+**What stays prefix-only for now:** every other command in `commands/`. Adding slash support is mechanical — declare a `slash` block and the registry picks it up on next boot.
+
+---
+
+### Plex multi-account auth
+
+The bot ships with a two-token model:
+
+- **`plexConfig.token`** — the user the bot *acts as* by default. Used for library reads, audio playback, queue ownership. Recommended setup: create a PIN-less Plex Home managed user dedicated to the bot ("BotAccount" or similar), sign in as them once, and grab their token. This keeps the bot's watch history isolated and avoids contaminating the owner account.
+- **`plexConfig.homeOwnerToken`** — your Plex Home OWNER token. Optional. Only used by `helpers/plexHome.js` when an explicit cross-account command is invoked.
+
+Cross-account flow (used by `!playlist plex-copy` and `!playlist plex-list <username>`):
+
+1. User invokes the command in a channel; bot opens a DM with them.
+2. Bot calls `GET https://plex.tv/api/v2/home/users` with `homeOwnerToken` to enumerate managed users.
+3. Bot asks the user which account they want, then DM-prompts for that user's PIN.
+4. Bot calls `POST https://plex.tv/api/v2/home/users/<id>/switch?pin=<pin>` with `homeOwnerToken`. Plex returns a `authToken` scoped to that managed user.
+5. Bot constructs a new `PlexAPI` client pointed at the local server, using the switched token.
+6. The switched client is cached in memory by `(discordUserId, plexUsername)` for 30 minutes. Subsequent invocations from the same Discord user against the same managed user within that window skip the PIN prompt entirely.
+
+Security shape:
+- PINs are **never persisted**. They're prompted via DM, used immediately for the switch call, and dropped from memory after the request completes.
+- Switched tokens live **only in process memory**. Process restart clears them.
+- The cache is keyed by Discord user, so PIN entry by user A doesn't grant user B implicit access to that managed account.
+- Without `homeOwnerToken` configured, cross-account commands degrade gracefully — the bot still works as its default user, the relevant commands just refuse with a clear "feature disabled" message.
 
 ### AI clue cache (`data/clues/`)
 

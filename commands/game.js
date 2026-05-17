@@ -8,6 +8,18 @@ module.exports = {
     command: {
         usage: '!game [title]',
         description: 'Search your library for a specific game and display its deep metadata.',
+
+        slash: {
+
+            description: "Show metadata for a game in your Playnite library",
+
+            options: [
+
+                { name: "title", type: "STRING", description: "Game title", required: true }
+
+            ]
+
+        },
         process: async function(bot, client, msg) {
             if (!msg) return;
 

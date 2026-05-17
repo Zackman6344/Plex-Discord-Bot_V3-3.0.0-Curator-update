@@ -3,6 +3,18 @@ module.exports = {
   command : {
     usage: '<song queue number>',
     description: 'removes song by index from the song queue',
+
+    slash: {
+
+        description: "Remove a song from the queue by position",
+
+        options: [
+
+            { name: "number", type: "INTEGER", description: "Queue position number", required: true }
+
+        ]
+
+    },
     process: function(bot, client, message, query) {
       let songNumber = query;
       songNumber = parseInt(songNumber);

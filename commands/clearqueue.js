@@ -3,6 +3,9 @@ module.exports = {
   command : {
     usage: '',
     description: 'clears all songs in queue',
+    slash: {
+      description: 'Clear the song queue'
+    },
     process: function(bot, client, message) {
       if (bot.songQueue.length > 0) {
         let newQueue = [];

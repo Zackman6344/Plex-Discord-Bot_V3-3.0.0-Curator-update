@@ -3,6 +3,18 @@ module.exports = {
   command : {
     usage: '<album>',
     description: 'Load and play an album.',
+
+    slash: {
+
+        description: "Queue an album from the Plex library",
+
+        options: [
+
+            { name: "query", type: "STRING", description: "Album or artist name", required: true }
+
+        ]
+
+    },
     process: async function(bot, client, message, query) {
       // if song request exists
       if (query.length > 0) {

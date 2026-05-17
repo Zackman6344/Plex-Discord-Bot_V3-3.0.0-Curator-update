@@ -8,6 +8,9 @@ module.exports = {
   command : {
     usage: '',
     description: 'Full diagnostic — checks Plex, Gemini, Tautulli, and Playnite connectivity.',
+    slash: {
+      description: 'Full diagnostic — checks Plex, Gemini, Tautulli, and Playnite connectivity'
+    },
     process: async function(bot, client, message) {
       const results = await runHealthCheck();
       const formatted = formatHealthCheck(results);

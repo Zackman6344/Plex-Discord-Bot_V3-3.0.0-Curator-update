@@ -90,6 +90,16 @@ module.exports = {
   command : {
     usage: '<list/add/del> <integer?>',
     description: 'Command to manage which libraries to use.',
+    slash: {
+      description: 'View or manage Plex libraries',
+      subcommands: [
+        { name: 'list', description: 'List Plex libraries (loaded + available)', options: [] },
+        { name: 'add',  description: 'Load a Plex library (omit key to load all)',
+          options: [{ name: 'key', type: 'STRING', description: 'Library key (optional)', required: false }] },
+        { name: 'del',  description: 'Unload a Plex library',
+          options: [{ name: 'key', type: 'STRING', description: 'Library key', required: true }] }
+      ]
+    },
     process: async function(bot, client, message, query) {
       let args = query.split(/\s+/);
       switch(args[0]) {

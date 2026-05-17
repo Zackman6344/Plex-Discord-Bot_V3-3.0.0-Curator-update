@@ -3,6 +3,9 @@ module.exports = {
   command : {
     usage: '',
     description: 'stops song if one is playing',
+    slash: {
+      description: 'Stop playback'
+    },
     process: function(bot, client, message) {
       if (bot.isPlaying) {
         bot.songQueue = []; // removes all songs from queue

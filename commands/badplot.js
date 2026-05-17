@@ -32,6 +32,13 @@ module.exports = {
     command: {
         usage: '!badplot [optional: "leaderboard"]',
         description: 'Start a 3-minute game of "Explain a Plot Badly", or view the server leaderboard.',
+        slash: {
+            description: 'Guess the movie from a sarcastic AI plot summary',
+            subcommands: [
+                { name: 'game', description: 'Start a new game', options: [] },
+                { name: 'leaderboard', description: 'View the leaderboard', options: [] }
+            ]
+        },
         process: async function(...args) {
             let msg = null;
             let commandArgs = [];

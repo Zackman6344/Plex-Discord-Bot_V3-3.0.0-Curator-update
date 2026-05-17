@@ -38,6 +38,26 @@ module.exports = {
     command: {
         usage: '!quotethebard',
         description: 'Open the Main Menu for the Quote the Bard minigame.',
+
+        slash: {
+
+            description: "Guess the song translated into Shakespearean English",
+
+            subcommands: [
+
+                { name: "game", description: "Start a new game",
+
+                    options: [
+
+                        { name: "difficulty", type: "STRING", description: "easy / medium / hard", required: false }
+
+                    ] },
+
+                { name: "leaderboard", description: "View the leaderboard", options: [] }
+
+            ]
+
+        },
         process: async function(...args) {
             let msg = null;
             let commandArgs = [];

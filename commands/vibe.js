@@ -32,6 +32,9 @@ module.exports = {
     command: {
         usage: '!vibe [setting or mood] + [optional: duration or track count]',
         description: 'Instantly generate and queue a thematic playlist based on a vibe using deep Plex tag filtering.',
+        slash: {
+            description: 'Generate a thematic playlist from a vibe (interactive)'
+        },
         process: async function(bot, client, msg, query) {
 
             if (!msg) return logger.error("Critical Error: Could not locate the Discord message object!");

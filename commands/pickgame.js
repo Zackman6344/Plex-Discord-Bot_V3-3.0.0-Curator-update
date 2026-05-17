@@ -8,6 +8,18 @@ module.exports = {
   command: {
     usage: '<keywords/mood>',
     description: 'Searches your Playnite library using AI to find a game matching your requested keywords or hardware.',
+
+    slash: {
+
+        description: "AI picks the best game match from your Playnite library",
+
+        options: [
+
+            { name: "keywords", type: "STRING", description: "Keywords or mood (optional)", required: false }
+
+        ]
+
+    },
     process: async function(bot, client, message, query) {
       try {
         // If the user just typed "!pickgame" with no arguments, default to a random great game

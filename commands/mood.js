@@ -5,6 +5,18 @@ module.exports = {
   command : {
     usage: '<mood name>',
     description: 'bot will join voice channel and play a random song label mood as given if available. If more than one, bot will return a list to choose from',
+
+    slash: {
+
+        description: "Play a random song matching a given mood",
+
+        options: [
+
+            { name: "mood", type: "STRING", description: "Mood name (e.g. chill, energetic)", required: true }
+
+        ]
+
+    },
     process: async function(bot, client, message, query) {
       // if song request exists
       if (query.length > 0) {

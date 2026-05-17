@@ -45,6 +45,18 @@ module.exports = {
     command: {
         usage: '!seek [time]',
         description: 'Seek to a specific time in the currently playing track (e.g., 1:30, 90, 1m30s).',
+
+        slash: {
+
+            description: "Jump to a specific time in the current Plex track",
+
+            options: [
+
+                { name: "time", type: "STRING", description: "Time (e.g. 1:30)", required: true }
+
+            ]
+
+        },
         process: async function(bot, client, message, query) {
 
             if (!bot.isPlaying || bot.songQueue.length === 0) {

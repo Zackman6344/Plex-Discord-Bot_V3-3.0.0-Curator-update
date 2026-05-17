@@ -23,6 +23,9 @@ module.exports = {
     command: {
         usage: '!quest',
         description: 'Build a thematic, narrative-driven media marathon from your Plex server.',
+        slash: {
+            description: 'Generate a custom movie marathon from a theme (interactive)'
+        },
         process: async function(...args) {
             let msg = null;
 

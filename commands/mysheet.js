@@ -8,6 +8,18 @@ module.exports = {
   command: {
     usage: '[@user]',
     description: 'Displays your or a mentioned user\'s currently saved D&D character sheet.',
+
+    slash: {
+
+        description: "Display your or another user character sheet",
+
+        options: [
+
+            { name: "user", type: "USER", description: "Whose sheet to show (default: you)", required: false }
+
+        ]
+
+    },
     process: async function(bot, client, message, query) {
       try {
         // 1. Determine target user (Author or Mentioned User)

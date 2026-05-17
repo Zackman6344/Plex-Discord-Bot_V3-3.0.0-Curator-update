@@ -12,6 +12,9 @@ module.exports = {
     command: {
         usage: '!curate',
         description: 'Start an interactive session with the AI media curator',
+        slash: {
+            description: 'AI-tailored media recommendations (interactive)'
+        },
         process: async function(...args) {
             let msg = null;
             for (let i = 0; i < args.length; i++) {

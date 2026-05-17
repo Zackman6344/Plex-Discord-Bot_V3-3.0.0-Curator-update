@@ -7,6 +7,9 @@ module.exports = {
   command : {
     usage : '',
     description : 'Ulala...',
+    slash : {
+      description : '???'
+    },
     process : async function(bot, client, message) {
       
       if(!bot.isPlaying || ulalaPlaying){

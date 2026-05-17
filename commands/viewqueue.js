@@ -3,6 +3,9 @@ module.exports = {
   command : {
     usage: '',
     description: 'displays current song queue',
+    slash: {
+      description: 'Show the current song queue'
+    },
     process: function(bot, client, message) {
       let messageLines = '';
       if (bot.songQueue.length > 0) {

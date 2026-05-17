@@ -8,6 +8,18 @@ module.exports = {
     command: {
         usage: '!launch [title]',
         description: 'Securely boots a game on the host PC (Owner Only).',
+
+        slash: {
+
+            description: "Boot a game on the host PC (owner-gated)",
+
+            options: [
+
+                { name: "title", type: "STRING", description: "Game title", required: true }
+
+            ]
+
+        },
         process: async function(bot, client, msg) {
             if (!msg) return;
 

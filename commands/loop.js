@@ -3,6 +3,9 @@ module.exports = {
   command : {
     usage: '',
     description: 'active or desactive the looping of the first queue\' song',
+    slash: {
+      description: 'Toggle queue loop'
+    },
     process: function(bot, client, message, query) {
       if(bot.songQueue.length > 0) {
         if(bot.songQueue[0].replay) {

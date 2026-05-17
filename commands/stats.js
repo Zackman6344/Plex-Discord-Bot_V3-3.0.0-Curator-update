@@ -9,6 +9,9 @@ module.exports = {
     command: {
         usage: '!stats',
         description: `Displays global statistics for both Playnite and the ${config.serverName} media server.`,
+        slash: {
+            description: 'Combined Plex + Tautulli + Playnite statistics'
+        },
         process: async function(bot, client, msg) {
             if (!msg) return;
 
