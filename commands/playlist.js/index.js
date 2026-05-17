@@ -1,4 +1,6 @@
+const fs = require('fs');
 const { EmbedBuilder } = require('discord.js');
+const config = require('../../config/config.js');
 
 var playlistSubcommands = {};
 
@@ -8,6 +10,14 @@ require('fs').readdirSync(__dirname + '/').forEach(function(file) {
     playlistSubcommands[command.name] = command.command;
   }
 });
+
+// Subcommand:option pairs whose autocomplete resolves from on-disk saved
+// playlists. plex-play / plex-list deliberately excluded — those need a Plex
+// API call and were scoped to a follow-up.
+const SAVED_PLAYLIST_KEYS = new Set([
+    'play:name', 'print:name', 'remove:name',
+    'add:playlist', 'delete:playlist'
+]);
 
 module.exports = {
   name : 'playlist',
@@ -21,12 +31,12 @@ module.exports = {
           options: [{ name: 'name', type: 'STRING', description: 'Playlist name', required: true }] },
         { name: 'list',      description: 'List all custom playlists', options: [] },
         { name: 'print',     description: 'Show the songs inside a custom playlist',
-          options: [{ name: 'name', type: 'STRING', description: 'Playlist name', required: true }] },
+          options: [{ name: 'name', type: 'STRING', description: 'Playlist name', required: true, autocomplete: true }] },
         { name: 'remove',    description: 'Delete a custom playlist',
-          options: [{ name: 'name', type: 'STRING', description: 'Playlist name', required: true }] },
+          options: [{ name: 'name', type: 'STRING', description: 'Playlist name', required: true, autocomplete: true }] },
         { name: 'add',       description: 'Add a song to a custom playlist',
           options: [
-            { name: 'playlist', type: 'STRING', description: 'Custom playlist name', required: true },
+            { name: 'playlist', type: 'STRING', description: 'Custom playlist name', required: true, autocomplete: true },
             { name: 'song',     type: 'STRING', description: 'Song title or YouTube URL', required: true }
           ] },
         { name: 'choice',    description: 'Pick a song from the last search results to add',
@@ -34,17 +44,53 @@ module.exports = {
         { name: 'page',      description: 'Show the next page of search results', options: [] },
         { name: 'delete',    description: 'Remove a song from a playlist by index',
           options: [
-            { name: 'playlist', type: 'STRING',  description: 'Playlist name', required: true },
+            { name: 'playlist', type: 'STRING',  description: 'Playlist name', required: true, autocomplete: true },
             { name: 'index',    type: 'INTEGER', description: 'Song index (see /playlist print)', required: true }
           ] },
         { name: 'play',      description: 'Play a custom playlist (joins your voice channel)',
-          options: [{ name: 'name', type: 'STRING', description: 'Custom playlist name', required: true }] },
+          options: [
+            { name: 'name',    type: 'STRING',  description: 'Custom playlist name', required: true, autocomplete: true },
+            { name: 'shuffle', type: 'BOOLEAN', description: 'Shuffle the playlist before playing', required: false, flag: '-r' }
+          ] },
         { name: 'plex-list', description: 'List Plex audio playlists (optionally for a managed user)',
           options: [{ name: 'account', type: 'STRING', description: 'Managed user (prompts for PIN via DM)', required: false }] },
         { name: 'plex-play', description: 'Play a Plex-hosted playlist',
-          options: [{ name: 'name', type: 'STRING', description: 'Plex playlist name', required: true }] },
+          options: [
+            { name: 'name',    type: 'STRING',  description: 'Plex playlist name', required: true },
+            { name: 'shuffle', type: 'BOOLEAN', description: 'Shuffle the playlist before playing', required: false, flag: '-r' }
+          ] },
         { name: 'plex-copy', description: 'Interactive wizard: copy a managed user\'s Plex playlist into a local bot playlist', options: [] }
-      ]
+      ],
+      async autocomplete(interaction) {
+          const focused = interaction.options.getFocused(true);
+          let sub = null;
+          try { sub = interaction.options.getSubcommand(false); } catch (_) {}
+
+          if (!SAVED_PLAYLIST_KEYS.has(`${sub}:${focused.name}`)) {
+              try { await interaction.respond([]); } catch (_) {}
+              return;
+          }
+
+          let entries = [];
+          try {
+              entries = fs.readdirSync(config.playlistsDir);
+          } catch (_) {
+              try { await interaction.respond([]); } catch (_) {}
+              return;
+          }
+
+          const q = (focused.value || '').toLowerCase();
+          const SUFFIX = '.playlist';
+          // Discord caps each choice's name+value at 100 chars — drop anything that wouldn't survive serialization.
+          const matches = entries
+              .filter(f => f.endsWith(SUFFIX))
+              .map(f => f.slice(0, -SUFFIX.length))
+              .filter(n => n.length > 0 && n.length <= 100 && (!q || n.toLowerCase().includes(q)))
+              .slice(0, 25)
+              .map(n => ({ name: n, value: n }));
+
+          try { await interaction.respond(matches); } catch (_) {}
+      }
     },
     process : function(bot, client, message, query) {
         if(query == "?") {
@@ -82,7 +128,7 @@ module.exports = {
         } else {
             message.reply(bot.language.PLAYLIST_UNKNOW_COMMAND.format({command : args[0], commandPrefix : bot.config.commandPrefix}));
         }
-        
+
     }
   },
 }

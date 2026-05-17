@@ -52,7 +52,8 @@ function mapOption(opt) {
         description: opt.description || 'No description provided',
         type: typeof opt.type === 'string' ? (TYPE_MAP[opt.type] || ApplicationCommandOptionType.String) : opt.type,
         required: !!opt.required,
-        ...(opt.choices ? { choices: opt.choices } : {})
+        ...(opt.choices ? { choices: opt.choices } : {}),
+        ...(opt.autocomplete ? { autocomplete: true } : {})
     };
 }
 
@@ -146,7 +147,14 @@ function buildQueryString(interaction, slashSpec) {
         for (const opt of optList) {
             const got = interaction.options.get(opt.name);
             if (got && got.value !== undefined && got.value !== null) {
-                parts.push(String(got.value));
+                // `flag` lets a BOOLEAN option emit a literal token (e.g. '-r') so
+                // slash invocations can produce arg strings the !-prefix parser
+                // already understands, instead of a stringified "true"/"false".
+                if (typeof opt.flag === 'string') {
+                    if (got.value) parts.push(opt.flag);
+                } else {
+                    parts.push(String(got.value));
+                }
             }
         }
     };
