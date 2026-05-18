@@ -110,6 +110,14 @@ async function registerAll(client, commands) {
     }
 
     if (config.testGuildId) {
+        // Drop stale global registrations so Discord stops showing them alongside
+        // the guild-scoped ones we're about to write. Failure here is non-fatal —
+        // the guild registration is what we actually need to succeed.
+        try {
+            await client.application.commands.set([]);
+        } catch (err) {
+            logger.warn('Failed to clear stale global slash commands:', err.message || err);
+        }
         try {
             const guild = await client.guilds.fetch(config.testGuildId);
             await guild.commands.set(specs);
