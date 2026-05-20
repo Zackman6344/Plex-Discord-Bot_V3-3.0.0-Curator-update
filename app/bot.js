@@ -483,6 +483,19 @@ class Bot extends EventEmitter{
 				};
 				// 20 971 520 bits = 20Mb
 
+				// Tear down any prior AudioPlayer + readstream before replacing them.
+				// Without this, re-entry through waitForStart -> endWorking -> playSong
+				// (or a forced replay) leaves the previous player subscribed with handler
+				// closures pinning the ~20MB read buffer alive.
+				if (this.dispatcher) {
+					try { this.dispatcher.removeAllListeners(); } catch (_) {}
+					try { this.dispatcher.stop(true); } catch (_) {}
+				}
+				if (this.readstream) {
+					try { this.readstream.destroy(); } catch (_) {}
+				}
+				this.readstream = readstream;
+
 				this.dispatcher = createAudioPlayer({
 					behaviors: {
 						noSubscriber: NoSubscriberBehavior.Stop,

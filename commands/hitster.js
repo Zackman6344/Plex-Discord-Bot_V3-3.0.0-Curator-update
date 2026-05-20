@@ -302,7 +302,10 @@ async function executeTurn(game, bot, message, allTracks, client) {
         return false;
     };
 
-    const collector = channel.createMessageCollector({ filter: gameFilter });
+    // Bound the per-turn collector so an abandoned channel (host leaves, channel
+    // goes quiet) can't keep the closure over allTracks/game/targetObj alive.
+    const TURN_TIMEOUT_MS = 10 * 60 * 1000;
+    const collector = channel.createMessageCollector({ filter: gameFilter, time: TURN_TIMEOUT_MS });
     let guessedCorrectly = false;
     let turnBonuses = {};
     let bonusRecap = [];
@@ -365,7 +368,15 @@ async function executeTurn(game, bot, message, allTracks, client) {
         }
     });
 
-    collector.on('end', () => {
+    collector.on('end', (collected, reason) => {
+        // Turn timed out with no guess — terminate the game rather than recursing
+        // into another turn that no one is watching.
+        if (reason === 'time' || reason === 'idle') {
+            channel.send(`⏳ **Hitster turn timed out** — no guess in ${TURN_TIMEOUT_MS / 60000} minutes. Game ended.`).catch(() => {});
+            activeGames.delete(game.channelId);
+            if (bot.isPlaying) bot.stop();
+            return;
+        }
         if (bot.isPlaying) bot.stop();
         let resultText = `🕰️ **Turn Over!** The track was:\n📅 **${targetObj.year}** - *${targetObj.title}* by ${targetObj.artist} (Album: *${targetObj.album || "Unknown"}*)\n\n`;
 

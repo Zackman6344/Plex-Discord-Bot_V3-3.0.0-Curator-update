@@ -12,12 +12,10 @@ module.exports = {
       if (bot.isPlaying) {
         bot.dispatcher.pause(true); // pause song
         bot.isPaused = true;
-        bot.dispatcher.on('debug',  (info) => {
-          logger.debug(`Dispatcher: ${info}`);
-        });
-        bot.dispatcher.on('error',  (err) => {
-          logger.error(`Dispatcher error: ${err}`);
-        });
+        // Listener attachments removed: this command used to add fresh debug+error
+        // listeners on every !pause invocation, which accumulated on long-running
+        // songs. Error logging is already handled at the AudioPlayer's creation
+        // site in app/bot.js (playSong).
         var embedObj = {
             color: 16424969,
             description: bot.language.PAUSE_INFO,

@@ -125,19 +125,25 @@ module.exports = {
           let handlerError = (error => {message.channel.send({embeds: [{color:0xff0000, description:'"' + error.key + '" is not a valide library\'s key.'}]})});
           bot.on('libraryAdded', handler);
           bot.on('loadLibraryError', handlerError);
-          
-          if(args.length > 1){
-            let id = parseInt(args[1]);
-            if(isNaN(id)) {
-              message.reply(args[1] + ' is not a valid library key.');
+
+          // try/finally so both listeners come off even if loadLibrary rejects.
+          // Previously the removeListener calls ran only on the happy path, and
+          // the 'loadLibraryError' removal was also passing the wrong fn ref.
+          try {
+            if(args.length > 1){
+              let id = parseInt(args[1]);
+              if(isNaN(id)) {
+                message.reply(args[1] + ' is not a valid library key.');
+              } else {
+                await bot.loadLibrary(id);
+              }
             } else {
-              await bot.loadLibrary(id);
+              await bot.loadLibrary();
             }
-          } else {
-            await bot.loadLibrary();
+          } finally {
+            bot.removeListener('libraryAdded', handler);
+            bot.removeListener('loadLibraryError', handlerError);
           }
-          bot.removeListener('libraryAdded', handler);
-          bot.removeListener('loadLibraryError', handler);
         }; break;
         case 'del': {
             let id = parseInt(args[1]);
