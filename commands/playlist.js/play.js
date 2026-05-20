@@ -1,5 +1,4 @@
 const fs = require('fs');
-const viewqueue = require('../viewqueue.js');
 
 //https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Math/random
 function getRandomInt(max) {
@@ -59,16 +58,7 @@ module.exports = {
 
           if(bot.isPlaying){
             await message.reply(bot.language.PLAYLIST_PLAY_SUCCES);
-            if(shuffle) {
-              // Invoke viewqueue inline instead of round-tripping a literal '!viewqueue'
-              // through the message bus — that hack leaked the prefix-command text into
-              // chat (and only worked when listenChannel was unset or matched).
-              viewqueue.command.process(bot, client, message);
-            }
           } else {
-            if(shuffle) {
-              viewqueue.command.process(bot, client, message);
-            }
             bot.playSong(message);
           }
       });
