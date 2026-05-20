@@ -5,6 +5,7 @@ module.exports = function(client, bot) {
   const { startHealthMonitor } = require('../helpers/healthMonitor.js');
   const slashRegistry = require('../helpers/slashRegistry.js');
   const { adaptInteraction } = require('../helpers/interactionAdapter.js');
+  const playbackButtons = require('../helpers/playbackButtons.js');
 
   // when bot is ready
   client.once('clientReady', async function() {
@@ -70,6 +71,17 @@ module.exports = function(client, bot) {
       } catch (err) {
         logger.error(`Autocomplete for /${interaction.commandName} threw:`, err.message || err);
         try { await interaction.respond([]); } catch (_) {}
+      }
+      return;
+    }
+
+    // Button clicks coming off the now-playing playback row. Owned by
+    // helpers/playbackButtons.js; falls through if the customId isn't ours.
+    if (interaction.isButton && interaction.isButton()) {
+      try {
+        await playbackButtons.handle(interaction, bot, client, plexCommands);
+      } catch (err) {
+        logger.error('Button dispatch threw:', err.message || err);
       }
       return;
     }
