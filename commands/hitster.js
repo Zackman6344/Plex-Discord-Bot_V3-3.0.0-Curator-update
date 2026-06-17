@@ -138,9 +138,8 @@ module.exports = {
                 { name: 'stats',    description: 'Show the server Hitster leaderboard', options: [] },
                 { name: 'guess',    description: 'Place the current song on a slot (optionally for another player)',
                   options: [
-                    { name: 'slot',  type: 'INTEGER', description: 'Slot number from the timeline', required: true },
-                    { name: 'as',    type: 'USER',    description: 'Play for a Discord user in the call who can\'t type', required: false },
-                    { name: 'local', type: 'STRING',  description: 'Play for a local (in-person) player by name', required: false }
+                    { name: 'slot',   type: 'INTEGER', description: 'Slot number from the timeline', required: true },
+                    { name: 'player', type: 'STRING',  description: 'Play for another player in the call (defaults to you)', required: false, autocomplete: true }
                   ] },
                 { name: 'bonus',    description: 'Wager points on the artist/album/title of the current song',
                   options: [
@@ -150,11 +149,33 @@ module.exports = {
                         { name: 'album',  value: 'album' },
                         { name: 'title',  value: 'title' }
                       ] },
-                    { name: 'guess', type: 'STRING', description: 'Your guess', required: true },
-                    { name: 'as',    type: 'USER',   description: 'Wager for a Discord user in the call', required: false },
-                    { name: 'local', type: 'STRING', description: 'Wager for a local (in-person) player by name', required: false }
+                    { name: 'guess',  type: 'STRING', description: 'Your guess', required: true },
+                    { name: 'player', type: 'STRING', description: 'Wager for another player in the call (defaults to you)', required: false, autocomplete: true }
                   ] }
-            ]
+            ],
+            // Autocomplete for the `player` field on guess/bonus: offer the actual
+            // participants of the game in this channel (real users + local players),
+            // returning the participant id as the value. Solves "the member picker
+            // only shows me and the bot" — local players have no Discord identity.
+            async autocomplete(interaction) {
+                const focused = interaction.options.getFocused(true);
+                if (focused.name !== 'player') { try { await interaction.respond([]); } catch (_) {} return; }
+
+                const game = activeGames.get(interaction.channelId);
+                if (!game) { try { await interaction.respond([]); } catch (_) {} return; }
+
+                const ids = game.state === 'playing' ? game.playerOrder : Array.from(game.lobby);
+                const q = (focused.value || '').toLowerCase();
+                const choices = ids.map((id) => {
+                    if (id.startsWith('local:')) return { name: `${game.localPlayers[id]} (local)`, value: id };
+                    const member = interaction.guild && interaction.guild.members.cache.get(id);
+                    const user = interaction.client.users.cache.get(id);
+                    const name = (member && member.displayName) || (user && user.username) || `User ${id}`;
+                    return { name, value: id };
+                }).filter((c) => !q || c.name.toLowerCase().includes(q)).slice(0, 25);
+
+                try { await interaction.respond(choices); } catch (_) {}
+            }
         },
         process: async function(bot, client, message, query) {
             const channelId = message.channel.id;
@@ -216,8 +237,7 @@ module.exports = {
 
                 const opts = message.interaction.options;
                 const actorId = message.author.id;
-                const asUser = opts.getUser('as');
-                const sel = { userId: asUser ? asUser.id : null, localName: opts.getString('local') || null };
+                const sel = { raw: opts.getString('player') || null };
 
                 if (commandArg === 'guess') {
                     const slot = opts.getInteger('slot');
@@ -402,12 +422,14 @@ async function executeTurn(game, bot, message, allTracks, client) {
         `*${displayPlayerName}: Type a slot number (e.g., \`1\` or \`2\`).*\n` +
         (isLocalTurn ? `*(Since ${displayPlayerName} is playing locally, anyone in the lobby can type the number for them!)*\n` : ``) +
         `*Anyone: Type \`!bonus [artist|album|title] [guess]\` to risk points!*\n` +
-        `*Or use \`/hitster guess\` / \`/hitster bonus\` — add \`as:\` (a Discord user in the call) or \`local:\` (a local player) to act for someone else.*`;
+        `*Or use \`/hitster guess\` / \`/hitster bonus\` — set \`player:\` to act for someone else in the call.*`;
 
     const turnMsg = await channel.send(baseMessageText);
     bot.songQueue.unshift({ key: targetObj.plexKey, title: "Secret Track", artist: "???" });
     await bot.playSong(message, targetObj.duration ? Math.floor(targetObj.duration / 2) : 60000);
-    setTimeout(() => { if (bot.isPlaying) bot.stop(); }, game.settings.clipLength);
+    // Cleared in resolveTurn. If left dangling (turn ended early by a guess), a
+    // long clipLength timer fires during a LATER turn and cuts its clip short.
+    const clipTimer = setTimeout(() => { if (bot.isPlaying) bot.stop(); }, game.settings.clipLength);
 
     const guessRegex = /^(\d+)$/;
     const bonusRegex = /^!bonus\s+(artist|album|title)\s+(.+)$/i;
@@ -535,6 +557,7 @@ async function executeTurn(game, bot, message, allTracks, client) {
         if (turn.resolved) return;
         turn.resolved = true;
         game.activeTurn = null;
+        clearTimeout(clipTimer); // don't let this turn's clip timer fire into a later turn
 
         // Turn timed out with no guess — terminate rather than recursing into a
         // turn no one is watching.

@@ -24,28 +24,23 @@ test('resolveTarget: nothing selected resolves to self', () => {
     assert.strictEqual(r.id, null);
 });
 
-test('resolveTarget: a known Discord user resolves to that user', () => {
-    const r = resolveTarget(makeGame(), { userId: '222' });
+test('resolveTarget: a participant user id resolves to that user', () => {
+    const r = resolveTarget(makeGame(), { raw: '222' });
     assert.deepStrictEqual(r, { id: '222', kind: 'user' });
 });
 
-test('resolveTarget: a user not in the game is invalid', () => {
-    const r = resolveTarget(makeGame(), { userId: '999' });
+test('resolveTarget: a user id not in the game is invalid', () => {
+    const r = resolveTarget(makeGame(), { raw: '999' });
     assert.strictEqual(r.kind, 'invalid');
 });
 
-test('resolveTarget: a local name resolves case-insensitively', () => {
-    const r = resolveTarget(makeGame(), { localName: 'LISA' });
+test('resolveTarget: a local: participant id resolves to that local player', () => {
+    const r = resolveTarget(makeGame(), { raw: 'local:lisa' });
     assert.deepStrictEqual(r, { id: 'local:lisa', kind: 'local' });
 });
 
-test('resolveTarget: an unknown local name is invalid', () => {
-    const r = resolveTarget(makeGame(), { localName: 'Bob' });
-    assert.strictEqual(r.kind, 'invalid');
-});
-
-test('resolveTarget: supplying both user and local is invalid', () => {
-    const r = resolveTarget(makeGame(), { userId: '111', localName: 'Lisa' });
+test('resolveTarget: an unknown local: id is invalid', () => {
+    const r = resolveTarget(makeGame(), { raw: 'local:bob' });
     assert.strictEqual(r.kind, 'invalid');
 });
 

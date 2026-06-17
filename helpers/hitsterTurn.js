@@ -7,38 +7,29 @@
 /**
  * Resolve who an action is being performed on behalf of.
  *
- * Slash options are split into a USER field (`as`) and a STRING field
- * (`local`) because a single typed field can't accept both a real Discord
- * mention and an arbitrary local-player name — see the command's slash spec.
+ * `raw` is the value from the single autocomplete `player` field: either a real
+ * Discord user id (a participant) or a `local:<name>` pseudo-player id. Empty
+ * means "myself". The autocomplete source only offers actual game participants,
+ * so the values are already canonical.
  *
  * @param {object} game - HitsterGame; reads playerOrder + localPlayers.
- * @param {{ userId?: string|null, localName?: string|null }} sel
+ * @param {{ raw?: string|null }} sel
  * @returns {{ id: string|null, kind: 'self'|'user'|'local'|'invalid', reason?: string }}
  */
 function resolveTarget(game, sel) {
-    const userId = sel && sel.userId;
-    const localName = sel && sel.localName;
+    const raw = sel && sel.raw;
+    if (!raw || !String(raw).trim()) return { id: null, kind: 'self' };
+    const val = String(raw).trim();
 
-    if (userId && localName) {
-        return { id: null, kind: 'invalid', reason: 'Pick either a Discord user or a local player, not both.' };
+    if (val.startsWith('local:')) {
+        if (game.localPlayers && game.localPlayers[val]) return { id: val, kind: 'local' };
+        return { id: null, kind: 'invalid', reason: 'That local player is not in this game.' };
     }
 
-    if (userId) {
-        if (Array.isArray(game.playerOrder) && game.playerOrder.includes(userId)) {
-            return { id: userId, kind: 'user' };
-        }
-        return { id: null, kind: 'invalid', reason: 'That user is not a player in this game.' };
+    if (Array.isArray(game.playerOrder) && game.playerOrder.includes(val)) {
+        return { id: val, kind: 'user' };
     }
-
-    if (localName && String(localName).trim()) {
-        const localId = `local:${String(localName).trim().toLowerCase()}`;
-        if (game.localPlayers && game.localPlayers[localId]) {
-            return { id: localId, kind: 'local' };
-        }
-        return { id: null, kind: 'invalid', reason: `No local player named "${localName}" in this game.` };
-    }
-
-    return { id: null, kind: 'self' };
+    return { id: null, kind: 'invalid', reason: 'That player is not in this game.' };
 }
 
 /**
