@@ -1,7 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert');
+const { ApplicationCommandOptionType } = require('discord.js');
 
-const { buildQueryString } = require('../helpers/slashRegistry.js');
+const { buildQueryString, buildSpec } = require('../helpers/slashRegistry.js');
 
 // Minimal interaction stub — just the surface buildQueryString actually touches.
 function makeInteraction({ subcommand, values }) {
@@ -66,4 +67,36 @@ test('STRING options still emit their value as-is', () => {
     };
     const interaction = makeInteraction({ subcommand: 'create', values: { name: 'partymix' } });
     assert.strictEqual(buildQueryString(interaction, spec), 'create partymix');
+});
+
+test('buildSpec expands subcommands with choices into the Discord option shape', () => {
+    const slash = {
+        description: 'game',
+        subcommands: [
+            { name: 'set', description: 'change a setting', options: [
+                { name: 'setting', type: 'STRING', required: true, choices: [{ name: 'Goal', value: 'goal' }] },
+                { name: 'value',   type: 'INTEGER', required: true }
+            ]},
+            { name: 'join', description: 'join', options: [] }
+        ]
+    };
+    const spec = buildSpec('hitster', slash);
+
+    assert.strictEqual(spec.name, 'hitster');
+    assert.strictEqual(spec.options.length, 2);
+
+    const setSub = spec.options.find(o => o.name === 'set');
+    assert.strictEqual(setSub.type, ApplicationCommandOptionType.Subcommand);
+    assert.strictEqual(setSub.options.length, 2);
+
+    const settingOpt = setSub.options.find(o => o.name === 'setting');
+    assert.strictEqual(settingOpt.type, ApplicationCommandOptionType.String);
+    assert.deepStrictEqual(settingOpt.choices, [{ name: 'Goal', value: 'goal' }]);
+
+    const valueOpt = setSub.options.find(o => o.name === 'value');
+    assert.strictEqual(valueOpt.type, ApplicationCommandOptionType.Integer);
+
+    const joinSub = spec.options.find(o => o.name === 'join');
+    assert.strictEqual(joinSub.type, ApplicationCommandOptionType.Subcommand);
+    assert.deepStrictEqual(joinSub.options, []);
 });

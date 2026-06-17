@@ -107,7 +107,27 @@ module.exports = {
         usage: '!hitster [start|join|add|stop|set|settings|stats]',
         description: 'Play a competitive turn-based music timeline game.',
         slash: {
-            description: 'Competitive turn-based music timeline game'
+            description: 'Competitive turn-based music timeline game',
+            subcommands: [
+                { name: 'create',   description: 'Start a new Hitster lobby in this channel', options: [] },
+                { name: 'join',     description: 'Join the current Hitster lobby', options: [] },
+                { name: 'add',      description: 'Add a local (in-person) player to the lobby',
+                  options: [{ name: 'name', type: 'STRING', description: 'Local player name', required: true }] },
+                { name: 'start',    description: 'Begin the game (host only)', options: [] },
+                { name: 'stop',     description: 'End the current game (host or admin)', options: [] },
+                { name: 'settings', description: 'Show the current game settings', options: [] },
+                { name: 'set',      description: 'Change a setting (host only, in lobby)',
+                  options: [
+                    { name: 'setting', type: 'STRING', description: 'Which setting to change', required: true,
+                      choices: [
+                        { name: 'goal (tracks to win)', value: 'goal' },
+                        { name: 'clip (seconds)',       value: 'clip' },
+                        { name: 'bonus (points per steal)', value: 'bonus' }
+                      ] },
+                    { name: 'value', type: 'INTEGER', description: 'New value', required: true }
+                  ] },
+                { name: 'stats',    description: 'Show the server Hitster leaderboard', options: [] }
+            ]
         },
         process: async function(bot, client, message, query) {
             const channelId = message.channel.id;
@@ -212,6 +232,13 @@ if (commandArg === 'stop') {
                 return message.channel.send(`✅ Updated! Goal: ${game.settings.timelineGoal} | Clip: ${game.settings.clipLength/1000}s | Bonus: ${game.settings.bonusValue}`);
             }
 
+            // Explicit reply when /hitster create (or !hitster create) is used while a
+            // lobby already exists — a slash interaction left without a reply hangs on
+            // "thinking...", so silent fall-through isn't safe for the slash path.
+            if ((commandArg === 'create' || commandArg === 'new') && activeGames.has(channelId)) {
+                return message.reply("A Hitster lobby already exists in this channel. Use `join`, `start`, or `stop`.");
+            }
+
             if (!activeGames.has(channelId)) {
                 if (!message.member.voice.channel) return message.reply("Join a voice channel!");
                 const game = new HitsterGame(message.author.id, channelId);
@@ -239,7 +266,8 @@ if (commandArg === 'stop') {
 
             const game = activeGames.get(channelId);
             if (commandArg === 'start') {
-                if (message.author.id !== game.hostId || game.state !== 'lobby') return;
+                if (message.author.id !== game.hostId) return message.reply("Only the host can start the game.");
+                if (game.state !== 'lobby') return message.reply("The game has already started.");
                 game.state = 'playing';
                 game.initializePlayers();
                 message.channel.send(`🎧 **Starting!** Goal: **${game.settings.timelineGoal}** Tracks.`);
