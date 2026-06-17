@@ -241,6 +241,10 @@ module.exports = {
                 if (!activeGames.has(channelId)) return message.reply("No active lobby. Type `!hitster` to create one.");
                 const game = activeGames.get(channelId);
                 if (game.state !== 'lobby') return message.reply("Game already started!");
+                // Symmetric with join-for: you must be in the call to be in the game.
+                if (!(message.member && message.member.voice && message.member.voice.channel)) {
+                    return message.reply("Join a voice channel first — Hitster players need to be in the call.");
+                }
                 game.addPlayer(message.author.id);
                 return message.reply(`🎵 <@${message.author.id}> joined!`);
             }
