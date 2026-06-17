@@ -3,6 +3,7 @@ const path = require('path');
 const { getPlex } = require('../helpers/plexClient.js');
 const logger = require('../helpers/logger.js');
 const hitsterTurn = require('../helpers/hitsterTurn.js');
+const channelClaims = require('../helpers/channelClaims.js');
 
 const plex = getPlex();
 
@@ -18,6 +19,11 @@ function saveStats(data) {
 }
 
 const activeGames = new Map();
+
+// While a game exists in a channel, raw inputs like !bonus / !localbonus are
+// consumed by the turn collector, not the command dispatcher. Claim the channel
+// so the dispatcher doesn't reply "unknown command" to those in-game inputs.
+channelClaims.register((channelId) => activeGames.has(channelId));
 
 class HitsterGame {
     constructor(hostId, channelId) {

@@ -6,6 +6,7 @@ module.exports = function(client, bot) {
   const slashRegistry = require('../helpers/slashRegistry.js');
   const { adaptInteraction } = require('../helpers/interactionAdapter.js');
   const playbackButtons = require('../helpers/playbackButtons.js');
+  const channelClaims = require('../helpers/channelClaims.js');
 
   // when bot is ready
   client.once('clientReady', async function() {
@@ -46,6 +47,10 @@ module.exports = function(client, bot) {
               }
             }
             else {
+              // Stay quiet if an interactive feature (e.g. a Hitster game) owns
+              // raw input in this channel — !bonus and friends aren't registered
+              // commands but are valid in-game, so "unknown command" would be noise.
+              if (channelClaims.isClaimed(message.channel.id)) return;
               message.reply(bot.language.MUSIC_UNKNOW_COMMAND.format({cmdTxt : cmdTxt}));
             }
         }
