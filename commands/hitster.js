@@ -241,9 +241,10 @@ module.exports = {
                 if (!activeGames.has(channelId)) return message.reply("No active lobby. Type `!hitster` to create one.");
                 const game = activeGames.get(channelId);
                 if (game.state !== 'lobby') return message.reply("Game already started!");
-                // Symmetric with join-for: you must be in the call to be in the game.
-                if (!(message.member && message.member.voice && message.member.voice.channel)) {
-                    return message.reply("Join a voice channel first — Hitster players need to be in the call.");
+                // Must be in the game's own voice channel, not just any channel —
+                // that's where the clips play.
+                if (!game.voiceChannel || !game.voiceChannel.members.has(message.author.id)) {
+                    return message.reply(`Join **${game.voiceChannel ? game.voiceChannel.name : "the game's voice channel"}** first — that's where Hitster is playing.`);
                 }
                 game.addPlayer(message.author.id);
                 return message.reply(`🎵 <@${message.author.id}> joined!`);
@@ -257,12 +258,9 @@ module.exports = {
                 const target = message.interaction ? message.interaction.options.getUser('user') : message.mentions.users.first();
                 if (!target) return message.reply("Tell me who to add — mention a user or use the `user:` option.");
 
-                // Lobby phase has no game voice channel yet, so gate on the adder's
-                // current channel — that's what becomes the game VC at start.
-                const actorVc = message.member && message.member.voice && message.member.voice.channel;
-                if (!actorVc) return message.reply("You must be in a voice channel to add someone for them.");
-                if (!actorVc.members.has(target.id)) {
-                    return message.reply(`<@${target.id}> isn't in your voice channel — you can only add someone who's in the call.`);
+                // Target must be in the game's voice channel — the one the clips play in.
+                if (!game.voiceChannel || !game.voiceChannel.members.has(target.id)) {
+                    return message.reply(`<@${target.id}> isn't in **${game.voiceChannel ? game.voiceChannel.name : "the game's voice channel"}** — you can only add someone who's in the call.`);
                 }
                 if (game.lobby.has(target.id)) return message.reply(`<@${target.id}> is already in the lobby.`);
 
@@ -329,6 +327,10 @@ if (commandArg === 'stop') {
             if (!activeGames.has(channelId)) {
                 if (!message.member.voice.channel) return message.reply("Join a voice channel!");
                 const game = new HitsterGame(message.author.id, channelId);
+                // The host's channel IS the game's channel — join / join-for / in-turn
+                // proxy all gate against its live .members. Refreshed at start in case
+                // the host moves between lobby and game.
+                game.voiceChannel = message.member.voice.channel;
                 activeGames.set(channelId, game);
 
                 const instructions = `🎵 **HITSTER LOBBY INITIALIZED!** 🎵\n` +
@@ -357,9 +359,10 @@ if (commandArg === 'stop') {
                 if (message.author.id !== game.hostId) return message.reply("Only the host can start the game.");
                 if (game.state !== 'lobby') return message.reply("The game has already started.");
                 game.state = 'playing';
-                // The channel the bot plays clips in == the host's voice channel here.
-                // Its live .members is what proxy actions check against.
-                game.voiceChannel = message.member.voice.channel;
+                // Refresh to the host's current channel (set at lobby creation) in case
+                // they moved — this is where the bot plays clips and what proxy/join gate on.
+                // Guard against a null (host not in voice) clobbering the captured channel.
+                if (message.member.voice.channel) game.voiceChannel = message.member.voice.channel;
                 game.initializePlayers();
                 message.channel.send(`🎧 **Starting!** Goal: **${game.settings.timelineGoal}** Tracks.`);
                 try {
