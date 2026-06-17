@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { getPlex } = require('../helpers/plexClient.js');
 const logger = require('../helpers/logger.js');
+const hitsterTurn = require('../helpers/hitsterTurn.js');
 
 const plex = getPlex();
 
@@ -16,8 +17,6 @@ function saveStats(data) {
     fs.writeFileSync(statsFile, JSON.stringify(data, null, 4));
 }
 
-const cleanString = (str) => str.toLowerCase().replace(/[^\w\s]/g, '').trim();
-
 const activeGames = new Map();
 
 class HitsterGame {
@@ -31,6 +30,8 @@ class HitsterGame {
         this.scores = {};
         this.currentStreaks = {};
         this.turnIndex = 0;
+        this.voiceChannel = null; // captured at start; .members gates proxy actions
+        this.activeTurn = null;   // the in-flight turn engine, or null between turns
 
         this.settings = {
             clipLength: 12000,
@@ -126,7 +127,25 @@ module.exports = {
                       ] },
                     { name: 'value', type: 'INTEGER', description: 'New value', required: true }
                   ] },
-                { name: 'stats',    description: 'Show the server Hitster leaderboard', options: [] }
+                { name: 'stats',    description: 'Show the server Hitster leaderboard', options: [] },
+                { name: 'guess',    description: 'Place the current song on a slot (optionally for another player)',
+                  options: [
+                    { name: 'slot',  type: 'INTEGER', description: 'Slot number from the timeline', required: true },
+                    { name: 'as',    type: 'USER',    description: 'Play for a Discord user in the call who can\'t type', required: false },
+                    { name: 'local', type: 'STRING',  description: 'Play for a local (in-person) player by name', required: false }
+                  ] },
+                { name: 'bonus',    description: 'Wager points on the artist/album/title of the current song',
+                  options: [
+                    { name: 'type',  type: 'STRING', description: 'What to guess', required: true,
+                      choices: [
+                        { name: 'artist', value: 'artist' },
+                        { name: 'album',  value: 'album' },
+                        { name: 'title',  value: 'title' }
+                      ] },
+                    { name: 'guess', type: 'STRING', description: 'Your guess', required: true },
+                    { name: 'as',    type: 'USER',   description: 'Wager for a Discord user in the call', required: false },
+                    { name: 'local', type: 'STRING', description: 'Wager for a local (in-person) player by name', required: false }
+                  ] }
             ]
         },
         process: async function(bot, client, message, query) {
@@ -176,6 +195,40 @@ module.exports = {
                 return message.channel.send(leaderboardText);
             }
 
+            // Slash-only in-turn actions. They read typed options off the interaction
+            // and feed the same turn engine the !-text collector uses.
+            if (commandArg === 'guess' || commandArg === 'bonus') {
+                if (!message.interaction) {
+                    return message.reply("Use `/hitster guess` or `/hitster bonus` — or type the slot number / `!bonus` during a turn.");
+                }
+                const game = activeGames.get(channelId);
+                if (!game || !game.activeTurn) {
+                    return message.reply("There's no Hitster turn in progress right now.");
+                }
+
+                const opts = message.interaction.options;
+                const actorId = message.author.id;
+                const asUser = opts.getUser('as');
+                const sel = { userId: asUser ? asUser.id : null, localName: opts.getString('local') || null };
+
+                if (commandArg === 'guess') {
+                    const slot = opts.getInteger('slot');
+                    const res = game.activeTurn.submitGuessSlash(actorId, sel, slot);
+                    if (!res.ok) return message.reply(`❌ ${res.reason || 'That guess could not be placed.'}`);
+                    return message.reply(res.correct
+                        ? `✅ Slot ${slot} — correct! Turn resolved.`
+                        : `❌ Slot ${slot} — wrong. Turn resolved.`);
+                } else {
+                    const type = opts.getString('type');
+                    const guess = opts.getString('guess');
+                    const res = game.activeTurn.submitBonusSlash(actorId, sel, type, guess);
+                    if (!res.ok) return message.reply(`❌ ${res.reason || 'That bonus could not be placed.'}`);
+                    return message.reply(res.correct
+                        ? `✅ Bonus on **${type}** landed! ${res.dispName} +${game.settings.bonusValue}.`
+                        : `❌ Bonus on **${type}** missed. ${res.dispName} -${game.settings.bonusValue}.`);
+                }
+            }
+
             if (commandArg === 'join') {
                 if (!activeGames.has(channelId)) return message.reply("No active lobby. Type `!hitster` to create one.");
                 const game = activeGames.get(channelId);
@@ -208,6 +261,7 @@ if (commandArg === 'stop') {
                     return message.reply("Only the game host or a Server Admin can stop the game.");
                 }
 
+                if (game.activeTurn && game.activeTurn.collector) game.activeTurn.collector.stop('stopped');
                 if (bot.isPlaying) bot.stop();
                 activeGames.delete(channelId);
                 return message.channel.send("🛑 Hitster terminated.");
@@ -269,6 +323,9 @@ if (commandArg === 'stop') {
                 if (message.author.id !== game.hostId) return message.reply("Only the host can start the game.");
                 if (game.state !== 'lobby') return message.reply("The game has already started.");
                 game.state = 'playing';
+                // The channel the bot plays clips in == the host's voice channel here.
+                // Its live .members is what proxy actions check against.
+                game.voiceChannel = message.member.voice.channel;
                 game.initializePlayers();
                 message.channel.send(`🎧 **Starting!** Goal: **${game.settings.timelineGoal}** Tracks.`);
                 try {
@@ -307,7 +364,8 @@ async function executeTurn(game, bot, message, allTracks, client) {
         `🔊 **Playing your target song!** Where does this song belong?\n` +
         `*${displayPlayerName}: Type a slot number (e.g., \`1\` or \`2\`).*\n` +
         (isLocalTurn ? `*(Since ${displayPlayerName} is playing locally, anyone in the lobby can type the number for them!)*\n` : ``) +
-        `*Anyone: Type \`!bonus [artist|album|title] [guess]\` to risk points!*`;
+        `*Anyone: Type \`!bonus [artist|album|title] [guess]\` to risk points!*\n` +
+        `*Or use \`/hitster guess\` / \`/hitster bonus\` — add \`as:\` (a Discord user in the call) or \`local:\` (a local player) to act for someone else.*`;
 
     const turnMsg = await channel.send(baseMessageText);
     bot.songQueue.unshift({ key: targetObj.plexKey, title: "Secret Track", artist: "???" });
@@ -317,27 +375,94 @@ async function executeTurn(game, bot, message, allTracks, client) {
     const guessRegex = /^(\d+)$/;
     const bonusRegex = /^!bonus\s+(artist|album|title)\s+(.+)$/i;
     const localBonusRegex = /^!localbonus\s+([a-zA-Z0-9_]+)\s+(artist|album|title)\s+(.+)$/i;
+    const TURN_TIMEOUT_MS = 10 * 60 * 1000;
+
+    // Shared turn engine. The !-text collector and the /hitster guess|bonus slash
+    // commands both resolve+authorize an actor, then call applyGuess/applyBonus,
+    // so the two input surfaces stay in lockstep.
+    const turn = {
+        currentPlayerId, isLocalTurn, targetObj, correctSlot,
+        turnBonuses: {}, bonusRecap: [], revealedText: '',
+        guessedCorrectly: false, resolved: false,
+        collector: null,
+    };
+
+    // Place a slot guess for the current player and end the turn. reactMsg is an
+    // optional Discord message to ✅/❌ (text path); the slash path passes null and
+    // replies from the returned result.
+    turn.applyGuess = function(slot, reactMsg) {
+        if (turn.resolved) return { ok: false, reason: 'The turn is already over.' };
+        turn.guessedCorrectly = (parseInt(slot, 10) === correctSlot);
+        if (reactMsg) reactMsg.react(turn.guessedCorrectly ? '✅' : '❌').catch(() => {});
+        if (turn.collector) turn.collector.stop('guessed');
+        return { ok: true, correct: turn.guessedCorrectly };
+    };
+
+    // Credit/debit a bonus wager to playerId. Mutates score + recap + the pinned
+    // turn message; returns a structured result each surface presents itself.
+    turn.applyBonus = function(playerId, type, guess) {
+        if (turn.resolved) return { ok: false, reason: 'The turn is already over.' };
+        const dispName = playerId.startsWith('local:') ? `**${game.localPlayers[playerId]}**` : `<@${playerId}>`;
+        if (!turn.turnBonuses[playerId]) turn.turnBonuses[playerId] = {};
+        if (turn.turnBonuses[playerId][type]) {
+            return { ok: false, reason: `${dispName} already wagered on the **${type}** for this track!` };
+        }
+        turn.turnBonuses[playerId][type] = true;
+
+        const correct = hitsterTurn.isBonusCorrect(targetObj, type, guess);
+        if (correct) {
+            game.scores[playerId] = (game.scores[playerId] || 0) + game.settings.bonusValue;
+            turn.bonusRecap.push(`🟢 ${dispName}: +${game.settings.bonusValue} pt (${type})`);
+            turn.revealedText += `\n> **${type.charAt(0).toUpperCase() + type.slice(1)}:** *${targetObj[type] || 'Unknown'}* (Guessed by ${dispName})`;
+            turnMsg.edit(baseMessageText + `\n\n🔍 **Revealed Details:**${turn.revealedText}`).catch(e => logger.error('hitster edit failed:', e));
+        } else {
+            game.scores[playerId] = (game.scores[playerId] || 0) - game.settings.bonusValue;
+            turn.bonusRecap.push(`🔴 ${dispName}: -${game.settings.bonusValue} pt (wrong ${type})`);
+        }
+        return { ok: true, correct, dispName };
+    };
+
+    // Slash entry points: resolve the on-behalf-of target and apply the VC-gated
+    // proxy rule before touching the engine.
+    turn.submitGuessSlash = function(actorId, sel, slot) {
+        const target = hitsterTurn.resolveTarget(game, sel);
+        if (target.kind === 'invalid') return { ok: false, reason: target.reason };
+        const anchored = target.kind === 'self' ? { kind: 'self', id: actorId } : target;
+        const targetId = target.kind === 'self' ? actorId : target.id;
+        if (targetId !== currentPlayerId) {
+            return { ok: false, reason: `It's ${displayPlayerName}'s turn — you can only guess for them.` };
+        }
+        const auth = hitsterTurn.canProxy(game, actorId, anchored);
+        if (!auth.ok) return { ok: false, reason: auth.reason };
+        return turn.applyGuess(slot, null);
+    };
+
+    turn.submitBonusSlash = function(actorId, sel, type, guess) {
+        const target = hitsterTurn.resolveTarget(game, sel);
+        if (target.kind === 'invalid') return { ok: false, reason: target.reason };
+        const anchored = target.kind === 'self' ? { kind: 'self', id: actorId } : target;
+        const targetId = target.kind === 'self' ? actorId : target.id;
+        const auth = hitsterTurn.canProxy(game, actorId, anchored);
+        if (!auth.ok) return { ok: false, reason: auth.reason };
+        return turn.applyBonus(targetId, type, guess);
+    };
 
     const gameFilter = m => {
         const text = m.content.trim();
-
         if (guessRegex.test(text)) {
-            if (m.author.id === currentPlayerId) return true; // Real player turn
-            if (isLocalTurn && game.lobby.has(m.author.id)) return true; // Local turn: allow any lobby member to proxy
+            if (m.author.id === currentPlayerId) return true; // current player guessing for themselves
+            if (isLocalTurn && game.lobby.has(m.author.id)) return true; // local turn: any lobby member proxies
         }
         if (bonusRegex.test(text) && game.lobby.has(m.author.id)) return true;
         if (localBonusRegex.test(text) && game.lobby.has(m.author.id)) return true;
         return false;
     };
 
-    // Bound the per-turn collector so an abandoned channel (host leaves, channel
-    // goes quiet) can't keep the closure over allTracks/game/targetObj alive.
-    const TURN_TIMEOUT_MS = 10 * 60 * 1000;
+    // Bound the collector so an abandoned channel can't keep the closure over
+    // allTracks/game/targetObj alive forever.
     const collector = channel.createMessageCollector({ filter: gameFilter, time: TURN_TIMEOUT_MS });
-    let guessedCorrectly = false;
-    let turnBonuses = {};
-    let bonusRecap = [];
-    let revealedText = "";
+    turn.collector = collector;
+    game.activeTurn = turn;
 
     collector.on('collect', m => {
         const text = m.content.trim();
@@ -346,65 +471,48 @@ async function executeTurn(game, bot, message, allTracks, client) {
         const localBonusMatch = text.match(localBonusRegex);
 
         if (slotMatch) {
-            if (parseInt(slotMatch[1]) === correctSlot) {
-                guessedCorrectly = true;
-                m.react('✅');
-            } else {
-                m.react('❌');
-            }
-            collector.stop();
+            turn.applyGuess(slotMatch[1], m);
         } else if (bonusMatch || localBonusMatch) {
-            let type, guess, userId, dispName;
-
+            let playerId, type, guess;
             if (localBonusMatch) {
-                const requestedLocalName = localBonusMatch[1].toLowerCase();
-                userId = `local:${requestedLocalName}`;
+                playerId = `local:${localBonusMatch[1].toLowerCase()}`;
                 type = localBonusMatch[2].toLowerCase();
                 guess = localBonusMatch[3];
-
-                if (!game.localPlayers[userId]) {
+                if (!game.localPlayers[playerId]) {
                     return m.reply(`❌ Local player **${localBonusMatch[1]}** is not in this game!`);
                 }
-                dispName = `**${game.localPlayers[userId]}**`;
             } else {
+                playerId = m.author.id;
                 type = bonusMatch[1].toLowerCase();
                 guess = bonusMatch[2];
-                userId = m.author.id;
-                dispName = `<@${userId}>`;
             }
-
-            if (!turnBonuses[userId]) turnBonuses[userId] = {};
-            if (turnBonuses[userId][type]) return m.reply(`${dispName} already wagered on the **${type}** for this track!`);
-            turnBonuses[userId][type] = true;
-
-            let isCorrect = false;
-            if (type === 'artist' && targetObj.artist && cleanString(targetObj.artist).includes(cleanString(guess))) isCorrect = true;
-            if (type === 'title' && targetObj.title && cleanString(targetObj.title).includes(cleanString(guess))) isCorrect = true;
-            if (type === 'album' && targetObj.album && cleanString(targetObj.album).includes(cleanString(guess))) isCorrect = true;
-
-            if (isCorrect) {
-                game.scores[userId] += game.settings.bonusValue;
-                m.react('✅');
-                bonusRecap.push(`🟢 ${dispName}: +${game.settings.bonusValue} pt (${type})`);
-                revealedText += `\n> **${type.charAt(0).toUpperCase() + type.slice(1)}:** *${targetObj[type] || "Unknown"}* (Guessed by ${dispName})`;
-                turnMsg.edit(baseMessageText + `\n\n🔍 **Revealed Details:**${revealedText}`).catch(e => logger.error('hitster edit failed:', e));
-            } else {
-                game.scores[userId] -= game.settings.bonusValue;
-                m.react('❌');
-                bonusRecap.push(`🔴 ${dispName}: -${game.settings.bonusValue} pt (wrong ${type})`);
-            }
+            const res = turn.applyBonus(playerId, type, guess);
+            if (!res.ok) return m.reply(res.reason);
+            m.react(res.correct ? '✅' : '❌').catch(() => {});
         }
     });
 
-    collector.on('end', (collected, reason) => {
-        // Turn timed out with no guess — terminate the game rather than recursing
-        // into another turn that no one is watching.
+    collector.on('end', (collected, reason) => resolveTurn(reason));
+
+    function resolveTurn(reason) {
+        if (turn.resolved) return;
+        turn.resolved = true;
+        game.activeTurn = null;
+
+        // Turn timed out with no guess — terminate rather than recursing into a
+        // turn no one is watching.
         if (reason === 'time' || reason === 'idle') {
             channel.send(`⏳ **Hitster turn timed out** — no guess in ${TURN_TIMEOUT_MS / 60000} minutes. Game ended.`).catch(() => {});
             activeGames.delete(game.channelId);
             if (bot.isPlaying) bot.stop();
             return;
         }
+        // Host/admin ended the game elsewhere; just make sure the clip is stopped.
+        if (reason === 'stopped') {
+            if (bot.isPlaying) bot.stop();
+            return;
+        }
+
         if (bot.isPlaying) bot.stop();
         let resultText = `🕰️ **Turn Over!** The track was:\n📅 **${targetObj.year}** - *${targetObj.title}* by ${targetObj.artist} (Album: *${targetObj.album || "Unknown"}*)\n\n`;
 
@@ -415,7 +523,7 @@ async function executeTurn(game, bot, message, allTracks, client) {
             stats[currentPlayerId] = { wins: 0, highestStreak: 0, bonusPoints: 0, username: uname };
         }
 
-        if (guessedCorrectly) {
+        if (turn.guessedCorrectly) {
             resultText += `🎉 **Correct!** Adding it to the timeline.\n`;
             game.timelines[currentPlayerId].push(targetObj);
             game.timelines[currentPlayerId].sort((a, b) => a.year - b.year);
@@ -432,7 +540,7 @@ async function executeTurn(game, bot, message, allTracks, client) {
             game.currentStreaks[currentPlayerId] = 0;
         }
 
-        if (bonusRecap.length > 0) resultText += `\n**Bonus Action Recap:**\n${bonusRecap.join('\n')}\n`;
+        if (turn.bonusRecap.length > 0) resultText += `\n**Bonus Action Recap:**\n${turn.bonusRecap.join('\n')}\n`;
 
         if (game.timelines[currentPlayerId].length >= game.settings.timelineGoal) {
             game.state = 'finished';
@@ -458,6 +566,9 @@ async function executeTurn(game, bot, message, allTracks, client) {
 
         saveStats(stats);
         channel.send(resultText);
-        setTimeout(() => { game.nextTurn(); executeTurn(game, bot, message, allTracks, client); }, 3000);
-    });
+        setTimeout(() => {
+            game.nextTurn();
+            executeTurn(game, bot, message, allTracks, client).catch(err => logger.error('hitster turn failed:', err));
+        }, 3000);
+    }
 }
