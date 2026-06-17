@@ -118,6 +118,8 @@ module.exports = {
             subcommands: [
                 { name: 'create',   description: 'Start a new Hitster lobby in this channel', options: [] },
                 { name: 'join',     description: 'Join the current Hitster lobby', options: [] },
+                { name: 'join-for', description: 'Add another Discord user in your voice channel to the lobby',
+                  options: [{ name: 'user', type: 'USER', description: 'Someone in your voice channel who can\'t type', required: true }] },
                 { name: 'add',      description: 'Add a local (in-person) player to the lobby',
                   options: [{ name: 'name', type: 'STRING', description: 'Local player name', required: true }] },
                 { name: 'start',    description: 'Begin the game (host only)', options: [] },
@@ -243,6 +245,27 @@ module.exports = {
                 return message.reply(`🎵 <@${message.author.id}> joined!`);
             }
 
+            if (commandArg === 'join-for') {
+                if (!activeGames.has(channelId)) return message.reply("No active lobby. Type `/hitster create` to make one.");
+                const game = activeGames.get(channelId);
+                if (game.state !== 'lobby') return message.reply("Game already started!");
+
+                const target = message.interaction ? message.interaction.options.getUser('user') : message.mentions.users.first();
+                if (!target) return message.reply("Tell me who to add — mention a user or use the `user:` option.");
+
+                // Lobby phase has no game voice channel yet, so gate on the adder's
+                // current channel — that's what becomes the game VC at start.
+                const actorVc = message.member && message.member.voice && message.member.voice.channel;
+                if (!actorVc) return message.reply("You must be in a voice channel to add someone for them.");
+                if (!actorVc.members.has(target.id)) {
+                    return message.reply(`<@${target.id}> isn't in your voice channel — you can only add someone who's in the call.`);
+                }
+                if (game.lobby.has(target.id)) return message.reply(`<@${target.id}> is already in the lobby.`);
+
+                game.addPlayer(target.id);
+                return message.channel.send(`🎵 <@${target.id}> was added to the Hitster lobby by <@${message.author.id}>!`);
+            }
+
             if (commandArg === 'add') {
                 if (!activeGames.has(channelId)) return message.reply("No active lobby.");
                 const game = activeGames.get(channelId);
@@ -316,6 +339,7 @@ if (commandArg === 'stop') {
                     `> • Correct steals award **+${game.settings.bonusValue}** points. Incorrect steals subtract **-${game.settings.bonusValue}** points.\n\n` +
                     `**⚙️ Lobby Commands:**\n` +
                     `> • \`!hitster join\` - Join the game via Discord.\n` +
+                    `> • \`!hitster join-for [@user]\` - Add someone in your voice channel who can't type.\n` +
                     `> • \`!hitster add [Name]\` - Add a local player to your device (e.g., \`!hitster add Lisa\`).\n` +
                     `> • \`!hitster set [goal|clip|bonus] [number]\` - Change settings (Host only).\n` +
                     `> • \`!hitster stats\` - View the server leaderboard.\n` +
