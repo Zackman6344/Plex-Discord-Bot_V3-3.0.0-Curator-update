@@ -404,8 +404,18 @@ class Bot extends EventEmitter{
 	}
 
 	stop() {
-		this.conn.disconnect();
-		this.dispatcher.stop();
+		// destroy() (not disconnect()) so discord.js drops the connection from its
+		// per-guild registry. A disconnect()-ed connection lingers in a half-dead
+		// state; the next joinVoiceChannel returns that corpse, entersState(Ready)
+		// waits 30s, then aborts with an AbortError that surfaces as an unhandled
+		// rejection. Nulling this.conn forces a fresh connection next play.
+		if (this.conn) {
+			try { this.conn.destroy(); } catch (_) {}
+			this.conn = null;
+		}
+		if (this.dispatcher) {
+			try { this.dispatcher.stop(); } catch (_) {}
+		}
 	}
 	/**
 	 *
@@ -588,7 +598,8 @@ class Bot extends EventEmitter{
 	async playbackCompletion(message) {
 		if(!this.isPlaying) {
 			if(this.conn){
-					await this.conn.disconnect();
+					try { this.conn.destroy(); } catch (_) {}
+					this.conn = null;
 			}
 			if(this.voiceChannel) {
 					//await this.voiceChannel.leave();
