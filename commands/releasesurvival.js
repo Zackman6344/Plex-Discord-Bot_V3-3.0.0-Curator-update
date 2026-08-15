@@ -33,8 +33,23 @@ module.exports = {
         slash: {
             description: 'Rapid-fire higher-or-lower release year game',
             subcommands: [
-                { name: 'game', description: 'Start a new game', options: [] },
-                { name: 'leaderboard', description: 'View the leaderboard', options: [] }
+                { name: 'start', description: 'Start a new run', options: [
+                    { name: 'category', type: 'STRING', description: 'What to guess release years for', required: true,
+                      choices: [
+                        { name: 'Movies', value: 'movies' },
+                        { name: 'Shows',  value: 'shows'  },
+                        { name: 'Albums', value: 'albums' }
+                      ] }
+                ] },
+                { name: 'leaderboard', description: 'View the leaderboard', options: [
+                    { name: 'category', type: 'STRING', description: 'Narrow to one category (default: all)', required: false,
+                      choices: [
+                        { name: 'Movies', value: 'movies' },
+                        { name: 'Shows',  value: 'shows'  },
+                        { name: 'Albums', value: 'albums' }
+                      ] }
+                ] },
+                { name: 'stop', description: 'Abandon your current run', options: [] }
             ]
         },
         process: async function(...args) {

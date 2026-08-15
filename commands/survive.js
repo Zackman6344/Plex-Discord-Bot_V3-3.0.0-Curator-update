@@ -15,7 +15,20 @@ module.exports = {
         usage: '!survive',
         description: 'Open the Main Menu for the Survive the Scene campaign.',
         slash: {
-            description: 'Interactive text-adventure based on a movie plot'
+            description: 'Interactive text-adventure based on a movie plot',
+            subcommands: [
+                { name: 'start', description: 'Drop into a scene and try to survive it', options: [
+                    { name: 'difficulty', type: 'STRING', description: 'How many scenes you have to survive (default: easy)', required: false,
+                      choices: [
+                        { name: 'Easy — 1 scene', value: 'easy' },
+                        { name: 'Medium — 2 scenes', value: 'medium' },
+                        { name: 'Hard — 3 scenes', value: 'hard' },
+                        { name: 'Expert — 4 scenes', value: 'expert' },
+                        { name: 'Nightmare — 5 scenes', value: 'nightmare' }
+                      ] }
+                ] },
+                { name: 'menu', description: 'Show the rules and difficulty list', options: [] }
+            ]
         },
         process: async function(...args) {
             let msg = null;

@@ -6,13 +6,7 @@ module.exports = {
 
     slash: {
 
-        description: "Search the Plex library for a song",
-
-        options: [
-
-            { name: "query", type: "STRING", description: "Song title or artist", required: true }
-
-        ]
+        description: "Show the song that's playing right now"
 
     },
     process: function(bot, client, message) {
