@@ -13,6 +13,7 @@ A multipurpose Discord bot designed to integrate your Plex media server with you
 - *(Optional)* A **Gemini API key** — required for any AI command (`!trivia`, `!curator`, `!vibe`, `!identify`, `!quest`, `!hitster`, etc.). Without it, music and basic Plex commands still work; AI commands will fail at the API call.
 - *(Optional)* A running [**Tautulli**](https://tautulli.com/) instance for `!stats`.
 - *(Optional)* A **Playnite HTTP server** on the host PC for `!game`, `!launch`, `!backlog`, and the gaming-history half of `!profile`.
+- *(Optional)* [**Kometa**](https://kometa.wiki/) and/or Playnite on the host PC for the automated broadcasts described in **Broadcasts & autostart** below.
 
 Some features cost money to use (Gemini API beyond the free tier). Non-AI features don't. If you find the bot referencing my specific media library somewhere, open an issue so I can pull it out.
 
@@ -76,7 +77,27 @@ module.exports = {
   'playniteEnabled' : false,               // toggle Playnite integration
   'tautulliEnabled' : false,               // toggle Tautulli integration
   'tautulliApiKey'  : '',
-  'tautulliUrl'     : ''                   // e.g. http://localhost:8181
+  'tautulliUrl'     : '',                  // e.g. http://localhost:8181
+
+  // --- Automated broadcasts (Kometa runs + Playnite game launches) — see below ---
+  'broadcastChannelId'  : '',              // fallback channel used when the two below are blank
+  'kometaChannelId'     : '',              // Kometa run announcements (falls back to broadcastChannelId)
+  'gameLaunchChannelId' : '',              // game-launch announcements (falls back to broadcastChannelId)
+  'eventServerEnabled'  : false,           // localhost listener for Kometa/Playnite pushes
+  'eventServerPort'     : 8799,
+  'eventServerToken'    : '',              // optional ?token= shared secret
+  'broadcastKometa'        : true,         // Kometa run summaries (start/end/error)
+  'broadcastKometaChanges' : true,         // live per-collection updates during a run
+  'kometaChangesMinAdds'   : 1,            // only report a collection that grew by ≥ N
+  'broadcastGameLaunch'    : true,         // game launches via the Playnite script
+  'gamePresenceEnabled'    : false,        // detect games via Discord activity (needs Presence Intent)
+  'broadcastStartup'       : true,         // post "System has started" on boot (single channel)
+
+  // Kometa Theater (silly mode) — see below
+  'kometaTheaterEnabled'   : false,
+  'kometaLogPath'          : 'C:/Users/zackm/Kometa/config/logs/meta.log',
+  'kometaTheaterModel'     : '',           // fast Gemini model; blank = the default model
+  'kometaTheaterDelayMs'   : 5000          // pacing between in-character "transmissions"
 };
 ```
 
@@ -87,6 +108,134 @@ node index.js
 ```
 
 The console needs to stay open for the bot to keep running. The Docker setup in this repo uses Node 20.
+
+### Editing settings from Discord
+
+Once the bot is running and you've set `ownerId`, you (the owner) can change most `config.js`
+settings without touching files: run **`/config`** (or `!config`). It opens a private panel —
+pick a setting from the dropdown, then a pop-up modal (for text/numbers) or Enable/Disable
+buttons (for toggles). Changes save instantly and **persist across restarts**.
+
+- Saves are written to `data/config.overrides.json`, which is layered over the defaults in
+  `config/config.js` on every boot. Delete that file to reset everything back to the file
+  defaults.
+- Most settings take effect immediately. Two are marked **(restart)** in the panel —
+  `eventServerEnabled` and `eventServerPort` — because the event listener is bound once at boot.
+- Discord/Gemini/Plex tokens (in `config/keys.js` and `config/plex.js`) are **not** editable
+  from Discord by design; edit those files directly.
+- If `ownerId` is still blank, `/config` runs in a one-time bootstrap mode so you can set the
+  owner from Discord; after that it's owner-only.
+
+## 📢 Broadcasts & autostart
+
+Three optional conveniences for a Windows host that runs the bot alongside **Kometa** and **Playnite**:
+
+1. **Announce when Kometa finishes a run.**
+2. **Announce when a game is launched** on the PC (with the game's cover art), via Playnite.
+3. **Auto-start the bot at login.**
+
+The first two share one small **localhost-only** HTTP listener the bot opens when
+`eventServerEnabled` is `true` (bound to `127.0.0.1` — never reachable from another machine).
+Kometa and Playnite push events to it; the bot posts an embed to `broadcastChannelId`.
+
+**1. Turn it on.** In `config/config.js`, set the broadcast channel(s) — right-click a channel
+with Discord Developer Mode on → *Copy Channel ID*. Use `kometaChannelId` and
+`gameLaunchChannelId` to send each broadcast type to its own channel, or just set
+`broadcastChannelId` to send both to one place (it's the fallback for whichever specific one you
+leave blank). Then flip `eventServerEnabled` to `true` and optionally set an `eventServerToken`
+(a made-up secret). Restart the bot — the boot health check / `!diag` will show
+`EventServer: listening on 127.0.0.1:8799`. (You can also set these later from Discord with
+`/config`.)
+
+On every boot the bot posts a **"System has started"** card to each assigned broadcast channel
+(showing the event-listener status and which broadcasts are enabled) so you can confirm it's live
+— turn this off with `broadcastStartup: false` if you don't want a message on each restart.
+
+You can smoke-test the listener without Kometa/Playnite:
+
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:8799/kometa?token=YOUR_TOKEN" -Method Post `
+  -ContentType application/json `
+  -Body '{"event":"run_end","run_time":"00:14","collections_modified":3,"items_added":42}'
+```
+
+**2. Point Kometa at it.** In Kometa's `config.yml`:
+
+```yaml
+settings:
+  webhooks:
+    run_end: http://127.0.0.1:8799/kometa?token=YOUR_TOKEN
+    error:   http://127.0.0.1:8799/kometa?token=YOUR_TOKEN
+    changes: http://127.0.0.1:8799/kometa?token=YOUR_TOKEN   # live per-collection updates
+```
+
+(Drop the `?token=...` if you left `eventServerToken` blank.)
+
+The `changes` webhook is what powers the **live, as-it-runs updates**: during a run, Kometa fires
+one per collection that changes, and the bot posts a card when a collection is **created**, **grows**
+(by at least `kometaChangesMinAdds` items), or has items **requested for the server** (Radarr/Sonarr
+adds — Kometa's "recommendations to add"). Each card lists the added titles and the collection
+poster. On a big first run this can be chatty — raise `kometaChangesMinAdds` (or turn off
+`broadcastKometaChanges`) to quiet it down. Run summaries (`run_end`) and live changes toggle
+independently.
+
+**3. Point Playnite at it.** In Playnite: *Main menu → Settings… → Scripts*, set the language
+selector to **PowerShell**, and paste the body of [`scripts/playnite-game-start.ps1`](scripts/playnite-game-start.ps1)
+into the **"Execute script after starting a game"** box. Edit the `$port` / `$token` at the top
+to match your config. **Note:** this only fires for games launched *through Playnite* — a game
+started directly from Steam won't trigger it. For launcher-agnostic detection, use the presence
+option below.
+
+**Game-launch detection — two options.** There are two ways to broadcast game launches; use either
+or both:
+
+- **Playnite script** (`broadcastGameLaunch`, above) — richest card (cover art, store, platform),
+  but only for games launched *through Playnite*.
+- **Discord activity** (`gamePresenceEnabled`) — the bot watches your Discord "Playing X" status
+  and posts when you start a game on **any** launcher (Steam, Playnite, Epic, …). This is usually
+  what you want if you launch games straight from Steam. It requires two one-time steps:
+  1. In the [Discord Developer Portal](https://discord.com/developers/applications) → your app →
+     **Bot** → enable the **Presence Intent** (a "Privileged Gateway Intent").
+  2. On your own Discord client: **Settings → Activity Privacy →** turn on *"Share your detected
+     activities with others"* (and make sure game activity is being detected).
+
+  Then set `gamePresenceEnabled: true` and **restart** the bot (the intent is chosen at startup).
+  Game-launch broadcasts go to `gameLaunchChannelId`. If you enable *both* methods, a Playnite
+  launch may post twice — pick one if that bugs you.
+
+**4. Auto-start at login.** From your **main install directory** (not a worktree), run once:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install-startup-shortcut.ps1
+```
+
+This drops a shortcut in your Startup folder that launches the bot hidden (via
+`scripts/start-bot.vbs`, logging to `bot.log`) each time you log in. Node must be on your PATH
+(it is after a standard Node install). To undo it, run `scripts\uninstall-startup-shortcut.ps1`.
+
+### 🎭 Kometa Theater (silly mode)
+
+An optional, for-fun mode that **narrates a Kometa run in-character** instead of posting factual
+change cards. As Kometa works, each collection reports to the server with its own themed
+personality, paced deliberately on Discord's side (Kometa itself is never slowed).
+
+- **Each collection has its own persona**, seeded from its name (every rating tier, every Cage
+  collection, etc. is distinct), minted once via a fast Gemini model and remembered.
+- A collection that is **brand-new *and* gained items** comes alive and introduces itself; a
+  collection the bot already knows **reports in** every run (commenting on any additions/removals).
+- A collection that's **unseen *and* gained nothing** is just **garbled static** — an unidentified
+  signal. (No Gemini spent on those.)
+- **No cap** — it's bounded only by how many collections Kometa processes.
+
+**How it works:** it tails Kometa's `meta.log` for per-collection coverage (that's why it can see
+even the unchanged ones) and uses your `changes` webhooks for the add/remove detail, posting to your
+`kometaChannelId`. It **replaces** the factual `changes` cards while on.
+
+**Turn it on:** set `kometaTheaterEnabled: true`, point `kometaLogPath` at your Kometa log, and set
+`kometaTheaterModel` to a fast model your Gemini key can use (blank keeps the default). Restart the
+bot. `kometaTheaterDelayMs` tunes the pace. Heads-up: it reads Kometa's *log wording*, so a future
+Kometa version could change the format — it degrades gracefully (fewer lines) and never crashes the
+bot, but may need a tweak.
 
 ## 📚 Command Directory
 
@@ -129,7 +278,8 @@ Type any command by itself (e.g. `!hitster`, `!playlist`) to open its specific m
 
 ### 🛠️ Owner / Admin commands
 
-- `!diag` *(alias: `!plextest`)* — Full diagnostic: Plex, Gemini, Tautulli, Playnite. Bot also runs this every 15 minutes in the background and DMs the owner (if `ownerId` is set) on any status transition.
+- `!config` *(best as `/config`)* — Owner-only settings wizard. Opens a private panel to view and change most `config.js` settings from inside Discord (prefix, server name, integration toggles, broadcast settings, etc.). See **Editing settings from Discord** below.
+- `!diag` *(alias: `!plextest`)* — Full diagnostic: Plex, Gemini, Tautulli, Playnite, event server. Bot also runs this every 15 minutes in the background and DMs the owner (if `ownerId` is set) on any status transition.
 - `!stats` — Combined Plex (via Tautulli) + Playnite statistics.
 - `!profile` — AI-generated D&D character sheet based on your gaming history.
 - `!game [title]` — Search the host's game library and show metadata.

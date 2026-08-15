@@ -6,6 +6,7 @@ const ytdl = require('@distube/ytdl-core');
 const config = require('../config/config');
 const logger = require('../helpers/logger.js');
 const { getPlex } = require('../helpers/plexClient.js');
+const playbackButtons = require('../helpers/playbackButtons.js');
 const { Readable } = require('stream');
 const {
 	NoSubscriberBehavior,
@@ -496,7 +497,7 @@ class Bot extends EventEmitter{
 				this.dispatcher.on(AudioPlayerStatus.Playing, () => {
 					if(!this.songQueue[0].played) {
 						let embedObj = this.songToEmbedObject(this.songQueue[0]);
-						message.channel.send({ content: language.BOT_PLAYSONG_SUCCES, embeds: [embedObj] });
+						message.channel.send({ content: language.BOT_PLAYSONG_SUCCES, embeds: [embedObj], components: [playbackButtons.buildRow(this)] });
 					}
 				});
 				this.dispatcher.on('error', (err) => {

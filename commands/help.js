@@ -88,7 +88,8 @@ module.exports = {
                     `> \`${prefix}stats\` — Combined Plex + Playnite + Tautulli statistics.\n\n` +
 
                     '**📊 ADMIN / DIAGNOSTIC**\n' +
-                    `> \`${prefix}diag\` *(alias \`${prefix}plextest\`)* — Full health check across Plex, Gemini, Tautulli, Playnite.\n` +
+                    `> \`${prefix}config\` *(owner-only; best as \`/config\`)* — Change bot settings from Discord.\n` +
+                    `> \`${prefix}diag\` *(alias \`${prefix}plextest\`)* — Full health check across Plex, Gemini, Tautulli, Playnite, event server.\n` +
                     `> \`${prefix}help\` *(alias \`${prefix}?\`)* — This menu.\n` +
                     `> \`${prefix}restart\` — Restart the bot process.\n\n` +
 

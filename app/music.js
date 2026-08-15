@@ -3,13 +3,27 @@ module.exports = function(client, bot) {
   const plexCommands = require('../commands');
   const logger = require('../helpers/logger.js');
   const { startHealthMonitor } = require('../helpers/healthMonitor.js');
+  const { startEventServer } = require('../helpers/eventServer.js');
+  const { startGamePresence } = require('../helpers/gamePresence.js');
+  const { startKometaTheater } = require('../helpers/kometaTheater.js');
+  const broadcast = require('../helpers/broadcast.js');
   const slashRegistry = require('../helpers/slashRegistry.js');
   const { adaptInteraction } = require('../helpers/interactionAdapter.js');
+  const { MessageFlags } = require('discord.js');
+  const playbackButtons = require('../helpers/playbackButtons.js');
 
   // when bot is ready
   client.once('clientReady', async function() {
     logger.info(`Bot ready — logged in as ${client.user.tag}`);
     startHealthMonitor(client);
+    // Inbound listener for Kometa run + Playnite game-launch pushes. No-op unless enabled.
+    startEventServer(client);
+    // Broadcast games detected via Discord activity ("Playing X"). No-op unless enabled.
+    startGamePresence(client);
+    // "Kometa Theater" — narrate runs in-character by tailing meta.log. No-op unless enabled.
+    startKometaTheater(client);
+    // Announce boot to the broadcast channel so it's easy to confirm the bot is live.
+    broadcast.broadcastStartup(client).catch((err) => logger.error('Startup broadcast failed:', err.message || err));
     // Slash command registration: commands declaring a `slash` block in commands/index.js
     // get registered with Discord on each boot. Fast in test-guild mode, slow globally.
     try {
@@ -74,6 +88,17 @@ module.exports = function(client, bot) {
       return;
     }
 
+    // Button clicks coming off the now-playing playback row. Owned by
+    // helpers/playbackButtons.js; falls through if the customId isn't ours.
+    if (interaction.isButton && interaction.isButton()) {
+      try {
+        await playbackButtons.handle(interaction, bot, client, plexCommands);
+      } catch (err) {
+        logger.error('Button dispatch threw:', err.message || err);
+      }
+      return;
+    }
+
     if (!interaction.isChatInputCommand || !interaction.isChatInputCommand()) return;
 
     const name = interaction.commandName;
@@ -84,7 +109,9 @@ module.exports = function(client, bot) {
     }
 
     try {
-      await interaction.deferReply();
+      // Commands can opt into a private (ephemeral) response via `slash.ephemeral` — used by
+      // /config so the settings panel isn't posted for the whole channel to see.
+      await interaction.deferReply(cmd.slash.ephemeral ? { flags: MessageFlags.Ephemeral } : undefined);
     } catch (err) {
       logger.error(`Failed to defer interaction for /${name}:`, err.message || err);
       return;

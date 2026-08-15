@@ -12,19 +12,26 @@ function start(){
     const logger = require('../helpers/logger.js');
     // my keys ---------------------------------------------------------------------
     var keys = require('../config/keys.js');
+    var config = require('../config/config.js');
 
     // discord client --------------------------------------------------------------
 
+    const intents = [
+       GatewayIntentBits.Guilds,
+       GatewayIntentBits.GuildMessages,
+       GatewayIntentBits.GuildVoiceStates,
+       GatewayIntentBits.MessageContent,
+       GatewayIntentBits.DirectMessages // <-- Allows the bot to receive DMs
+    ];
+    // Game-presence detection needs the privileged GuildPresences intent. Only request it when the
+    // feature is enabled — otherwise Discord rejects login with "Used disallowed intents" for bots
+    // that haven't turned the Presence Intent on in the developer portal.
+    if (config.gamePresenceEnabled) intents.push(GatewayIntentBits.GuildPresences);
+
     const client = new Client({
-       intents: [
-          GatewayIntentBits.Guilds,
-          GatewayIntentBits.GuildMessages,
-          GatewayIntentBits.GuildVoiceStates,
-          GatewayIntentBits.MessageContent,
-          GatewayIntentBits.DirectMessages // <-- ADDED: Allows the bot to receive DMs
-       ],
+       intents,
        partials: [
-          Partials.Channel, // <-- ADDED: Forces the bot to listen to uncached DM channels
+          Partials.Channel, // <-- Forces the bot to listen to uncached DM channels
           Partials.Message
        ]
     });

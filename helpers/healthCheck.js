@@ -7,6 +7,7 @@ const config = require('../config/config.js');
 const { getPlex } = require('./plexClient.js');
 const tautulli = require('./tautulliAPI.js');
 const playnite = require('./playniteAPI.js');
+const eventServer = require('./eventServer.js');
 
 // status values: 'ok' | 'error' | 'missing' | 'disabled'
 
@@ -89,6 +90,17 @@ async function checkPlaynite() {
     return { status: 'error', detail: 'Unexpected response from Playnite' };
 }
 
+function checkEventServer() {
+    const s = eventServer.getStatus();
+    if (!s.enabled) {
+        return { status: 'disabled', detail: 'eventServerEnabled is false in config/config.js' };
+    }
+    if (s.listening) {
+        return { status: 'ok', detail: `listening on 127.0.0.1:${s.port} (Kometa + Playnite pushes)` };
+    }
+    return { status: 'error', detail: `enabled but not listening on :${s.port} (port in use?)` };
+}
+
 async function runHealthCheck() {
     const [plex, tautulliRes, playniteRes] = await Promise.all([
         checkPlex(),
@@ -101,7 +113,8 @@ async function runHealthCheck() {
         plex,
         gemini: checkGemini(),
         tautulli: tautulliRes,
-        playnite: playniteRes
+        playnite: playniteRes,
+        eventServer: checkEventServer()
     };
 }
 
