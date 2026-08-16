@@ -38,6 +38,10 @@ When you run `node index.js`:
 6. Installs `SIGTERM` / `SIGINT` handlers for graceful shutdown.
 7. Calls `client.login(keys.botToken)`. Discord login is async.
 8. On `clientReady` (Discord ready), `app/music.js` calls `startHealthMonitor(client)`, which runs an initial health check and schedules re-checks every 15 minutes.
+9. Still on `clientReady`, `app/music.js` calls `startEventServer(client)` (`helpers/eventServer.js`). When `config.eventServerEnabled` is true it opens a localhost-only HTTP listener that relays Kometa run + Playnite game-launch pushes to the broadcast channel; otherwise it logs "disabled" and no-ops.
+10. Then `app/music.js` calls `startGamePresence(client)` (`helpers/gamePresence.js`) — when `config.gamePresenceEnabled` is true it subscribes to `presenceUpdate` and broadcasts games the owner starts (detected via Discord activity). No-op otherwise. The `GuildPresences` intent it needs is added in `app/utils.js` only when the flag is on, so the default keeps login working.
+11. `app/music.js` calls `startKometaTheater(client)` (`helpers/kometaTheater.js`) — when `config.kometaTheaterEnabled` is true it starts tailing `config.kometaLogPath` to narrate Kometa runs in-character (and `broadcast.broadcastKometaRun` routes run boundaries + changes to it instead of factual cards). No-op otherwise.
+12. Finally `app/music.js` calls `broadcast.broadcastStartup(client)` — when `config.broadcastStartup` is true it posts a "System has started" card to a single channel (the general `broadcastChannelId`, else the first configured channel), confirming the bot is live and the listener is bound. No-op when the toggle is off or no channel is set.
 
 A clean boot looks like:
 ```
@@ -49,6 +53,7 @@ INFO  Boot health check:
   ✓ Gemini: API key present
   − Tautulli: disabled
   − Playnite: disabled
+  − EventServer: disabled
 INFO  Health monitor scheduled — re-checking every 15 minutes
 ```
 
@@ -122,6 +127,11 @@ Two signature styles coexist in the codebase:
 | `healthMonitor.js`         | Runs `runHealthCheck()` at boot + every 15 minutes. Logs status transitions and DMs the owner (if `config.ownerId` is set) on any change. |
 | `tautulliAPI.js`           | Wraps the Tautulli HTTP API. Currently exposes `getLibraryStats()`. Disabled unless `config.tautulliEnabled`.                          |
 | `playniteAPI.js`           | Wraps the local Playnite HTTP server (port 8787). Exposes `getLibrary()`, `searchGame(q)`, `launchGame(id)`, `getStats()`. Disabled unless `config.playniteEnabled`. |
+| `eventServer.js`           | Localhost-only inbound HTTP listener (`config.eventServerPort`, default 8799). `POST /kometa` and `POST /playnite/start` relay to the broadcast channel; `GET /health` is a ping. Optional `?token=` check. Disabled unless `config.eventServerEnabled`. See "Broadcasts" below. |
+| `broadcast.js`            | Builds + sends the broadcast embeds. Pure builders `buildKometaEmbed` / `buildKometaChangesEmbed` / `buildGameLaunchEmbed` / `buildGamePresenceEmbed` / `buildStartupEmbed` + `pickChannelId(type)` / `startupChannelId()` / `isNoteworthyChange(payload)` (all unit-tested); senders route Kometa → `kometaChannelId` and game launches → `gameLaunchChannelId` (each falling back to `broadcastChannelId`), gate `changes` events through the noteworthy filter, attach Playnite cover art, and swallow send failures. `broadcastStartup(client)` posts a boot confirmation to a single channel. |
+| `gamePresence.js`         | Launcher-agnostic game-launch detection via Discord activity. `startGamePresence(client)` watches `presenceUpdate` for the owner and broadcasts newly-started `Playing` games (pure `startedGames(prev, activities)` diff, unit-tested). No-op unless `config.gamePresenceEnabled` (which also gates the privileged `GuildPresences` intent in `app/utils.js`). |
+| `kometaTheater.js`        | "Silly mode" that narrates a Kometa run in-character. Tails `meta.log` for per-collection coverage (single-pattern `parseFinishedCollection`) + `changes` webhooks (fed via `onChanges`) for detail; a paced worker posts per-collection persona dialogue (fast Gemini, persisted per name) or garbled `buildStaticText` for unseen+unadded collections. Pure `parseFinishedCollection`/`normalizeName`/`classifyKind`/`buildStaticText` unit-tested. No-op unless `config.kometaTheaterEnabled`. See "Kometa Theater" below. |
+| `configStore.js`          | Backing store + schema for the `/config` wizard. Holds the editable `SETTINGS` list, pure `formatValue`/`validate` helpers (unit-tested), and `readOverrides`/`writeOverride`/`removeOverride`. Writes `data/config.overrides.json` and mutates the live config object so most changes apply without a restart. No discord.js. See "In-Discord config wizard" below. |
 | `aiGameRecommender.js`     | "Pick a game" AI helper. Uses centralized `getModel()`. Powers `!pickgame`.                                                            |
 | `aiCharacterMapper.js`     | Maps gaming/media habits to a D&D class. Uses centralized `getModel()`. Powers `!buildcharacter`.                                      |
 | `characterStorage.js`      | Persists character sheets to `data/characters.json`. Used by `!buildcharacter` and `!mysheet`.                                          |
@@ -135,11 +145,18 @@ Three files in `config/`. The two with secrets are **gitignored**; templates are
 
 | File                   | Tracked? | What it holds                                                              |
 | ---------------------- | -------- | -------------------------------------------------------------------------- |
-| `config/config.js`     | yes      | Feature flags + display strings: `commandPrefix`, `listenChannel`, `playlistsDir`, `serverName`, `ownerId`, `launchRoleId`, `playniteEnabled`, `tautulliEnabled` + `tautulliApiKey` + `tautulliUrl`, `language`, `youtube_quality`. |
+| `config/config.js`     | yes      | Feature flags + display strings: `commandPrefix`, `listenChannel`, `playlistsDir`, `serverName`, `ownerId`, `launchRoleId`, `playniteEnabled`, `tautulliEnabled` + `tautulliApiKey` + `tautulliUrl`, `language`, `youtube_quality`, plus the broadcast block (`broadcastChannelId`, `eventServerEnabled`, `eventServerPort`, `eventServerToken`, `broadcastKometa`, `broadcastGameLaunch`). |
 | `config/keys.js`       | **no**   | `botToken` (Discord) + `geminiApiKey` (Gemini). Copy from `keys.example.js`. |
 | `config/plex.js`       | **no**   | Plex `hostname`, `port`, `https`, `token` (the bot's default user), `homeOwnerToken` (optional, only for cross-account playlist features), `managedUser`, `options`. Copy from `plex.example.js`. |
 
 The boot health check validates the critical keys in `config.js` (`commandPrefix`, `language`, `serverName`, `playlistsDir`) and prints a loud warning if any are missing.
+
+**Runtime overrides.** `config/config.js` defines its values as a `defaults` object, then merges
+`data/config.overrides.json` (if present) over them on load, applying only keys that already
+exist in `defaults`. That overrides file is written by the `/config` wizard (`helpers/configStore.js`).
+Because `bot.config` is the *same* object as `require('config/config.js')` and consumers read
+`config.X` at call time, the wizard mutating that object takes effect live for most settings; the
+JSON file makes the change durable across restarts. A missing/malformed overrides file is ignored.
 
 ---
 
@@ -208,7 +225,7 @@ slash: {
 **Dispatch.** `app/music.js`'s `interactionCreate` handler:
 1. Filters to chat-input commands only.
 2. Looks up the command in `plexCommands` and confirms it has a `slash` block.
-3. Calls `interaction.deferReply()` immediately (Discord's 3-second acknowledgement window).
+3. Calls `interaction.deferReply()` immediately (Discord's 3-second acknowledgement window). A command may set `slash.ephemeral: true` to defer privately (`flags: MessageFlags.Ephemeral`) — used by `/config` so the settings panel is only visible to the owner who ran it.
 4. Builds a `query` string from the interaction's options, in the same shape the prefix dispatcher produces (so the existing parser code in each command works).
 5. Wraps the interaction in `interactionAdapter.adaptInteraction()` → a Message-shaped facade.
 6. Calls `cmd.process(bot, client, fakeMessage, query)` — same signature the prefix dispatcher uses.
@@ -293,6 +310,126 @@ If the generator throws (e.g. a malformed Gemini response), nothing is written a
 
 ---
 
+## In-Discord config wizard (`/config`)
+
+`commands/config.js` is an **owner-only** wizard for editing `config/config.js` from Discord —
+no file editing or restart needed for most settings.
+
+- **UI.** An ephemeral panel (embed of current values grouped by section + a select menu of
+  editable settings). Picking a setting edits it via a **modal** (text/number), **buttons**
+  (on/off), or a small **select** (choice like `youtube_quality`). Built with a message
+  component collector + `awaitModalSubmit`, the same self-contained pattern as
+  `commands/buildcharacter.js` — so the global `interactionCreate` handler needs no changes.
+- **Schema + persistence** live in `helpers/configStore.js`: the `SETTINGS` list (key, label,
+  group, type, `secret`/`restartRequired`/`snowflake` flags, validators), pure `validate` /
+  `formatValue`, and `writeOverride` (persists to `data/config.overrides.json` + mutates the
+  live config object). See "Runtime overrides" under Configuration.
+- **Security.** Owner-gated via `config.ownerId` (bootstrap: if `ownerId` is blank, the first
+  caller may set it, then it locks to owner). Secret fields (`tautulliApiKey`,
+  `eventServerToken`) are entered through a modal and **never displayed** (shown as `set`/`not set`).
+  Tokens in `config/keys.js` / `config/plex.js` are intentionally **out of scope**.
+- **Restart-scoped.** `eventServerEnabled` / `eventServerPort` only affect the already-bound
+  listener at next boot; the panel labels these `(restart)`.
+
+---
+
+## Broadcasts (Kometa runs + Playnite game launches)
+
+The bot can announce two kinds of on-machine events to a Discord channel. Both arrive by
+**push** — the bot exposes a tiny inbound HTTP listener (`helpers/eventServer.js`) that
+Kometa and Playnite POST to; the bot never polls.
+
+```
+Kometa   --webhook run_end/error-->  POST /kometa          ┐
+                                                            ├─ eventServer ─> broadcast.js ─> channel embed
+Playnite --"after starting" script-> POST /playnite/start  ┘
+```
+
+- **Listener.** Node core `http`, bound to `127.0.0.1` only (never reachable off the box).
+  Enabled by `config.eventServerEnabled`; port from `config.eventServerPort` (default 8799).
+  If `config.eventServerToken` is set, senders must pass `?token=<it>` or a `401` is returned.
+  Body cap 64 KB; malformed JSON → `400`; unknown route → `404`. Listen failures (e.g. port
+  in use) are logged and degrade the feature rather than crashing the bot.
+- **Routing.** `POST /kometa` → `broadcast.broadcastKometaRun` (which applies the right per-event
+  toggle: `config.broadcastKometa` for run summaries, `config.broadcastKometaChanges` for live
+  changes); `POST /playnite/start` → `broadcast.broadcastGameLaunch` (gated by
+  `config.broadcastGameLaunch`); `GET /health` → `{ ok: true }` for connectivity testing.
+  Broadcasts fire-and-forget so a slow/failed Discord send never delays the HTTP response back to
+  Kometa/Playnite.
+- **Live Kometa changes.** Kometa's `changes` webhook fires once per collection/playlist during a
+  run. `broadcastKometaRun` routes those to `buildKometaChangesEmbed` (added/removed titles,
+  Radarr/Sonarr "requested for the server" items, collection poster), but only after
+  `isNoteworthyChange(payload)` passes — created, has server requests, or grew by at least
+  `config.kometaChangesMinAdds` (floored at 1, so pure removals never post). This keeps a big run
+  from spamming every tiny tweak.
+- **Startup confirmation.** On boot (`clientReady`), `broadcastStartup(client)` posts a "System has
+  started" card — listing the event-listener status and which broadcasts are enabled — to a single
+  channel (`startupChannelId()`: the general `broadcastChannelId`, else the first configured type
+  channel). Gated by `config.broadcastStartup`.
+- **Game-launch detection — two independent paths.** (1) The **Playnite script** POSTs to
+  `/playnite/start` → `broadcastGameLaunch` (rich card w/ cover art, but only for Playnite-launched
+  games). (2) **Discord activity** via `helpers/gamePresence.js` → `broadcastGamePresence` (works
+  for any launcher Discord detects, e.g. Steam-direct; needs the privileged Presence Intent + a
+  restart). Both post to the game channel; enabling both can double-post a Playnite launch.
+- **Embeds.** `helpers/broadcast.js` maps the Kometa webhook JSON (`run_time`,
+  `collections_*`, `items_*`, `added_to_radarr/sonarr`; `error`/`run_start` also handled) and
+  the Playnite payload (`name`, `source`, `platform`, `cover`) to embeds. Kometa runs post to
+  `config.kometaChannelId` and game launches to `config.gameLaunchChannelId`, each falling back
+  to `config.broadcastChannelId` when its dedicated channel is blank (`pickChannelId(type)`).
+  For game launches, `cover` is an absolute path the Playnite
+  script resolves via `$PlayniteApi.Database.GetFullFilePath(...)`; the bot validates it
+  (image extension, exists, size cap) and attaches it as the embed thumbnail, falling back to
+  a text-only embed otherwise. Everything no-ops (with a one-time WARN) when
+  `broadcastChannelId` is blank.
+
+### Host-side setup (`scripts/`)
+
+These are **not** run by the bot — the user runs them once on the host, in the main install dir:
+
+- `start-bot.vbs` — launches `node index.js` hidden (no console), cwd = repo root resolved
+  relative to the script, output appended to `bot.log`.
+- `install-startup-shortcut.ps1` / `uninstall-startup-shortcut.ps1` — add/remove a shortcut to
+  `start-bot.vbs` in the Windows Startup folder so the bot launches at login.
+- `playnite-game-start.ps1` — the snippet to paste into Playnite → Settings → Scripts →
+  "Execute script after starting a game". POSTs the launched game to `POST /playnite/start`.
+
+Kometa is pointed at the listener from its own `config.yml`:
+
+```yaml
+settings:
+  webhooks:
+    run_end: http://127.0.0.1:8799/kometa?token=YOUR_TOKEN
+    error:   http://127.0.0.1:8799/kometa?token=YOUR_TOKEN
+    changes: http://127.0.0.1:8799/kometa?token=YOUR_TOKEN
+```
+
+### Kometa Theater (`helpers/kometaTheater.js`)
+
+Opt-in "silly mode" (`config.kometaTheaterEnabled`) that narrates a run in-character instead of the
+factual change cards. It **replaces** the `changes`/`run_*` cards while on (`broadcastKometaRun`
+routes those events into the theater via `onChanges`/`onRunStart`/`onRunEnd`).
+
+- **Hybrid inputs.** Kometa's `changes` webhook only reports *changed* collections, so it can't see
+  the ones that pass through unchanged. The theater tails **`meta.log`** for coverage — one clean
+  `Finished <Name> Collection` line per collection (incl. unchanged) — and uses the buffered
+  `changes` webhooks for the add/remove detail. Correlated by `normalizeName`; a short grace period
+  before each post lets the matching webhook arrive.
+- **Classification** (`classifyKind(isSeen, hasAdditions)`): unseen **and** gained nothing → garbled
+  `buildStaticText` (no Gemini); otherwise it "reports in" — a brand-new collection with items
+  introduces itself, an established one just reports (commenting on changes when present).
+- **Personas** are per-collection-name, minted once via a fast model (`config.kometaTheaterModel`
+  → `getModel`) and persisted in `data/kometa_theater.json` alongside the `seen` set. Gemini and
+  Discord failures fall back to templated text; a parse error can't crash the bot.
+- **Pacing**: a self-scheduling worker drains one collection every `config.kometaTheaterDelayMs`
+  (the deliberate Discord-side slowdown). No cap — bounded by the number of collections processed.
+- **Log tailer**: polls the file, seeks to EOF at boot (only new lines), handles rotation
+  (`size < offset` → reset), decodes UTF-8 via `StringDecoder`, read-only.
+
+**Brittleness (accepted):** depends on Kometa's log wording (`Finished (.+?) Collection`). Isolated
+to one regex; degrades to fewer lines rather than failing.
+
+---
+
 ## Logging
 
 Every log line goes through `helpers/logger.js`. Format:
@@ -350,3 +487,5 @@ Errors caught by the global `uncaughtException` / `unhandledRejection` handlers 
 | D&D character sheets             | `commands/{buildcharacter,mysheet,profile}.js` | `aiCharacterMapper.js`, `compendiumProvider.js`, `characterStorage.js` |
 | Playnite game launching          | `commands/{game,launch,backlog,pickgame,stats}.js` | `helpers/playniteAPI.js`, `aiGameRecommender.js`    |
 | Stats / diagnostic               | `commands/{stats,test}.js`           | `tautulliAPI.js`, `playniteAPI.js`, `healthCheck.js`        |
+| Broadcasts (Kometa + game launch) | `helpers/eventServer.js` (inbound)  | `helpers/broadcast.js`; `scripts/` (autostart + Playnite hook) |
+| In-Discord config wizard         | `commands/config.js`                 | `helpers/configStore.js`; `config/config.js` overrides layer |
