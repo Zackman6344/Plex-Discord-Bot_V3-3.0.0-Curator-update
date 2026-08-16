@@ -13,6 +13,12 @@
 // - Subsequent calls go through `interaction.channel.send(...)` as normal messages.
 //   That preserves the "post a status message, then post more updates" pattern most
 //   of the long-running commands already use.
+// - `content` is rebuilt in prefix form (`!name args`) rather than set to the bare arg
+//   string. Several commands parse their arguments as `content.split(' ').slice(1)`,
+//   which assumes the command token is still the first word; handing them a bare arg
+//   string makes slice(1) swallow the real argument.
+
+const config = require('../config/config.js');
 
 function makeChannelProxy(interaction, state) {
     return {
@@ -92,7 +98,7 @@ function adaptInteraction(interaction, queryString) {
         guild: interaction.guild,
         client: interaction.client,
         mentions,
-        content: queryString || '',
+        content: config.commandPrefix + interaction.commandName + (queryString ? ' ' + queryString : ''),
 
         // Reply method routes the same way channel.send does (first → editReply, rest → channel.send).
         async reply(payload) {
