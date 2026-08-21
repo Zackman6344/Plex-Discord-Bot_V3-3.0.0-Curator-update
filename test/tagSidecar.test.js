@@ -2,16 +2,20 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 
+const os = require('node:os');
+const pathMod = require('node:path');
+
+// Its own store, so parallel test files cannot race on one file and a run can never
+// disturb the real one.
+process.env.PLEXBOT_TAGS_FILE = pathMod.join(os.tmpdir(), 'plexbot-test-sidecar-' + process.pid + '.json');
+
 const sidecar = require('../helpers/tagSidecar.js');
 
 // The sidecar persists to data/inferred_tags.json. These tests exercise real load/save paths and
 // restore whatever was on disk afterwards, so running them can never cost real approved tags.
 const FILE = sidecar._file;
-const backup = fs.existsSync(FILE) ? fs.readFileSync(FILE, 'utf8') : null;
-
 test.afterEach(() => {
-    if (backup === null) { try { fs.unlinkSync(FILE); } catch (_) {} }
-    else fs.writeFileSync(FILE, backup);
+    try { fs.unlinkSync(FILE); } catch (_) {}
     try { fs.unlinkSync(FILE + '.tmp'); } catch (_) {}
     sidecar._reset();
 });

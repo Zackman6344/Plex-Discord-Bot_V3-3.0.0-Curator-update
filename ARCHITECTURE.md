@@ -237,11 +237,15 @@ slash: {
 5. Wraps the interaction in `interactionAdapter.adaptInteraction()` → a Message-shaped facade.
 6. Calls `cmd.process(bot, client, fakeMessage, query)` — same signature the prefix dispatcher uses.
 
-**The adapter contract** (`helpers/interactionAdapter.js`): the first call to `message.reply(...)` or `message.channel.send(...)` routes through `interaction.editReply(...)`, which appears in chat as the bot's response to the slash command. Subsequent calls go through the real `interaction.channel.send(...)`. That means commands like `!trivia` (which post a "Loading..." status, then edit it, then post game messages) work unchanged: the initial `channel.send` becomes the slash command's primary response, then the game's follow-up messages are normal channel posts.
+**The adapter contract** (`helpers/interactionAdapter.js`): `message.content` is rebuilt in prefix form (`!name args`) rather than set to the bare argument string, because several commands parse arguments as `content.split(' ').slice(1)` and would otherwise lose the first one. The first call to `message.reply(...)` or `message.channel.send(...)` routes through `interaction.editReply(...)`, which appears in chat as the bot's response to the slash command. Subsequent calls go through the real `interaction.channel.send(...)`. That means commands like `!trivia` (which post a "Loading..." status, then edit it, then post game messages) work unchanged: the initial `channel.send` becomes the slash command's primary response, then the game's follow-up messages are normal channel posts.
 
-**What's wired in phase 1:** `/help`, `/diag` (+ legacy alias `plextest`), `/play`, `/trivia` (with `game`/`leaderboard` subcommands), `/playlist` (12 subcommands), `/request` (5 subcommands).
+**Coverage:** every command in `commands/` declares a `slash` block — 53 at the time of writing, including subcommand sets for `/playlist`, `/request`, `/hitster`, `/library`, `/list`, `/tags` and the game commands. `npm run check:slash` validates the whole set against Discord's rules without booting the bot.
 
-**What stays prefix-only for now:** every other command in `commands/`. Adding slash support is mechanical — declare a `slash` block and the registry picks it up on next boot.
+**Option conventions.** Two beyond plain options:
+- `flag: '-r'` on a BOOLEAN emits a literal token into the query string when true, so the `!`-prefix parser sees the argument shape it already understands (`/playlist play shuffle:True` → `play <name> -r`).
+- `omitFromQuery: true` keeps an option out of the query string entirely, for commands that read it straight off the interaction — `/vibe`'s `ttrpg:` boolean does this.
+
+**The trap.** A command that refuses to run without an argument must declare that argument as an option. This has shipped twice: the parser demanded input the slash spec gave no way to supply, so `/x` was permanently unusable while `!x` worked fine. `npm run check:slash` warns about exactly this case.
 
 ---
 
@@ -468,6 +472,40 @@ Errors caught by the global `uncaughtException` / `unhandledRejection` handlers 
 
 ---
 
+## Tag search and the inferred-tag sidecar
+
+The subsystem behind `/vibe` and `/tags`. Four facts about Plex drive the whole design:
+
+1. A section listing (`/library/sections/<k>/all?type=10`) returns **no Mood and no Style** on
+   tracks, whatever the library holds. Only `/library/metadata/<key>` carries them.
+2. Those tags *do* exist as **filters**: `/library/sections/<k>/mood?type=10` lists the vocabulary
+   (258 moods on the reference library), and `?mood=<key>` returns just its tracks, in
+   milliseconds.
+3. Most tracks have no mood data at all — roughly 70% on the reference library.
+4. The full library is large (14k tracks / 19 MB), so pulling it per command is both slow and,
+   because of (1), useless for tag matching.
+
+The pipeline:
+
+1. **Vocabulary** (`helpers/plexTags.js`) — the section's real mood/genre/style tags, cached for
+   an hour.
+2. **Mapping** — Gemini turns the user's request into tags **chosen from that closed list**, as
+   many as genuinely fit. Unconstrained it invents plausible tags that match nothing, which is
+   what made the original filter fall back to title substring matching.
+3. **Retrieval** — one query per chosen tag; results are unioned, each track carrying the tags it
+   actually matched. Ground truth, so the curator LLM downstream reasons about real metadata.
+4. **Sidecar** (`helpers/tagSidecar.js`) — approved inferred tags are searched alongside Plex, so
+   tracks Plex never tagged become reachable. Plex wins per dimension, always.
+5. **Rotation + discovery** (`helpers/recentPicks.js`) — recent picks take a score handicap, and a
+   configurable share of each queue is given to random untagged tracks, which then feed step 6.
+6. **Review** (`helpers/tagInference.js`) — tags are proposed for queued tracks Plex has nothing
+   for, and approved **one track at a time**. Approve writes that track immediately; reject writes
+   nothing; feedback regenerates that track's suggestion and is remembered for later runs.
+
+Nothing here writes to Plex. The store is `data/inferred_tags.json` (atomic writes, pending
+reviews persisted so a restart doesn't strand a card), with `PLEXBOT_TAGS_FILE` overriding the
+path for tests or an externally managed sidecar.
+
 ## Adding a new command
 
 1. Drop a new file in `commands/<name>.js`.
@@ -476,7 +514,9 @@ Errors caught by the global `uncaughtException` / `unhandledRejection` handlers 
 4. Inside `process`, call `bot.X()` methods, `bot.plex.query(...)`, `bot.songQueue.push(...)`, etc.
 5. For AI commands: import `getModel` from `helpers/geminiAPI.js`. Don't construct your own `GoogleGenerativeAI`.
 6. For error replies on AI commands: wrap your AI call in try/catch and pass to `helpers/aiErrorHandler.js`.
-7. Add the command to `commands/help.js`'s embed text so it shows up in `!help`.
+7. Add a `slash` block. **If the command needs an argument, declare it as a required option** — otherwise the slash form has no field to type into and can never work. Check the spec against what `process` actually reads, in both directions: an option nothing consumes is as broken as a missing one.
+8. Run `npm run check:slash`.
+9. Add the command to `commands/help.js`'s embed text so it shows up in `!help`.
 
 ---
 

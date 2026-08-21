@@ -27,7 +27,9 @@ const fs = require('fs');
 const path = require('path');
 const logger = require('./logger.js');
 
-const FILE = path.join(__dirname, '..', 'data', 'inferred_tags.json');
+// Overridable so a test run can never touch the real store — which now holds work a human
+// approved by hand — and so an external workflow can point the bot at a sidecar it manages.
+const FILE = process.env.PLEXBOT_TAGS_FILE || path.join(__dirname, '..', 'data', 'inferred_tags.json');
 const TMP = FILE + '.tmp';
 const DIMENSIONS = ['moods', 'genres', 'styles'];
 const PROPOSAL_TTL_MS = 24 * 60 * 60 * 1000;
@@ -41,7 +43,7 @@ const SETTING_DEFAULTS = { discoveryPercent: 25, repeatMemory: 300 };
 const SETTING_BOUNDS = { discoveryPercent: [0, 100], repeatMemory: [0, 2000] };
 
 function blank() {
-    return { version: 1, entries: {}, pending: {}, settings: { ...SETTING_DEFAULTS } };
+    return { version: 1, entries: {}, pending: {}, feedback: {}, settings: { ...SETTING_DEFAULTS } };
 }
 
 /** Current tuning, with defaults filled in for anything unset or out of range. */
@@ -86,6 +88,7 @@ function load() {
                     version: parsed.version || 1,
                     entries: parsed.entries,
                     pending: parsed.pending || {},
+                    feedback: parsed.feedback || {},
                     settings: parsed.settings || { ...SETTING_DEFAULTS }
                 };
                 prunePending();
@@ -123,6 +126,7 @@ function save() {
                     version: parsed.version || 1,
                     entries: parsed.entries || {},
                     pending: parsed.pending || {},
+                    feedback: parsed.feedback || {},
                     settings: parsed.settings || { ...SETTING_DEFAULTS }
                 };
             } catch (_) { /* leave memory as-is; disk is unreadable anyway */ }
@@ -174,7 +178,11 @@ function sanitizeEntry(raw) {
         moods: cleanTagList(raw.moods),
         genres: cleanTagList(raw.genres),
         styles: cleanTagList(raw.styles),
-        source: cleanText(raw.source, 60) || 'inferred'
+        source: cleanText(raw.source, 60) || 'inferred',
+        // Which dimensions Plex had nothing for, so a regeneration knows what it may fill.
+        missing: Array.isArray(raw.missing) ? raw.missing.filter((d) => DIMENSIONS.includes(d)) : DIMENSIONS.slice(),
+        status: ['approved', 'rejected'].includes(raw.status) ? raw.status : 'pending',
+        feedback: cleanText(raw.feedback, 500)
     };
     if (!entry.moods.length && !entry.genres.length && !entry.styles.length) return null;
     return entry;
@@ -341,6 +349,146 @@ function approve(id, approvedBy) {
     return { written, saved: true };
 }
 
+/** Write one proposal entry to the store. Shared by approveOne and approveRemaining. */
+function writeEntry(entry, approvedBy) {
+    const data = load();
+    data.entries[entry.ratingKey] = {
+        title: entry.title,
+        artist: entry.artist,
+        album: entry.album,
+        file: entry.file,
+        moods: entry.moods,
+        genres: entry.genres,
+        styles: entry.styles,
+        source: entry.source,
+        note: entry.feedback || null,
+        approvedBy: approvedBy || null,
+        at: new Date().toISOString(),
+        supersededAt: null
+    };
+}
+
+/**
+ * Approve a single track from a proposal. Each decision is written immediately, so a review
+ * interrupted halfway keeps the songs already approved.
+ *
+ * @returns {{ok: boolean, reason?: string, entry?: Object}}
+ */
+function approveOne(id, index, approvedBy) {
+    const proposal = getProposal(id);
+    if (!proposal) return { ok: false, reason: 'expired' };
+    const entry = proposal.entries[index];
+    if (!entry) return { ok: false, reason: 'no-such-track' };
+    if (entry.status === 'approved') return { ok: true, entry };
+
+    const data = load();
+    const snapshot = JSON.stringify(data.entries);
+    writeEntry(entry, approvedBy);
+    data.pending[proposal.id].entries[index].status = 'approved';
+
+    if (!save()) {
+        try { data.entries = JSON.parse(snapshot); } catch (_) {}
+        data.pending[proposal.id].entries[index].status = 'pending';
+        return { ok: false, reason: 'write-failed' };
+    }
+    if (entry.feedback) recordFeedback(entry.ratingKey, entry.feedback, approvedBy, 'approved');
+    return { ok: true, entry };
+}
+
+/**
+ * Reject a single track. Nothing is written to the store, but the reason (when given) is
+ * remembered so a future run can do better instead of proposing the same thing again.
+ */
+function rejectOne(id, index, by, feedbackText) {
+    const proposal = getProposal(id);
+    if (!proposal) return { ok: false, reason: 'expired' };
+    const entry = proposal.entries[index];
+    if (!entry) return { ok: false, reason: 'no-such-track' };
+
+    const data = load();
+    data.pending[proposal.id].entries[index].status = 'rejected';
+    if (feedbackText) data.pending[proposal.id].entries[index].feedback = cleanText(feedbackText, 500);
+    save();
+    recordFeedback(entry.ratingKey, feedbackText || null, by, 'rejected');
+    return { ok: true, entry };
+}
+
+/** Approve everything still undecided in one go. */
+function approveRemaining(id, approvedBy) {
+    const proposal = getProposal(id);
+    if (!proposal) return { written: 0, saved: false, reason: 'expired' };
+
+    const data = load();
+    const snapshot = JSON.stringify(data.entries);
+    let written = 0;
+    for (let i = 0; i < proposal.entries.length; i++) {
+        const entry = proposal.entries[i];
+        if (entry.status !== 'pending') continue;
+        writeEntry(entry, approvedBy);
+        data.pending[proposal.id].entries[i].status = 'approved';
+        written++;
+    }
+    if (written === 0) return { written: 0, saved: true };
+
+    if (!save()) {
+        try { data.entries = JSON.parse(snapshot); } catch (_) {}
+        for (let i = 0; i < proposal.entries.length; i++) {
+            if (data.pending[proposal.id].entries[i].status === 'approved') {
+                data.pending[proposal.id].entries[i].status = 'pending';
+            }
+        }
+        return { written: 0, saved: false, reason: 'write-failed' };
+    }
+    return { written, saved: true };
+}
+
+/** Replace a proposal entry's tags in place — used after a feedback-driven regeneration. */
+function updateProposalEntry(id, index, patch) {
+    const proposal = getProposal(id);
+    if (!proposal) return { ok: false, reason: 'expired' };
+    const existing = proposal.entries[index];
+    if (!existing) return { ok: false, reason: 'no-such-track' };
+
+    const merged = sanitizeEntry({ ...existing, ...patch, status: 'pending' });
+    if (!merged) return { ok: false, reason: 'nothing-usable' };
+
+    load().pending[proposal.id].entries[index] = merged;
+    save();
+    return { ok: true, entry: merged };
+}
+
+/**
+ * What the user has said about a track before. Fed back into later inference so a correction
+ * only has to be made once.
+ */
+function recordFeedback(ratingKey, text, by, outcome) {
+    if (!ratingKey) return false;
+    const data = load();
+    if (!data.feedback) data.feedback = {};
+    const key = String(ratingKey);
+    const previous = data.feedback[key] || {};
+    data.feedback[key] = {
+        text: cleanText(text, 500) || previous.text || null,
+        outcome: outcome || previous.outcome || null,
+        by: by || previous.by || null,
+        at: new Date().toISOString()
+    };
+    return save();
+}
+
+function getFeedback(ratingKey) {
+    return (load().feedback || {})[String(ratingKey)] || null;
+}
+
+/** Decision counts for the review card's progress line. */
+function proposalSummary(id) {
+    const proposal = getProposal(id);
+    if (!proposal) return null;
+    const counts = { total: proposal.entries.length, approved: 0, rejected: 0, pending: 0 };
+    for (const e of proposal.entries) counts[e.status === 'approved' ? 'approved' : e.status === 'rejected' ? 'rejected' : 'pending']++;
+    return counts;
+}
+
 /** Record that Plex now has official data, so the inferred entry stops being consulted. */
 function supersede(ratingKey) {
     const entry = get(ratingKey);
@@ -399,5 +547,7 @@ module.exports = {
     DIMENSIONS, PROPOSAL_TTL_MS, SETTING_DEFAULTS, getSettings, setSetting,
     load, save, get, missingDimensions, effectiveTags, findByTags,
     stage, getProposal, discard, approve, supersede, forget, stats, list, activeEntries,
+    approveOne, rejectOne, approveRemaining, updateProposalEntry,
+    recordFeedback, getFeedback, proposalSummary,
     sanitizeEntry, _reset, _file: FILE
 };

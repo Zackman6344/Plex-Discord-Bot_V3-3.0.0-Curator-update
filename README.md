@@ -10,7 +10,7 @@ A multipurpose Discord bot designed to integrate your Plex media server with you
 
 - **Node.js 18 or newer.** Node 16 is EOL and the bot now uses discord.js v14, which requires 18+.
 - A Discord bot token (see the V2 setup section below for how to get one).
-- *(Optional)* A **Gemini API key** — required for any AI command (`!trivia`, `!curator`, `!vibe`, `!identify`, `!quest`, `!hitster`, etc.). Without it, music and basic Plex commands still work; AI commands will fail at the API call.
+- *(Optional)* A **Gemini API key** — required for any AI command (`!trivia`, `!curate`, `!vibe`, `!identify`, `!quest`, `!hitster`, etc.). Without it, music and basic Plex commands still work; AI commands will fail at the API call.
 - *(Optional)* A running [**Tautulli**](https://tautulli.com/) instance for `!stats`.
 - *(Optional)* A **Playnite HTTP server** on the host PC for `!game`, `!launch`, `!backlog`, and the gaming-history half of `!profile`.
 - *(Optional)* [**Kometa**](https://kometa.wiki/) and/or Playnite on the host PC for the automated broadcasts described in **Broadcasts & autostart** below.
@@ -19,7 +19,12 @@ Some features cost money to use (Gemini API beyond the free tier). Non-AI featur
 
 ## Setup
 
-After cloning and running `npm install`, set up your three config files. **Two of them are gitignored on purpose** so your tokens never end up in version control — copy the templates and fill them in locally:
+After cloning and running `npm install`, set up your three config files.
+
+> **Use `npm install`, not `npm ci`.** The committed lockfile is older than `package.json` and
+> pins discord.js v13, which this bot no longer runs on. `npm ci` would install it anyway, and
+> slash commands would silently never register.
+ **Two of them are gitignored on purpose** so your tokens never end up in version control — copy the templates and fill them in locally:
 
 ```
 cp config/keys.example.js config/keys.js
@@ -73,6 +78,7 @@ module.exports = {
 
   'ownerId'         : '',                  // your Discord user ID — gates owner-only Playnite commands and DM alerts
   'launchRoleId'    : '',                  // optional Discord role allowed to use !launch
+  'testGuildId'     : '',                  // register slash commands in this guild only (instant); blank = global, up to 1 hour
 
   'playniteEnabled' : false,               // toggle Playnite integration
   'tautulliEnabled' : false,               // toggle Tautulli integration
@@ -95,7 +101,7 @@ module.exports = {
 
   // Kometa Theater (silly mode) — see below
   'kometaTheaterEnabled'   : false,
-  'kometaLogPath'          : 'C:/Users/zackm/Kometa/config/logs/meta.log',
+  'kometaLogPath'          : 'C:/Kometa/config/logs/meta.log',   // point at your own Kometa meta.log
   'kometaTheaterModel'     : '',           // fast Gemini model; blank = the default model
   'kometaTheaterDelayMs'   : 5000          // pacing between in-character "transmissions"
 };
@@ -237,9 +243,63 @@ bot. `kometaTheaterDelayMs` tunes the pace. Heads-up: it reads Kometa's *log wor
 Kometa version could change the format — it degrades gracefully (fewer lines) and never crashes the
 bot, but may need a tweak.
 
+## 🏷️ Inferred tags (filling gaps Plex leaves)
+
+Plex only returns a track's moods and styles on a direct per-track lookup, never in a library
+listing — and on a typical library most tracks have no mood data at all. That matters for `/vibe`,
+which searches by tag: a track Plex never tagged can't be found by tag, so the same well-tagged
+minority would play on repeat forever.
+
+Two things address that, both tunable from Discord:
+
+**A discovery quota.** A share of every `/vibe` queue is reserved for random untagged tracks —
+25% by default. It is a share *of* the queue, not extra on top: asking for 5 tracks at 25% gets
+4 curated picks plus 1 wildcard, still 5. Set it with `/tags discovery percent:<0-100>`, or 0 to
+turn it off. Repeats are also avoided across the last 300 tracks served (`/tags memory`).
+
+**A local tag sidecar.** After a run, the bot offers tags for the tracks it queued that Plex has
+nothing for, and you review them **one track at a time**:
+
+- **Approve** writes that single track to `data/inferred_tags.json` immediately.
+- **Reject** writes nothing.
+- **Tell it why & retry** opens a box for what it got wrong ("this is a sea shanty, not
+  synthwave") and regenerates that track's suggestion with your note in mind. The note is kept,
+  so a later run doesn't repeat the same mistake.
+
+Nothing is ever written to Plex, and **Plex always wins**: wherever Plex has real data for a
+dimension, that is what gets used, no matter what the sidecar holds. If the agent later supplies
+data for a track, the inferred entry is retired automatically (and stays visible in `/tags list`
+so you can see what happened).
+
+Approved tags then make those tracks findable by `/vibe`, and anywhere they appear they're
+labelled *(tags inferred, not from Plex)*.
+
+`/tags coverage` estimates how much of the library Plex has tagged. `/tags export` writes a
+portable copy — including each track's file path on the Plex host — for tagging tools outside
+the bot.
+
 ## 📚 Command Directory
 
+Every command below works two ways: with the `!` prefix, or as a slash command of the same name.
 Type any command by itself (e.g. `!hitster`, `!playlist`) to open its specific menu.
+
+### Slash commands
+
+All commands register with Discord on boot. With `testGuildId` set they appear in that one server
+instantly; left blank they register globally and can take up to an hour to show up. Restart the bot
+after adding or renaming a command so the set re-registers.
+
+A few take a required option, because they can't do anything without one:
+
+| Command | Required option |
+| ------- | --------------- |
+| `/vibe` | `vibe:` — the setting or mood. Optional `ttrpg:` skips the follow-up question |
+| `/sonic` | `target:` — a vibe, or a specific song to build the station around |
+| `/releasesurvival start` | `category:` — movies, shows or albums |
+| `/survive start` | none, but `start` is the subcommand that begins a game (`difficulty:` is optional) |
+
+Run `npm run check:slash` after editing any command's `slash` block. Registration is
+all-or-nothing, so a single malformed spec makes *every* slash command disappear at once.
 
 ### 🤖 AI Arcade & Minigames
 
@@ -264,17 +324,20 @@ Type any command by itself (e.g. `!hitster`, `!playlist`) to open its specific m
 - `!youtube [url or search]` — Play a YouTube URL, or search and play the top result.
 - `!playlist` — Access the custom playlist manager (create, add, play).
 - `!mood [mood]` — Random song matching your given mood.
+- `!sonic [vibe or song]` — Plex Sonic Analysis playlist built around a vibe or an anchor track.
+- `!seek [time]` — Jump to a position in the current track.
 
 ### 🍿 Plex & Media Utilities
 
 - `!request` — Anonymously request movies, shows, or albums for the server.
-- `!curator` — Custom-tailored AI media recommendations.
+- `!curate` — Custom-tailored AI media recommendations.
 - `!groupwatch` — Multiplayer curator to find a movie a group can agree on.
 - `!quest` — Custom movie marathon based on a theme.
 - `!identify` — Find that "tip of your tongue" movie from a vague description.
 - `!vibe` — Generate a playlist or media queue based on a vibe.
 - `!library` — View or search server libraries.
 - `!random` — Random media pick.
+- `!list` — Page through, search, or reset the last set of search results.
 
 ### 🛠️ Owner / Admin commands
 
@@ -285,6 +348,11 @@ Type any command by itself (e.g. `!hitster`, `!playlist`) to open its specific m
 - `!game [title]` — Search the host's game library and show metadata.
 - `!launch [title]` — Boot a game on the host PC.
 - `!backlog` — Random unplayed game from the library.
+- `!pickgame [keywords]` — AI picks something from the game library for you.
+- `!buildcharacter` / `!mysheet` — Create and view your AI D&D character sheet.
+- `!tags` — Review locally inferred track tags, library tag coverage, and the `/vibe` rotation settings. See **Inferred tags** below.
+- `!restart` — Restart the bot process.
+- `!ulala` — Toggles a certain YouTube track. Inherited; left in.
 
 > Most of these are gated on `playniteEnabled` and/or `ownerId` in `config/config.js`.
 

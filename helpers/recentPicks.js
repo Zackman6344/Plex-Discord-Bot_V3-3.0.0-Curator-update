@@ -13,7 +13,8 @@ const fs = require('fs');
 const path = require('path');
 const logger = require('./logger.js');
 
-const FILE = path.join(__dirname, '..', 'data', 'recent_picks.json');
+// Overridable so a test run uses its own file rather than the live rotation memory.
+const FILE = process.env.PLEXBOT_RECENT_PICKS_FILE || path.join(__dirname, '..', 'data', 'recent_picks.json');
 const TMP = FILE + '.tmp';
 const DEFAULT_MEMORY = 300;
 

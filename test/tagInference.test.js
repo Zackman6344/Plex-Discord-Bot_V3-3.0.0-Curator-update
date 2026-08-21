@@ -2,15 +2,19 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 
+const os = require('node:os');
+const pathMod = require('node:path');
+
+// Its own store, so parallel test files cannot race on one file and a run can never
+// disturb the real one.
+process.env.PLEXBOT_TAGS_FILE = pathMod.join(os.tmpdir(), 'plexbot-test-inference-' + process.pid + '.json');
+
 const inference = require('../helpers/tagInference.js');
 const sidecar = require('../helpers/tagSidecar.js');
 
 const FILE = sidecar._file;
-const backup = fs.existsSync(FILE) ? fs.readFileSync(FILE, 'utf8') : null;
-
 test.afterEach(() => {
-    if (backup === null) { try { fs.unlinkSync(FILE); } catch (_) {} }
-    else fs.writeFileSync(FILE, backup);
+    try { fs.unlinkSync(FILE); } catch (_) {}
     sidecar._reset();
 });
 
@@ -33,17 +37,19 @@ const proposals = (n) => Array.from({ length: n }, (_, i) => ({
     ratingKey: String(1000 + i), title: `Track ${i}`, artist: 'Artist', moods: ['Eerie'], genres: [], styles: []
 }));
 
-test('the card stays inside Discord field limits however many tracks are proposed', () => {
+test('the card stays inside Discord limits however long the review is', () => {
     const many = proposals(60);
     const id = sidecar.stage(many, 'user1');
     const card = inference.buildApprovalMessage(id, many);
     const embed = card.embeds[0].toJSON();
 
-    assert.ok(embed.fields.length <= inference.LIMIT.fields, `fields capped (got ${embed.fields.length})`);
-    assert.ok(embed.footer.text.includes('more will be saved too'), 'the overflow is disclosed, not hidden');
+    assert.ok(card.components.length <= 5, 'at most five action rows');
+    for (const row of card.components) {
+        assert.ok(row.toJSON().components.length <= 5, 'at most five buttons per row');
+    }
+    assert.match(embed.footer.text, /Track 1 of 60/, 'position in the review is disclosed');
 
-    const total = embed.title.length + embed.description.length + embed.footer.text.length +
-        embed.fields.reduce((n, f) => n + f.name.length + f.value.length, 0);
+    const total = embed.title.length + embed.description.length + embed.footer.text.length;
     assert.ok(total <= 6000, `embed total under Discord's 6000 ceiling (got ${total})`);
 });
 
@@ -58,14 +64,14 @@ test('absurd tag and title lengths are truncated rather than rejected by Discord
     const card = inference.buildApprovalMessage('abc', monstrous);
     const embed = card.embeds[0].toJSON();
 
-    assert.ok(embed.fields[0].name.length <= inference.LIMIT.fieldName);
-    assert.ok(embed.fields[0].value.length <= inference.LIMIT.fieldValue);
+    assert.ok(embed.title.length <= inference.LIMIT.title, 'title clamped');
+    assert.ok(embed.description.length <= inference.LIMIT.description, 'description clamped');
 });
 
 test('an empty proposal list produces a plain message with no buttons to press', () => {
     const card = inference.buildApprovalMessage('abc', []);
     assert.ok(card.content, 'says something rather than rendering an empty card');
-    assert.strictEqual(card.components, undefined);
+    assert.deepStrictEqual(card.components, [], 'and offers nothing to click');
 });
 
 test('buttons belonging to other modules are declined', async () => {

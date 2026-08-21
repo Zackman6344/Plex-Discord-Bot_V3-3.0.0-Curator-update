@@ -11,7 +11,7 @@ node index.js 2>&1 | tee data/bot-session.log
 
 ---
 
-## Phase 0 — Triage: `/play` fails, `!play` works
+## Phase 0 — Triage: a slash command fails but its `!` version works
 
 The two paths share `plexCommands` and the same `process()` function
 ([app/music.js:37](app/music.js#L37) prefix, [app/music.js:72](app/music.js#L72) slash), so a
@@ -83,64 +83,65 @@ spec anywhere means *zero* commands register and every `/x` disappears at once. 
 before booting whenever you add or edit a `slash:` block:
 
 ```bash
-node scripts/validate-slash.js .
+npm run check:slash
 ```
-
-(script currently lives in the scratchpad — say the word and I'll drop it in the repo as
-`npm run check:slash`)
 
 It checks the rules Discord rejects on: lowercase names matching `^[\w-]{1,32}$`, 1–100 char
 descriptions, ≤25 options/choices, no subcommands mixed with top-level options, and
-**required options declared before optional ones**. All 52 specs pass today.
+**required options declared before optional ones**. It also warns when a command bails out
+without an argument but declares no option to supply one — the bug that shipped twice. All 53
+specs pass today.
 
 - [ ] New/edited `slash:` block → re-run the validator.
 - [ ] Renamed or deleted a command → confirm the stale one disappeared from the picker (the `set()`
       call replaces the whole list, so it should).
 
-## Known broken today (verified by reading the running code — no need to re-derive)
+## Fixed — regression checks
 
-`/play` is fine. These six are not. Two root causes.
+These all shipped broken and are now fixed. They are worth re-running after any change to the
+slash plumbing, because each one was invisible from the prefix side.
 
-**Cause 1 — the adapter's `content` isn't prefix-shaped.** The facade sets
-`content = query` ([helpers/interactionAdapter.js:95](helpers/interactionAdapter.js#L95)), but three
-commands parse args as `msg.content.split(' ').slice(1)` — which assumes `content` starts with the
-`!command` token. Under slash, `slice(1)` eats the real argument instead:
+**Arguments reaching the command.** The adapter used to set `content` to the bare argument
+string, but several commands parse args as `content.split(' ').slice(1)` — so the first
+argument was eaten. `content` is now prefix-shaped (`!name args`).
 
-- [ ] `/game title:<x>` → answers *"⚠️ Please provide a game to search for!"*
-      ([commands/game.js:37](commands/game.js#L37))
-- [ ] `/launch title:<x>` → answers *"⚠️ Please provide a game to launch!"*
-      ([commands/launch.js:45](commands/launch.js#L45))
-- [ ] `/profile mode:regen` → **silently ignores** the mode and shows the existing sheet
-      ([commands/profile.js:37](commands/profile.js#L37))
+- [ ] `/game title:<x>` returns metadata (used to answer "please provide a game to search for")
+- [ ] `/launch title:<x>` finds the game
+- [ ] `/profile mode:regen` actually regenerates (used to silently ignore the mode)
 
-One-line systemic fix, in the adapter rather than in three commands:
-`content: config.commandPrefix + interaction.commandName + (query ? ' ' + query : '')`.
-No command reads `content` expecting the bare form, so this is safe and inoculates future commands.
+**Spec matching the parser.** A slash spec has to line up with what `process` reads, in both
+directions — a declared option nothing consumes is as broken as required input never declared.
 
-**Cause 2 — slash spec doesn't match what the command parses.**
+- [ ] `/song` takes no argument and shows the current track (once demanded a `query` it ignored)
+- [ ] `/vibe vibe:<x>` runs (once had no field to type into at all)
+- [ ] `/sonic target:<x>` runs (same bug)
+- [ ] `/survive start difficulty:nightmare` starts a game (once could only print the menu)
+- [ ] `/releasesurvival start category:movies` starts a run (`game` never matched its parser)
 
-- [ ] `/song query:<x>` — the option is **required and completely ignored**; the command just prints
-      the now-playing card (`!song` takes no args). Fix: drop the option
-      ([commands/song.js:18](commands/song.js#L18)).
-- [ ] `/survive` — spec declares no options, but the parser needs `start [difficulty]`, so an empty
-      query always lands on the menu branch. **No way to start a game via slash.** Fix: a `start`
-      subcommand with a `difficulty` choices option — `buildQueryString` prepends the subcommand
-      name, so that yields exactly `start nightmare`
-      ([commands/survive.js:43](commands/survive.js#L43)).
-- [ ] `/releasesurvival game` — the parser wants `start <category>`, so `game` hits
-      *"⚠️ Unknown command"* every time. Fix: rename the subcommand to `start` and add a required
-      `category` choice (movies/shows/albums) ([commands/releasesurvival.js:140](commands/releasesurvival.js#L140)).
-      `/releasesurvival leaderboard` works.
+`npm run check:slash` catches this class before boot — run it after editing any `slash` block.
 
-**Watch, not confirmed broken:** `/sonic` re-dispatches by mutating `msg.content` and re-emitting a
-synthetic `messageCreate` with the adapter object
-([commands/sonic.js:238](commands/sonic.js#L238)). It should work, but it also collects on the
-channel expecting to see the bot's own reply — and under slash the first reply is an interaction
-response. Test it end to end before trusting it.
+**Error reporting that told the truth.** `game`/`launch` used to answer "Search timed out" for
+any failure, logging nothing, so a real error was indistinguishable from a timeout.
 
-**Cleared (don't chase these):** `.has('ADMINISTRATOR')` in
-[commands/hitster.js:185](commands/hitster.js#L185) — v14 still accepts the legacy uppercase name,
-verified. The `...args` sniffing pattern used by the game commands correctly finds the adapter.
+- [ ] A genuine timeout still says timed out; a real failure names itself and hits the log
+
+**`/vibe` crash.** `rawInputLower` was used in the scoring pass and never defined, so every run
+that got that far threw. Both `!vibe` and `/vibe` were affected.
+
+- [ ] `/vibe vibe:"1 hour of cyberpunk nightclub"` completes and queues music
+
+## Tag review and rotation
+
+- [ ] After a `/vibe` run, the review card appears for tracks Plex has no metadata for
+- [ ] **Approve** writes only that track — check `/tags list`
+- [ ] **Reject** writes nothing and moves on
+- [ ] **Tell it why & retry** opens the box, and the suggestion changes to match what you said
+- [ ] A restart mid-review keeps both the approved tracks and the remaining card
+- [ ] Clicking as a different user is refused
+- [ ] `/tags coverage` reports plausible percentages against the library size
+- [ ] `/tags export` writes a file with track file paths in it
+- [ ] `/tags discovery percent:0` stops wildcards appearing; a non-zero value keeps queue size
+      the same (wildcards replace curated picks rather than adding to them)
 
 ## Phase 3 — Prefix ↔ slash parity
 
@@ -208,6 +209,6 @@ args rather than crashes.
   `"xml2js": "0.4.16"` in `package.json` before regenerating, and re-test `/diag` after.
 - **Logs are console-only.** Nothing is written to disk, so a failure that happened yesterday is
   unrecoverable. Pipe to a file while bug-testing (command at the top).
-- **2 of 79 unit tests fail on your machine** (`test/plexHome.test.js`) — they assert on a missing
+- **2 of 122 unit tests fail on your machine** (`test/plexHome.test.js`) — they assert on a missing
   `homeOwnerToken` but read your real `config/plex.js`, where it's set. It's a test-isolation bug,
   not a bot bug, but it means `npm test` isn't currently a clean signal.

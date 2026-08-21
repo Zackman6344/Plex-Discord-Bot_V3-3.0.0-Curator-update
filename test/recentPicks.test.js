@@ -2,14 +2,18 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 
+const os = require('node:os');
+const pathMod = require('node:path');
+
+// Its own store, so parallel test files cannot race on one file and a run can never
+// disturb the real one.
+process.env.PLEXBOT_RECENT_PICKS_FILE = pathMod.join(os.tmpdir(), 'plexbot-test-recent-' + process.pid + '.json');
+
 const recent = require('../helpers/recentPicks.js');
 
 const FILE = recent._file;
-const backup = fs.existsSync(FILE) ? fs.readFileSync(FILE, 'utf8') : null;
-
 test.afterEach(() => {
-    if (backup === null) { try { fs.unlinkSync(FILE); } catch (_) {} }
-    else fs.writeFileSync(FILE, backup);
+    try { fs.unlinkSync(FILE); } catch (_) {}
     try { fs.unlinkSync(FILE + '.tmp'); } catch (_) {}
     recent._reset();
 });

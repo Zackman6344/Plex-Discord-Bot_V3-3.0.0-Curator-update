@@ -70,7 +70,7 @@ const defaults = {
   // Discord's side. Replaces the factual `changes` cards while on. Posts to kometaChannelId.
   // Reads Kometa's meta.log for per-collection coverage (incl. unchanged ones → "static").
   'kometaTheaterEnabled'   : false,
-  'kometaLogPath'          : 'C:/Users/zackm/Kometa/config/logs/meta.log',
+  'kometaLogPath'          : 'C:/Kometa/config/logs/meta.log',
   // Fast Gemini model for the dialogue. Blank = fall back to helpers/geminiAPI.js DEFAULT_MODEL.
   'kometaTheaterModel'     : '',
   // Milliseconds between "transmissions" — the deliberate slowdown on Discord's side. No cap on

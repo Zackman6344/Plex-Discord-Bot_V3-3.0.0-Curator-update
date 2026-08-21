@@ -340,47 +340,54 @@ await statusMsg.edit(`🎵 **Vibe:** \`${typeData.vibe}\`\n⏳ *The AI Librarian
                 // Reserve a share of the queue for tracks tag search can never reach — the ones
                 // Plex has no metadata for. Without this the tagged minority is the only music
                 // that ever plays, and the untagged majority stays untagged forever.
-                if (tuning.discoveryPercent > 0 && finalPlaylist.length > 0) {
-                    const quota = Math.max(1, Math.round(finalPlaylist.length * tuning.discoveryPercent / 100));
-                    try {
-                        const alreadyPicked = new Set(finalPlaylist.map(t => String(t.ratingKey)));
-                        const sampled = await plexTags.sampleRandomTracks(vocab.sectionKey, quota * 5);
-                        const discoveries = [];
+                if (tuning.discoveryPercent > 0 && finalPlaylist.length > 1) {
+                    // A *share of* the requested count, not extra on top of it: asking for 5
+                    // tracks at 25% gets 4 curated + 1 wildcard, still 5. Never take the last
+                    // slot, so a 2-track request keeps both picks curated.
+                    const target = finalPlaylist.length;
+                    const quota = Math.min(Math.floor(target * tuning.discoveryPercent / 100), target - 1);
+                    if (quota > 0) {
+                        try {
+                            const alreadyPicked = new Set(finalPlaylist.map(t => String(t.ratingKey)));
+                            const sampled = await plexTags.sampleRandomTracks(vocab.sectionKey, quota * 5);
+                            const discoveries = [];
 
-                        const discoveryArtists = new Set(finalPlaylist.map(t => String(t.artist || '').toLowerCase()));
-                        for (const track of shuffleArray(sampled)) {
-                            if (discoveries.length >= quota) break;
-                            const rk = String(track.ratingKey);
-                            if (alreadyPicked.has(rk)) continue;
-                            // Wildcards are meant to broaden the queue, so don't spend them all
-                            // on one artist (or on an artist already represented).
-                            const who = String(track.originalTitle || track.grandparentTitle || '').toLowerCase();
-                            if (who && discoveryArtists.has(who)) continue;
-                            if (who) discoveryArtists.add(who);
-                            if (tuning.repeatMemory > 0 && recentPicks.wasRecentlyPicked(rk, tuning.repeatMemory)) continue;
-                            const key = track.Media?.[0]?.Part?.[0]?.key;
-                            if (!key) continue;
+                            const discoveryArtists = new Set(finalPlaylist.map(t => String(t.artist || '').toLowerCase()));
+                            for (const track of shuffleArray(sampled)) {
+                                if (discoveries.length >= quota) break;
+                                const rk = String(track.ratingKey);
+                                if (alreadyPicked.has(rk)) continue;
+                                // Wildcards are meant to broaden the queue, so don't spend them all
+                                // on one artist (or on an artist already represented).
+                                const who = String(track.originalTitle || track.grandparentTitle || '').toLowerCase();
+                                if (who && discoveryArtists.has(who)) continue;
+                                if (who) discoveryArtists.add(who);
+                                if (tuning.repeatMemory > 0 && recentPicks.wasRecentlyPicked(rk, tuning.repeatMemory)) continue;
+                                const key = track.Media?.[0]?.Part?.[0]?.key;
+                                if (!key) continue;
 
-                            discoveries.push({
-                                id: -1,
-                                title: track.title || 'Unknown Title',
-                                artist: track.originalTitle || track.grandparentTitle || 'Unknown Artist',
-                                album: track.parentTitle || null,
-                                plexKey: key,
-                                ratingKey: rk,
-                                discovery: true,
-                                tags: [],
-                                reason: 'Wildcard pick — untagged in Plex, included so the library keeps rotating.'
-                            });
-                            alreadyPicked.add(rk);
+                                discoveries.push({
+                                    id: -1,
+                                    title: track.title || 'Unknown Title',
+                                    artist: track.originalTitle || track.grandparentTitle || 'Unknown Artist',
+                                    album: track.parentTitle || null,
+                                    plexKey: key,
+                                    ratingKey: rk,
+                                    discovery: true,
+                                    tags: [],
+                                    reason: 'Wildcard pick — untagged in Plex, included so the library keeps rotating.'
+                                });
+                                alreadyPicked.add(rk);
+                            }
+
+                            if (discoveries.length) {
+                                // Substitute, don't append — drop the lowest-ranked curated picks.
+                                finalPlaylist = finalPlaylist.slice(0, target - discoveries.length).concat(discoveries);
+                                logger.info(`vibe: ${discoveries.length} of ${target} slot(s) given to discovery picks (${tuning.discoveryPercent}% quota).`);
+                            }
+                        } catch (err) {
+                            logger.warn('vibe: discovery picks skipped:', err.message || err);
                         }
-
-                        if (discoveries.length) {
-                            finalPlaylist = finalPlaylist.concat(discoveries);
-                            logger.info(`vibe: added ${discoveries.length} discovery pick(s) (${tuning.discoveryPercent}% quota).`);
-                        }
-                    } catch (err) {
-                        logger.warn('vibe: discovery picks skipped:', err.message || err);
                     }
                 }
 
