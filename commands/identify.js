@@ -13,6 +13,9 @@ const promptUser = async (channel, authorId, text, time = 60000) => {
         const collected = await channel.awaitMessages({ filter, max: 1, time, errors: ['time'] });
         return collected.first().content.trim();
     } catch (e) {
+        // Timeout rejects with the (empty) collection; a real Error would otherwise be
+        // reported to the user as "you took too long".
+        if (e instanceof Error) logger.error('Prompt failed:', e);
         return null;
     }
 };

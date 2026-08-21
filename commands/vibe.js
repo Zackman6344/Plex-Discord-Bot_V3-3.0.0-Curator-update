@@ -14,6 +14,9 @@ const promptUser = async (channel, authorId, text, time = 30000) => {
         const collected = await channel.awaitMessages({ filter, max: 1, time, errors: ['time'] });
         return collected.first().content.trim();
     } catch (e) {
+        // Timeout rejects with the (empty) collection; a real Error would otherwise be
+        // reported to the user as "you took too long".
+        if (e instanceof Error) logger.error('Prompt failed:', e);
         return null;
     }
 };
@@ -121,6 +124,7 @@ module.exports = {
                 // STRINGER FIX: Strip punctuation and weird spaces for a pure alphanumeric comparison
                 const normalizeString = (str) => str.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
                 const normalizedInput = normalizeString(rawInput);
+                const rawInputLower = rawInput.toLowerCase();
 
                 const fillerWords = ['of', 'the', 'and', 'in', 'a', 'some', 'music', 'mix', 'playlist', 'for', 'my', 'hour', 'minutes', 'mins'];
                 const searchTerms = rawInput.toLowerCase().split(/\s+/).filter(w => w.length > 2 && !fillerWords.includes(w));

@@ -2,6 +2,7 @@
 const playnite = require('../helpers/playniteAPI.js');
 const config = require('../config/config.js');
 const { EmbedBuilder } = require('discord.js');
+const logger = require('../helpers/logger.js');
 
 module.exports = {
     name: 'game',
@@ -120,6 +121,12 @@ module.exports = {
 
                 } catch (err) {
                     await statusMsg.delete().catch(() => {});
+                    // awaitMessages rejects with the (empty) collection when it times out. An
+                    // Error here is something else breaking, and reporting it as a timeout hides it.
+                    if (err instanceof Error) {
+                        logger.error('game selection failed:', err);
+                        return msg.channel.send("❌ Something went wrong with that selection — check the bot log.");
+                    }
                     return msg.channel.send("⏳ Search timed out. Please run the command again.");
                 }
             } else {
