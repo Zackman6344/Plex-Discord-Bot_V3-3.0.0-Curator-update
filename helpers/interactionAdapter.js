@@ -17,6 +17,10 @@
 //   string. Several commands parse their arguments as `content.split(' ').slice(1)`,
 //   which assumes the command token is still the first word; handing them a bare arg
 //   string makes slice(1) swallow the real argument.
+// - An optional `onInteractionResponse` observer is told about anything sent through the
+//   interaction itself. That path is `editReply`, which Discord delivers as a message *edit*, so
+//   a messageCreate listener never sees it — without this hook the primary reply to every slash
+//   command is invisible to the command log.
 
 const config = require('../config/config.js');
 
@@ -32,10 +36,13 @@ function makeChannelProxy(interaction, state) {
             if (!state.firstResponseSent) {
                 state.firstResponseSent = true;
                 const opts = typeof payload === 'string' ? { content: payload } : payload;
+                state.report(opts);
                 // editReply returns the resulting Message in v14 — same shape commands
                 // expect from channel.send (so .edit() / .delete() chain naturally).
                 return interaction.editReply(opts);
             }
+            // A real channel message from here on, which a messageCreate listener can see, so
+            // reporting it here as well would double-count it.
             return interaction.channel.send(payload);
         },
 
@@ -82,10 +89,24 @@ function makeMentionsProxy(interaction) {
  *
  * @param {ChatInputCommandInteraction} interaction
  * @param {string} queryString  - space-separated args, as the !-prefix dispatcher would have produced
+ * @param {Object} [options]
+ * @param {function} [options.onInteractionResponse] - called with anything sent through the
+ *   interaction itself (an `editReply`, which Discord delivers as an edit and no messageCreate
+ *   listener can see). Purely an observer: it must never affect what the user gets.
  * @returns {Object} a Message-like object suitable for passing as `message` to existing command.process functions
  */
-function adaptInteraction(interaction, queryString) {
-    const state = { firstResponseSent: false };
+function adaptInteraction(interaction, queryString, { onInteractionResponse = null } = {}) {
+    const state = {
+        firstResponseSent: false,
+        report(payload) {
+            if (typeof onInteractionResponse !== 'function') return;
+            try {
+                onInteractionResponse(payload);
+            } catch (_) {
+                // Observing the reply must never stop the reply being sent.
+            }
+        }
+    };
 
     const channel = makeChannelProxy(interaction, state);
     const mentions = makeMentionsProxy(interaction);
@@ -105,6 +126,7 @@ function adaptInteraction(interaction, queryString) {
             const opts = typeof payload === 'string' ? { content: payload } : payload;
             if (!state.firstResponseSent) {
                 state.firstResponseSent = true;
+                state.report(opts);
                 return interaction.editReply(opts);
             }
             return interaction.channel.send(opts);

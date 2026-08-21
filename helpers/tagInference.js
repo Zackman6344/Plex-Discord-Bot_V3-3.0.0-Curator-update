@@ -322,8 +322,14 @@ function nextPending(entries, from) {
  * Answer a click exactly once, trying progressively weaker channels. A review card that silently
  * does nothing is the worst outcome: the user can't tell whether their tags were saved.
  */
-async function respond(interaction, payload, { asUpdate = true } = {}) {
+async function respond(interaction, payload, { asUpdate = true, onInteractionResponse = null } = {}) {
     const message = typeof payload === 'string' ? { content: payload, embeds: [], components: [] } : payload;
+
+    // The card is edited in place, which Discord delivers as an update — invisible to the
+    // messageCreate listener, so the observer is the only way this reaches the log.
+    if (typeof onInteractionResponse === 'function') {
+        try { onInteractionResponse(message); } catch (_) { /* observing must not break the reply */ }
+    }
 
     try {
         if (asUpdate && typeof interaction.update === 'function') {
@@ -365,7 +371,8 @@ async function respond(interaction, payload, { asUpdate = true } = {}) {
 }
 
 /** Feedback modal → regenerate that one track → refresh the card in place. */
-async function runFeedbackFlow(interaction, id, index, entry) {
+async function runFeedbackFlow(interaction, id, index, entry, onInteractionResponse = null) {
+    const say = (target, payload, extra = {}) => respond(target, payload, { onInteractionResponse, ...extra });
     const modalId = `${NAMESPACE}_modal_${id}_${index}`;
     const modal = new ModalBuilder()
         .setCustomId(modalId)
@@ -384,7 +391,7 @@ async function runFeedbackFlow(interaction, id, index, entry) {
         await interaction.showModal(modal);
     } catch (err) {
         logger.warn('tagInference: could not open the feedback modal:', err.message || err);
-        await respond(interaction, '❌ Could not open the feedback box — nothing changed.', { asUpdate: false });
+        await say(interaction, '❌ Could not open the feedback box — nothing changed.', { asUpdate: false });
         return;
     }
 
@@ -421,7 +428,7 @@ async function runFeedbackFlow(interaction, id, index, entry) {
         try {
             await submitted.editReply(card);
         } catch (_) {
-            await respond(submitted, card.content, { asUpdate: false });
+            await say(submitted, card.content, { asUpdate: false });
         }
         return;
     }
@@ -433,7 +440,7 @@ async function runFeedbackFlow(interaction, id, index, entry) {
         await submitted.editReply(card);
     } catch (err) {
         logger.warn('tagInference: could not refresh the card after regeneration:', err.message || err);
-        await respond(submitted, '🔄 Regenerated — reopen the card to see the new suggestion.', { asUpdate: false });
+        await say(submitted, '🔄 Regenerated — reopen the card to see the new suggestion.', { asUpdate: false });
     }
 }
 
@@ -443,28 +450,33 @@ async function runFeedbackFlow(interaction, id, index, entry) {
  *
  * @returns {Promise<boolean>} true if the customId belonged to this module
  */
-async function handle(interaction) {
+async function handle(interaction, { onInteractionResponse = null } = {}) {
     try {
         if (!interaction || typeof interaction.customId !== 'string') return false;
         const [namespace, action, id, rawIndex] = interaction.customId.split(':');
         if (namespace !== NAMESPACE) return false;
 
+        // Every reply below reports itself, so the card edits — which Discord delivers as
+        // updates — still reach the command log.
+        const say = (target, payload, extra = {}) => respond(target, payload, { onInteractionResponse, ...extra });
+
         if (!id) {
-            await respond(interaction, '❌ That button is malformed — nothing was written.', { asUpdate: false });
+            await say(interaction, '❌ That button is malformed — nothing was written.', { asUpdate: false });
             return true;
         }
 
         const proposal = sidecar.getProposal(id);
         if (!proposal) {
-            await respond(interaction, '⌛ That review has expired or was already finished — nothing was written.');
+            await say(interaction, '⌛ That review has expired or was already finished — nothing was written.');
             return true;
         }
 
         const clicker = interaction.user && interaction.user.id;
         if (proposal.requesterId && clicker && clicker !== proposal.requesterId) {
-            await respond(interaction, 'Only the person who ran the command can review these tags.', { asUpdate: false });
+            await say(interaction, 'Only the person who ran the command can review these tags.', { asUpdate: false });
             return true;
         }
+
 
         const entries = proposal.entries;
         const index = Math.max(0, Math.min(parseInt(rawIndex, 10) || 0, entries.length - 1));
@@ -475,12 +487,12 @@ async function handle(interaction) {
         if (rawIndex === undefined) {
             if (action === 'discard') {
                 sidecar.discard(id);
-                await respond(interaction, '🗑️ Discarded — nothing was written.');
+                await say(interaction, '🗑️ Discarded — nothing was written.');
                 return true;
             }
             if (action === 'approve') {
                 const { written, saved } = sidecar.approveRemaining(id, clicker || null);
-                await respond(interaction, saved
+                await say(interaction, saved
                     ? `✅ Saved tags for **${written}** track${written === 1 ? '' : 's'}.`
                     : '❌ Could not write the sidecar file, so **nothing was saved**. Check the bot log — the card is still live, so you can try again once it is fixed.');
                 return true;
@@ -492,36 +504,36 @@ async function handle(interaction) {
             case 'next': {
                 const step = action === 'next' ? 1 : -1;
                 const moved = (index + step + entries.length) % entries.length;
-                await respond(interaction, buildReviewCard(id, proposal, moved));
+                await say(interaction, buildReviewCard(id, proposal, moved));
                 return true;
             }
 
             case 'approve': {
                 const result = sidecar.approveOne(id, index, clicker || null);
                 if (!result.ok) {
-                    await respond(interaction, result.reason === 'write-failed'
+                    await say(interaction, result.reason === 'write-failed'
                         ? '❌ Could not write the sidecar file, so **this track was not saved**. Check the bot log — the button still works once it is fixed.'
                         : '⌛ That track is no longer part of an active review.', { asUpdate: false });
                     return true;
                 }
                 const refreshed = sidecar.getProposal(id);
-                await respond(interaction, buildReviewCard(id, refreshed, nextPending(refreshed.entries, index)));
+                await say(interaction, buildReviewCard(id, refreshed, nextPending(refreshed.entries, index)));
                 return true;
             }
 
             case 'reject': {
                 const result = sidecar.rejectOne(id, index, clicker || null, null);
                 if (!result.ok) {
-                    await respond(interaction, '⌛ That track is no longer part of an active review.', { asUpdate: false });
+                    await say(interaction, '⌛ That track is no longer part of an active review.', { asUpdate: false });
                     return true;
                 }
                 const refreshed = sidecar.getProposal(id);
-                await respond(interaction, buildReviewCard(id, refreshed, nextPending(refreshed.entries, index)));
+                await say(interaction, buildReviewCard(id, refreshed, nextPending(refreshed.entries, index)));
                 return true;
             }
 
             case 'feedback':
-                await runFeedbackFlow(interaction, id, index, entry);
+                await runFeedbackFlow(interaction, id, index, entry, onInteractionResponse);
                 return true;
 
             case 'approveall': {
@@ -536,27 +548,27 @@ async function handle(interaction) {
                 }
                 const card = buildReviewCard(id, sidecar.getProposal(id), index);
                 card.content = `✅ Saved **${written}** remaining track${written === 1 ? '' : 's'}.`;
-                await respond(interaction, card);
+                await say(interaction, card);
                 return true;
             }
 
             case 'done': {
                 const counts = sidecar.proposalSummary(id) || { approved: 0, rejected: 0, pending: 0 };
                 sidecar.discard(id);
-                await respond(interaction,
+                await say(interaction,
                     `🏁 Review closed — **${counts.approved}** saved, **${counts.rejected}** rejected` +
                     (counts.pending ? `, **${counts.pending}** left undecided (not written).` : '.'));
                 return true;
             }
 
             default:
-                await respond(interaction, '❌ Unknown action on that card — nothing was written.', { asUpdate: false });
+                await say(interaction, '❌ Unknown action on that card — nothing was written.', { asUpdate: false });
                 return true;
         }
     } catch (err) {
         logger.error('tagInference: review handler threw:', err);
         try {
-            await respond(interaction, '❌ Something went wrong handling that click — nothing was written. Check the bot log.', { asUpdate: false });
+            await say(interaction, '❌ Something went wrong handling that click — nothing was written. Check the bot log.', { asUpdate: false });
         } catch (_) { /* already logged */ }
         return true;
     }

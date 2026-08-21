@@ -76,6 +76,7 @@ if (invocations.length === 0) {
 for (const inv of invocations.slice().reverse()) {
     const status = inv.ok === false ? red('FAILED')
         : inv.ok === null ? yellow('no outcome recorded')
+        : inv.awaited === false ? yellow('dispatched') + dim(' (returned immediately; async work may still be running)')
         : green('ok');
     const took = inv.ms === null ? '' : dim(` ${inv.ms}ms`);
 

@@ -70,7 +70,7 @@ function buildRow(bot) {
  * @returns {Promise<boolean>} true if the customId belonged to this module
  *   (handled or attempted), false if the dispatcher should keep looking.
  */
-async function handle(interaction, bot, client, plexCommands) {
+async function handle(interaction, bot, client, plexCommands, { onInteractionResponse = null } = {}) {
     if (typeof interaction.customId !== 'string') return false;
     const [namespace, action] = interaction.customId.split(':');
     if (namespace !== NAMESPACE) return false;
@@ -97,7 +97,7 @@ async function handle(interaction, bot, client, plexCommands) {
         return true;
     }
 
-    const fakeMessage = adaptInteraction(interaction, '');
+    const fakeMessage = adaptInteraction(interaction, '', { onInteractionResponse });
     try {
         await cmd.process(bot, client, fakeMessage, '');
     } catch (err) {

@@ -182,3 +182,20 @@ test('only the requester can decide', async () => {
     assert.match(interaction.seen.replies[0].content, /only the person who ran the command/i);
     assert.strictEqual(sidecar.stats().active, 0);
 });
+
+test('a failed approve-remaining does not undo decisions already made', async (t) => {
+    // Regression: the rollback used to revert every entry marked approved, including ones
+    // approved by earlier successful clicks whose tags were already in the store.
+    const id = sidecar.stage(batch(3), 'owner');
+    await inference.handle(stubInteraction(`tagprop:approve:${id}:0`, 'owner'));
+    assert.strictEqual(sidecar.proposalSummary(id).approved, 1, 'track 0 approved and stored');
+
+    t.mock.method(fs, 'writeFileSync', () => { throw new Error('ENOSPC'); });
+    await inference.handle(stubInteraction(`tagprop:approveall:${id}:0`, 'owner'));
+    t.mock.restoreAll();
+
+    const counts = sidecar.proposalSummary(id);
+    assert.strictEqual(counts.approved, 1, 'the earlier decision survives the failed batch');
+    assert.strictEqual(counts.pending, 2, 'only the two that failed are still undecided');
+    assert.ok(sidecar.get('700'), 'and its tags are still stored');
+});

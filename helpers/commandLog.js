@@ -124,11 +124,17 @@ function startInvocation(info = {}) {
     return id;
 }
 
-function finishInvocation(id, { ok = true, ms = null, error = null } = {}) {
+/**
+ * @param {boolean} awaited - whether the handler's own promise was waited on. Many commands
+ *   start async work and return immediately; recording that distinction stops the log claiming
+ *   a 1ms success for a command that is still running (or about to fail).
+ */
+function finishInvocation(id, { ok = true, ms = null, error = null, awaited = true } = {}) {
     write({
         type: 'outcome',
         id,
         ok: !!ok,
+        awaited: !!awaited,
         ms: typeof ms === 'number' ? Math.round(ms) : null,
         error: error ? scrub(error.stack || error.message || String(error), 900, { keepLines: true }) : null
     });
@@ -195,9 +201,14 @@ function readInvocations({ limit = 25, command = null, userId = null, errorsOnly
 
     for (const event of readEvents()) {
         if (event.type === 'invoke') {
-            byId.set(event.id, { ...event, outputs: [], ok: null, ms: null, error: null });
+            byId.set(event.id, { ...event, outputs: [], ok: null, ms: null, error: null, awaited: true });
         } else if (event.type === 'outcome' && byId.has(event.id)) {
-            Object.assign(byId.get(event.id), { ok: event.ok, ms: event.ms, error: event.error });
+            Object.assign(byId.get(event.id), {
+                ok: event.ok,
+                ms: event.ms,
+                error: event.error,
+                awaited: event.awaited !== false
+            });
         } else if (event.type === 'output') {
             if (event.id && byId.has(event.id)) byId.get(event.id).outputs.push(event);
             else loose.push(event);

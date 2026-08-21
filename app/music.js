@@ -103,8 +103,10 @@ module.exports = function(client, bot) {
               try {
                 // Commands are a mix of sync and async; Promise.resolve captures both, and the
                 // dispatcher deliberately doesn't await so long-running games stay non-blocking.
-                Promise.resolve(cmd.process(bot, client, message, query))
-                  .then(() => commandLog.finishInvocation(logId, { ok: true, ms: Date.now() - startedAt }))
+                const result = cmd.process(bot, client, message, query);
+                const awaited = !!(result && typeof result.then === 'function');
+                Promise.resolve(result)
+                  .then(() => commandLog.finishInvocation(logId, { ok: true, ms: Date.now() - startedAt, awaited }))
                   .catch((e) => {
                     logger.error(`Command "${cmdTxt}" threw:`, e);
                     commandLog.finishInvocation(logId, { ok: false, ms: Date.now() - startedAt, error: e });
@@ -165,11 +167,17 @@ module.exports = function(client, bot) {
       recentInvocations.set(interaction.channelId, buttonLogId);
       const buttonStartedAt = Date.now();
 
+      // Button handlers answer by editing the card in place, which Discord delivers as an update
+      // — invisible to the messageCreate listener, so they report their replies directly.
+      const onInteractionResponse = (payload) => commandLog.recordOutput({
+        id: buttonLogId, kind: 'interaction-reply', channelId: interaction.channelId, payload
+      });
+
       try {
         // Each handler returns false when the customId isn't its own, so ownership stays with
         // the module that defined the button.
-        const claimed = await playbackButtons.handle(interaction, bot, client, plexCommands);
-        if (!claimed) await tagInference.handle(interaction);
+        const claimed = await playbackButtons.handle(interaction, bot, client, plexCommands, { onInteractionResponse });
+        if (!claimed) await tagInference.handle(interaction, { onInteractionResponse });
         commandLog.finishInvocation(buttonLogId, { ok: true, ms: Date.now() - buttonStartedAt });
       } catch (err) {
         commandLog.finishInvocation(buttonLogId, { ok: false, ms: Date.now() - buttonStartedAt, error: err });
@@ -187,18 +195,10 @@ module.exports = function(client, bot) {
       return;
     }
 
-    try {
-      // Commands can opt into a private (ephemeral) response via `slash.ephemeral` — used by
-      // /config so the settings panel isn't posted for the whole channel to see.
-      await interaction.deferReply(cmd.slash.ephemeral ? { flags: MessageFlags.Ephemeral } : undefined);
-    } catch (err) {
-      logger.error(`Failed to defer interaction for /${name}:`, err.message || err);
-      return;
-    }
-
     const query = slashRegistry.buildQueryString(interaction, cmd.slash);
-    const fakeMessage = adaptInteraction(interaction, query);
 
+    // Logged before the defer: a defer that fails is exactly the "This interaction failed" case
+    // the log exists to explain, and starting after it would leave no record of the attempt.
     const logId = commandLog.startInvocation({
       path: 'slash',
       command: name,
@@ -213,8 +213,30 @@ module.exports = function(client, bot) {
     const startedAt = Date.now();
 
     try {
-      await cmd.process(bot, client, fakeMessage, query);
-      commandLog.finishInvocation(logId, { ok: true, ms: Date.now() - startedAt });
+      // Commands can opt into a private (ephemeral) response via `slash.ephemeral` — used by
+      // /config so the settings panel isn't posted for the whole channel to see.
+      await interaction.deferReply(cmd.slash.ephemeral ? { flags: MessageFlags.Ephemeral } : undefined);
+    } catch (err) {
+      logger.error(`Failed to defer interaction for /${name}:`, err.message || err);
+      commandLog.finishInvocation(logId, { ok: false, ms: Date.now() - startedAt, error: err });
+      return;
+    }
+
+    // The adapter reports the interaction response, which reaches Discord as an edit and so is
+    // invisible to the messageCreate listener that captures ordinary channel messages.
+    const fakeMessage = adaptInteraction(interaction, query, {
+      onInteractionResponse: (payload) => commandLog.recordOutput({
+        id: logId, kind: 'interaction-reply', channelId: interaction.channelId, payload
+      })
+    });
+
+    try {
+      const result = cmd.process(bot, client, fakeMessage, query);
+      // Plenty of commands kick off async work and return synchronously; recording whether the
+      // handler's own promise was awaited keeps the log from calling those a 1ms success.
+      const awaited = !!(result && typeof result.then === 'function');
+      await result;
+      commandLog.finishInvocation(logId, { ok: true, ms: Date.now() - startedAt, awaited });
     } catch (err) {
       commandLog.finishInvocation(logId, { ok: false, ms: Date.now() - startedAt, error: err });
       logger.error(`/${name} threw:`, err);

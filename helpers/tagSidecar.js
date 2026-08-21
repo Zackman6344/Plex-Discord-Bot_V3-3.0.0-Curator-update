@@ -420,26 +420,24 @@ function approveRemaining(id, approvedBy) {
 
     const data = load();
     const snapshot = JSON.stringify(data.entries);
-    let written = 0;
+    const flipped = [];
     for (let i = 0; i < proposal.entries.length; i++) {
         const entry = proposal.entries[i];
         if (entry.status !== 'pending') continue;
         writeEntry(entry, approvedBy);
         data.pending[proposal.id].entries[i].status = 'approved';
-        written++;
+        flipped.push(i);
     }
-    if (written === 0) return { written: 0, saved: true };
+    if (flipped.length === 0) return { written: 0, saved: true };
 
     if (!save()) {
         try { data.entries = JSON.parse(snapshot); } catch (_) {}
-        for (let i = 0; i < proposal.entries.length; i++) {
-            if (data.pending[proposal.id].entries[i].status === 'approved') {
-                data.pending[proposal.id].entries[i].status = 'pending';
-            }
-        }
+        // Only the entries this call approved. Reverting everything marked approved would also
+        // undo decisions from earlier successful clicks, whose tags are still in the store.
+        for (const i of flipped) data.pending[proposal.id].entries[i].status = 'pending';
         return { written: 0, saved: false, reason: 'write-failed' };
     }
-    return { written, saved: true };
+    return { written: flipped.length, saved: true };
 }
 
 /** Replace a proposal entry's tags in place — used after a feedback-driven regeneration. */
