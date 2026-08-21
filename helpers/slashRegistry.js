@@ -153,6 +153,9 @@ function buildQueryString(interaction, slashSpec) {
     const collectOptions = (optList) => {
         if (!Array.isArray(optList)) return;
         for (const opt of optList) {
+            // Options the command reads straight off the interaction (interaction.options.getX)
+            // would otherwise be stringified into the arg text and parsed as part of the query.
+            if (opt.omitFromQuery) continue;
             const got = interaction.options.get(opt.name);
             if (got && got.value !== undefined && got.value !== null) {
                 // `flag` lets a BOOLEAN option emit a literal token (e.g. '-r') so

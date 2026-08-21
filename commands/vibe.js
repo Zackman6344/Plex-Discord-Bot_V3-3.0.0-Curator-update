@@ -2,6 +2,7 @@ const { getModel } = require('../helpers/geminiAPI.js');
 const { getPlex } = require('../helpers/plexClient.js');
 const handleAIError = require('../helpers/aiErrorHandler.js');
 const logger = require('../helpers/logger.js');
+const plexTags = require('../helpers/plexTags.js');
 
 const model = getModel();
 const plex = getPlex();
@@ -39,7 +40,9 @@ module.exports = {
             description: 'Generate a thematic playlist from a vibe',
             options: [
                 { name: 'vibe', type: 'STRING', required: true,
-                  description: 'Setting or mood, optionally with a duration or track count' }
+                  description: 'Setting or mood, optionally with a duration or track count' },
+                { name: 'ttrpg', type: 'BOOLEAN', required: false, omitFromQuery: true,
+                  description: 'Background ambiance for a tabletop session (skips the follow-up question)' }
             ]
         },
         process: async function(bot, client, msg, query) {
@@ -51,19 +54,36 @@ module.exports = {
                 return msg.channel.send("🎧 **You need to give me a vibe!** Try: `!vibe 1 hour of cyberpunk nightclub` or `!vibe spooky forest`.");
             }
 
-            const affirmitiveWords = ['yes', 'y', 'yeah', 'yep', 'sure', 'tabletop', 'ttrpg'];
-            const ttrpgAns = await promptUser(msg.channel, msg.author.id, `🎲 **Quick question:** Is this vibe for a Tabletop RPG session?\n*(Reply **Yes** for a 20-track ambient background queue, or **No** for a standard mix)*`);
-
-            if (!ttrpgAns) {
-                return msg.channel.send("🎧 *Vibe check timed out. Run the command again when you're ready!*");
+            // A slash user answers this up front with the ttrpg option; the prefix path (and a
+            // slash invocation that left it unset) still gets asked in-channel.
+            let isTTRPG = null;
+            const slashOpts = msg.interaction && msg.interaction.options;
+            if (slashOpts && typeof slashOpts.getBoolean === 'function') {
+                const chosen = slashOpts.getBoolean('ttrpg');
+                if (chosen !== null && chosen !== undefined) isTTRPG = chosen;
             }
 
-            let isTTRPG = affirmitiveWords.includes(ttrpgAns.toLowerCase());
+            if (isTTRPG === null) {
+                const affirmitiveWords = ['yes', 'y', 'yeah', 'yep', 'sure', 'tabletop', 'ttrpg'];
+                const ttrpgAns = await promptUser(msg.channel, msg.author.id, `🎲 **Quick question:** Is this vibe for a Tabletop RPG session?\n*(Reply **Yes** for a 20-track ambient background queue, or **No** for a standard mix)*`);
+
+                if (!ttrpgAns) {
+                    return msg.channel.send("🎧 *Vibe check timed out. Run the command again when you're ready!*");
+                }
+                isTTRPG = affirmitiveWords.includes(ttrpgAns.toLowerCase());
+            }
 
             let statusMsg = await msg.channel.send(`🎵 **Vibe Check Initializing...**\n⏳ *Decoding your constraints and casting a sonic keyword net...*`);
 
             try {
                 const ttrpgContext = isTTRPG ? "CRITICAL: The user wants instrumental, cinematic, or ambient background music for a Tabletop RPG." : "";
+
+                // The AI picks from the library's real tag vocabulary. Left unconstrained it
+                // invents plausible-sounding tags ("driving", "instrumental") that match nothing,
+                // which is what made the old filter fall back to scoring on absent fields.
+                const vocabForPrompt = await plexTags.getVocabulary();
+                const moodVocab = vocabForPrompt.moods.map(m => m.title);
+                const genreVocab = vocabForPrompt.genres.map(g => g.title);
 
                 const typePrompt = `
                 The user requested a music playlist: "${rawInput}"
@@ -72,15 +92,29 @@ module.exports = {
                 Tasks:
                 1. Extract the core vibe/setting.
                 2. Determine if the user asked for a specific number of tracks OR a target duration in minutes. If neither, return null.
-                3. Deduce the implied genres, moods, and styles to search a music database. Keep arrays small (2-4 words each).
-                CRITICAL: If the user explicitly names a specific genre or style (e.g., "bardcore", "synthwave"), you MUST include that exact word in the 'genres' or 'styles' array!
+                3. List any specific recording artists the user named. Empty array if none.
+                4. Choose moods and genres from the CLOSED LISTS below.
+
+                MOODS AVAILABLE (choose only from this list, copying names exactly):
+                ${JSON.stringify(moodVocab)}
+
+                GENRES AVAILABLE (choose only from this list, copying names exactly):
+                ${JSON.stringify(genreVocab)}
+
+                CRITICAL RULES for tag selection:
+                - Include EVERY tag from the lists that could plausibly fit the request, not a token
+                  handful. Breadth here is good: it widens the candidate pool the next stage curates
+                  from. Twenty accurate moods beat three.
+                - Never invent a tag. If a word the user used isn't in a list, express it through
+                  whichever listed tags come closest.
+                - If nothing in a list fits at all, return an empty array for it.
 
                 Output ONLY a raw JSON object exactly like this:
                 {
                     "vibe": "the core setting",
-                    "genres": ["synthwave", "electronic"],
-                    "moods": ["energetic", "dark"],
-                    "styles": ["driving", "instrumental"],
+                    "artists": [],
+                    "genres": ["Electronic"],
+                    "moods": ["Energetic", "Dramatic", "Exciting"],
                     "trackCount": 5,
                     "durationMinutes": null
                 }
@@ -107,99 +141,93 @@ module.exports = {
 
                 await statusMsg.edit(`🎵 **Vibe:** \`${typeData.vibe}\` | **Target:** \`${constraintText}\`\n⏳ *Cross-referencing Plex tags with: ${[...(typeData.genres || []), ...(typeData.moods || [])].join(", ")}...*`);
 
-                const sections = await plex.query('/library/sections');
-                const targetSection = sections.MediaContainer.Directory.find(sec => sec.type === 'artist');
-
-                if (!targetSection) {
+                const vocab = await plexTags.getVocabulary();
+                if (!vocab.sectionKey) {
                     return statusMsg.edit(`❌ Couldn't find a music library on the server!`);
                 }
 
-                const libraryData = await plex.query(`/library/sections/${targetSection.key}/all?type=10`);
-                const allItems = libraryData.MediaContainer.Metadata || [];
+                // Ask Plex for exactly the tracks carrying the tags the AI chose, instead of
+                // pulling the whole library and scoring it against Mood/Style fields that a
+                // section listing never returns. Every matched tag below is one Plex assigned.
+                const tagHits = await plexTags.fetchTracksByTags(typeData.moods || [], typeData.genres || []);
 
-                if (allItems.length === 0) {
-                    return statusMsg.edit(`❌ The music library is empty!`);
+                if (tagHits.unknown.length) {
+                    logger.debug(`vibe: AI proposed tags absent from the library vocabulary: ${tagHits.unknown.join(', ')}`);
                 }
 
-                   // ==========================================
-                // THE NEW DEEP METADATA CROSS-FILTER
-                // ==========================================
+                // A named artist won't show up under a mood tag, so look those up separately.
+                const requestedArtists = [];
+                const artistTracks = [];
+                for (const name of (typeData.artists || []).slice(0, 5)) {
+                    try {
+                        const res = await plex.query(`/search/?type=10&query=${encodeURI(name)}&X-Plex-Container-Start=0&X-Plex-Container-Size=100`);
+                        const found = (res.MediaContainer && res.MediaContainer.Metadata) || [];
+                        if (found.length) {
+                            requestedArtists.push(name);
+                            for (const t of found) artistTracks.push({ track: t, matchedMoods: [], matchedGenres: [], requestedArtist: true });
+                        }
+                    } catch (err) {
+                        logger.warn(`vibe: artist lookup failed for "${name}":`, err.message || err);
+                    }
+                }
 
-                // STRINGER FIX: Strip punctuation and weird spaces for a pure alphanumeric comparison
-                const normalizeString = (str) => str.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
-                const normalizedInput = normalizeString(rawInput);
+                const byKey = new Map();
+                for (const entry of [...tagHits.tracks, ...artistTracks]) {
+                    const id = entry.track.ratingKey;
+                    if (!byKey.has(id)) byKey.set(id, entry);
+                    else if (entry.requestedArtist) byKey.get(id).requestedArtist = true;
+                }
+
+                if (byKey.size === 0) {
+                    // Previously this fell back to "every playable track", then presented 75 random
+                    // songs as a curated vibe. Saying nothing matched is more useful than that.
+                    const tried = [...tagHits.usedMoods, ...tagHits.usedGenres].join(', ') || 'nothing usable';
+                    return statusMsg.edit(
+                        `🎧 **No matches for that vibe.**\nI mapped it to: \`${tried}\` — but no tracks in the library carry those tags.\n` +
+                        `*Try naming a genre or artist you know is on the server, or a broader mood.*`
+                    );
+                }
+
                 const rawInputLower = rawInput.toLowerCase();
-
                 const fillerWords = ['of', 'the', 'and', 'in', 'a', 'some', 'music', 'mix', 'playlist', 'for', 'my', 'hour', 'minutes', 'mins'];
-                const searchTerms = rawInput.toLowerCase().split(/\s+/).filter(w => w.length > 2 && !fillerWords.includes(w));
+                const searchTerms = rawInputLower.split(/\s+/).filter(w => w.length > 2 && !fillerWords.includes(w));
 
-                // METADATA FIX: Extract Album Artists AND Track-Specific Artists (to catch compilation albums)
-                const allUniqueArtists = [...new Set(allItems.flatMap(item => [item.grandparentTitle, item.originalTitle]).filter(Boolean))];
-
-                const requestedArtists = allUniqueArtists.filter(artist => {
-                    const normArtist = normalizeString(artist);
-                    if (normArtist.length < 3) return false;
-
-                    // Use a word boundary regex so asking for "Rush" doesn't accidentally trigger on "Brush"
-                    const regex = new RegExp(`\\b${normArtist}\\b`, 'i');
-                    return regex.test(normalizedInput);
-                });
-
-                let scoredItems = allItems.map((item) => {
-                    let score = 0;
-
-                    // DIRECT MEMORY FIX: Extract the actual media file path to bypass the search engine entirely.
+                let scoredItems = [...byKey.values()].map((entry) => {
+                    const item = entry.track;
                     const plexKey = item.Media?.[0]?.Part?.[0]?.key;
                     if (!plexKey) return { score: -1 };
 
-                    let tGenres = item.Genre ? item.Genre.map(g => g.tag.toLowerCase()) : [];
-                    let tMoods = item.Mood ? item.Mood.map(m => m.tag.toLowerCase()) : [];
-                    let tStyles = item.Style ? item.Style.map(s => s.tag.toLowerCase()) : [];
-
                     const title = item.title || "Unknown Title";
-                    // Fallback from Track Artist -> Album Artist -> Unknown
                     const artist = item.originalTitle || item.grandparentTitle || "Unknown Artist";
                     const album = item.parentTitle || "Unknown Album";
 
-                    tGenres.forEach(tg => { if (tg.length > 2 && rawInputLower.includes(tg)) score += 15; });
-                    tStyles.forEach(ts => { if (ts.length > 2 && rawInputLower.includes(ts)) score += 10; });
-                    tMoods.forEach(tm => { if (tm.length > 2 && rawInputLower.includes(tm)) score += 5; });
+                    // Tag matches are the signal: the track is here because Plex tagged it that way.
+                    let score = entry.matchedMoods.length * 8 + entry.matchedGenres.length * 5;
+                    if (entry.requestedArtist) score += 40;
 
+                    // Literal text hits still count, but can no longer outweigh the tags the way a
+                    // 20-point title match once did.
                     searchTerms.forEach(term => {
-                        if (artist.toLowerCase().includes(term)) score += 20;
-                        if (title.toLowerCase().includes(term)) score += 20;
-                        if (album.toLowerCase().includes(term)) score += 10;
+                        if (artist.toLowerCase().includes(term)) score += 6;
+                        if (title.toLowerCase().includes(term)) score += 4;
+                        if (album.toLowerCase().includes(term)) score += 2;
                     });
+                    if (typeData.vibe && title.toLowerCase().includes(typeData.vibe.toLowerCase())) score += 2;
 
-                    if (typeData.genres) typeData.genres.forEach(g => { if(title.toLowerCase().includes(g.toLowerCase())) score += 15; });
-                    if (typeData.styles) typeData.styles.forEach(s => { if(title.toLowerCase().includes(s.toLowerCase())) score += 10; });
-
-                    if (typeData.genres) typeData.genres.forEach(g => { if(tGenres.some(tg => tg.includes(g.toLowerCase()))) score += 3; });
-                    if (typeData.moods) typeData.moods.forEach(m => { if(tMoods.some(tm => tm.includes(m.toLowerCase()))) score += 1; });
-                    if (typeData.styles) typeData.styles.forEach(s => { if(tStyles.some(ts => ts.includes(s.toLowerCase()))) score += 1; });
-
-                    if (title.toLowerCase().includes(typeData.vibe.toLowerCase())) score += 2;
-
-                    // UPDATED: Now saving the tags so the LLM can actually see them
-                                        return {
-                                            title,
-                                            artist,
-                                            album,
-                                            score,
-                                            plexKey,
-                                            tags: [...tGenres, ...tMoods, ...tStyles]
-                                        };
-                                    });
+                    return {
+                        title, artist, album, score, plexKey,
+                        duration: item.duration || null,
+                        tags: [...entry.matchedMoods, ...entry.matchedGenres]
+                    };
+                });
 
                 let filteredItems = scoredItems.filter(item => item.score > 0);
-
                 if (filteredItems.length === 0) {
-                    filteredItems = scoredItems.filter(item => item.score > -1); // Fallback to all playable tracks
-                } else {
-                    filteredItems.sort((a, b) => b.score - a.score);
+                    return statusMsg.edit(`🎧 **Nothing scored high enough for that vibe.** Try a broader mood or a specific artist.`);
                 }
+                filteredItems.sort((a, b) => b.score - a.score);
 
-let diverseCatalog = [];
+                let diverseCatalog = [];
                 let artistTracker = {};
                 const MAX_TRACKS_PER_ARTIST = 3;
 
@@ -207,7 +235,6 @@ let diverseCatalog = [];
                     const item = filteredItems[i];
                     if (!artistTracker[item.artist]) artistTracker[item.artist] = 0;
 
-                    // DYNAMIC THRESHOLD: If the user explicitly asked for this artist, remove the cap!
                     const isRequestedArtist = requestedArtists.some(ra => ra.toLowerCase() === item.artist.toLowerCase());
                     const currentLimit = isRequestedArtist ? 50 : MAX_TRACKS_PER_ARTIST;
 
@@ -219,7 +246,7 @@ let diverseCatalog = [];
                 }
 
                 // ID MAPPING FIX: Assign an integer ID to each track so the LLM doesn't have to output massive JSON strings.
-                let catalog = diverseCatalog.sort(() => 0.5 - Math.random()).map((item, index) => ({
+                let catalog = shuffleArray(diverseCatalog).map((item, index) => ({
                     id: index,
                     title: item.title,
                     artist: item.artist,
@@ -227,6 +254,7 @@ let diverseCatalog = [];
                     plexKey: item.plexKey,
                     tags: item.tags
                 }));
+
 await statusMsg.edit(`🎵 **Vibe:** \`${typeData.vibe}\`\n⏳ *The AI Librarian is analyzing metadata...*`);
 
                 // DYNAMIC AI RULE: Tell the AI it is allowed to spam an artist if the user asked for them

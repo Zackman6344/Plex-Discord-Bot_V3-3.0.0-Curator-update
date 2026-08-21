@@ -100,3 +100,25 @@ test('buildSpec expands subcommands with choices into the Discord option shape',
     assert.strictEqual(joinSub.type, ApplicationCommandOptionType.Subcommand);
     assert.deepStrictEqual(joinSub.options, []);
 });
+
+test('omitFromQuery keeps an option out of the arg string (command reads it off the interaction)', () => {
+    const slash = {
+        options: [
+            { name: 'vibe', type: 'STRING' },
+            { name: 'ttrpg', type: 'BOOLEAN', omitFromQuery: true }
+        ]
+    };
+    const interaction = makeInteraction({ values: { vibe: 'spooky forest', ttrpg: true } });
+
+    assert.strictEqual(buildQueryString(interaction, slash), 'spooky forest');
+});
+
+test('omitFromQuery is not sent to Discord as part of the option spec', () => {
+    const spec = buildSpec('vibe', {
+        description: 'x',
+        options: [{ name: 'ttrpg', type: 'BOOLEAN', omitFromQuery: true, description: 'y' }]
+    });
+
+    assert.strictEqual(spec.options[0].type, ApplicationCommandOptionType.Boolean);
+    assert.ok(!('omitFromQuery' in spec.options[0]));
+});
