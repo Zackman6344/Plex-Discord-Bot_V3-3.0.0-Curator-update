@@ -11,6 +11,7 @@ module.exports = function(client, bot) {
   const { adaptInteraction } = require('../helpers/interactionAdapter.js');
   const { MessageFlags } = require('discord.js');
   const playbackButtons = require('../helpers/playbackButtons.js');
+  const tagInference = require('../helpers/tagInference.js');
   const channelClaims = require('../helpers/channelClaims.js');
 
   // when bot is ready
@@ -97,7 +98,10 @@ module.exports = function(client, bot) {
     // helpers/playbackButtons.js; falls through if the customId isn't ours.
     if (interaction.isButton && interaction.isButton()) {
       try {
-        await playbackButtons.handle(interaction, bot, client, plexCommands);
+        // Each handler returns false when the customId isn't its own, so ownership stays with
+        // the module that defined the button.
+        const claimed = await playbackButtons.handle(interaction, bot, client, plexCommands);
+        if (!claimed) await tagInference.handle(interaction);
       } catch (err) {
         logger.error('Button dispatch threw:', err.message || err);
       }

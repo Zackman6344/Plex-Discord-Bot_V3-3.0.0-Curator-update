@@ -3,6 +3,8 @@ const { getPlex } = require('../helpers/plexClient.js');
 const handleAIError = require('../helpers/aiErrorHandler.js');
 const logger = require('../helpers/logger.js');
 const plexTags = require('../helpers/plexTags.js');
+const sidecar = require('../helpers/tagSidecar.js');
+const tagInference = require('../helpers/tagInference.js');
 
 const model = getModel();
 const plex = getPlex();
@@ -151,6 +153,25 @@ module.exports = {
                 // section listing never returns. Every matched tag below is one Plex assigned.
                 const tagHits = await plexTags.fetchTracksByTags(typeData.moods || [], typeData.genres || []);
 
+                // A track Plex never tagged can't come back from a Plex tag query at all, so the
+                // approved sidecar is the only route by which it's reachable.
+                const sidecarHits = sidecar.findByTags({ moods: typeData.moods || [], genres: typeData.genres || [] }).slice(0, 60);
+                const sidecarTracks = [];
+                if (sidecarHits.length) {
+                    const full = await plexTags.fetchTracksByRatingKeys(sidecarHits.map(h => h.ratingKey));
+                    const byRatingKey = new Map(full.map(t => [String(t.ratingKey), t]));
+                    for (const hit of sidecarHits) {
+                        const track = byRatingKey.get(String(hit.ratingKey));
+                        if (!track) continue;
+                        sidecarTracks.push({
+                            track,
+                            matchedMoods: hit.matched.moods,
+                            matchedGenres: hit.matched.genres,
+                            inferred: true
+                        });
+                    }
+                }
+
                 if (tagHits.unknown.length) {
                     logger.debug(`vibe: AI proposed tags absent from the library vocabulary: ${tagHits.unknown.join(', ')}`);
                 }
@@ -172,7 +193,7 @@ module.exports = {
                 }
 
                 const byKey = new Map();
-                for (const entry of [...tagHits.tracks, ...artistTracks]) {
+                for (const entry of [...tagHits.tracks, ...sidecarTracks, ...artistTracks]) {
                     const id = entry.track.ratingKey;
                     if (!byKey.has(id)) byKey.set(id, entry);
                     else if (entry.requestedArtist) byKey.get(id).requestedArtist = true;
@@ -216,6 +237,8 @@ module.exports = {
 
                     return {
                         title, artist, album, score, plexKey,
+                        ratingKey: item.ratingKey,
+                        inferred: !!entry.inferred,
                         duration: item.duration || null,
                         tags: [...entry.matchedMoods, ...entry.matchedGenres]
                     };
@@ -252,6 +275,8 @@ module.exports = {
                     artist: item.artist,
                     album: item.album,
                     plexKey: item.plexKey,
+                    ratingKey: item.ratingKey,
+                    inferred: item.inferred,
                     tags: item.tags
                 }));
 
@@ -310,7 +335,8 @@ await statusMsg.edit(`🎵 **Vibe:** \`${typeData.vibe}\`\n⏳ *The AI Librarian
                 let currentChunk = header;
 
                 finalPlaylist.forEach(track => {
-                    let trackDisplay = `🎶 **${track.title}** by ${track.artist}\n> *${track.reason}*\n\n`;
+                    const provenance = track.inferred ? ' *(tags inferred, not from Plex)*' : '';
+                    let trackDisplay = `🎶 **${track.title}** by ${track.artist}${provenance}\n> *${track.reason}*\n\n`;
                     if (currentChunk.length + trackDisplay.length > 1900) {
                         chunks.push(currentChunk);
                         currentChunk = "";
@@ -342,6 +368,25 @@ await statusMsg.edit(`🎵 **Vibe:** \`${typeData.vibe}\`\n⏳ *The AI Librarian
                 // If the bot isn't currently playing anything, start the music loop!
                 if (queuedCount > 0 && !bot.isPlaying) {
                     bot.playSong(msg);
+                }
+
+                // Offer to fill in what Plex is missing for the tracks just queued. This only
+                // proposes — the approval card is the sole path to writing anything, and even
+                // then only to the local sidecar.
+                try {
+                    const queuedKeys = finalPlaylist.map(t => t.ratingKey).filter(Boolean);
+                    if (queuedKeys.length) {
+                        const { proposals, superseded } = await tagInference.proposeForTracks(queuedKeys, vocab);
+                        if (superseded) {
+                            logger.info(`vibe: retired ${superseded} inferred entr${superseded === 1 ? 'y' : 'ies'} — Plex now has official data.`);
+                        }
+                        if (proposals.length) {
+                            const proposalId = sidecar.stage(proposals, msg.author.id);
+                            await msg.channel.send(tagInference.buildApprovalMessage(proposalId, proposals));
+                        }
+                    }
+                } catch (err) {
+                    logger.warn('vibe: tag inference skipped:', err.message || err);
                 }
 
             } catch (err) {

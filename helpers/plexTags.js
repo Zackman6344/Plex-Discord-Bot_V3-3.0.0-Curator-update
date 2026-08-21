@@ -141,9 +141,28 @@ async function fetchTracksByTags(moodNames = [], genreNames = []) {
     };
 }
 
+/**
+ * Full metadata for specific tracks. Unlike a section listing this does carry Mood/Genre/Style,
+ * which is why anything needing real per-track tags has to come through here.
+ */
+async function fetchTracksByRatingKeys(ratingKeys = []) {
+    const plex = getPlex();
+    const out = [];
+    for (const rk of ratingKeys) {
+        try {
+            const res = await plex.query(`/library/metadata/${rk}`);
+            const track = res.MediaContainer && res.MediaContainer.Metadata && res.MediaContainer.Metadata[0];
+            if (track) out.push(track);
+        } catch (err) {
+            logger.warn(`Plex metadata fetch failed for ${rk}:`, err.message || err);
+        }
+    }
+    return out;
+}
+
 // exported for tests
 function _resetCache() {
     vocabCache = null;
 }
 
-module.exports = { getVocabulary, fetchTracksByTag, fetchTracksByTags, resolveTag, _resetCache };
+module.exports = { getVocabulary, fetchTracksByTag, fetchTracksByTags, fetchTracksByRatingKeys, resolveTag, _resetCache };
