@@ -253,8 +253,11 @@ minority would play on repeat forever.
 Two things address that, both tunable from Discord:
 
 **A discovery quota.** A share of every `/vibe` queue is reserved for random untagged tracks —
-25% by default. It is a share *of* the queue, not extra on top: asking for 5 tracks at 25% gets
-4 curated picks plus 1 wildcard, still 5. Set it with `/tags discovery percent:<0-100>`, or 0 to
+25% by default. It is a share *of* the queue, not extra on top — a 5-track request stays 5
+tracks, with roughly one of them a wildcard. Small queues are handled by rounding the fraction
+probabilistically rather than down, so 25% of a 3-track queue means a wildcard three runs in four
+rather than never; the average over runs is the percentage you asked for at every queue size.
+Set it with `/tags discovery percent:<0-100>`, or 0 to
 turn it off. Repeats are also avoided across the last 300 tracks served (`/tags memory`).
 
 **A local tag sidecar.** After a run, the bot offers tags for the tracks it queued that Plex has

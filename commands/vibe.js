@@ -5,6 +5,7 @@ const logger = require('../helpers/logger.js');
 const plexTags = require('../helpers/plexTags.js');
 const sidecar = require('../helpers/tagSidecar.js');
 const recentPicks = require('../helpers/recentPicks.js');
+const { discoveryQuota, weightedShuffle } = require('../helpers/selection.js');
 const tagInference = require('../helpers/tagInference.js');
 
 const model = getModel();
@@ -278,7 +279,10 @@ module.exports = {
                 }
 
                 // ID MAPPING FIX: Assign an integer ID to each track so the LLM doesn't have to output massive JSON strings.
-                let catalog = shuffleArray(diverseCatalog).map((item, index) => ({
+                // Ordered by relevance rather than shuffled flat: a track matching six requested
+                // moods should be near the front far more often than one matching a single mood,
+                // while still leaving every track a real chance at every position.
+                let catalog = weightedShuffle(diverseCatalog, (item) => item.score).map((item, index) => ({
                     id: index,
                     title: item.title,
                     artist: item.artist,
@@ -307,7 +311,12 @@ await statusMsg.edit(`🎵 **Vibe:** \`${typeData.vibe}\`\n⏳ *The AI Librarian
                 3. TECHNICAL REASONING ONLY: Completely exclude flavorful, emotional, or "DJ pitch" style text. The 'reason' field MUST be a clinical explanation of why this track was selected based on its metadata tags and prompt relevance.
 
                 Analyze this catalog of highly relevant songs (JSON) and select ${aiTargetInstructions}.
-                ${JSON.stringify(catalog.map(c => ({id: c.id, title: c.title, artist: c.artist, tags: c.tags.slice(0, 5)})))}
+                The list is ordered by how strongly each track matched the request — earlier entries
+                matched more of it. Treat that as a strong hint, not a rule: prefer earlier tracks
+                when two are otherwise equally good, but pick a later one whenever it genuinely
+                fits the vibe better. "matched" is how many of the requested tags that track carries.
+
+                ${JSON.stringify(catalog.map(c => ({id: c.id, title: c.title, artist: c.artist, matched: (c.tags || []).length, tags: c.tags.slice(0, 5)})))}
 
                 Output ONLY a raw JSON object exactly like this:
                 {
@@ -345,7 +354,7 @@ await statusMsg.edit(`🎵 **Vibe:** \`${typeData.vibe}\`\n⏳ *The AI Librarian
                     // tracks at 25% gets 4 curated + 1 wildcard, still 5. Never take the last
                     // slot, so a 2-track request keeps both picks curated.
                     const target = finalPlaylist.length;
-                    const quota = Math.min(Math.floor(target * tuning.discoveryPercent / 100), target - 1);
+                    const quota = discoveryQuota(target, tuning.discoveryPercent);
                     if (quota > 0) {
                         try {
                             const alreadyPicked = new Set(finalPlaylist.map(t => String(t.ratingKey)));
@@ -383,7 +392,7 @@ await statusMsg.edit(`🎵 **Vibe:** \`${typeData.vibe}\`\n⏳ *The AI Librarian
                             if (discoveries.length) {
                                 // Substitute, don't append — drop the lowest-ranked curated picks.
                                 finalPlaylist = finalPlaylist.slice(0, target - discoveries.length).concat(discoveries);
-                                logger.info(`vibe: ${discoveries.length} of ${target} slot(s) given to discovery picks (${tuning.discoveryPercent}% quota).`);
+                                logger.info(`vibe: ${discoveries.length} of ${target} slot(s) given to discovery picks (${tuning.discoveryPercent}% quota, ${((target * tuning.discoveryPercent) / 100).toFixed(2)} expected).`);
                             }
                         } catch (err) {
                             logger.warn('vibe: discovery picks skipped:', err.message || err);

@@ -494,6 +494,9 @@ The pipeline:
    what made the original filter fall back to title substring matching.
 3. **Retrieval** — one query per chosen tag; results are unioned, each track carrying the tags it
    actually matched. Ground truth, so the curator LLM downstream reasons about real metadata.
+   The candidate list is then ordered by a weighted shuffle (`helpers/selection.js`): a track
+   matching six requested moods reaches the front far more often than one matching a single mood,
+   without ever being guaranteed a slot, so the same request twice does not return the same queue.
 4. **Sidecar** (`helpers/tagSidecar.js`) — approved inferred tags are searched alongside Plex, so
    tracks Plex never tagged become reachable. Plex wins per dimension, always.
 5. **Rotation + discovery** (`helpers/recentPicks.js`) — recent picks take a score handicap, and a
