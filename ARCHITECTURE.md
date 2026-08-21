@@ -123,6 +123,8 @@ Two signature styles coexist in the codebase:
 | `interactionAdapter.js`    | Wraps a Discord `ChatInputCommandInteraction` to look like a `Message` so existing command process functions work unchanged against slash commands. First `.reply()` / `.channel.send()` routes through `interaction.editReply()`; subsequent calls use the real channel. See "Slash commands" below. |
 | `aiErrorHandler.js`        | `handleAIError(err, statusMsg, defaultMsg)` for AI commands; replies with an inferred reason (503 / 429 / bad key / 404 / network / SyntaxError) or the command-specific fallback. Also exports `inferReason(err)` as a pure function. |
 | `clueCache.js`             | Persistent XML clue cache for AI minigames. `getOrGenerate(media, minigame, fn, model)` checks `data/clues/<slug>-<year>.xml` first; on miss runs `fn` and appends the result as a new variant. Multiple variants per (media, minigame) accumulate; lookups pick one at random. See "AI clue cache" section below. |
+| `commandLog.js`            | Structured JSONL record of every command invocation, its outcome and the bot's replies, in `data/logs/commands-<date>.jsonl`. Secrets redacted, 14-day retention, `npm run logs` reads it back. |
+| `selection.js`             | The probabilistic bits of queue assembly: `discoveryQuota()` (stochastic rounding, so a percentage setting behaves at small queue sizes) and `weightedShuffle()` (stronger tag matches surface near the front without being guaranteed a slot). Pure, with an injectable RNG. |
 | `plexTags.js`              | Plex mood/genre/style vocabulary + server-side tag filtering. Plex never returns Mood/Style inline on a track in a *section listing* — only `/library/metadata/<key>` carries them — so tag search must go through the section's tag filters. Exports `getVocabulary()`, `fetchTracksByTags()`, `fetchTracksByRatingKeys()`, `countTracks()`, `sampleRandomTracks()`. |
 | `tagSidecar.js`            | Local store of **approved, AI-inferred** track tags filling the gap where Plex has none (~70% of tracks here). Plex always wins per dimension; an inferred dimension Plex later fills is marked `supersededAt` rather than deleted. Atomic writes, persisted pending proposals, and the `discoveryPercent` / `repeatMemory` tuning. Writes `data/inferred_tags.json`. Never writes to Plex. |
 | `tagInference.js`          | Asks Gemini to fill only the dimensions Plex is missing, constrained to the library's own vocabulary, and renders the approval card. Nothing is stored without a human clicking Approve; the handler answers every click through an update → reply → followUp → channel fallback chain and leaves the proposal live if the disk write fails. |
@@ -177,6 +179,8 @@ All persistent runtime state lives under `data/`. The directory is created if mi
 | `data/inferred_tags.json`         | `helpers/tagSidecar.js` (approved inferred tags + pending proposals + tuning; documented, stable shape for use outside the bot) |
 | `data/inferred_tags.export.json`  | `commands/tags.js` (`/tags export` — portable copy including file paths) |
 | `data/recent_picks.json`          | `helpers/recentPicks.js`            |
+| `data/logs/bot-<date>.log`        | `helpers/logger.js` (console mirror) |
+| `data/logs/commands-<date>.jsonl` | `helpers/commandLog.js` (invocations, outcomes, outputs) |
 | `data/hitster_stats.json`         | `commands/hitster.js`               |
 | `data/trivia_leaderboard.json`    | `commands/trivia.js`                |
 | `data/badplot_leaderboard.json`   | `commands/badplot.js`               |
@@ -508,6 +512,33 @@ The pipeline:
 Nothing here writes to Plex. The store is `data/inferred_tags.json` (atomic writes, pending
 reviews persisted so a restart doesn't strand a card), with `PLEXBOT_TAGS_FILE` overriding the
 path for tests or an externally managed sidecar.
+
+## Logging
+
+Two sinks, both under `data/logs/`, both pruned at 14 days.
+
+**`helpers/logger.js`** mirrors console output to `bot-YYYY-MM-DD.log`. Console-only logging meant
+any failure nobody was watching scrolled past unrecoverably.
+
+**`helpers/commandLog.js`** records structured JSON Lines: `invoke` (path, command, args, user,
+channel), `outcome` (ok, ms, error stack) and `output` (what the bot posted). One object per line,
+so a process killed mid-append costs one event rather than the file.
+
+Wiring lives in `app/music.js`. Invocations are logged in all three dispatch paths — prefix, slash
+and button. Output is captured once, in a `messageCreate` listener filtered to the bot's own
+messages, rather than at the couple of hundred call sites that produce it; each is correlated to
+whatever command last ran in that channel within a two-minute window. Correlation is best-effort
+by design: a Kometa broadcast or a game timer arrives with no invocation attached, which is
+exactly what it is, and `npm run logs` reports those separately.
+
+Secrets discovered from `config/keys.js`, `config/plex.js` and `config/config.js` are redacted
+before any line is written. Both sinks swallow their own write errors — a logger that throws is
+worse than a logger that loses a line — and both honour env kill switches
+(`PLEXBOT_COMMAND_LOG=0`, `PLEXBOT_LOG_TO_FILE=0`) plus `PLEXBOT_LOG_DIR` for redirection.
+
+`scripts/logs.js` (`npm run logs`) folds the events back into one record per invocation and prints
+them as a transcript, with `--errors`, `--command=`, `--user=`, `--since=`, `--n=`, `--stats` and
+`--raw`.
 
 ## Adding a new command
 

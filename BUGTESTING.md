@@ -3,11 +3,15 @@
 Practical pass for this bot. Phase 0 is the `/play` symptom specifically; Phases 1–6 are the
 repeatable sweep to run after any change that touches dispatch, commands, or deps.
 
-Run the bot with output captured — the logger writes to console only, nothing is persisted:
+The bot now persists its own logs to `data/logs/`, so a failure you didn't happen to be watching
+is still there afterwards:
 
 ```bash
-node index.js 2>&1 | tee data/bot-session.log
+npm run logs -- --errors
 ```
+
+That prints each failed command with its arguments, who ran it, and the stack. `npm run logs`
+alone shows recent commands paired with what the bot replied.
 
 ---
 
@@ -207,8 +211,8 @@ args rather than crashes.
 - **`xml2js` installed is 0.4.16 while `package.json` says `^0.6.2`.** The Plex code depends on the
   0.4.x callback API, so regenerating the lockfile will bump it and can break Plex parsing. Pin
   `"xml2js": "0.4.16"` in `package.json` before regenerating, and re-test `/diag` after.
-- **Logs are console-only.** Nothing is written to disk, so a failure that happened yesterday is
-  unrecoverable. Pipe to a file while bug-testing (command at the top).
+- ~~Logs are console-only.~~ Fixed: `data/logs/` now holds both a console mirror and a structured
+  command log, pruned after 14 days. Read it with `npm run logs`.
 - **2 of 122 unit tests fail on your machine** (`test/plexHome.test.js`) — they assert on a missing
   `homeOwnerToken` but read your real `config/plex.js`, where it's set. It's a test-isolation bug,
   not a bot bug, but it means `npm test` isn't currently a clean signal.

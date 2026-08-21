@@ -6,7 +6,8 @@
 	"scripts": {
 		"start": "node index.js",
 		"test": "node --test test/*.test.js",
-		"check:slash": "node scripts/validate-slash.js"
+		"check:slash": "node scripts/validate-slash.js",
+		"logs": "node scripts/logs.js"
 	},
 	"author": "danxfisher, irbyk, zackman634",
 	"license": "ISC",

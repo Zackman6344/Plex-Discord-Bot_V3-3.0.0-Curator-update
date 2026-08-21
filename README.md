@@ -281,6 +281,42 @@ labelled *(tags inferred, not from Plex)*.
 portable copy — including each track's file path on the Plex host — for tagging tools outside
 the bot.
 
+## 🧾 Logs
+
+The bot keeps two logs under `data/logs/`, both plain text, both pruned after 14 days:
+
+- `bot-YYYY-MM-DD.log` — everything the console prints, minus the colours.
+- `commands-YYYY-MM-DD.jsonl` — one line per event: a command being invoked (who, where, which
+  arguments, prefix or slash or button), its outcome (ok / failed, how long it took, the stack if
+  it threw), and every message the bot posted in response.
+
+Read them back with:
+
+```
+npm run logs                     # last 15 commands, with what the bot replied
+npm run logs -- --errors         # only the ones that failed
+npm run logs -- --command=vibe   # one command
+npm run logs -- --since=30m      # last half hour (s/m/h/d)
+npm run logs -- --n=50           # more of them
+npm run logs -- --stats          # totals and busiest commands
+npm run logs -- --raw            # the underlying JSONL
+```
+
+Output is tied back to the command that caused it, so a session reads as a transcript:
+
+```
+11:43:14  slash vibe "1 hour of cyberpunk nightclub"  by zackman in #music
+   ok 8423ms
+   <- 🎵 **Vibe Check Initializing...**
+   << 🎧 **Vibe Locked:** cyberpunk nightclub — queuing 5 tracks
+   << [embed] 🏷️ Neon Rain — by Test Artist — moods: Ominous, Nocturnal
+```
+
+Your tokens are redacted before anything is written. Command arguments and the bot's replies are
+stored as written, so treat `data/logs/` as being as private as the channels the bot posts in.
+Set `PLEXBOT_COMMAND_LOG=0` to disable the command log, or `PLEXBOT_LOG_TO_FILE=0` for the
+console mirror.
+
 ## 📚 Command Directory
 
 Every command below works two ways: with the `!` prefix, or as a slash command of the same name.

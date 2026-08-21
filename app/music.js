@@ -12,6 +12,41 @@ module.exports = function(client, bot) {
   const { MessageFlags } = require('discord.js');
   const playbackButtons = require('../helpers/playbackButtons.js');
   const tagInference = require('../helpers/tagInference.js');
+  const commandLog = require('../helpers/commandLog.js');
+
+  // Correlates the bot's own messages back to whatever command last ran in that channel, so the
+  // log reads as "this was asked, this came back" instead of two unrelated streams. Correlation
+  // is best-effort by design: a background broadcast lands with no invocation attached, which is
+  // exactly what it is.
+  const CORRELATION_WINDOW_MS = 2 * 60 * 1000;
+  const recentInvocations = {
+    entries: new Map(),
+    set(channelId, id) {
+      if (!channelId || !id) return;
+      this.entries.set(channelId, { id, at: Date.now() });
+      if (this.entries.size > 200) {
+        const oldest = [...this.entries.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+        if (oldest) this.entries.delete(oldest[0]);
+      }
+    },
+    get(channelId) {
+      const hit = this.entries.get(channelId);
+      if (!hit) return null;
+      return Date.now() - hit.at <= CORRELATION_WINDOW_MS ? hit.id : null;
+    }
+  };
+
+  // Everything the bot says, captured where it actually reaches Discord rather than at each of
+  // the ~200 call sites that produce it.
+  client.on('messageCreate', function(message) {
+    if (!message.author || !client.user || message.author.id !== client.user.id) return;
+    commandLog.recordOutput({
+      id: recentInvocations.get(message.channelId),
+      kind: (message.interaction || message.interactionMetadata) ? 'interaction-reply' : 'message',
+      channelId: message.channelId,
+      payload: { content: message.content, embeds: message.embeds, components: message.components }
+    });
+  });
   const channelClaims = require('../helpers/channelClaims.js');
 
   // when bot is ready
@@ -53,11 +88,31 @@ module.exports = function(client, bot) {
             var cmd = plexCommands[cmdTxt];
 
             if (cmd){
+              const logId = commandLog.startInvocation({
+                path: 'prefix',
+                command: cmdTxt,
+                args: query,
+                user: message.author && message.author.username,
+                userId: message.author && message.author.id,
+                channel: message.channel && message.channel.name,
+                channelId: message.channel && message.channel.id,
+                guildId: message.guild && message.guild.id
+              });
+              recentInvocations.set(message.channel && message.channel.id, logId);
+              const startedAt = Date.now();
               try {
-                cmd.process(bot, client, message, query);
+                // Commands are a mix of sync and async; Promise.resolve captures both, and the
+                // dispatcher deliberately doesn't await so long-running games stay non-blocking.
+                Promise.resolve(cmd.process(bot, client, message, query))
+                  .then(() => commandLog.finishInvocation(logId, { ok: true, ms: Date.now() - startedAt }))
+                  .catch((e) => {
+                    logger.error(`Command "${cmdTxt}" threw:`, e);
+                    commandLog.finishInvocation(logId, { ok: false, ms: Date.now() - startedAt, error: e });
+                  });
               }
               catch (e) {
                 logger.error(`Command "${cmdTxt}" threw:`, e);
+                commandLog.finishInvocation(logId, { ok: false, ms: Date.now() - startedAt, error: e });
               }
             }
             else {
@@ -97,12 +152,27 @@ module.exports = function(client, bot) {
     // Button clicks coming off the now-playing playback row. Owned by
     // helpers/playbackButtons.js; falls through if the customId isn't ours.
     if (interaction.isButton && interaction.isButton()) {
+      const buttonLogId = commandLog.startInvocation({
+        path: 'button',
+        command: String(interaction.customId || '').split(':').slice(0, 2).join(':'),
+        args: interaction.customId,
+        user: interaction.user && interaction.user.username,
+        userId: interaction.user && interaction.user.id,
+        channel: interaction.channel && interaction.channel.name,
+        channelId: interaction.channelId,
+        guildId: interaction.guildId
+      });
+      recentInvocations.set(interaction.channelId, buttonLogId);
+      const buttonStartedAt = Date.now();
+
       try {
         // Each handler returns false when the customId isn't its own, so ownership stays with
         // the module that defined the button.
         const claimed = await playbackButtons.handle(interaction, bot, client, plexCommands);
         if (!claimed) await tagInference.handle(interaction);
+        commandLog.finishInvocation(buttonLogId, { ok: true, ms: Date.now() - buttonStartedAt });
       } catch (err) {
+        commandLog.finishInvocation(buttonLogId, { ok: false, ms: Date.now() - buttonStartedAt, error: err });
         logger.error('Button dispatch threw:', err.message || err);
       }
       return;
@@ -129,9 +199,24 @@ module.exports = function(client, bot) {
     const query = slashRegistry.buildQueryString(interaction, cmd.slash);
     const fakeMessage = adaptInteraction(interaction, query);
 
+    const logId = commandLog.startInvocation({
+      path: 'slash',
+      command: name,
+      args: query,
+      user: interaction.user && interaction.user.username,
+      userId: interaction.user && interaction.user.id,
+      channel: interaction.channel && interaction.channel.name,
+      channelId: interaction.channelId,
+      guildId: interaction.guildId
+    });
+    recentInvocations.set(interaction.channelId, logId);
+    const startedAt = Date.now();
+
     try {
       await cmd.process(bot, client, fakeMessage, query);
+      commandLog.finishInvocation(logId, { ok: true, ms: Date.now() - startedAt });
     } catch (err) {
+      commandLog.finishInvocation(logId, { ok: false, ms: Date.now() - startedAt, error: err });
       logger.error(`/${name} threw:`, err);
       try {
         await interaction.followUp({ content: '❌ Command failed — check the bot log.', ephemeral: true });
