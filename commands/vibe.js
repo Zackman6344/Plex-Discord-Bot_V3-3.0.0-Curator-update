@@ -36,7 +36,11 @@ module.exports = {
         usage: '!vibe [setting or mood] + [optional: duration or track count]',
         description: 'Instantly generate and queue a thematic playlist based on a vibe using deep Plex tag filtering.',
         slash: {
-            description: 'Generate a thematic playlist from a vibe (interactive)'
+            description: 'Generate a thematic playlist from a vibe',
+            options: [
+                { name: 'vibe', type: 'STRING', required: true,
+                  description: 'Setting or mood, optionally with a duration or track count' }
+            ]
         },
         process: async function(bot, client, msg, query) {
 

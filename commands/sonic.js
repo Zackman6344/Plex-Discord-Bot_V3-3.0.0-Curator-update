@@ -13,7 +13,11 @@ module.exports = {
         usage: '!sonic [setting/mood OR specific song] + [optional: duration or track count]',
         description: 'Uses Plex Sonic Analysis strictly to build a playlist around an AI-selected vibe or a specific anchor track.',
         slash: {
-            description: 'Plex Sonic Analysis playlist around a vibe or anchor song'
+            description: 'Plex Sonic Analysis playlist around a vibe or anchor song',
+            options: [
+                { name: 'target', type: 'STRING', required: true,
+                  description: 'A setting/mood or a specific song, optionally with a duration or track count' }
+            ]
         },
         process: async function(...args) {
             let msg = null;
