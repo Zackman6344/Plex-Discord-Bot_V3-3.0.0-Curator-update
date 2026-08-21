@@ -160,9 +160,58 @@ async function fetchTracksByRatingKeys(ratingKeys = []) {
     return out;
 }
 
+/** Total tracks in the music section, for sampling and coverage estimates. */
+async function countTracks(sectionKey) {
+    try {
+        const plex = getPlex();
+        const res = await plex.query(`/library/sections/${sectionKey}/all?type=10&X-Plex-Container-Start=0&X-Plex-Container-Size=0`);
+        const mc = (res && res.MediaContainer) || {};
+        return Number(mc.totalSize != null ? mc.totalSize : mc.size) || 0;
+    } catch (err) {
+        logger.warn('Could not count tracks:', err.message || err);
+        return 0;
+    }
+}
+
+/**
+ * A random spread of tracks from the library, drawn as a few small windows at random offsets
+ * rather than by pulling everything. Used to reach music that tag search can never surface,
+ * because Plex has no tags on it to search by.
+ */
+async function sampleRandomTracks(sectionKey, count, knownTotal = null) {
+    const total = knownTotal || await countTracks(sectionKey);
+    if (!total) return [];
+
+    const plex = getPlex();
+    // One track per window. A section listing is ordered by artist and album, so pulling a
+    // *block* of adjacent tracks returns one album rather than a spread of the library — which
+    // for discovery picks would mean five tracks by whoever the dice landed on.
+    const windowSize = 1;
+    const windows = Math.min(Math.min(count, total), 40);
+    const seen = new Map();
+
+    for (let i = 0; i < windows; i++) {
+        const start = Math.floor(Math.random() * Math.max(1, total - windowSize));
+        try {
+            const res = await plex.query(
+                `/library/sections/${sectionKey}/all?type=10&X-Plex-Container-Start=${start}&X-Plex-Container-Size=${windowSize}`
+            );
+            for (const track of (res.MediaContainer && res.MediaContainer.Metadata) || []) {
+                seen.set(String(track.ratingKey), track);
+            }
+        } catch (err) {
+            logger.warn(`Random sample window at ${start} failed:`, err.message || err);
+        }
+    }
+    return [...seen.values()];
+}
+
 // exported for tests
 function _resetCache() {
     vocabCache = null;
 }
 
-module.exports = { getVocabulary, fetchTracksByTag, fetchTracksByTags, fetchTracksByRatingKeys, resolveTag, _resetCache };
+module.exports = {
+    getVocabulary, fetchTracksByTag, fetchTracksByTags, fetchTracksByRatingKeys,
+    countTracks, sampleRandomTracks, resolveTag, _resetCache
+};

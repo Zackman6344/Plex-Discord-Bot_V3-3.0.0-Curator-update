@@ -4,6 +4,7 @@ const handleAIError = require('../helpers/aiErrorHandler.js');
 const logger = require('../helpers/logger.js');
 const plexTags = require('../helpers/plexTags.js');
 const sidecar = require('../helpers/tagSidecar.js');
+const recentPicks = require('../helpers/recentPicks.js');
 const tagInference = require('../helpers/tagInference.js');
 
 const model = getModel();
@@ -213,6 +214,8 @@ module.exports = {
                 const fillerWords = ['of', 'the', 'and', 'in', 'a', 'some', 'music', 'mix', 'playlist', 'for', 'my', 'hour', 'minutes', 'mins'];
                 const searchTerms = rawInputLower.split(/\s+/).filter(w => w.length > 2 && !fillerWords.includes(w));
 
+                const tuning = sidecar.getSettings();
+
                 let scoredItems = [...byKey.values()].map((entry) => {
                     const item = entry.track;
                     const plexKey = item.Media?.[0]?.Part?.[0]?.key;
@@ -234,6 +237,12 @@ module.exports = {
                         if (album.toLowerCase().includes(term)) score += 2;
                     });
                     if (typeData.vibe && title.toLowerCase().includes(typeData.vibe.toLowerCase())) score += 2;
+
+                    // Handicap, not a ban: a track that really is the best match can still win,
+                    // but the well-tagged minority stops monopolising every single run.
+                    if (tuning.repeatMemory > 0) {
+                        score -= Math.round(recentPicks.recency(item.ratingKey, tuning.repeatMemory) * 30);
+                    }
 
                     return {
                         title, artist, album, score, plexKey,
@@ -328,6 +337,53 @@ await statusMsg.edit(`🎵 **Vibe:** \`${typeData.vibe}\`\n⏳ *The AI Librarian
                     }
                 });
 
+                // Reserve a share of the queue for tracks tag search can never reach — the ones
+                // Plex has no metadata for. Without this the tagged minority is the only music
+                // that ever plays, and the untagged majority stays untagged forever.
+                if (tuning.discoveryPercent > 0 && finalPlaylist.length > 0) {
+                    const quota = Math.max(1, Math.round(finalPlaylist.length * tuning.discoveryPercent / 100));
+                    try {
+                        const alreadyPicked = new Set(finalPlaylist.map(t => String(t.ratingKey)));
+                        const sampled = await plexTags.sampleRandomTracks(vocab.sectionKey, quota * 5);
+                        const discoveries = [];
+
+                        const discoveryArtists = new Set(finalPlaylist.map(t => String(t.artist || '').toLowerCase()));
+                        for (const track of shuffleArray(sampled)) {
+                            if (discoveries.length >= quota) break;
+                            const rk = String(track.ratingKey);
+                            if (alreadyPicked.has(rk)) continue;
+                            // Wildcards are meant to broaden the queue, so don't spend them all
+                            // on one artist (or on an artist already represented).
+                            const who = String(track.originalTitle || track.grandparentTitle || '').toLowerCase();
+                            if (who && discoveryArtists.has(who)) continue;
+                            if (who) discoveryArtists.add(who);
+                            if (tuning.repeatMemory > 0 && recentPicks.wasRecentlyPicked(rk, tuning.repeatMemory)) continue;
+                            const key = track.Media?.[0]?.Part?.[0]?.key;
+                            if (!key) continue;
+
+                            discoveries.push({
+                                id: -1,
+                                title: track.title || 'Unknown Title',
+                                artist: track.originalTitle || track.grandparentTitle || 'Unknown Artist',
+                                album: track.parentTitle || null,
+                                plexKey: key,
+                                ratingKey: rk,
+                                discovery: true,
+                                tags: [],
+                                reason: 'Wildcard pick — untagged in Plex, included so the library keeps rotating.'
+                            });
+                            alreadyPicked.add(rk);
+                        }
+
+                        if (discoveries.length) {
+                            finalPlaylist = finalPlaylist.concat(discoveries);
+                            logger.info(`vibe: added ${discoveries.length} discovery pick(s) (${tuning.discoveryPercent}% quota).`);
+                        }
+                    } catch (err) {
+                        logger.warn('vibe: discovery picks skipped:', err.message || err);
+                    }
+                }
+
                 finalPlaylist = shuffleArray(finalPlaylist);
 
                 let header = `🎧 **${isTTRPG ? 'Ambiance' : 'Vibe'} Locked:** \`${typeData.vibe}\`\nQueuing up ${finalPlaylist.length} tracks (\`${constraintText}\`)...\n\n`;
@@ -335,7 +391,9 @@ await statusMsg.edit(`🎵 **Vibe:** \`${typeData.vibe}\`\n⏳ *The AI Librarian
                 let currentChunk = header;
 
                 finalPlaylist.forEach(track => {
-                    const provenance = track.inferred ? ' *(tags inferred, not from Plex)*' : '';
+                    const provenance = track.discovery
+                        ? ' *(wildcard — untagged in Plex)*'
+                        : (track.inferred ? ' *(tags inferred, not from Plex)*' : '');
                     let trackDisplay = `🎶 **${track.title}** by ${track.artist}${provenance}\n> *${track.reason}*\n\n`;
                     if (currentChunk.length + trackDisplay.length > 1900) {
                         chunks.push(currentChunk);
@@ -368,6 +426,13 @@ await statusMsg.edit(`🎵 **Vibe:** \`${typeData.vibe}\`\n⏳ *The AI Librarian
                 // If the bot isn't currently playing anything, start the music loop!
                 if (queuedCount > 0 && !bot.isPlaying) {
                     bot.playSong(msg);
+                }
+
+                // Remember what went out so the next run reaches for something else.
+                try {
+                    recentPicks.record(finalPlaylist.map(t => t.ratingKey).filter(Boolean), tuning.repeatMemory);
+                } catch (err) {
+                    logger.warn('vibe: could not record recent picks:', err.message || err);
                 }
 
                 // Offer to fill in what Plex is missing for the tracks just queued. This only

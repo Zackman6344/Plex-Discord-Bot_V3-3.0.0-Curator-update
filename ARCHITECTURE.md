@@ -123,6 +123,10 @@ Two signature styles coexist in the codebase:
 | `interactionAdapter.js`    | Wraps a Discord `ChatInputCommandInteraction` to look like a `Message` so existing command process functions work unchanged against slash commands. First `.reply()` / `.channel.send()` routes through `interaction.editReply()`; subsequent calls use the real channel. See "Slash commands" below. |
 | `aiErrorHandler.js`        | `handleAIError(err, statusMsg, defaultMsg)` for AI commands; replies with an inferred reason (503 / 429 / bad key / 404 / network / SyntaxError) or the command-specific fallback. Also exports `inferReason(err)` as a pure function. |
 | `clueCache.js`             | Persistent XML clue cache for AI minigames. `getOrGenerate(media, minigame, fn, model)` checks `data/clues/<slug>-<year>.xml` first; on miss runs `fn` and appends the result as a new variant. Multiple variants per (media, minigame) accumulate; lookups pick one at random. See "AI clue cache" section below. |
+| `plexTags.js`              | Plex mood/genre/style vocabulary + server-side tag filtering. Plex never returns Mood/Style inline on a track in a *section listing* — only `/library/metadata/<key>` carries them — so tag search must go through the section's tag filters. Exports `getVocabulary()`, `fetchTracksByTags()`, `fetchTracksByRatingKeys()`, `countTracks()`, `sampleRandomTracks()`. |
+| `tagSidecar.js`            | Local store of **approved, AI-inferred** track tags filling the gap where Plex has none (~70% of tracks here). Plex always wins per dimension; an inferred dimension Plex later fills is marked `supersededAt` rather than deleted. Atomic writes, persisted pending proposals, and the `discoveryPercent` / `repeatMemory` tuning. Writes `data/inferred_tags.json`. Never writes to Plex. |
+| `tagInference.js`          | Asks Gemini to fill only the dimensions Plex is missing, constrained to the library's own vocabulary, and renders the approval card. Nothing is stored without a human clicking Approve; the handler answers every click through an update → reply → followUp → channel fallback chain and leaves the proposal live if the disk write fails. |
+| `recentPicks.js`           | Short memory of tracks already served, so a library's well-tagged minority doesn't monopolise every AI-curated queue. A score *handicap*, not a ban. Writes `data/recent_picks.json`. |
 | `healthCheck.js`           | Validates config + tries each integration (Plex/Gemini/Tautulli/Playnite). Returns a structured `{config, plex, gemini, tautulli, playnite}` result. Used by `!diag` and the boot monitor. |
 | `healthMonitor.js`         | Runs `runHealthCheck()` at boot + every 15 minutes. Logs status transitions and DMs the owner (if `config.ownerId` is set) on any change. |
 | `tautulliAPI.js`           | Wraps the Tautulli HTTP API. Currently exposes `getLibraryStats()`. Disabled unless `config.tautulliEnabled`.                          |
@@ -170,6 +174,9 @@ All persistent runtime state lives under `data/`. The directory is created if mi
 | `data/character_sheets.json`      | `commands/profile.js`               |
 | `data/characters.json`            | `helpers/characterStorage.js` (used by `!buildcharacter`/`!mysheet`) |
 | `data/plex_requests.json`         | `commands/request.js`               |
+| `data/inferred_tags.json`         | `helpers/tagSidecar.js` (approved inferred tags + pending proposals + tuning; documented, stable shape for use outside the bot) |
+| `data/inferred_tags.export.json`  | `commands/tags.js` (`/tags export` — portable copy including file paths) |
+| `data/recent_picks.json`          | `helpers/recentPicks.js`            |
 | `data/hitster_stats.json`         | `commands/hitster.js`               |
 | `data/trivia_leaderboard.json`    | `commands/trivia.js`                |
 | `data/badplot_leaderboard.json`   | `commands/badplot.js`               |
