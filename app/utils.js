@@ -55,12 +55,19 @@ function start(){
     // Catch anything that escapes a try/catch or a .catch() so the bot doesn't die mid-session.
     // Node's default would crash the process on an uncaught exception; for a long-running bot we'd
     // rather log it loudly and keep running.
+    // Also recorded in the command log: this is where a failure with no command behind it shows
+    // up (a queue advancing, a timer firing), and the console line alone gave no way to see what
+    // the bot had been doing at the time.
+    const commandLog = require('../helpers/commandLog.js');
+
     process.on('uncaughtException', (err, origin) => {
         logger.error(`Uncaught exception (${origin}):`, err && err.stack ? err.stack : err);
+        commandLog.recordEvent('uncaught-exception', { origin, error: (err && err.stack) || String(err) });
     });
 
     process.on('unhandledRejection', (reason) => {
         logger.error('Unhandled promise rejection:', reason && reason.stack ? reason.stack : reason);
+        commandLog.recordEvent('unhandled-rejection', { error: (reason && reason.stack) || String(reason) });
     });
 
     process.on('SIGTERM', quitter);

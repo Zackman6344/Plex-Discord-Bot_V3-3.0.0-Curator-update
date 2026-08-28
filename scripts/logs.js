@@ -11,6 +11,8 @@
 //   npm run logs -- --command=vibe   one command
 //   npm run logs -- --since=30m      last half hour (s/m/h/d)
 //   npm run logs -- --user=<id>      one person
+//   npm run logs -- --events         background events (tracks, voice joins, crashes)
+//   npm run logs -- --events --kind=voice-join-failed   one kind
 //   npm run logs -- --stats          totals and the busiest commands
 //   npm run logs -- --raw            the underlying JSONL, unfolded
 
@@ -47,6 +49,21 @@ if (flag('stats')) {
     if (s.topCommands.length) {
         console.log(bold('\n  Busiest commands'));
         for (const [name, count] of s.topCommands) console.log(`    ${String(count).padStart(4)}  ${name}`);
+    }
+    process.exit(0);
+}
+
+if (flag('events')) {
+    const events = commandLog.readEventLog({ limit: Number(value('n', 40)), kind: value('kind') });
+    if (events.length === 0) {
+        console.log('No background events logged yet.');
+        process.exit(0);
+    }
+    for (const e of events) {
+        const { t, type, kind, ...rest } = e;
+        const detail = Object.entries(rest).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(' ');
+        const label = /fail|error|exception|rejection/.test(kind) ? red(kind) : bold(kind);
+        console.log(`${dim(clock(t))}  ${label}  ${dim(detail)}`);
     }
     process.exit(0);
 }

@@ -171,6 +171,30 @@ function recordOutput({ id = null, kind = 'message', channelId = null, payload =
     write({ type: 'output', id, kind, channelId, content, embeds, components });
 }
 
+/**
+ * Record something that happened without anyone typing a command — a track starting, a voice
+ * join failing, the process catching a crash. The command log could previously only describe
+ * work a user asked for, so anything that broke while the bot ran itself (a queue advancing, a
+ * timer firing) left no trace at all.
+ */
+function recordEvent(kind, detail = {}) {
+    const clean = {};
+    for (const [key, value] of Object.entries(detail || {})) {
+        if (value === null || value === undefined) continue;
+        if (typeof value === 'number' || typeof value === 'boolean') clean[key] = value;
+        else if (typeof value === 'string') clean[key] = scrub(value, 300);
+        else clean[key] = scrub(JSON.stringify(value), 300);
+    }
+    write({ type: 'event', kind: String(kind || 'event').slice(0, 60), ...clean });
+}
+
+/** Non-command events, newest last. */
+function readEventLog({ limit = 40, kind = null } = {}) {
+    let events = readEvents().filter((e) => e.type === 'event');
+    if (kind) events = events.filter((e) => e.kind === kind);
+    return events.slice(-limit);
+}
+
 /** Every event from the retained day-files, oldest first. Malformed lines are skipped. */
 function readEvents({ days = RETENTION_DAYS } = {}) {
     const events = [];
@@ -250,6 +274,6 @@ function _reset() {
 }
 
 module.exports = {
-    startInvocation, finishInvocation, recordOutput, readEvents, readInvocations, stats,
+    startInvocation, finishInvocation, recordOutput, recordEvent, readEventLog, readEvents, readInvocations, stats,
     summarise, _reset, _dir: DIR, RETENTION_DAYS
 };

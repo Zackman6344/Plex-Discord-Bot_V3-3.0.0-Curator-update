@@ -5,6 +5,7 @@ const fs = require('fs');
 const ytdl = require('@distube/ytdl-core');
 const config = require('../config/config');
 const logger = require('../helpers/logger.js');
+const commandLog = require('../helpers/commandLog.js');
 const { getPlex } = require('../helpers/plexClient.js');
 const playbackButtons = require('../helpers/playbackButtons.js');
 const { Readable } = require('stream');
@@ -16,7 +17,8 @@ const {
 	entersState,
 	AudioPlayerStatus,
 	VoiceConnectionStatus,
-	joinVoiceChannel
+	joinVoiceChannel,
+	getVoiceConnection
 } = require('@discordjs/voice');
 const language = require('../'+config.language);
 // plex constants ------------------------------------------------------------
@@ -403,6 +405,108 @@ class Bot extends EventEmitter{
 		}
 	}
 
+	/**
+	 * Where the next track should play.
+	 *
+	 * Stay in the channel we are already connected to — queueing a song shouldn't drag the bot
+	 * across channels mid-playlist — but only while that connection is actually alive. The old
+	 * code cached `voiceChannel` and only ever re-read it when null, so a channel the bot had
+	 * since been dropped from was reused forever, and the "are you in a voice channel?" check was
+	 * skipped because the cached value was still truthy.
+	 */
+	pickVoiceChannel(message) {
+		const status = this.conn && this.conn.state && this.conn.state.status;
+		const live = status === VoiceConnectionStatus.Ready
+			|| status === VoiceConnectionStatus.Signalling
+			|| status === VoiceConnectionStatus.Connecting;
+		if (live && this.voiceChannel) return this.voiceChannel;
+
+		// `member.voice` is always a VoiceState in discord.js v14 — never null — so the channel
+		// itself is what says whether they're actually in one.
+		const fromMember = message && message.member && message.member.voice
+			? message.member.voice.channel
+			: null;
+		return fromMember || null;
+	}
+
+	/**
+	 * Join `this.voiceChannel`, clearing any dead connection first.
+	 *
+	 * joinVoiceChannel hands back an existing connection for the guild as-is. If that one is
+	 * disconnected or destroyed it never reaches Ready, so entersState waits the full timeout and
+	 * then aborts — the AbortError that used to escape as an unhandled rejection.
+	 */
+	async openConnection() {
+		const guildId = this.voiceChannel.guild.id;
+		const existing = getVoiceConnection(guildId);
+		if (existing && existing.state && existing.state.status !== VoiceConnectionStatus.Ready) {
+			try { existing.destroy(); } catch (_) {}
+		}
+
+		const connection = joinVoiceChannel({
+			channelId: this.voiceChannel.id,
+			guildId,
+			adapterCreator: this.voiceChannel.guild.voiceAdapterCreator
+		});
+
+		const startedAt = Date.now();
+		try {
+			await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
+		} catch (error) {
+			commandLog.recordEvent('voice-join-failed', {
+				channel: this.voiceChannel.name,
+				channelId: this.voiceChannel.id,
+				replacedDeadConnection: !!existing,
+				waitedMs: Date.now() - startedAt,
+				error: (error && error.message) || String(error)
+			});
+			try { connection.destroy(); } catch (_) {}
+			throw error;
+		}
+		commandLog.recordEvent('voice-joined', {
+			channel: this.voiceChannel.name,
+			channelId: this.voiceChannel.id,
+			replacedDeadConnection: !!existing,
+			tookMs: Date.now() - startedAt
+		});
+		return connection;
+	}
+
+	/**
+	 * Put playback back to a state the next command can recover from.
+	 *
+	 * The queue is deliberately kept: the tracks are still what the user asked for. What has to go
+	 * is the belief that we are playing them — `isPlaying` left true meant every later `!play`
+	 * just queued silently and nothing ever started, which is what "the bot stopped responding"
+	 * actually was.
+	 */
+	failPlayback(message, error) {
+		logger.error('Playback could not start:', (error && error.stack) || error);
+		commandLog.recordEvent('playback-failed', {
+			channel: this.voiceChannel && this.voiceChannel.name,
+			channelId: this.voiceChannel && this.voiceChannel.id,
+			queueDepth: this.songQueue.length,
+			error: (error && error.message) || String(error)
+		});
+
+		this.isPlaying = false;
+		this.waitForStart = false;
+		this.waitForStartMessage = null;
+		this.voiceChannel = null;
+		if (this.conn) {
+			try { this.conn.destroy(); } catch (_) {}
+			this.conn = null;
+		}
+
+		if (message && message.channel && typeof message.channel.send === 'function') {
+			const queued = this.songQueue.length;
+			message.channel.send(
+				`⚠️ I couldn't get into the voice channel, so playback stopped.` +
+				(queued ? ` ${queued} track${queued === 1 ? '' : 's'} are still queued — join a channel and run \`${this.config.commandPrefix}play\` to pick up where this left off.` : '')
+			).catch(() => {});
+		}
+	}
+
 	stop() {
 		// destroy() (not disconnect()) so discord.js drops the connection from its
 		// per-guild registry. A disconnect()-ed connection lingers in a half-dead
@@ -420,19 +524,42 @@ class Bot extends EventEmitter{
 	/**
 	 *
 	 */
+	/**
+	 * Start (or continue) playback. Never rejects: every caller is fire-and-forget — queue
+	 * advances, timers, command handlers — so a throw here became an unhandled rejection that
+	 * left `isPlaying` stuck true and the bot accepting commands while playing nothing.
+	 */
 	async playSong(message) {
-		
-		if (this.voiceChannel == null) {
-			if(message.member == null) {
-				message.channel.send("The bot cannot see who send the message, and therefor cannot connect to the voice channel.");
-				return ;
-			}
-			if(message.member.voice == null) {
-				message.channel.send("You are not connected to a voice channel, or the bot cannot see the voice channel.");
-				return ;
-			}
-			this.voiceChannel = message.member.voice.channel;
+		try {
+			await this.runPlayback(message);
+		} catch (error) {
+			this.failPlayback(message, error);
 		}
+	}
+
+	async runPlayback(message) {
+
+		if (message == null || message.member == null) {
+			if (message && message.channel) {
+				message.channel.send("The bot cannot see who sent the message, and therefore cannot connect to the voice channel.");
+			}
+			return;
+		}
+
+		this.voiceChannel = this.pickVoiceChannel(message);
+
+		if (!this.voiceChannel) {
+			// Nothing is playing and the requester isn't in a channel: keep the queue, drop the
+			// belief that playback is under way, and say which of the two is missing.
+			this.isPlaying = false;
+			const queued = this.songQueue.length;
+			message.channel.send(
+				`🔇 Join a voice channel first — I don't know where to play this.` +
+				(queued ? ` ${queued} track${queued === 1 ? '' : 's'} are waiting in the queue.` : '')
+			);
+			return;
+		}
+
 		if (this.voiceChannel) {
 			this.emit('will play', message);
 			if(this.workingTask > 0){
@@ -440,21 +567,7 @@ class Bot extends EventEmitter{
 				this.waitForStart = true;
 				this.waitForStartMessage = message;
 			} else {
-				//const connection = await this.voiceChannel.join();
-				const connection = await joinVoiceChannel({
-					channelId: this.voiceChannel.id,
-					guildId: this.voiceChannel.guild.id,
-					adapterCreator: this.voiceChannel.guild.voiceAdapterCreator
-				})
-
-
-				try {
-					await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
-					this.conn = connection;
-				} catch (error) {
-					connection.destroy();
-					throw error;
-				}
+				this.conn = await this.openConnection();
 
 
 				
@@ -467,6 +580,12 @@ class Bot extends EventEmitter{
 					readstream = ytdl(this.songQueue[0].url, { format: 'audioonly', quality: config.youtube_quality || 'highestaudio' });
 				}
 				this.isPlaying = true;
+				commandLog.recordEvent('track-start', {
+					title: this.songQueue[0] && this.songQueue[0].title,
+					artist: this.songQueue[0] && this.songQueue[0].artist,
+					queueDepth: this.songQueue.length,
+					channel: this.voiceChannel && this.voiceChannel.name
+				});
 
 				// Arrow fuction to be played after a song is finished.
 				let dispatcherFunc = () => {
