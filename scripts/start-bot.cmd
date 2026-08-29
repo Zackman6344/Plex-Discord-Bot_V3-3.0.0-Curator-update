@@ -19,6 +19,10 @@ if not exist "%BOTROOT%\index.js" (
 
 cd /d "%BOTROOT%"
 
+rem Only the hidden launcher writes this file. Left behind, it would make the status window
+rem report errors from some previous windowless run as if they came from this one.
+if exist "%BOTROOT%\data\logs\startup-stderr.log" del /q "%BOTROOT%\data\logs\startup-stderr.log"
+
 echo ===============================================
 echo  Plex Discord Bot
 echo  %BOTROOT%

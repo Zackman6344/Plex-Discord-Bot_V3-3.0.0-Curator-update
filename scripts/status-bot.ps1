@@ -29,11 +29,12 @@ if (Test-Path $today) {
     Get-Content $today -Tail 15 -Encoding UTF8
 }
 
-# stderr from this launch: a crash before the logger loaded, plus any error-level lines.
+# Written only by the hidden launcher (start-bot.vbs); the console launcher shows errors in its
+# own window and deletes this file on start, so anything here belongs to a windowless run.
 $early = Join-Path $repoRoot 'data\logs\startup-stderr.log'
 if ((Test-Path $early) -and (Get-Item $early).Length -gt 0) {
     Write-Host ""
-    Write-Host "Errors from this launch (startup-stderr.log):" -ForegroundColor Yellow
+    Write-Host ("Errors from a windowless launch, {0} (startup-stderr.log):" -f (Get-Item $early).LastWriteTime) -ForegroundColor Yellow
     Get-Content $early -Tail 20 -Encoding UTF8
 }
 
