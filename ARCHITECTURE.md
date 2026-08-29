@@ -142,6 +142,7 @@ Two signature styles coexist in the codebase:
 | `archipelagoClient.js`     | One read-only WebSocket connection to an Archipelago multiworld. Runs the `RoomInfo` → `GetDataPackage` → `Connect` handshake, resolves item/location/player ids to names, renders `PrintJSON` packets into log lines, reconnects with backoff. Also exports the pure `parseTarget()`, `extractConnectAddress()` and `renderPrintJSON()`. |
 | `archipelagoData.js`       | Disk cache for AP data packages under `data/archipelago/datapackage/`, keyed by the per-game checksum the server publishes in `RoomInfo`. A reconnect re-downloads only the games whose checksum moved. |
 | `archipelagoMonitor.js`    | Holds one client per watched room, batches its log lines, posts them to the channel the watch was created in. Watches persist to `data/archipelago_watches.json` and reopen on boot. Disabled unless `config.archipelagoEnabled`. See "Archipelago room monitor" below. |
+| `archipelagoTracker.js`    | Reads per-slot completion (`124/124`) off a room's multiworld tracker page, which is the only place a slot's total location count exists. Pure `extractTrackerId` / `parseTrackerRows` / `fullyCheckedSlots` plus one `readCompletion` fetch. Degrades to no information rather than throwing. |
 | `aiGameRecommender.js`     | "Pick a game" AI helper. Uses centralized `getModel()`. Powers `!pickgame`.                                                            |
 | `aiCharacterMapper.js`     | Maps gaming/media habits to a D&D class. Uses centralized `getModel()`. Powers `!buildcharacter`.                                      |
 | `characterStorage.js`      | Persists character sheets to `data/characters.json`. Used by `!buildcharacter` and `!mysheet`.                                          |
@@ -549,6 +550,12 @@ The two halves are tracked differently, because the server stores one and only a
 - a `PrintJSON` of type `Goal` also marks the slot
 
 **Releases** have no readable key anywhere, so that set is built purely from `PrintJSON` type `Release` and deliberately survives a reconnect, since it cannot be rebuilt. A release announced before the bot first connected is invisible to it; a goal is not.
+
+**Fully-checked slots** come from the room's tracker page (`helpers/archipelagoTracker.js`), because the protocol exposes no other slot's locations at all. Gated on `archipelagoInferFinished`, room-URL watches only, polled every `archipelagoTrackerPollMinutes` (default 15). Measured against a live 29-player room: 15 slots were at 100%, and **9 of those had never goaled**, so this is where most of the filtering comes from late in an async.
+
+The tracker's JSON API at `/api/tracker/<id>` looks like the right source and is not: it returns `player_checks_done` as raw location ids with no per-slot total to compare against, since the host computes the total from the seed. The HTML table carries both, as a `124/124` column, so that is what gets parsed. Columns are located by header text rather than position, the parse returns nothing rather than throwing on unexpected markup, and a failed read leaves the filter falling back to goals and releases.
+
+**The caveat:** a player can have every location checked and still be waiting on an item to actually goal. Items sent to them do still matter in that window, and this filter hides them. `archipelagoInferFinished` is the switch for anyone who would rather see those.
 
 The status key is requested under both `_read_client_status_{team}_{slot}` and `client_status_{team}_{slot}`, because the protocol docs give the read-only prefix for the sibling keys but not consistently for this one. Against archipelago.gg the prefixed form answers and the bare form returns null.
 

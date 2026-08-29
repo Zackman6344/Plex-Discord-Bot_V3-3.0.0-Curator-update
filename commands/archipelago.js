@@ -125,6 +125,10 @@ module.exports = {
                     { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' },
                     { name: 'enabled', type: 'BOOLEAN', required: true, description: 'Hide them?' }
                 ] },
+                { name: 'infer', description: 'Also treat a 100%-checked slot as finished', options: [
+                    { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' },
+                    { name: 'enabled', type: 'BOOLEAN', required: true, description: 'Read the room tracker for completion?' }
+                ] },
                 { name: 'color', description: 'Colour item names by class', options: [
                     { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' },
                     { name: 'enabled', type: 'BOOLEAN', required: true, description: 'Use colour?' }
@@ -181,6 +185,7 @@ module.exports = {
                     `\`${prefix}ap filter <id> <${Object.keys(CATEGORY_HELP).join('|')}> <on|off>\` — pick which lines get relayed.`,
                     `\`${prefix}ap progression <id> <on|off>\` — item sends only when they're progression.`,
                     `\`${prefix}ap skipgoaled <id> <on|off>\` — hide items sent to slots that already finished.`,
+                    `\`${prefix}ap infer <id> <on|off>\` — also treat a 100%-checked slot as finished (reads the room tracker).`,
                     `\`${prefix}ap color <id> <on|off>\` — colour item names: progression, useful, trap, filler.`,
                     `\`${prefix}ap password <id> [password]\` — set or clear the room password (the command message is deleted).`,
                     `\`${prefix}ap retry <id>\` — reconnect a watch the server refused.`
@@ -308,6 +313,11 @@ module.exports = {
                         apply: monitor.setSkipGoaled,
                         on: 'items sent to slots that already finished are hidden',
                         off: 'items sent to finished slots are shown again'
+                    },
+                    infer: {
+                        apply: monitor.setInferFinished,
+                        on: 'slots with every location checked also count as finished (read from the room tracker)',
+                        off: 'only goaled and released slots count as finished'
                     },
                     color: {
                         apply: monitor.setColor,

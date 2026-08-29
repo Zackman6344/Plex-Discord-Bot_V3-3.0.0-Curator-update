@@ -109,6 +109,15 @@ const defaults = {
   // server, so players who goaled before the bot connected count too; a release is only seen
   // if the bot was connected when it happened, because nothing stores it.
   'archipelagoSkipGoaled' : true,
+  // Also treat a slot with every location checked as finished. The network protocol cannot see
+  // another slot's locations at all, so this reads the room's tracker page instead: room-URL
+  // watches only, and it needs a web host (archipelago.gg or your own), not a bare MultiServer.
+  // Caveat worth knowing: a player can have every location checked and still be waiting on an
+  // item to actually goal. Turn this off if you would rather see those sends.
+  'archipelagoInferFinished' : true,
+  // How often to re-read the tracker page. Completion moves over hours and the page is large,
+  // so this is deliberately slow.
+  'archipelagoTrackerPollMinutes' : 15,
   // Colour item names by class in the relayed log: progression magenta, useful blue, trap red,
   // filler cyan. Matches Archipelago's own clients. Needs a Discord client that renders ANSI
   // code blocks; turn it off if the log arrives full of escape codes.

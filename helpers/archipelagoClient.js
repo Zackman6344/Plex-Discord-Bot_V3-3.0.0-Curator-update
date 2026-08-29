@@ -247,6 +247,9 @@ class ArchipelagoClient extends EventEmitter {
         // built from what the socket hears and deliberately survives a reconnect. A release
         // seen before the bot first connected is invisible; a goal is not.
         this.released = new Set();
+        // Slots whose locations are all checked. Not knowable over the socket at all, so the
+        // monitor fills this from the room's tracker page. See helpers/archipelagoTracker.js.
+        this.fullyChecked = new Set();
         this.team = 0;
         // Flipped per watch by the monitor; read at render time so a colour toggle costs no
         // reconnect.
@@ -261,13 +264,17 @@ class ArchipelagoClient extends EventEmitter {
         return this.released.has(`${team}:${slot}`);
     }
 
-    /** Done with, either way: nothing sent to this slot from here on matters. */
+    hasFullyChecked(slot, team = this.team) {
+        return this.fullyChecked.has(`${team}:${slot}`);
+    }
+
+    /** Done with, however it happened: nothing sent to this slot from here on matters. */
     hasFinished(slot, team = this.team) {
-        return this.hasGoaled(slot, team) || this.hasReleased(slot, team);
+        return this.hasGoaled(slot, team) || this.hasReleased(slot, team) || this.hasFullyChecked(slot, team);
     }
 
     get finishedCount() {
-        return new Set([...this.goaled, ...this.released]).size;
+        return new Set([...this.goaled, ...this.released, ...this.fullyChecked]).size;
     }
 
     get tags() {

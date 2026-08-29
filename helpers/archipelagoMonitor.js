@@ -15,6 +15,7 @@ const path = require('path');
 const config = require('../config/config.js');
 const logger = require('./logger.js');
 const configStore = require('./configStore.js');
+const tracker = require('./archipelagoTracker.js');
 const { ArchipelagoClient, parseTarget, ITEM_FLAG_PROGRESSION, CATEGORY_GROUPS, DEFAULT_PORT } = require('./archipelagoClient.js');
 
 // Overridable so a test run can point at its own file, and so the store can be relocated.
@@ -243,6 +244,8 @@ function makeState(watch) {
         channel: null,
         buffer: [],
         timer: null,
+        pollTimer: null,
+        trackerUrl: null,
         status: 'idle',
         detail: null,
         connectedAt: null,
@@ -255,10 +258,48 @@ function makeState(watch) {
     return state;
 }
 
+// A slot with every location checked is done in the way that matters here: nothing it receives
+// can be used, and nothing more can come out of it. The socket cannot see that (the protocol
+// exposes no other slot's locations), so it comes off the room's tracker page. Room-URL watches
+// only; a bare host:port has no web host to ask.
+function trackerPollMs() {
+    return Math.max(1, Number(config.archipelagoTrackerPollMinutes) || 15) * 60 * 1000;
+}
+
+async function pollCompletion(state) {
+    const watch = state.watch;
+    if (!watch.inferFinished || !watch.target || watch.target.kind !== 'room') return;
+
+    try {
+        const result = await tracker.readCompletion(watch.target.roomUrl, {
+            team: state.client.team,
+            trackerUrl: state.trackerUrl
+        });
+        // The tracker id is stable for the life of the room, so it is resolved once.
+        state.trackerUrl = result.trackerUrl;
+        state.client.fullyChecked = result.fullyChecked;
+        logger.debug(`[AP:${watch.label}] tracker: ${result.fullyChecked.size}/${result.rows.length} slots fully checked`);
+    } catch (err) {
+        // Never fatal: the relay keeps working, the filter just falls back to goals and releases.
+        logger.debug(`[AP:${watch.label}] tracker read failed: ${err.message}`);
+    }
+}
+
+function startCompletionPoll(state) {
+    if (state.pollTimer) return;
+    if (!state.watch.inferFinished || !state.watch.target || state.watch.target.kind !== 'room') return;
+    // The tracker page is large, so this is deliberately slow. Completion changes over hours.
+    pollCompletion(state);
+    state.pollTimer = setInterval(() => pollCompletion(state), trackerPollMs());
+}
+
 function startWatch(watch) {
     const state = makeState(watch);
     states.set(watch.id, state);
-    if (!watch.paused) state.client.start();
+    if (!watch.paused) {
+        state.client.start();
+        startCompletionPoll(state);
+    }
     return state;
 }
 
@@ -266,7 +307,9 @@ function stopWatch(id) {
     const state = states.get(id);
     if (!state) return;
     if (state.timer) clearTimeout(state.timer);
+    if (state.pollTimer) clearInterval(state.pollTimer);
     state.timer = null;
+    state.pollTimer = null;
     state.client.stop();
 }
 
@@ -278,9 +321,15 @@ function restartWatch(id) {
     stopWatch(id);
     const state = makeState(existing.watch);
     state.channel = existing.channel;
+    // Both survive the new socket: the tracker id is fixed for the room's life, and completion
+    // read before the reconnect is still true after it.
+    state.trackerUrl = existing.trackerUrl;
+    state.client.fullyChecked = existing.client.fullyChecked;
+    state.client.released = existing.client.released;
     states.set(id, state);
     existing.watch.paused = false;
     state.client.start();
+    startCompletionPoll(state);
     persist();
     return state;
 }
@@ -339,6 +388,7 @@ function syncConfigWatch() {
         filters: configFilters(),
         progressionOnly: !!config.archipelagoProgressionOnly,
         skipGoaled: config.archipelagoSkipGoaled !== false,
+        inferFinished: config.archipelagoInferFinished !== false,
         color: config.archipelagoColorLines !== false,
         paused: false,
         addedBy: null,
@@ -360,8 +410,15 @@ function syncConfigWatch() {
         !!existing.watch.filters.deaths !== !!desired.filters.deaths;
     const channelChanged = existing.watch.channelId !== desired.channelId;
 
+    const inferChanged = !!existing.watch.inferFinished !== !!desired.inferFinished;
     Object.assign(existing.watch, desired);
     if (channelChanged) existing.channel = null;
+    if (inferChanged) {
+        if (existing.pollTimer) clearInterval(existing.pollTimer);
+        existing.pollTimer = null;
+        if (desired.inferFinished) startCompletionPoll(existing);
+        else existing.client.fullyChecked = new Set();
+    }
     // Colour is read at render time, so it applies to the next line without a new socket.
     existing.client.colorize = desired.color;
     if (needsReconnect) restartWatch(CONFIG_WATCH_ID);
@@ -389,6 +446,7 @@ function applyConfig({ boot = false } = {}) {
             watch.filters = { ...DEFAULT_FILTERS, ...(watch.filters || {}) };
             // Watches saved before these existed default to on, matching a fresh watch.
             watch.skipGoaled = watch.skipGoaled !== false;
+            watch.inferFinished = watch.inferFinished !== false;
             watch.color = watch.color !== false;
             startWatch(watch);
         }
@@ -440,6 +498,7 @@ function addWatch(options, waitMs = 20000) {
         filters: { ...DEFAULT_FILTERS },
         progressionOnly: false,
         skipGoaled: config.archipelagoSkipGoaled !== false,
+        inferFinished: config.archipelagoInferFinished !== false,
         color: config.archipelagoColorLines !== false,
         paused: false,
         addedBy: options.addedBy || null,
@@ -523,6 +582,19 @@ function setSkipGoaled(id, enabled) {
     return state;
 }
 
+function setInferFinished(id, enabled) {
+    const state = states.get(id);
+    if (!state) return null;
+    refuseIfManaged(state, 'the tracker inference');
+    state.watch.inferFinished = !!enabled;
+    if (state.pollTimer) clearInterval(state.pollTimer);
+    state.pollTimer = null;
+    if (enabled) startCompletionPoll(state);
+    else state.client.fullyChecked = new Set();
+    persist();
+    return state;
+}
+
 function setColor(id, enabled) {
     const state = states.get(id);
     if (!state) return null;
@@ -582,7 +654,9 @@ module.exports = {
     setFilter,
     setProgressionOnly,
     setSkipGoaled,
+    setInferFinished,
     setColor,
+    pollCompletion,
     listWatches,
     getWatch,
     getStatus,
