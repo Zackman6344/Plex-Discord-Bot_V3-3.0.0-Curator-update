@@ -5,6 +5,10 @@ const os = require('node:os');
 const pathMod = require('node:path');
 
 process.env.PLEXBOT_LOG_DIR = pathMod.join(os.tmpdir(), 'plexbot-test-wiring-' + process.pid);
+// The review-card test stages a proposal, and the sidecar resolves its path once at require
+// time. Without this, a test run writes into the real data/inferred_tags.json, which is the
+// file a working install accumulates over months. Same isolation the other tag tests use.
+process.env.PLEXBOT_TAGS_FILE = pathMod.join(os.tmpdir(), 'plexbot-test-wiring-' + process.pid + '.json');
 
 const commandLog = require('../helpers/commandLog.js');
 const { adaptInteraction } = require('../helpers/interactionAdapter.js');
@@ -14,6 +18,7 @@ const sidecar = require('../helpers/tagSidecar.js');
 const DIR = commandLog._dir;
 test.afterEach(() => {
     try { fs.rmSync(DIR, { recursive: true, force: true }); } catch (_) {}
+    try { fs.rmSync(sidecar._file, { force: true }); } catch (_) {}
     commandLog._reset();
     sidecar._reset();
 });

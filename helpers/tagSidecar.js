@@ -31,6 +31,11 @@ const logger = require('./logger.js');
 // approved by hand — and so an external workflow can point the bot at a sidecar it manages.
 const FILE = process.env.PLEXBOT_TAGS_FILE || path.join(__dirname, '..', 'data', 'inferred_tags.json');
 const TMP = FILE + '.tmp';
+// Under the test runner that override is required rather than optional, the same way
+// commandLog.js gates on PLEXBOT_LOG_DIR. The line above claims a test run can never touch the
+// real store; this is what makes the claim true when a test file forgets to set it, which is
+// how a wiring test quietly rewrote a real sidecar. Without it, the store stays in memory.
+const usable = !process.env.NODE_TEST_CONTEXT || !!process.env.PLEXBOT_TAGS_FILE;
 const DIMENSIONS = ['moods', 'genres', 'styles'];
 const PROPOSAL_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_TAGS_PER_DIMENSION = 40;
@@ -80,6 +85,10 @@ function setSetting(key, value) {
 
 function load() {
     if (store) return store;
+    if (!usable) {
+        store = blank();
+        return store;
+    }
     try {
         if (fs.existsSync(FILE)) {
             const parsed = JSON.parse(fs.readFileSync(FILE, 'utf8'));
@@ -108,6 +117,7 @@ function load() {
 /** Atomic write. Returns false (and keeps memory consistent with disk) if anything fails. */
 function save() {
     const data = load();
+    if (!usable) return true;
     const previous = fs.existsSync(FILE) ? (() => { try { return fs.readFileSync(FILE, 'utf8'); } catch (_) { return null; } })() : null;
     try {
         fs.mkdirSync(path.dirname(FILE), { recursive: true });
