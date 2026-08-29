@@ -26,7 +26,7 @@ $today = Join-Path $repoRoot ("data\logs\bot-{0}.log" -f (Get-Date -Format 'yyyy
 if (Test-Path $today) {
     Write-Host ""
     Write-Host "Last 15 lines of $today"
-    Get-Content $today -Tail 15
+    Get-Content $today -Tail 15 -Encoding UTF8
 }
 
 # stderr from this launch: a crash before the logger loaded, plus any error-level lines.
@@ -34,7 +34,7 @@ $early = Join-Path $repoRoot 'data\logs\startup-stderr.log'
 if ((Test-Path $early) -and (Get-Item $early).Length -gt 0) {
     Write-Host ""
     Write-Host "Errors from this launch (startup-stderr.log):" -ForegroundColor Yellow
-    Get-Content $early -Tail 20
+    Get-Content $early -Tail 20 -Encoding UTF8
 }
 
 Write-Host ""
