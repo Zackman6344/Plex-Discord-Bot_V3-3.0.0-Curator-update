@@ -12,7 +12,7 @@ const path = require('path');
 const OVERRIDES_PATH = path.join(__dirname, '..', 'data', 'config.overrides.json');
 
 // Group render order for the wizard panel.
-const GROUPS = ['General', 'Access', 'Integrations', 'Broadcasts'];
+const GROUPS = ['General', 'Access', 'Integrations', 'Broadcasts', 'Archipelago'];
 
 // Editable settings. `type`: bool | string | int | choice.
 //   secret          — never display the value; modal input starts blank.
@@ -40,8 +40,23 @@ const SETTINGS = [
     { key: 'tautulliEnabled', label: 'Tautulli integration', group: 'Integrations', type: 'bool' },
     { key: 'tautulliUrl', label: 'Tautulli URL', group: 'Integrations', type: 'string', placeholder: 'http://localhost:8181' },
     { key: 'tautulliApiKey', label: 'Tautulli API key', group: 'Integrations', type: 'string', secret: true },
-    { key: 'archipelagoEnabled', label: 'Archipelago room monitor', group: 'Integrations', type: 'bool', restartRequired: true },
-    { key: 'archipelagoBatchSeconds', label: 'Archipelago log batch (seconds)', group: 'Integrations', type: 'int', min: 1, max: 300 },
+
+    { key: 'archipelagoEnabled', label: 'Archipelago monitor', group: 'Archipelago', type: 'bool' },
+    { key: 'archipelagoChannelId', label: 'Archipelago log channel', group: 'Archipelago', type: 'string', snowflake: true },
+    { key: 'archipelagoRoomUrl', label: 'Room URL', group: 'Archipelago', type: 'string', placeholder: 'https://archipelago.gg/room/<id>' },
+    { key: 'archipelagoHost', label: 'Server host (instead of a room URL)', group: 'Archipelago', type: 'string', placeholder: 'localhost' },
+    { key: 'archipelagoPort', label: 'Server port', group: 'Archipelago', type: 'int', min: 1, max: 65535 },
+    { key: 'archipelagoSlot', label: 'Slot name to watch from', group: 'Archipelago', type: 'string', placeholder: 'an existing slot in the multiworld' },
+    { key: 'archipelagoPassword', label: 'Room password', group: 'Archipelago', type: 'string', secret: true },
+    { key: 'archipelagoBatchSeconds', label: 'Log batch (seconds)', group: 'Archipelago', type: 'int', min: 1, max: 300 },
+    { key: 'archipelagoProgressionOnly', label: 'Progression item sends only', group: 'Archipelago', type: 'bool' },
+    { key: 'archipelagoShowItems', label: 'Show item sends', group: 'Archipelago', type: 'bool' },
+    { key: 'archipelagoShowHints', label: 'Show hints', group: 'Archipelago', type: 'bool' },
+    { key: 'archipelagoShowChat', label: 'Show chat', group: 'Archipelago', type: 'bool' },
+    { key: 'archipelagoShowJoins', label: 'Show joins and parts', group: 'Archipelago', type: 'bool' },
+    { key: 'archipelagoShowGoals', label: 'Show goals and releases', group: 'Archipelago', type: 'bool' },
+    { key: 'archipelagoShowMisc', label: 'Show countdowns and server notices', group: 'Archipelago', type: 'bool' },
+    { key: 'archipelagoShowDeaths', label: 'Show DeathLink deaths', group: 'Archipelago', type: 'bool', warn: 'Reconnects the room so the DeathLink tag is sent.' },
 
     { key: 'broadcastChannelId', label: 'Broadcast channel (fallback)', group: 'Broadcasts', type: 'string', snowflake: true },
     { key: 'kometaChannelId', label: 'Kometa channel', group: 'Broadcasts', type: 'string', snowflake: true },
@@ -58,12 +73,18 @@ const SETTINGS = [
     { key: 'kometaTheaterEnabled', label: 'Kometa Theater (in-character narration)', group: 'Broadcasts', type: 'bool', restartRequired: true },
 ];
 
-// Discord caps a string select at 25 options and a message at 5 action rows. The panel spends
-// one row on its buttons, so the settings have to fit in four menus of 25. One menu per group
-// is the readable split; a group that outgrows a menu is chunked, and groups past the row
-// budget share the last one. Kept here, away from discord.js, so the arithmetic is testable.
+// Discord caps a string select at 25 options and a message at 5 action rows, and it rejects an
+// oversized payload outright rather than trimming it, so overflowing either limit takes /config
+// down entirely.
+//
+// The panel therefore navigates in two steps: one menu to pick a group, then a menu of that
+// group's settings. Flattening every setting into one menu is what broke the panel at 26
+// settings, and packing a menu per group instead only moved the ceiling to four groups. Two
+// steps costs one click and stops the panel having a setting count it cannot survive.
+// Kept here, away from discord.js, so the arithmetic is testable.
 const SELECT_OPTION_LIMIT = 25;
-const SELECT_ROW_LIMIT = 4;
+// Rows: one for the group menu, one for the buttons, leaving three for the settings themselves.
+const SETTING_ROW_LIMIT = 3;
 
 function chunk(items, size) {
     const out = [];
@@ -71,35 +92,25 @@ function chunk(items, size) {
     return out;
 }
 
-function selectPages(settings = SETTINGS) {
-    const pages = [];
-    const placed = new Set();
+function settingsInGroup(group, settings = SETTINGS) {
+    return settings.filter((s) => s.group === group);
+}
 
-    for (const group of GROUPS) {
-        const inGroup = settings.filter((s) => s.group === group);
-        if (inGroup.length === 0) continue;
-        const parts = chunk(inGroup, SELECT_OPTION_LIMIT);
-        parts.forEach((settings, index) => {
-            pages.push({ label: parts.length > 1 ? `${group} ${index + 1}` : group, settings });
-            for (const s of settings) placed.add(s.key);
-        });
-    }
+/** Group names in panel order, including any a setting invented outside the GROUPS list. */
+function groupNames(settings = SETTINGS) {
+    const listed = GROUPS.filter((g) => settingsInGroup(g, settings).length > 0);
+    const extra = [...new Set(settings.map((s) => s.group))].filter((g) => !GROUPS.includes(g));
+    return [...listed, ...extra];
+}
 
-    // A setting whose group isn't listed in GROUPS would otherwise be unreachable in the panel.
-    const orphans = settings.filter((s) => !placed.has(s.key));
-    for (const settings of chunk(orphans, SELECT_OPTION_LIMIT)) {
-        pages.push({ label: 'Other', settings });
-    }
-
-    if (pages.length <= SELECT_ROW_LIMIT) return pages;
-
-    // Out of rows: fold everything from the last affordable row onward into shared menus.
-    const kept = pages.slice(0, SELECT_ROW_LIMIT - 1);
-    const rest = pages.slice(SELECT_ROW_LIMIT - 1).flatMap((p) => p.settings);
-    for (const settings of chunk(rest, SELECT_OPTION_LIMIT)) {
-        kept.push({ label: 'More', settings });
-    }
-    return kept.slice(0, SELECT_ROW_LIMIT);
+/** The settings menus for one group, split when a group outgrows a single menu. */
+function selectPages(group, settings = SETTINGS) {
+    const inGroup = settingsInGroup(group, settings);
+    const parts = chunk(inGroup, SELECT_OPTION_LIMIT);
+    return parts.map((part, index) => ({
+        label: parts.length > 1 ? `${group} ${index + 1}` : group,
+        settings: part
+    }));
 }
 
 function getSetting(key) {
@@ -179,6 +190,26 @@ function readOverrides(overridesPath = OVERRIDES_PATH) {
 }
 
 // Persist one override and (by default) apply it to the live config object immediately.
+// Modules that need to react to a setting changing under them rather than waiting for a restart.
+// The Archipelago monitor uses this to re-point at a new room the moment the wizard saves one.
+const listeners = new Set();
+
+function onChange(fn) {
+    listeners.add(fn);
+    return () => listeners.delete(fn);
+}
+
+function notify(key, value) {
+    for (const fn of listeners) {
+        // A listener that throws must not roll back a write that already happened on disk.
+        try {
+            fn(key, value);
+        } catch (err) {
+            console.warn('[config] change listener threw:', err && err.message ? err.message : err);
+        }
+    }
+}
+
 function writeOverride(key, value, opts = {}) {
     const overridesPath = opts.path || OVERRIDES_PATH;
     const applyLive = opts.applyLive !== false;
@@ -188,7 +219,10 @@ function writeOverride(key, value, opts = {}) {
     fs.mkdirSync(path.dirname(overridesPath), { recursive: true });
     fs.writeFileSync(overridesPath, JSON.stringify(obj, null, 2) + '\n');
 
-    if (applyLive) require('../config/config.js')[key] = value;
+    if (applyLive) {
+        require('../config/config.js')[key] = value;
+        notify(key, value);
+    }
     return obj;
 }
 
@@ -210,8 +244,11 @@ module.exports = {
     GROUPS,
     SETTINGS,
     SELECT_OPTION_LIMIT,
-    SELECT_ROW_LIMIT,
+    SETTING_ROW_LIMIT,
+    groupNames,
+    settingsInGroup,
     selectPages,
+    onChange,
     getSetting,
     formatValue,
     validate,

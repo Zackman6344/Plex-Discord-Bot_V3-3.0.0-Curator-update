@@ -105,9 +105,23 @@ module.exports = {
   'kometaTheaterModel'     : '',           // fast Gemini model; blank = the default model
   'kometaTheaterDelayMs'   : 5000,         // pacing between in-character "transmissions"
 
-  // Archipelago room monitor (!ap) — see below
-  'archipelagoEnabled'      : false,       // toggle the monitor; takes effect on next boot
-  'archipelagoBatchSeconds' : 5            // seconds of room log collected per Discord post
+  // Archipelago room monitor (see below). All of this is editable from /config → Archipelago.
+  'archipelagoEnabled'   : false,
+  'archipelagoChannelId' : '',             // channel the room log posts to (its own, not the broadcast one)
+  'archipelagoRoomUrl'   : '',             // https://archipelago.gg/room/<id>
+  'archipelagoHost'      : '',             // or a host, for a server you run yourself
+  'archipelagoPort'      : 38281,          // used with archipelagoHost
+  'archipelagoSlot'      : '',             // an existing slot name in that multiworld
+  'archipelagoPassword'  : '',             // only if the room has one
+  'archipelagoBatchSeconds'    : 5,        // seconds of room log collected per Discord post
+  'archipelagoProgressionOnly' : false,    // relay item sends only when they are progression
+  'archipelagoShowItems'  : true,          // which categories of log line get relayed
+  'archipelagoShowHints'  : true,
+  'archipelagoShowChat'   : true,
+  'archipelagoShowJoins'  : true,
+  'archipelagoShowGoals'  : true,
+  'archipelagoShowMisc'   : true,
+  'archipelagoShowDeaths' : false          // DeathLink; reconnects the room to add the tag
 };
 ```
 
@@ -384,7 +398,11 @@ all-or-nothing, so a single malformed spec makes *every* slash command disappear
 
 ### 🧩 Archipelago room monitor
 
-Off unless `archipelagoEnabled` is set in `config/config.js`. The bot joins a multiworld as a read-only tracker client and relays the server log into the channel the watch was made in.
+Off unless `archipelagoEnabled` is set. The bot joins a multiworld as a read-only tracker client and relays the server log into Discord.
+
+**The easiest way in is `/config` → Archipelago**, which holds every setting for one room: its URL (or host and port), the slot to watch from, its password, the channel the log posts to, the batch window, and the seven category filters. Saving any of them re-points the bot immediately, with no restart. That room shows up as watch `#0`, and because `/config` owns it, `!ap` will not let you edit it from the command line.
+
+`!ap` adds further rooms alongside it, each posting to the channel it was created in:
 
 - `!ap watch [room url or host:port] [slot name]`: Start relaying a room's log here. The slot name has to match a real slot in that multiworld; the bot attaches to it as an observer, receives no items, and cannot affect the person playing it.
 - `!ap list` / `!ap status [id]`: Watches, their connection state and how many lines each has relayed.

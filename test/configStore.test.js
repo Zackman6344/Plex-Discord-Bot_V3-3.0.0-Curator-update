@@ -87,41 +87,55 @@ test('formatValue masks secrets and renders bools/choices', () => {
     assert.strictEqual(store.formatValue(store.getSetting('listenChannel'), ''), '— (empty)');
 });
 
-// The panel renders one select per page plus a button row. Discord rejects a select with more
-// than 25 options and a message with more than 5 action rows, and it rejects the whole payload
-// rather than trimming, so overflowing either limit takes /config down entirely.
-test('selectPages keeps every setting reachable exactly once', () => {
-    const keys = store.selectPages().flatMap((page) => page.settings.map((s) => s.key));
-    assert.strictEqual(keys.length, store.SETTINGS.length);
-    assert.strictEqual(new Set(keys).size, store.SETTINGS.length);
+// Discord rejects a select carrying more than 25 options, and a message carrying more than 5
+// action rows, by refusing the whole payload rather than trimming it. Overflowing either takes
+// /config down entirely, which is how the panel broke once at 26 settings.
+test('every setting is reachable from some group', () => {
+    const reachable = store.groupNames().flatMap((g) => store.settingsInGroup(g).map((s) => s.key));
+    assert.strictEqual(new Set(reachable).size, store.SETTINGS.length);
     for (const setting of store.SETTINGS) {
-        assert.ok(keys.includes(setting.key), `${setting.key} is unreachable in the panel`);
+        assert.ok(reachable.includes(setting.key), `${setting.key} is unreachable in the panel`);
     }
 });
 
-test('selectPages fits Discord\'s select and action-row limits', () => {
-    const pages = store.selectPages();
-    assert.ok(pages.length <= store.SELECT_ROW_LIMIT, `${pages.length} menus exceeds the row budget`);
-    for (const page of pages) {
-        assert.ok(page.settings.length <= store.SELECT_OPTION_LIMIT, `menu "${page.label}" has ${page.settings.length} options`);
+test('the group menu and every settings menu fit their limits', () => {
+    const groups = store.groupNames();
+    assert.ok(groups.length <= store.SELECT_OPTION_LIMIT, `${groups.length} groups exceeds one menu`);
+    for (const group of groups) {
+        const pages = store.selectPages(group);
+        assert.ok(pages.length <= store.SETTING_ROW_LIMIT, `group "${group}" needs ${pages.length} rows`);
+        for (const page of pages) {
+            assert.ok(page.settings.length <= store.SELECT_OPTION_LIMIT, `menu "${page.label}" has ${page.settings.length} options`);
+        }
     }
 });
 
-test('selectPages gives each group its own menu while they fit', () => {
-    const labels = store.selectPages().map((page) => page.label);
-    assert.deepStrictEqual(labels, store.GROUPS.filter((g) => store.SETTINGS.some((s) => s.group === g)));
-});
-
-test('selectPages still respects both limits when the settings list outgrows them', () => {
-    const many = Array.from({ length: 200 }, (_, i) => ({
-        key: `synthetic${i}`,
-        label: `Synthetic ${i}`,
-        group: store.GROUPS[i % store.GROUPS.length],
-        type: 'bool'
+test('a group larger than one menu is split rather than truncated', () => {
+    const many = Array.from({ length: 60 }, (_, i) => ({
+        key: `synthetic${i}`, label: `Synthetic ${i}`, group: 'General', type: 'bool'
     }));
-    const pages = store.selectPages(many);
-    assert.ok(pages.length <= store.SELECT_ROW_LIMIT);
-    for (const page of pages) {
-        assert.ok(page.settings.length <= store.SELECT_OPTION_LIMIT);
+    const pages = store.selectPages('General', many);
+    assert.strictEqual(pages.length, 3);
+    assert.strictEqual(pages.flatMap((p) => p.settings).length, 60);
+    for (const page of pages) assert.ok(page.settings.length <= store.SELECT_OPTION_LIMIT);
+});
+
+test('groupNames surfaces a group invented outside the GROUPS list', () => {
+    const settings = [{ key: 'x', label: 'X', group: 'Nowhere', type: 'bool' }];
+    assert.deepStrictEqual(store.groupNames(settings), ['Nowhere']);
+});
+
+test('the Archipelago section covers the room, its channel and its filters', () => {
+    const keys = store.settingsInGroup('Archipelago').map((s) => s.key);
+    for (const expected of [
+        'archipelagoEnabled', 'archipelagoChannelId', 'archipelagoRoomUrl', 'archipelagoHost',
+        'archipelagoPort', 'archipelagoSlot', 'archipelagoPassword', 'archipelagoBatchSeconds',
+        'archipelagoProgressionOnly', 'archipelagoShowItems', 'archipelagoShowHints',
+        'archipelagoShowChat', 'archipelagoShowJoins', 'archipelagoShowGoals',
+        'archipelagoShowMisc', 'archipelagoShowDeaths'
+    ]) {
+        assert.ok(keys.includes(expected), `${expected} is missing from the Archipelago section`);
     }
+    // The password must never be rendered back into the panel.
+    assert.strictEqual(store.formatValue(store.getSetting('archipelagoPassword'), 'hunter2'), '••• set');
 });

@@ -47,8 +47,23 @@ function panelEmbed(statusLine, bootstrapMode) {
     return embed;
 }
 
-function pickRows() {
-    return store.selectPages().map((page, index) =>
+function groupRow(activeGroup) {
+    return new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+            .setCustomId('cfg_group')
+            .setPlaceholder(activeGroup ? `Section: ${activeGroup}` : 'Choose a section…')
+            .addOptions(store.groupNames().map((group) => ({
+                label: truncate(group, 100),
+                value: group,
+                description: truncate(`${store.settingsInGroup(group).length} settings`, 100),
+                default: group === activeGroup,
+            })))
+    );
+}
+
+function pickRows(activeGroup) {
+    if (!activeGroup) return [];
+    return store.selectPages(activeGroup).map((page, index) =>
         new ActionRowBuilder().addComponents(
             new StringSelectMenuBuilder()
                 .setCustomId(`cfg_pick_${index}`)
@@ -56,7 +71,7 @@ function pickRows() {
                 .addOptions(page.settings.map((s) => ({
                     label: truncate(s.label, 100),
                     value: s.key,
-                    description: truncate(`${s.group} · now: ${store.formatValue(s, config[s.key])}`, 100),
+                    description: truncate(`now: ${store.formatValue(s, config[s.key])}`, 100),
                 })))
         )
     );
@@ -93,8 +108,8 @@ function choiceComponents(setting) {
     return [row, backCloseRow()];
 }
 
-function pickComponents() {
-    return [...pickRows(), closeRow()];
+function pickComponents(activeGroup) {
+    return [groupRow(activeGroup), ...pickRows(activeGroup), closeRow()];
 }
 
 function buildModal(setting) {
@@ -148,10 +163,11 @@ module.exports = {
             }
 
             let activeKey = null;
+            let activeGroup = null;
 
             const panelMsg = await message.reply({
                 embeds: [panelEmbed(null, bootstrapMode)],
-                components: pickComponents(),
+                components: pickComponents(activeGroup),
             });
 
             const collector = panelMsg.createMessageComponentCollector({
@@ -159,9 +175,10 @@ module.exports = {
                 time: COLLECTOR_MS,
             });
 
+            // Back out to the section the setting came from, not to an empty panel.
             const renderPick = async (interaction, status) => {
                 activeKey = null;
-                await interaction.update({ embeds: [panelEmbed(status, bootstrapMode)], components: pickComponents() });
+                await interaction.update({ embeds: [panelEmbed(status, bootstrapMode)], components: pickComponents(activeGroup) });
             };
 
             collector.on('collect', async (i) => {
@@ -176,7 +193,12 @@ module.exports = {
                         return renderPick(i);
                     }
 
-                    // One menu per settings group, so the id carries which menu was used.
+                    if (i.customId === 'cfg_group') {
+                        activeGroup = i.values[0];
+                        return renderPick(i);
+                    }
+
+                    // A group can need more than one menu, so the id carries which one was used.
                     if (i.customId.startsWith('cfg_pick')) {
                         const setting = store.getSetting(i.values[0]);
                         if (!setting) return renderPick(i);
@@ -212,7 +234,7 @@ module.exports = {
                         }
                         store.writeOverride(setting.key, res.value);
                         activeKey = null;
-                        return submitted.update({ embeds: [panelEmbed(confirmLine(setting), bootstrapMode)], components: pickComponents() });
+                        return submitted.update({ embeds: [panelEmbed(confirmLine(setting), bootstrapMode)], components: pickComponents(activeGroup) });
                     }
 
                     if (i.customId === 'cfg_bool_enable' || i.customId === 'cfg_bool_disable') {

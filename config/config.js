@@ -77,12 +77,45 @@ const defaults = {
   // how many post in a run; it's bounded by the number of collections Kometa actually processes.
   'kometaTheaterDelayMs'   : 5000,
 
-  // --- Archipelago room monitor (!ap) ---
-  // When on, the bot opens a read-only tracker connection to each watched multiworld and
-  // relays its log into the Discord channel the watch was created in. Takes effect on boot.
+  // --- Archipelago room monitor (!ap, or the Archipelago page of /config) ---
+  // When on, the bot opens a read-only tracker connection to the multiworld and relays its log
+  // into archipelagoChannelId. Rooms added with `!ap watch` run alongside this one and post to
+  // whichever channel they were created in.
   'archipelagoEnabled' : false,
+  // Channel the configured room's log goes to. Its own setting rather than the shared
+  // broadcastChannelId, because a multiworld log is a firehose next to a Kometa summary.
+  // Blank means the configured room below stays idle. (Right-click a channel with Developer
+  // Mode on → "Copy Channel ID".)
+  'archipelagoChannelId' : '',
+
+  // The room to watch. Give EITHER a room URL, or a host and port.
+  // A room URL is preferred for anything hosted on archipelago.gg: the port changes every time
+  // the room spins up, and the URL lets the bot re-read the current one on each connect.
+  'archipelagoRoomUrl' : '',           // e.g. https://archipelago.gg/room/<id>
+  'archipelagoHost'    : '',           // e.g. localhost, for a server you host yourself
+  'archipelagoPort'    : 38281,        // used with archipelagoHost; ignored when a room URL is set
+  // An existing slot name in that multiworld. The bot attaches to it as a read-only observer,
+  // receives no items, and cannot affect whoever is playing it.
+  'archipelagoSlot'     : '',
+  'archipelagoPassword' : '',          // only if the room has one
+
   // Seconds of room log collected before the batch is posted. Lower is snappier and noisier.
-  'archipelagoBatchSeconds' : 5
+  'archipelagoBatchSeconds' : 5,
+  // Relay an item send only when its flags mark it as progression. The usual fix for a big
+  // async where filler sends drown everything else.
+  'archipelagoProgressionOnly' : false,
+
+  // Which categories of log line get relayed.
+  'archipelagoShowItems'  : true,      // item sends, and cheated items
+  'archipelagoShowHints'  : true,      // hints
+  'archipelagoShowChat'   : true,      // player and server chat
+  'archipelagoShowJoins'  : true,      // joins, parts, tag changes
+  'archipelagoShowGoals'  : true,      // goals, releases, collects
+  'archipelagoShowMisc'   : true,      // countdowns, tutorials, command output
+  // DeathLink arrives on a different packet type, and the server only routes it to clients
+  // advertising the tag. Turning this on reconnects so the tag is sent. The bot never sends a
+  // death of its own.
+  'archipelagoShowDeaths' : false
 };
 
 // Layer persisted overrides (written by the /config wizard, helpers/configStore.js) on top of

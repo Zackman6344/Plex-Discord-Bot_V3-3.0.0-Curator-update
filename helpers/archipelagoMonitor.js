@@ -14,9 +14,15 @@ const fs = require('fs');
 const path = require('path');
 const config = require('../config/config.js');
 const logger = require('./logger.js');
-const { ArchipelagoClient, parseTarget, ITEM_FLAG_PROGRESSION, CATEGORY_GROUPS } = require('./archipelagoClient.js');
+const configStore = require('./configStore.js');
+const { ArchipelagoClient, parseTarget, ITEM_FLAG_PROGRESSION, CATEGORY_GROUPS, DEFAULT_PORT } = require('./archipelagoClient.js');
 
-const WATCH_FILE = path.join(__dirname, '..', 'data', 'archipelago_watches.json');
+// Overridable so a test run can point at its own file, and so the store can be relocated.
+const WATCH_FILE = process.env.PLEXBOT_AP_WATCHES_FILE || path.join(__dirname, '..', 'data', 'archipelago_watches.json');
+// Under the test runner that override is required rather than optional, the same gate
+// commandLog.js and tagSidecar.js use. The real file holds a room password, and a test run has
+// no business reading or rewriting it.
+const usable = !process.env.NODE_TEST_CONTEXT || !!process.env.PLEXBOT_AP_WATCHES_FILE;
 // Read per flush rather than captured at load, so the /config wizard's change to
 // archipelagoBatchSeconds applies to the next batch instead of the next boot.
 function flushDelayMs() {
@@ -29,11 +35,16 @@ const MAX_BUFFER_LINES = 500;
 
 const DEFAULT_FILTERS = { items: true, hints: true, chat: true, joins: true, goals: true, misc: true, deaths: false };
 const FILTER_GROUPS = Object.keys(CATEGORY_GROUPS);
+// The room described by config/config.js gets a reserved id. It is rebuilt from config rather
+// than stored in the watch file, so `!ap watch` rooms number from 1 and never collide with it.
+const CONFIG_WATCH_ID = 0;
 
 let discord = null;
+let savedWatchesLoaded = false;
 const states = new Map();
 
 function loadStore() {
+    if (!usable) return { nextId: 1, watches: [] };
     try {
         const raw = fs.readFileSync(WATCH_FILE, 'utf8');
         const parsed = JSON.parse(raw);
@@ -48,6 +59,7 @@ function loadStore() {
 }
 
 function saveStore(store) {
+    if (!usable) return;
     try {
         fs.mkdirSync(path.dirname(WATCH_FILE), { recursive: true });
         fs.writeFileSync(WATCH_FILE, JSON.stringify(store, null, 4));
@@ -56,10 +68,13 @@ function saveStore(store) {
     }
 }
 
+// The configured room is derived from config/config.js on every boot, so writing it to the
+// watch file would leave a stale duplicate behind the moment those settings changed.
 function currentStore() {
+    const watches = [...states.values()].map(s => s.watch).filter(w => !w.managed);
     return {
-        nextId: Math.max(1, ...[...states.values()].map(s => s.watch.id + 1)),
-        watches: [...states.values()].map(s => s.watch)
+        nextId: Math.max(1, ...watches.map(w => w.id + 1)),
+        watches
     };
 }
 
@@ -263,21 +278,130 @@ function restartWatch(id) {
     return state;
 }
 
-function startArchipelagoMonitor(client) {
+// Which room config/config.js is asking for. A room URL wins over host/port: on a hosted room
+// the port moves every spin-up, and only the URL lets the client re-read the current one.
+function configTarget() {
+    const url = String(config.archipelagoRoomUrl || '').trim();
+    if (url) return parseTarget(url);
+    const host = String(config.archipelagoHost || '').trim();
+    if (host) return parseTarget(`${host}:${Number(config.archipelagoPort) || DEFAULT_PORT}`);
+    return null;
+}
+
+function configFilters() {
+    return {
+        items:  config.archipelagoShowItems !== false,
+        hints:  config.archipelagoShowHints !== false,
+        chat:   config.archipelagoShowChat !== false,
+        joins:  config.archipelagoShowJoins !== false,
+        goals:  config.archipelagoShowGoals !== false,
+        misc:   config.archipelagoShowMisc !== false,
+        deaths: config.archipelagoShowDeaths === true
+    };
+}
+
+/** What the configured room still needs before it can connect. Empty means it is ready. */
+function configGaps() {
+    const gaps = [];
+    if (!configTarget()) gaps.push('a room URL, or a host');
+    if (!String(config.archipelagoSlot || '').trim()) gaps.push('a slot name');
+    if (!String(config.archipelagoChannelId || '').trim()) gaps.push('a log channel');
+    return gaps;
+}
+
+function syncConfigWatch() {
+    const existing = states.get(CONFIG_WATCH_ID);
+
+    if (configGaps().length > 0) {
+        if (existing) {
+            stopWatch(CONFIG_WATCH_ID);
+            states.delete(CONFIG_WATCH_ID);
+            logger.info('Archipelago configured room cleared — its settings are no longer complete');
+        }
+        return null;
+    }
+
+    const desired = {
+        id: CONFIG_WATCH_ID,
+        managed: true,
+        label: 'Configured room',
+        target: configTarget(),
+        slot: String(config.archipelagoSlot).trim(),
+        password: config.archipelagoPassword || null,
+        channelId: String(config.archipelagoChannelId).trim(),
+        filters: configFilters(),
+        progressionOnly: !!config.archipelagoProgressionOnly,
+        paused: false,
+        addedBy: null,
+        addedAt: new Date().toISOString()
+    };
+
+    if (!existing) {
+        startWatch(desired);
+        logger.info(`Archipelago configured room watching ${describeTarget(desired.target)} as ${desired.slot}`);
+        return desired;
+    }
+
+    // Target, slot, password and the DeathLink tag are only read during the connect handshake,
+    // so a change to any of them needs a fresh socket. The rest apply to the next batch.
+    const needsReconnect =
+        JSON.stringify(existing.watch.target) !== JSON.stringify(desired.target) ||
+        existing.watch.slot !== desired.slot ||
+        (existing.watch.password || null) !== desired.password ||
+        !!existing.watch.filters.deaths !== !!desired.filters.deaths;
+    const channelChanged = existing.watch.channelId !== desired.channelId;
+
+    Object.assign(existing.watch, desired);
+    if (channelChanged) existing.channel = null;
+    if (needsReconnect) restartWatch(CONFIG_WATCH_ID);
+    return existing.watch;
+}
+
+// Runs at boot and again whenever an archipelago* setting is saved, so the wizard can point the
+// bot at a different room without a restart.
+function applyConfig({ boot = false } = {}) {
     if (!config.archipelagoEnabled) {
-        logger.debug('Archipelago monitor disabled (config.archipelagoEnabled is false)');
+        if (states.size > 0) {
+            for (const id of [...states.keys()]) stopWatch(id);
+            states.clear();
+            savedWatchesLoaded = false;
+            logger.info('Archipelago monitor stopped — archipelagoEnabled is off');
+        } else if (boot) {
+            logger.debug('Archipelago monitor disabled (config.archipelagoEnabled is false)');
+        }
         return;
     }
-    discord = client;
 
-    const store = loadStore();
-    for (const watch of store.watches) {
-        watch.filters = { ...DEFAULT_FILTERS, ...(watch.filters || {}) };
-        startWatch(watch);
+    if (!savedWatchesLoaded) {
+        const store = loadStore();
+        for (const watch of store.watches) {
+            watch.filters = { ...DEFAULT_FILTERS, ...(watch.filters || {}) };
+            startWatch(watch);
+        }
+        savedWatchesLoaded = true;
+        const active = store.watches.filter(w => !w.paused).length;
+        logger.info(`Archipelago monitor started — ${active} saved room(s), ${store.watches.length - active} paused`);
     }
 
-    const active = store.watches.filter(w => !w.paused).length;
-    logger.info(`Archipelago monitor started — ${active} room(s) watched, ${store.watches.length - active} paused`);
+    syncConfigWatch();
+
+    const gaps = configGaps();
+    if (boot && gaps.length > 0 && states.size === 0) {
+        logger.info(`Archipelago monitor idle — /config still needs ${gaps.join(', ')}`);
+    }
+}
+
+function startArchipelagoMonitor(client) {
+    discord = client;
+    configStore.onChange((key) => {
+        if (typeof key !== 'string' || !key.startsWith('archipelago')) return;
+        try {
+            applyConfig();
+        } catch (err) {
+            logger.error('Archipelago monitor could not apply a config change:', err.message || err);
+        }
+    });
+    applyConfig({ boot: true });
 }
 
 /**
@@ -327,9 +451,18 @@ function addWatch(options, waitMs = 20000) {
     });
 }
 
+// The configured room is rebuilt from config on every change, so editing it here would be
+// undone without warning. Point at the place that actually owns it instead.
+function refuseIfManaged(state, what) {
+    if (state && state.watch.managed) {
+        throw new Error(`Watch #${state.watch.id} comes from \`/config\` → Archipelago. Change ${what} there.`);
+    }
+}
+
 function removeWatch(id) {
     const state = states.get(id);
     if (!state) return null;
+    refuseIfManaged(state, 'the room URL or host');
     stopWatch(id);
     states.delete(id);
     persist();
@@ -339,6 +472,7 @@ function removeWatch(id) {
 function setPassword(id, password) {
     const state = states.get(id);
     if (!state) return null;
+    refuseIfManaged(state, 'the room password');
     state.watch.password = password || null;
     return restartWatch(id);
 }
@@ -346,6 +480,7 @@ function setPassword(id, password) {
 function setFilter(id, group, enabled) {
     const state = states.get(id);
     if (!state) return null;
+    refuseIfManaged(state, 'the category toggles');
     if (!FILTER_GROUPS.includes(group)) throw new Error(`Unknown category "${group}".`);
     state.watch.filters = { ...DEFAULT_FILTERS, ...state.watch.filters, [group]: enabled };
     // The DeathLink tag is negotiated at connect time, so that one needs a fresh socket.
@@ -357,6 +492,7 @@ function setFilter(id, group, enabled) {
 function setProgressionOnly(id, enabled) {
     const state = states.get(id);
     if (!state) return null;
+    refuseIfManaged(state, 'the progression filter');
     state.watch.progressionOnly = !!enabled;
     persist();
     return state;
@@ -388,12 +524,20 @@ function getStatus() {
         enabled: !!config.archipelagoEnabled,
         total: list.length,
         connected: list.filter(entry => entry.status === 'connected').length,
-        paused: list.filter(entry => entry.watch.paused).length
+        paused: list.filter(entry => entry.watch.paused).length,
+        // What the Archipelago page of /config still needs before its room can connect.
+        gaps: config.archipelagoEnabled ? configGaps() : []
     };
 }
 
 module.exports = {
     startArchipelagoMonitor,
+    applyConfig,
+    syncConfigWatch,
+    configTarget,
+    configFilters,
+    configGaps,
+    CONFIG_WATCH_ID,
     addWatch,
     removeWatch,
     restartWatch,

@@ -336,17 +336,21 @@ If the generator throws (e.g. a malformed Gemini response), nothing is written a
 `commands/config.js` is an **owner-only** wizard for editing `config/config.js` from Discord —
 no file editing or restart needed for most settings.
 
-- **UI.** An ephemeral panel (embed of current values grouped by section + one select menu per
-  group). Picking a setting edits it via a **modal** (text/number), **buttons**
-  (on/off), or a small **select** (choice like `youtube_quality`). Built with a message
-  component collector + `awaitModalSubmit`, the same self-contained pattern as
-  `commands/buildcharacter.js` — so the global `interactionCreate` handler needs no changes.
+- **UI.** An ephemeral panel: an embed of current values grouped by section, a menu to pick a
+  section, then a menu of that section's settings. Picking one edits it via a **modal**
+  (text/number), **buttons** (on/off), or a small **select** (choice like `youtube_quality`).
+  Built with a message component collector + `awaitModalSubmit`, the same self-contained pattern
+  as `commands/buildcharacter.js`, so the global `interactionCreate` handler needs no changes.
 - **Panel limits.** Discord rejects a select carrying more than 25 options, and a message
-  carrying more than 5 action rows, by refusing the whole payload. One row goes to the buttons,
-  leaving four menus of 25. `configStore.selectPages()` does that division: a menu per group,
-  chunked if a group outgrows one, folded into shared menus if the groups outrun the rows.
-  Adding a 27th setting to a single flat menu is what broke `/config` once already, so
-  `test/configStore.test.js` asserts both limits and that every setting stays reachable.
+  carrying more than 5 action rows, by refusing the whole payload rather than trimming it. Two
+  earlier shapes both hit a ceiling: one flat menu died at 26 settings, and a menu per group
+  died at the fifth group. The section-then-setting split has no such number, since only one
+  group's settings are on screen at a time. `configStore.groupNames()` and `selectPages(group)`
+  do the division; `test/configStore.test.js` asserts both limits and that every setting stays
+  reachable.
+- **Change hook.** `configStore.onChange(fn)` fires after a save is written and applied to the
+  live config object. The Archipelago monitor subscribes so a new room, channel or filter takes
+  effect on the next batch instead of the next boot.
 - **Schema + persistence** live in `helpers/configStore.js`: the `SETTINGS` list (key, label,
   group, type, `secret`/`restartRequired`/`snowflake` flags, validators), pure `validate` /
   `formatValue`, and `writeOverride` (persists to `data/config.overrides.json` + mutates the
@@ -459,7 +463,23 @@ to one regex; degrades to fewer lines rather than failing.
 
 ## Archipelago room monitor
 
-`!ap watch <room url|host:port> <slot name>` binds a multiworld to the channel the command was run in. The bot connects to that game server, follows its log, and relays it back into Discord. Off by default: set `archipelagoEnabled: true` in `config/config.js` and restart.
+There are two ways to point the bot at a multiworld, and they run side by side.
+
+**From `/config` → Archipelago.** Sixteen settings describe one room: where it is (`archipelagoRoomUrl`, or `archipelagoHost` + `archipelagoPort`), which slot to observe from, its password, which channel the log goes to, and the category filters. The monitor rebuilds that watch whenever any of them is saved, so a room can be swapped without touching the command line or restarting.
+
+**From `!ap watch <room url|host:port> <slot name>`,** which binds a room to the channel the command was run in and persists it to the watch file.
+
+Off by default either way: `archipelagoEnabled` gates both.
+
+### The configured room
+
+The config-defined room holds the reserved watch id `0` and is marked `managed`. Three consequences:
+
+- It is **never written to `data/archipelago_watches.json`**. It is derived from config on every change, so a stored copy would go stale the moment a setting moved. `!ap watch` rooms number from 1 and cannot collide with it.
+- `!ap unwatch 0`, `filter`, `password` and `progression` **refuse** and point at `/config`, because the next config change would silently undo them.
+- It only exists once `archipelagoChannelId`, a target, and `archipelagoSlot` are all set. `configGaps()` names whatever is still missing, and both `!ap list` and `!diag` report it.
+
+`syncConfigWatch()` decides whether a change costs a reconnect. Target, slot, password and the DeathLink tag are read during the connect handshake, so those rebuild the socket. Filters, the progression toggle, the batch window and the channel apply to the next batch on the existing connection.
 
 ### How the log is read
 
@@ -492,7 +512,7 @@ Relayed text is untrusted: it comes from whoever is playing. Every post goes out
 
 ### Filters
 
-Seven categories, each toggled per watch with `!ap filter <id> <category> <on|off>`:
+Seven categories. The configured room takes them from the `archipelagoShow*` settings; a `!ap watch` room takes them from `!ap filter <id> <category> <on|off>`:
 
 | Category | PrintJSON types |
 | -------- | --------------- |
@@ -520,7 +540,7 @@ Everything except `deaths` is on by default. `!ap progression <id> on` narrows `
 | `helpers/archipelagoClient.js` | Socket, handshake, reconnect, `PrintJSON` rendering. |
 | `helpers/archipelagoMonitor.js` | Watch store, batching, Discord relay, status notices. |
 | `helpers/archipelagoData.js` | Data package disk cache. |
-| `data/archipelago_watches.json` | Persisted watches. Gitignored: it holds the room URL, the Discord channel and user ids, and a room password in plain text if one was set. |
+| `data/archipelago_watches.json` | Watches added with `!ap watch`, never the configured room. Gitignored: it holds the room URL, the Discord channel and user ids, and a room password in plain text if one was set. Overridable with `PLEXBOT_AP_WATCHES_FILE`, which is required under the test runner so a test run cannot read or rewrite the real one. |
 
 ---
 

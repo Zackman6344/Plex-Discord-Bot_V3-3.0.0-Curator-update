@@ -108,6 +108,9 @@ function checkArchipelago() {
         return { status: 'disabled', detail: 'archipelagoEnabled is false in config/config.js' };
     }
     if (s.total === 0) {
+        if (s.gaps && s.gaps.length > 0) {
+            return { status: 'missing', detail: `/config → Archipelago still needs ${s.gaps.join(', ')}` };
+        }
         return { status: 'ok', detail: 'no rooms watched' };
     }
     // A dropped connection retries itself, so it isn't reported here. A refusal (bad slot name

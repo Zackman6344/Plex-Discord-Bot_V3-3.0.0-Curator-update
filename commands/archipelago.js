@@ -44,9 +44,13 @@ function buildListEmbed(entries) {
         .setTitle('🧩 Archipelago room watches');
 
     if (entries.length === 0) {
+        const gaps = monitor.configGaps();
         return embed.setDescription(
-            `No rooms are being watched.\n` +
-            `Add one with \`${config.commandPrefix}ap watch <room url> <slot name>\`.`
+            `No rooms are being watched.\n\n` +
+            (config.archipelagoEnabled && gaps.length > 0
+                ? `\`/config\` → **Archipelago** still needs ${gaps.join(', ')}.\n`
+                : '') +
+            `Or add a room here with \`${config.commandPrefix}ap watch <room url> <slot name>\`.`
         );
     }
 
@@ -58,7 +62,7 @@ function buildListEmbed(entries) {
             .join(', ') || 'none';
 
         embed.addFields({
-            name: `${statusIcon(entry.status)} #${watch.id} — ${watch.label}`,
+            name: `${statusIcon(entry.status)} #${watch.id} — ${watch.label}${watch.managed ? ' (from /config)' : ''}`,
             value: [
                 `**Slot:** \`${watch.slot}\`${watch.password ? ' (password set)' : ''}`,
                 `**Room:** ${monitor.describeTarget(watch.target)}`,
