@@ -528,6 +528,26 @@ Everything except `deaths` is on by default. `!ap progression <id> on` narrows `
 
 `deaths` is separate because DeathLink arrives on `Bounced` rather than `PrintJSON`, and the server only routes those to clients advertising the `DeathLink` tag. Turning it on reconnects the watch so the tag is included in a fresh handshake. The bot never sends a death of its own.
 
+### Item colour
+
+With `archipelagoColorLines` on (the default), batches post as ```` ```ansi ```` blocks and each item name is wrapped in a colour by its own `NetworkItem.flags`: **progression magenta, useful blue, trap red, filler cyan**. That mapping is Archipelago's own, so a colour means the same thing here as in the game's text client.
+
+Colour is decided per JSONMessagePart rather than from the packet's headline item, so a line mentioning two items colours each one correctly. A trap that is also flagged progression renders as a trap, on the grounds that the warning is the more useful signal.
+
+`client.colorize` is read at render time, so toggling colour applies to the next batch instead of costing a reconnect. A plain fence is used when colour is off, because a ```` ``` ```` block would show the escape codes as literal text.
+
+### Goal tracking, and skipping items sent to finished slots
+
+Late in an async, much of the remaining item traffic is addressed to players who have already finished. `archipelagoSkipGoaled` (default on) drops those `ItemSend` lines. Only items are suppressed: a goal, a hint or a chat line involving that slot still comes through.
+
+Knowing who has finished takes more than watching for `Goal` messages, since a watch outlives its socket and a hosted room restarts often. On every `Connected` the client clears its goal set and reads it back from the server's data storage, then subscribes for changes:
+
+- `Get` with a `client_status` key per slot, and `SetNotify` on the same keys
+- `Retrieved` and `SetReply` are parsed for `ClientStatus.CLIENT_GOAL` (30)
+- a `PrintJSON` of type `Goal` also marks the slot, as a fallback
+
+The key is requested under both `_read_client_status_{team}_{slot}` and `client_status_{team}_{slot}`. The protocol docs give the read-only prefix for the sibling keys but not consistently for this one, and an unknown key is answered with null rather than an error, so asking for both costs one extra key per slot and means a wrong guess degrades to "nobody has goaled" instead of a filter that silently never fires.
+
 ### Data package caching
 
 `RoomInfo` carries a checksum per game. Each is looked up in `data/archipelago/datapackage/<game>-<checksum>.json` first, and `GetDataPackage` is sent only for the games that missed. Some games ship id tables in the megabytes, and without the cache every reconnect would re-download all of them. Cache files are disposable; delete any and the next connect refetches it.

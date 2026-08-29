@@ -38,10 +38,33 @@ const PING_INTERVAL_MS = 30000;
 const RECONNECT_DELAYS_MS = [5000, 10000, 20000, 40000, 80000, 160000, 300000];
 const USER_AGENT = 'PlexDiscordBot-ArchipelagoMonitor/1.0';
 
-// NetworkItem.flags — used for the progression-only filter.
+// NetworkItem.flags — used for the progression-only filter and for colouring.
 const ITEM_FLAG_PROGRESSION = 0b001;
 const ITEM_FLAG_USEFUL = 0b010;
 const ITEM_FLAG_TRAP = 0b100;
+
+// ClientStatus.CLIENT_GOAL. A slot reporting this has finished; items still arriving for it are
+// noise, which is what the skip-goaled filter exists to drop.
+const CLIENT_STATUS_GOAL = 30;
+
+// Discord renders a subset of ANSI inside a ```ansi block. The mapping follows Archipelago's
+// own clients so the colours mean the same thing here as in the game's text client.
+const ANSI = {
+    reset: '\u001b[0m',
+    progression: '\u001b[0;35m', // magenta
+    useful: '\u001b[0;34m',      // blue
+    trap: '\u001b[0;31m',        // red
+    filler: '\u001b[0;36m'       // cyan
+};
+
+/** Which of the four item classes a NetworkItem.flags value describes. */
+function classifyItem(flags) {
+    const value = Number(flags) || 0;
+    if (value & ITEM_FLAG_TRAP) return 'trap';
+    if (value & ITEM_FLAG_PROGRESSION) return 'progression';
+    if (value & ITEM_FLAG_USEFUL) return 'useful';
+    return 'filler';
+}
 
 // PrintJSON types collapsed into the handful of switches a Discord channel actually
 // wants to toggle. Anything the protocol adds later lands in 'misc' rather than vanishing.
@@ -123,7 +146,14 @@ async function resolveRoomAddress(roomUrl) {
     throw new Error('no connect address on the room page — the room may have expired');
 }
 
-function renderPart(part, tables) {
+// Each part carries its own flags, so an item is coloured by what that item is rather than by
+// whatever the packet's headline item happened to be.
+function paint(text, part, ansi) {
+    if (!ansi || typeof part.flags !== 'number') return text;
+    return `${ANSI[classifyItem(part.flags)]}${text}${ANSI.reset}`;
+}
+
+function renderPart(part, tables, ansi) {
     const raw = (part && part.text !== undefined && part.text !== null) ? String(part.text) : '';
     if (!part || !part.type) return raw;
 
@@ -136,8 +166,10 @@ function renderPart(part, tables) {
         case 'item_id': {
             const game = tables.gameForSlot && tables.gameForSlot(Number(part.player));
             const name = tables.itemName && tables.itemName(game, Number(raw));
-            return name || `Item#${raw}`;
+            return paint(name || `Item#${raw}`, part, ansi);
         }
+        case 'item_name':
+            return paint(raw, part, ansi);
         case 'location_id': {
             const game = tables.gameForSlot && tables.gameForSlot(Number(part.player));
             const name = tables.locationName && tables.locationName(game, Number(raw));
@@ -155,15 +187,17 @@ function renderPart(part, tables) {
  * @param {Object} packet
  * @param {Object} tables lookup callbacks: playerName(slot), gameForSlot(slot), itemName(game,id), locationName(game,id)
  */
-function renderPrintJSON(packet, tables = {}) {
+function renderPrintJSON(packet, tables = {}, options = {}) {
     const parts = Array.isArray(packet && packet.data) ? packet.data : [];
     const type = (packet && packet.type) || 'Text';
     const flags = packet && packet.item && typeof packet.item.flags === 'number' ? packet.item.flags : 0;
+    const ansi = !!options.ansi;
     return {
         type,
         group: groupOf(type),
         flags,
-        text: parts.map(part => renderPart(part, tables)).join('').trim()
+        itemClass: classifyItem(flags),
+        text: parts.map(part => renderPart(part, tables, ansi)).join('').trim()
     };
 }
 
@@ -205,6 +239,18 @@ class ArchipelagoClient extends EventEmitter {
         this.itemNames = new Map();
         this.locationNames = new Map();
         this.pendingChecksums = {};
+
+        // Slots that have finished, as "team:slot". Rebuilt from the server on every connect,
+        // because a watch outlives its socket and a hosted room restarts often.
+        this.goaled = new Set();
+        this.team = 0;
+        // Flipped per watch by the monitor; read at render time so a colour toggle costs no
+        // reconnect.
+        this.colorize = !!options.colorize;
+    }
+
+    hasGoaled(slot, team = this.team) {
+        return this.goaled.has(`${team}:${slot}`);
     }
 
     get tags() {
@@ -396,10 +442,27 @@ class ArchipelagoClient extends EventEmitter {
                 this._handleRefused(packet);
                 break;
             case 'PrintJSON': {
-                const line = renderPrintJSON(packet, this.lookupTables());
-                if (line.text) this.emit('line', { ...line, packet });
+                if (packet.type === 'Goal' && typeof packet.slot === 'number') {
+                    this.goaled.add(`${packet.team || 0}:${packet.slot}`);
+                }
+                const line = renderPrintJSON(packet, this.lookupTables(), { ansi: this.colorize });
+                if (line.text) {
+                    const receiving = typeof packet.receiving === 'number' ? packet.receiving : null;
+                    this.emit('line', {
+                        ...line,
+                        receiving,
+                        recipientGoaled: receiving !== null && this.hasGoaled(receiving),
+                        packet
+                    });
+                }
                 break;
             }
+            case 'Retrieved':
+                this._absorbStatuses(packet.keys || {});
+                break;
+            case 'SetReply':
+                if (packet.key) this._absorbStatuses({ [packet.key]: packet.value });
+                break;
             case 'RoomUpdate':
                 this._absorbPlayers(packet);
                 break;
@@ -462,10 +525,45 @@ class ArchipelagoClient extends EventEmitter {
         }
     }
 
+    // Goal status lives in the server's data storage under a read-only key per slot. Reading it
+    // at connect is what makes the skip-goaled filter work for players who finished before the
+    // bot joined, or before its last reconnect; SetNotify keeps it current afterwards.
+    //
+    // The key is requested under both spellings seen in the protocol docs. An unknown key is
+    // answered with null rather than an error, so asking for both costs nothing and means a
+    // wrong guess degrades to "nobody has goaled" instead of a silently dead filter.
+    _statusKeys() {
+        const keys = [];
+        for (const slot of this.players.keys()) {
+            keys.push(`_read_client_status_${this.team}_${slot}`);
+            keys.push(`client_status_${this.team}_${slot}`);
+        }
+        return keys;
+    }
+
+    _absorbStatuses(entries) {
+        for (const [key, value] of Object.entries(entries)) {
+            const match = /client_status_(\d+)_(\d+)$/.exec(key);
+            if (!match) continue;
+            const id = `${Number(match[1])}:${Number(match[2])}`;
+            if (Number(value) === CLIENT_STATUS_GOAL) this.goaled.add(id);
+            else this.goaled.delete(id);
+        }
+    }
+
     _handleConnected(packet) {
         this._absorbPlayers(packet);
+        if (typeof packet.team === 'number') this.team = packet.team;
         this.connected = true;
         this.attempt = 0;
+
+        this.goaled.clear();
+        const keys = this._statusKeys();
+        if (keys.length > 0) {
+            this._send({ cmd: 'Get', keys });
+            this._send({ cmd: 'SetNotify', keys });
+        }
+
         this.emit('status', { state: 'connected', detail: this.address, slots: this.players.size });
     }
 
@@ -496,6 +594,9 @@ class ArchipelagoClient extends EventEmitter {
 
 module.exports = {
     ArchipelagoClient,
+    classifyItem,
+    ANSI,
+    CLIENT_STATUS_GOAL,
     parseTarget,
     extractConnectAddress,
     resolveRoomAddress,

@@ -70,7 +70,11 @@ function buildListEmbed(entries) {
                 `**Channel:** <#${watch.channelId}>`,
                 `**State:** ${entry.status}${entry.detail ? ` (${entry.detail})` : ''}`,
                 `**Relayed:** ${entry.lineCount} line(s)${entry.droppedLines ? `, ${entry.droppedLines} dropped` : ''}`,
-                `**Showing:** ${filters}${watch.progressionOnly ? ' · progression items only' : ''}`
+                `**Showing:** ${filters}${watch.progressionOnly ? ' · progression items only' : ''}`,
+                `**Extras:** ${watch.color !== false ? 'colour on' : 'colour off'} · ` +
+                    (watch.skipGoaled !== false
+                        ? `hiding items to ${entry.goaled || 0} finished slot(s)`
+                        : 'showing items to finished slots')
             ].join('\n')
         });
     }
@@ -116,6 +120,14 @@ module.exports = {
                 { name: 'progression', description: 'Relay only progression item sends', options: [
                     { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' },
                     { name: 'enabled', type: 'BOOLEAN', required: true, description: 'Progression items only?' }
+                ] },
+                { name: 'skipgoaled', description: 'Hide items sent to slots that already finished', options: [
+                    { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' },
+                    { name: 'enabled', type: 'BOOLEAN', required: true, description: 'Hide them?' }
+                ] },
+                { name: 'color', description: 'Colour item names by class', options: [
+                    { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' },
+                    { name: 'enabled', type: 'BOOLEAN', required: true, description: 'Use colour?' }
                 ] },
                 { name: 'password', description: 'Set or clear a room password', options: [
                     { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' },
@@ -168,6 +180,8 @@ module.exports = {
                     `\`${prefix}ap unwatch <id>\` — stop and forget a watch.`,
                     `\`${prefix}ap filter <id> <${Object.keys(CATEGORY_HELP).join('|')}> <on|off>\` — pick which lines get relayed.`,
                     `\`${prefix}ap progression <id> <on|off>\` — item sends only when they're progression.`,
+                    `\`${prefix}ap skipgoaled <id> <on|off>\` — hide items sent to slots that already finished.`,
+                    `\`${prefix}ap color <id> <on|off>\` — colour item names: progression, useful, trap, filler.`,
                     `\`${prefix}ap password <id> [password]\` — set or clear the room password (the command message is deleted).`,
                     `\`${prefix}ap retry <id>\` — reconnect a watch the server refused.`
                 ].join('\n'));
@@ -283,7 +297,26 @@ module.exports = {
                     return msg.channel.send(`✅ **${state.watch.label}** (#${id}) — \`${group}\` ${toggle ? 'on' : 'off'}.${note}`);
                 }
 
-                if (action === 'progression') {
+                // progression / skipgoaled / color all read "<id> <on|off>" the same way.
+                const TOGGLES = {
+                    progression: {
+                        apply: monitor.setProgressionOnly,
+                        on: 'only progression item sends will be relayed',
+                        off: 'all item sends will be relayed'
+                    },
+                    skipgoaled: {
+                        apply: monitor.setSkipGoaled,
+                        on: 'items sent to slots that already finished are hidden',
+                        off: 'items sent to finished slots are shown again'
+                    },
+                    color: {
+                        apply: monitor.setColor,
+                        on: 'items are coloured by class (progression, useful, trap, filler)',
+                        off: 'the log is posted without colour'
+                    }
+                };
+
+                if (TOGGLES[action]) {
                     const id = idFrom(words[1]);
                     if (id === null) return badId();
                     const rawToggle = opt('enabled');
@@ -291,12 +324,12 @@ module.exports = {
                         : truthy(words[2]) ? true
                         : falsy(words[2]) ? false
                         : null;
-                    if (toggle === null) return msg.channel.send(`Usage: \`${prefix}ap progression <id> <on|off>\``);
+                    if (toggle === null) return msg.channel.send(`Usage: \`${prefix}ap ${action} <id> <on|off>\``);
 
-                    const state = monitor.setProgressionOnly(id, toggle);
+                    const state = TOGGLES[action].apply(id, toggle);
                     if (!state) return msg.channel.send(`No watch with ID ${id}.`);
                     return msg.channel.send(
-                        `✅ **${state.watch.label}** (#${id}) — ${toggle ? 'only progression item sends' : 'all item sends'} will be relayed.`
+                        `✅ **${state.watch.label}** (#${id}) — ${toggle ? TOGGLES[action].on : TOGGLES[action].off}.`
                     );
                 }
 

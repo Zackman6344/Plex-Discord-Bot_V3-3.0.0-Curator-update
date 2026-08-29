@@ -186,3 +186,103 @@ test('deathlink watches advertise the tag the server routes deaths by', async (t
     const connect = received.find(p => p.cmd === 'Connect');
     assert.deepStrictEqual(connect.tags, ['Tracker', 'DeathLink']);
 });
+
+test('goal status comes from the server, and filters items sent to finished slots', async (t) => {
+    const received = [];
+    const wss = new WebSocketServer({ port: 0 });
+    let live = null;
+
+    wss.on('connection', (socket) => {
+        live = socket;
+        const send = (packets) => socket.send(JSON.stringify(packets));
+        send([{ cmd: 'RoomInfo', games: [], datapackage_checksums: {}, password: false }]);
+
+        socket.on('message', (raw) => {
+            for (const packet of JSON.parse(raw.toString())) {
+                received.push(packet);
+
+                if (packet.cmd === 'Connect') {
+                    send([{
+                        cmd: 'Connected', team: 0, slot: 1,
+                        players: [
+                            { team: 0, slot: 1, alias: 'Zack', name: 'Zack' },
+                            { team: 0, slot: 2, alias: 'Alice', name: 'Alice' }
+                        ],
+                        slot_info: {}, missing_locations: [], checked_locations: []
+                    }]);
+                }
+
+                // Alice finished before the bot ever connected. The prefixed spelling is the
+                // one the AP source uses.
+                if (packet.cmd === 'Get') {
+                    send([{ cmd: 'Retrieved', keys: { '_read_client_status_0_2': 30, '_read_client_status_0_1': 20 } }]);
+                }
+            }
+        });
+    });
+
+    await new Promise((resolve) => wss.on('listening', resolve));
+    const port = wss.address().port;
+
+    const c = new ArchipelagoClient({
+        target: { kind: 'direct', host: '127.0.0.1', port },
+        slot: 'Zack', label: 'goal-test'
+    });
+
+    t.after(async () => {
+        c.stop();
+        for (const s of wss.clients) s.terminate();
+        await new Promise((r) => wss.close(r));
+    });
+
+    await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('never connected')), 15000);
+        c.on('status', (s) => { if (s.state === 'connected') { clearTimeout(timer); resolve(); } });
+        c.start();
+    });
+
+    // 'connected' fires as soon as the client has sent these; the server still has to receive
+    // and answer them.
+    await new Promise((r) => setTimeout(r, 200));
+
+    // Both key spellings are asked for, so a wrong guess in either direction still works.
+    const get = received.find((p) => p.cmd === 'Get');
+    const notify = received.find((p) => p.cmd === 'SetNotify');
+    assert.ok(get, 'the client should read client status at connect');
+    assert.ok(notify, 'and subscribe to changes');
+    assert.ok(get.keys.includes('_read_client_status_0_2'));
+    assert.ok(get.keys.includes('client_status_0_2'));
+
+    assert.strictEqual(c.hasGoaled(2), true, 'Alice goaled before we connected');
+    assert.strictEqual(c.hasGoaled(1), false, 'Zack is still playing');
+
+    const lineFor = (packet) => new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('no line')), 8000);
+        c.once('line', (l) => { clearTimeout(timer); resolve(l); });
+        live.send(JSON.stringify([packet]));
+    });
+
+    const toAlice = await lineFor({
+        cmd: 'PrintJSON', type: 'ItemSend', receiving: 2,
+        item: { item: 5, location: 9, player: 1, flags: 1 },
+        data: [{ text: 'Zack sent a thing to Alice' }]
+    });
+    assert.strictEqual(toAlice.recipientGoaled, true);
+    assert.strictEqual(toAlice.receiving, 2);
+
+    const toZack = await lineFor({
+        cmd: 'PrintJSON', type: 'ItemSend', receiving: 1,
+        item: { item: 5, location: 9, player: 2, flags: 1 },
+        data: [{ text: 'Alice sent a thing to Zack' }]
+    });
+    assert.strictEqual(toZack.recipientGoaled, false);
+
+    // A goal announced while watching counts too, under the unprefixed key spelling.
+    live.send(JSON.stringify([{ cmd: 'SetReply', key: 'client_status_0_1', value: 30, original_value: 20 }]));
+    await new Promise((r) => setTimeout(r, 120));
+    assert.strictEqual(c.hasGoaled(1), true, 'a live status change is picked up');
+
+    // And so does a Goal print, which is the fallback when data storage is unavailable.
+    const c2Goaled = c.hasGoaled(2);
+    assert.strictEqual(c2Goaled, true);
+});

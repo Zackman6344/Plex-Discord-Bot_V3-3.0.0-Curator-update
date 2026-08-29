@@ -112,6 +112,9 @@ function shouldRelay(watch, line) {
     const filters = watch.filters || DEFAULT_FILTERS;
     if (filters[line.group] === false) return false;
     if (watch.progressionOnly && line.group === 'items' && !(line.flags & ITEM_FLAG_PROGRESSION)) return false;
+    // Once a slot has finished, items still arriving for it change nothing. In a long async
+    // that is most of the late-game traffic.
+    if (watch.skipGoaled && line.group === 'items' && line.recipientGoaled) return false;
     return true;
 }
 
@@ -155,8 +158,11 @@ async function flush(state) {
         chunks = chunks.slice(0, MAX_MESSAGES_PER_FLUSH);
     }
 
+    // An ```ansi fence is what makes Discord honour the colour codes; a plain fence would show
+    // them as literal escape text.
+    const fence = state.watch.color ? 'ansi' : '';
     for (const chunk of chunks) {
-        await post(state, `\`\`\`\n${chunk}\n\`\`\``);
+        await post(state, `\`\`\`${fence}\n${chunk}\n\`\`\``);
     }
     if (trimmed > 0) {
         await post(state, `…${trimmed} further block(s) of log trimmed to keep the channel readable.`);
@@ -228,6 +234,7 @@ function makeState(watch) {
         slot: watch.slot,
         password: watch.password,
         deathlink: !!(watch.filters && watch.filters.deaths),
+        colorize: watch.color !== false,
         label: watch.label
     });
     const state = {
@@ -331,6 +338,8 @@ function syncConfigWatch() {
         channelId: String(config.archipelagoChannelId).trim(),
         filters: configFilters(),
         progressionOnly: !!config.archipelagoProgressionOnly,
+        skipGoaled: config.archipelagoSkipGoaled !== false,
+        color: config.archipelagoColorLines !== false,
         paused: false,
         addedBy: null,
         addedAt: new Date().toISOString()
@@ -353,6 +362,8 @@ function syncConfigWatch() {
 
     Object.assign(existing.watch, desired);
     if (channelChanged) existing.channel = null;
+    // Colour is read at render time, so it applies to the next line without a new socket.
+    existing.client.colorize = desired.color;
     if (needsReconnect) restartWatch(CONFIG_WATCH_ID);
     return existing.watch;
 }
@@ -376,6 +387,9 @@ function applyConfig({ boot = false } = {}) {
         const store = loadStore();
         for (const watch of store.watches) {
             watch.filters = { ...DEFAULT_FILTERS, ...(watch.filters || {}) };
+            // Watches saved before these existed default to on, matching a fresh watch.
+            watch.skipGoaled = watch.skipGoaled !== false;
+            watch.color = watch.color !== false;
             startWatch(watch);
         }
         savedWatchesLoaded = true;
@@ -425,6 +439,8 @@ function addWatch(options, waitMs = 20000) {
         guildId: options.guildId || null,
         filters: { ...DEFAULT_FILTERS },
         progressionOnly: false,
+        skipGoaled: config.archipelagoSkipGoaled !== false,
+        color: config.archipelagoColorLines !== false,
         paused: false,
         addedBy: options.addedBy || null,
         addedAt: new Date().toISOString()
@@ -498,6 +514,26 @@ function setProgressionOnly(id, enabled) {
     return state;
 }
 
+function setSkipGoaled(id, enabled) {
+    const state = states.get(id);
+    if (!state) return null;
+    refuseIfManaged(state, 'the goaled-recipient filter');
+    state.watch.skipGoaled = !!enabled;
+    persist();
+    return state;
+}
+
+function setColor(id, enabled) {
+    const state = states.get(id);
+    if (!state) return null;
+    refuseIfManaged(state, 'colour highlighting');
+    state.watch.color = !!enabled;
+    // Read at render time, so this lands on the next line rather than the next connect.
+    state.client.colorize = !!enabled;
+    persist();
+    return state;
+}
+
 function listWatches() {
     return [...states.values()].map(state => ({
         watch: state.watch,
@@ -507,7 +543,8 @@ function listWatches() {
         lineCount: state.lineCount,
         droppedLines: state.droppedLines,
         connectedAt: state.connectedAt,
-        players: state.client.players.size
+        players: state.client.players.size,
+        goaled: state.client.goaled.size
     }));
 }
 
@@ -544,6 +581,8 @@ module.exports = {
     setPassword,
     setFilter,
     setProgressionOnly,
+    setSkipGoaled,
+    setColor,
     listWatches,
     getWatch,
     getStatus,

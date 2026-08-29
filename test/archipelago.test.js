@@ -164,3 +164,60 @@ test('data package cache round-trips and misses on a changed checksum', async ()
         try { await fs.unlink(dataCache.cacheFilePath(game, checksum)); } catch (_) {}
     }
 });
+
+// --- item classification and colour ------------------------------------------------------
+
+test('classifyItem reads the NetworkItem flag bits', () => {
+    assert.strictEqual(client.classifyItem(0b000), 'filler');
+    assert.strictEqual(client.classifyItem(0b001), 'progression');
+    assert.strictEqual(client.classifyItem(0b010), 'useful');
+    assert.strictEqual(client.classifyItem(0b100), 'trap');
+    assert.strictEqual(client.classifyItem(undefined), 'filler');
+    // A trap flagged progression as well reads as a trap: the warning matters more.
+    assert.strictEqual(client.classifyItem(0b101), 'trap');
+});
+
+test('renderPrintJSON colours item parts by their own flags, not the packet headline', () => {
+    const packet = {
+        type: 'ItemSend',
+        item: { item: 5, location: 9, player: 1, flags: 0b001 },
+        data: [
+            { type: 'item_id', text: '5', player: 2, flags: 0b001 },
+            { text: ' and ' },
+            { type: 'item_id', text: '6', player: 2, flags: 0b100 }
+        ]
+    };
+    const tables = {
+        gameForSlot: () => 'A Link to the Past',
+        itemName: (game, id) => ({ 5: 'Progressive Sword', 6: 'Ice Trap' })[id]
+    };
+
+    const plain = client.renderPrintJSON(packet, tables);
+    assert.strictEqual(plain.text, 'Progressive Sword and Ice Trap');
+    assert.ok(!plain.text.includes(client.ANSI.reset), 'no escape codes unless asked for');
+
+    const colored = client.renderPrintJSON(packet, tables, { ansi: true });
+    assert.ok(colored.text.includes(client.ANSI.progression + 'Progressive Sword' + client.ANSI.reset));
+    assert.ok(colored.text.includes(client.ANSI.trap + 'Ice Trap' + client.ANSI.reset));
+    assert.strictEqual(colored.itemClass, 'progression');
+});
+
+test('renderPrintJSON leaves parts with no flags uncoloured', () => {
+    const line = client.renderPrintJSON({
+        type: 'Chat',
+        data: [{ text: 'Alice: found it' }]
+    }, {}, { ansi: true });
+    assert.strictEqual(line.text, 'Alice: found it');
+});
+
+test('shouldRelay drops item sends to a finished slot only when asked', () => {
+    const base = { filters: { ...monitor.DEFAULT_FILTERS } };
+    const toGoaled = { group: 'items', flags: 1, recipientGoaled: true };
+    const toPlaying = { group: 'items', flags: 1, recipientGoaled: false };
+
+    assert.strictEqual(monitor.shouldRelay({ ...base, skipGoaled: true }, toGoaled), false);
+    assert.strictEqual(monitor.shouldRelay({ ...base, skipGoaled: true }, toPlaying), true);
+    assert.strictEqual(monitor.shouldRelay({ ...base, skipGoaled: false }, toGoaled), true);
+    // Only item traffic is suppressed; a goal or a chat line from that slot still comes through.
+    assert.strictEqual(monitor.shouldRelay({ ...base, skipGoaled: true }, { group: 'goals', flags: 0, recipientGoaled: true }), true);
+});
