@@ -14,8 +14,11 @@ if ($procs.Count -eq 0) {
     Write-Host "The bot is NOT running." -ForegroundColor Yellow
 } else {
     foreach ($p in $procs) {
-        $started = ([Management.ManagementDateTimeConverter]::ToDateTime($p.CreationDate))
-        Write-Host ("Running. PID {0}, up since {1}" -f $p.ProcessId, $started) -ForegroundColor Green
+        # Get-CimInstance hands back a real DateTime. Only the older Get-WmiObject needs the
+        # DMTF string conversion, which throws here.
+        $started = $p.CreationDate
+        $uptime = if ($started) { ' (up {0:hh\:mm\:ss})' -f (New-TimeSpan -Start $started -End (Get-Date)) } else { '' }
+        Write-Host ("Running. PID {0}, started {1}{2}" -f $p.ProcessId, $started, $uptime) -ForegroundColor Green
     }
 }
 
