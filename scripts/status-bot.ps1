@@ -26,11 +26,11 @@ if (Test-Path $today) {
     Get-Content $today -Tail 15
 }
 
-# Only written when the bot died before its own logger started, so it is usually empty.
-$early = Join-Path $repoRoot 'data\logs\startup-stdout.log'
+# stderr from this launch: a crash before the logger loaded, plus any error-level lines.
+$early = Join-Path $repoRoot 'data\logs\startup-stderr.log'
 if ((Test-Path $early) -and (Get-Item $early).Length -gt 0) {
     Write-Host ""
-    Write-Host "Output from before the logger loaded (startup-stdout.log):" -ForegroundColor Yellow
+    Write-Host "Errors from this launch (startup-stderr.log):" -ForegroundColor Yellow
     Get-Content $early -Tail 20
 }
 

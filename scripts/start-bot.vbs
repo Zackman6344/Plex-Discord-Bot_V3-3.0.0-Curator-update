@@ -8,12 +8,13 @@
 ' bare "node index.js" the command line carries no clue which node process this is, and
 ' stopping it would mean guessing.
 '
-' The bot's own log lives in data/logs/. This redirect only catches output from a crash early
-' enough that the logger never loaded, and it truncates each launch so it always describes the
-' most recent start rather than every start since install.
+' The bot's own log lives in data/logs/, so only stderr is captured here: a crash early enough
+' that the logger never loaded, plus error-level lines. Capturing stdout as well duplicated the
+' whole log into this file and grew it for as long as the bot stayed up. Truncated each launch,
+' so it always describes the most recent start rather than every start since install.
 Option Explicit
 
-Dim fso, shell, scriptDir, repoRoot, logDir, logPath, entry, cmd
+Dim fso, shell, scriptDir, repoRoot, logDir, logPath, entry, cmd, errPath
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set shell = CreateObject("WScript.Shell")
 
@@ -24,10 +25,10 @@ entry = fso.BuildPath(repoRoot, "index.js")
 logDir = fso.BuildPath(repoRoot, "data\logs")
 If Not fso.FolderExists(fso.BuildPath(repoRoot, "data")) Then fso.CreateFolder fso.BuildPath(repoRoot, "data")
 If Not fso.FolderExists(logDir) Then fso.CreateFolder logDir
-logPath = fso.BuildPath(logDir, "startup-stdout.log")
+errPath = fso.BuildPath(logDir, "startup-stderr.log")
 
 shell.CurrentDirectory = repoRoot
 
 ' 0 = hidden window, False = don't wait for the process to exit.
-cmd = "cmd /c node """ & entry & """ > """ & logPath & """ 2>&1"
+cmd = "cmd /c node """ & entry & """ > nul 2> """ & errPath & """"
 shell.Run cmd, 0, False
