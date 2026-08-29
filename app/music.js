@@ -6,6 +6,7 @@ module.exports = function(client, bot) {
   const { startEventServer } = require('../helpers/eventServer.js');
   const { startGamePresence } = require('../helpers/gamePresence.js');
   const { startKometaTheater } = require('../helpers/kometaTheater.js');
+  const { startArchipelagoMonitor } = require('../helpers/archipelagoMonitor.js');
   const broadcast = require('../helpers/broadcast.js');
   const slashRegistry = require('../helpers/slashRegistry.js');
   const { adaptInteraction } = require('../helpers/interactionAdapter.js');
@@ -59,6 +60,13 @@ module.exports = function(client, bot) {
     startGamePresence(client);
     // "Kometa Theater" — narrate runs in-character by tailing meta.log. No-op unless enabled.
     startKometaTheater(client);
+    // Re-opens any Archipelago watches saved in data/archipelago_watches.json. No-op
+    // unless config.archipelagoEnabled is set.
+    try {
+      startArchipelagoMonitor(client);
+    } catch (err) {
+      logger.error('Archipelago monitor failed to start:', err.message || err);
+    }
     // Announce boot to the broadcast channel so it's easy to confirm the bot is live.
     broadcast.broadcastStartup(client).catch((err) => logger.error('Startup broadcast failed:', err.message || err));
     // Slash command registration: commands declaring a `slash` block in commands/index.js

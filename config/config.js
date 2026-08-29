@@ -75,7 +75,14 @@ const defaults = {
   'kometaTheaterModel'     : '',
   // Milliseconds between "transmissions" — the deliberate slowdown on Discord's side. No cap on
   // how many post in a run; it's bounded by the number of collections Kometa actually processes.
-  'kometaTheaterDelayMs'   : 5000
+  'kometaTheaterDelayMs'   : 5000,
+
+  // --- Archipelago room monitor (!ap) ---
+  // When on, the bot opens a read-only tracker connection to each watched multiworld and
+  // relays its log into the Discord channel the watch was created in. Takes effect on boot.
+  'archipelagoEnabled' : false,
+  // Seconds of room log collected before the batch is posted. Lower is snappier and noisier.
+  'archipelagoBatchSeconds' : 5
 };
 
 // Layer persisted overrides (written by the /config wizard, helpers/configStore.js) on top of

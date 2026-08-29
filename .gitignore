@@ -5,3 +5,15 @@
 # These should never be committed because they contain bot tokens and Plex tokens.
 /config/keys.js
 /config/plex.js
+
+# Runtime state under data/ that is specific to your install, not to the code.
+# config.overrides.json holds whatever the /config wizard saved, including the fields it
+# treats as secret (Tautulli API key, event server token) and your Discord IDs.
+# logs/ holds the bot log and the command log, which record message content verbatim.
+# archipelago_watches.json holds room URLs, channel/user IDs, and a room password if set.
+/data/config.overrides.json
+/data/logs/
+/data/archipelago_watches.json
+/data/archipelago/
+/data/inferred_tags.json
+/data/recent_picks.json

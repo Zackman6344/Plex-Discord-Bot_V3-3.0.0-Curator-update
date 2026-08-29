@@ -41,7 +41,8 @@ When you run `node index.js`:
 9. Still on `clientReady`, `app/music.js` calls `startEventServer(client)` (`helpers/eventServer.js`). When `config.eventServerEnabled` is true it opens a localhost-only HTTP listener that relays Kometa run + Playnite game-launch pushes to the broadcast channel; otherwise it logs "disabled" and no-ops.
 10. Then `app/music.js` calls `startGamePresence(client)` (`helpers/gamePresence.js`) — when `config.gamePresenceEnabled` is true it subscribes to `presenceUpdate` and broadcasts games the owner starts (detected via Discord activity). No-op otherwise. The `GuildPresences` intent it needs is added in `app/utils.js` only when the flag is on, so the default keeps login working.
 11. `app/music.js` calls `startKometaTheater(client)` (`helpers/kometaTheater.js`) — when `config.kometaTheaterEnabled` is true it starts tailing `config.kometaLogPath` to narrate Kometa runs in-character (and `broadcast.broadcastKometaRun` routes run boundaries + changes to it instead of factual cards). No-op otherwise.
-12. Finally `app/music.js` calls `broadcast.broadcastStartup(client)` — when `config.broadcastStartup` is true it posts a "System has started" card to a single channel (the general `broadcastChannelId`, else the first configured channel), confirming the bot is live and the listener is bound. No-op when the toggle is off or no channel is set.
+12. `app/music.js` calls `startArchipelagoMonitor(client)` (`helpers/archipelagoMonitor.js`), which reopens any saved Archipelago watches. Returns immediately when `config.archipelagoEnabled` is false, which is the default.
+13. Finally `app/music.js` calls `broadcast.broadcastStartup(client)` — when `config.broadcastStartup` is true it posts a "System has started" card to a single channel (the general `broadcastChannelId`, else the first configured channel), confirming the bot is live and the listener is bound. No-op when the toggle is off or no channel is set.
 
 A clean boot looks like:
 ```
@@ -138,6 +139,9 @@ Two signature styles coexist in the codebase:
 | `gamePresence.js`         | Launcher-agnostic game-launch detection via Discord activity. `startGamePresence(client)` watches `presenceUpdate` for the owner and broadcasts newly-started `Playing` games (pure `startedGames(prev, activities)` diff, unit-tested). No-op unless `config.gamePresenceEnabled` (which also gates the privileged `GuildPresences` intent in `app/utils.js`). |
 | `kometaTheater.js`        | "Silly mode" that narrates a Kometa run in-character. Tails `meta.log` for per-collection coverage (single-pattern `parseFinishedCollection`) + `changes` webhooks (fed via `onChanges`) for detail; a paced worker posts per-collection persona dialogue (fast Gemini, persisted per name) or garbled `buildStaticText` for unseen+unadded collections. Pure `parseFinishedCollection`/`normalizeName`/`classifyKind`/`buildStaticText` unit-tested. No-op unless `config.kometaTheaterEnabled`. See "Kometa Theater" below. |
 | `configStore.js`          | Backing store + schema for the `/config` wizard. Holds the editable `SETTINGS` list, pure `formatValue`/`validate` helpers (unit-tested), and `readOverrides`/`writeOverride`/`removeOverride`. Writes `data/config.overrides.json` and mutates the live config object so most changes apply without a restart. No discord.js. See "In-Discord config wizard" below. |
+| `archipelagoClient.js`     | One read-only WebSocket connection to an Archipelago multiworld. Runs the `RoomInfo` → `GetDataPackage` → `Connect` handshake, resolves item/location/player ids to names, renders `PrintJSON` packets into log lines, reconnects with backoff. Also exports the pure `parseTarget()`, `extractConnectAddress()` and `renderPrintJSON()`. |
+| `archipelagoData.js`       | Disk cache for AP data packages under `data/archipelago/datapackage/`, keyed by the per-game checksum the server publishes in `RoomInfo`. A reconnect re-downloads only the games whose checksum moved. |
+| `archipelagoMonitor.js`    | Holds one client per watched room, batches its log lines, posts them to the channel the watch was created in. Watches persist to `data/archipelago_watches.json` and reopen on boot. Disabled unless `config.archipelagoEnabled`. See "Archipelago room monitor" below. |
 | `aiGameRecommender.js`     | "Pick a game" AI helper. Uses centralized `getModel()`. Powers `!pickgame`.                                                            |
 | `aiCharacterMapper.js`     | Maps gaming/media habits to a D&D class. Uses centralized `getModel()`. Powers `!buildcharacter`.                                      |
 | `characterStorage.js`      | Persists character sheets to `data/characters.json`. Used by `!buildcharacter` and `!mysheet`.                                          |
@@ -151,7 +155,7 @@ Three files in `config/`. The two with secrets are **gitignored**; templates are
 
 | File                   | Tracked? | What it holds                                                              |
 | ---------------------- | -------- | -------------------------------------------------------------------------- |
-| `config/config.js`     | yes      | Feature flags + display strings: `commandPrefix`, `listenChannel`, `playlistsDir`, `serverName`, `ownerId`, `launchRoleId`, `playniteEnabled`, `tautulliEnabled` + `tautulliApiKey` + `tautulliUrl`, `language`, `youtube_quality`, plus the broadcast block (`broadcastChannelId`, `eventServerEnabled`, `eventServerPort`, `eventServerToken`, `broadcastKometa`, `broadcastGameLaunch`). |
+| `config/config.js`     | yes      | Feature flags + display strings: `commandPrefix`, `listenChannel`, `playlistsDir`, `serverName`, `ownerId`, `launchRoleId`, `playniteEnabled`, `tautulliEnabled` + `tautulliApiKey` + `tautulliUrl`, `language`, `youtube_quality`, the broadcast block (`broadcastChannelId`, `eventServerEnabled`, `eventServerPort`, `eventServerToken`, `broadcastKometa`, `broadcastGameLaunch`), and `archipelagoEnabled` + `archipelagoBatchSeconds`. |
 | `config/keys.js`       | **no**   | `botToken` (Discord) + `geminiApiKey` (Gemini). Copy from `keys.example.js`. |
 | `config/plex.js`       | **no**   | Plex `hostname`, `port`, `https`, `token` (the bot's default user), `homeOwnerToken` (optional, only for cross-account playlist features), `managedUser`, `options`. Copy from `plex.example.js`. |
 
@@ -189,6 +193,8 @@ All persistent runtime state lives under `data/`. The directory is created if mi
 | `data/rumor_leaderboard.json`     | `commands/rumor.js`                 |
 | `data/reviewbomb_leaderboard.json` | `commands/reviewbomb.js`           |
 | `data/survival_<category>_leaderboard.json` | `commands/releasesurvival.js` |
+| `data/archipelago_watches.json`   | `helpers/archipelagoMonitor.js`     |
+| `data/archipelago/datapackage/*.json` | `helpers/archipelagoData.js`    |
 
 Custom user playlists are separate — they live in `playlists/<name>.playlist` (gitignored). On-disk shape uses legacy French keys (`musiques`, `nom`, `titre`, `artiste`, `cle`) for backward compatibility with older playlist files; code reads/writes them using English variable names internally.
 
@@ -442,6 +448,73 @@ routes those events into the theater via `onChanges`/`onRunStart`/`onRunEnd`).
 
 **Brittleness (accepted):** depends on Kometa's log wording (`Finished (.+?) Collection`). Isolated
 to one regex; degrades to fewer lines rather than failing.
+
+---
+
+## Archipelago room monitor
+
+`!ap watch <room url|host:port> <slot name>` binds a multiworld to the channel the command was run in. The bot connects to that game server, follows its log, and relays it back into Discord. Off by default: set `archipelagoEnabled: true` in `config/config.js` and restart.
+
+### How the log is read
+
+The web host serves a room's log at `/log/<room>`, gated on the room owner's browser session (`room.owner == session["_id"]`, otherwise `403`). Scraping it needs a cookie that expires, only ever covers rooms you own, and hands back text that has to be re-parsed. **The bot connects to the game server instead**, speaking the AP network protocol over a WebSocket, and receives the same events as structured packets. That path is identical for archipelago.gg and for a self-hosted server.
+
+`PrintJSON` packets arrive as a list of parts where ids stand in for names, so rendering a line is a concatenation plus three lookups: player slot to name from `Connected.players`, item and location ids to names from the game's data package.
+
+### The observer contract
+
+The `Connect` handshake sends `game: ""`, `items_handling: 0`, `slot_data: false` and the `Tracker` tag. The server forwards no items and expects no location checks, so attaching to a slot leaves the person playing it untouched. AP permits many clients on one slot, which is how the stock text client rides along beside a game client.
+
+`test/archipelagoConnect.test.js` asserts those four fields on the wire against a loopback server. A change there stops the bot being an observer of the slot it attaches to.
+
+### Two visible side effects
+
+- The room sees a client join on the watched slot, and it shows in everyone's log.
+- Holding the socket open stops a hosted room idling to sleep. Resolving a room URL fetches the room page, which is also what wakes a paused room.
+
+### Ports move
+
+A hosted room is assigned a new port every time it spins up. A watch created from a room URL therefore stores the URL and re-reads the `'/connect host:port'` line off the room page on every connection attempt, including reconnects. A watch created from a literal `host:port` skips the lookup and connects straight out.
+
+Reconnect backoff runs 5s, 10s, 20s, 40s, 80s, 160s, then holds at 300s. A `ConnectionRefused` (bad slot name, bad password) is treated as fatal instead: the watch is marked paused and says so in the channel, because retrying cannot fix it.
+
+### Batching and safety
+
+Lines are collected for `archipelagoBatchSeconds` (default 5) and posted as one fenced block. A busy multiworld emits dozens of item sends a minute, which would hit Discord's per-channel rate limit and bury everything else in the channel. Three caps bound the damage from a burst: 1900 characters per message, 3 messages per flush with a "trimmed" note beyond that, and 500 buffered lines before the oldest are dropped.
+
+Relayed text is untrusted: it comes from whoever is playing. Every post goes out with `allowedMentions: { parse: [] }`, and any ` ``` ` inside a log line is rewritten to `'''` so it cannot close the fence early and let the rest render as markdown.
+
+### Filters
+
+Seven categories, each toggled per watch with `!ap filter <id> <category> <on|off>`:
+
+| Category | PrintJSON types |
+| -------- | --------------- |
+| `items`  | `ItemSend`, `ItemCheat` |
+| `hints`  | `Hint` |
+| `chat`   | `Chat`, `ServerChat` |
+| `joins`  | `Join`, `Part`, `TagsChanged` |
+| `goals`  | `Goal`, `Release`, `Collect` |
+| `deaths` | DeathLink broadcasts |
+| `misc`   | `Countdown`, `Tutorial`, `CommandResult`, `AdminCommandResult`, plain text, and any type added to the protocol later |
+
+Everything except `deaths` is on by default. `!ap progression <id> on` narrows `items` to sends whose `NetworkItem.flags` carry the advancement bit, which is the usual fix for a noisy async.
+
+`deaths` is separate because DeathLink arrives on `Bounced` rather than `PrintJSON`, and the server only routes those to clients advertising the `DeathLink` tag. Turning it on reconnects the watch so the tag is included in a fresh handshake. The bot never sends a death of its own.
+
+### Data package caching
+
+`RoomInfo` carries a checksum per game. Each is looked up in `data/archipelago/datapackage/<game>-<checksum>.json` first, and `GetDataPackage` is sent only for the games that missed. Some games ship id tables in the megabytes, and without the cache every reconnect would re-download all of them. Cache files are disposable; delete any and the next connect refetches it.
+
+### Files
+
+| File | Role |
+| ---- | ---- |
+| `commands/archipelago.js` | `!ap` / `/ap` (alias `!archipelago`). Subcommands: `watch`, `list`, `status`, `unwatch`, `filter`, `progression`, `password`, `retry`. Mutating subcommands are owner-only when `config.ownerId` is set. |
+| `helpers/archipelagoClient.js` | Socket, handshake, reconnect, `PrintJSON` rendering. |
+| `helpers/archipelagoMonitor.js` | Watch store, batching, Discord relay, status notices. |
+| `helpers/archipelagoData.js` | Data package disk cache. |
+| `data/archipelago_watches.json` | Persisted watches. Gitignored: it holds the room URL, the Discord channel and user ids, and a room password in plain text if one was set. |
 
 ---
 

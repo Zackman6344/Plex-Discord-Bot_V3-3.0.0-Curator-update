@@ -8,6 +8,7 @@ const { getPlex } = require('./plexClient.js');
 const tautulli = require('./tautulliAPI.js');
 const playnite = require('./playniteAPI.js');
 const eventServer = require('./eventServer.js');
+const archipelagoMonitor = require('./archipelagoMonitor.js');
 
 // status values: 'ok' | 'error' | 'missing' | 'disabled'
 
@@ -101,6 +102,22 @@ function checkEventServer() {
     return { status: 'error', detail: `enabled but not listening on :${s.port} (port in use?)` };
 }
 
+function checkArchipelago() {
+    const s = archipelagoMonitor.getStatus();
+    if (!s.enabled) {
+        return { status: 'disabled', detail: 'archipelagoEnabled is false in config/config.js' };
+    }
+    if (s.total === 0) {
+        return { status: 'ok', detail: 'no rooms watched' };
+    }
+    // A dropped connection retries itself, so it isn't reported here. A refusal (bad slot name
+    // or password) can only be fixed by a person, so that one is worth surfacing.
+    if (s.paused > 0) {
+        return { status: 'error', detail: `${s.paused} of ${s.total} watch(es) paused after a refused connection` };
+    }
+    return { status: 'ok', detail: `${s.connected}/${s.total} room(s) connected` };
+}
+
 async function runHealthCheck() {
     const [plex, tautulliRes, playniteRes] = await Promise.all([
         checkPlex(),
@@ -114,7 +131,8 @@ async function runHealthCheck() {
         gemini: checkGemini(),
         tautulli: tautulliRes,
         playnite: playniteRes,
-        eventServer: checkEventServer()
+        eventServer: checkEventServer(),
+        archipelago: checkArchipelago()
     };
 }
 

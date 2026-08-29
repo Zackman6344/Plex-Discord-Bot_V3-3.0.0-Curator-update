@@ -103,7 +103,11 @@ module.exports = {
   'kometaTheaterEnabled'   : false,
   'kometaLogPath'          : 'C:/Kometa/config/logs/meta.log',   // point at your own Kometa meta.log
   'kometaTheaterModel'     : '',           // fast Gemini model; blank = the default model
-  'kometaTheaterDelayMs'   : 5000          // pacing between in-character "transmissions"
+  'kometaTheaterDelayMs'   : 5000,         // pacing between in-character "transmissions"
+
+  // Archipelago room monitor (!ap) — see below
+  'archipelagoEnabled'      : false,       // toggle the monitor; takes effect on next boot
+  'archipelagoBatchSeconds' : 5            // seconds of room log collected per Discord post
 };
 ```
 
@@ -377,6 +381,19 @@ all-or-nothing, so a single malformed spec makes *every* slash command disappear
 - `!library` — View or search server libraries.
 - `!random` — Random media pick.
 - `!list` — Page through, search, or reset the last set of search results.
+
+### 🧩 Archipelago room monitor
+
+Off unless `archipelagoEnabled` is set in `config/config.js`. The bot joins a multiworld as a read-only tracker client and relays the server log into the channel the watch was made in.
+
+- `!ap watch [room url or host:port] [slot name]`: Start relaying a room's log here. The slot name has to match a real slot in that multiworld; the bot attaches to it as an observer, receives no items, and cannot affect the person playing it.
+- `!ap list` / `!ap status [id]`: Watches, their connection state and how many lines each has relayed.
+- `!ap filter [id] [items|hints|chat|joins|goals|deaths|misc] [on|off]`: Pick which lines get posted.
+- `!ap progression [id] on`: Item sends only when they are progression. The usual fix for a noisy async.
+- `!ap password [id] [password]`: Set or clear a room password. The prefix form deletes your message afterwards.
+- `!ap unwatch [id]` / `!ap retry [id]`: Stop a watch, or reconnect one the server refused.
+
+Two things worth knowing before switching it on: the room sees a client join on the slot being watched, and a held connection stops a room hosted on archipelago.gg from idling to sleep. Watches survive a restart and reconnect on their own, including after a hosted room comes back on a new port.
 
 ### 🛠️ Owner / Admin commands
 

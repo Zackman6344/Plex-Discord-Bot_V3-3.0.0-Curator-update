@@ -40,6 +40,8 @@ const SETTINGS = [
     { key: 'tautulliEnabled', label: 'Tautulli integration', group: 'Integrations', type: 'bool' },
     { key: 'tautulliUrl', label: 'Tautulli URL', group: 'Integrations', type: 'string', placeholder: 'http://localhost:8181' },
     { key: 'tautulliApiKey', label: 'Tautulli API key', group: 'Integrations', type: 'string', secret: true },
+    { key: 'archipelagoEnabled', label: 'Archipelago room monitor', group: 'Integrations', type: 'bool', restartRequired: true },
+    { key: 'archipelagoBatchSeconds', label: 'Archipelago log batch (seconds)', group: 'Integrations', type: 'int', min: 1, max: 300 },
 
     { key: 'broadcastChannelId', label: 'Broadcast channel (fallback)', group: 'Broadcasts', type: 'string', snowflake: true },
     { key: 'kometaChannelId', label: 'Kometa channel', group: 'Broadcasts', type: 'string', snowflake: true },

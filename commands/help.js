@@ -87,6 +87,14 @@ module.exports = {
                     `> \`${prefix}pickgame [keywords]\` — AI picks the best match for keywords/hardware.\n` +
                     `> \`${prefix}stats\` — Combined Plex + Playnite + Tautulli statistics.\n\n` +
 
+                    // Opt-in feature: the section only appears once the monitor is switched on,
+                    // so a stock install isn't advertised commands it can't run.
+                    (config.archipelagoEnabled
+                        ? '**🧩 ARCHIPELAGO**\n' +
+                          `> \`${prefix}ap watch [room url] [slot]\` — Relay a multiworld's server log into this channel.\n` +
+                          `> \`${prefix}ap list\` / \`${prefix}ap filter\` — Review watches and pick which log lines get posted.\n\n`
+                        : '') +
+
                     '**📊 ADMIN / DIAGNOSTIC**\n' +
                     `> \`${prefix}config\` *(owner-only; best as \`/config\`)* — Change bot settings from Discord.\n` +
                     `> \`${prefix}diag\` *(alias \`${prefix}plextest\`)* — Full health check across Plex, Gemini, Tautulli, Playnite, event server.\n` +
