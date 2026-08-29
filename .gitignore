@@ -17,3 +17,24 @@
 /data/archipelago/
 /data/inferred_tags.json
 /data/recent_picks.json
+
+# Player data written by the games and AI commands. Every one of these is keyed by Discord
+# user ID and belongs to whoever runs the bot, not to the code.
+/data/character_sheets.json
+/data/characters.json
+/data/hitster_stats.json
+/data/kometa_theater.json
+/data/*_leaderboard.json
+/data/clues/
+# Older builds wrote some of the same files next to the config or at the project root.
+/config/*_leaderboard.json
+/config/hitster_stats.json
+/config/plex_requests.json
+/character_sheets.json
+/playtime_stats.json
+
+# Local tooling and scratch files that end up in the project root.
+/.claude/
+/.idea/
+*.lnk
+*-player-script.js
