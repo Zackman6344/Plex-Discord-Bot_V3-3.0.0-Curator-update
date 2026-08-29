@@ -233,19 +233,24 @@ or both:
 powershell -ExecutionPolicy Bypass -File scripts\install-startup-shortcut.ps1
 ```
 
-That gives you a Startup-folder entry which launches the bot hidden (via `scripts/start-bot.vbs`)
-at every login, plus three desktop shortcuts:
+At every login the bot comes up in a console window titled **Plex Discord Bot**. **Closing that
+window stops the bot.** You also get three desktop shortcuts:
 
 | Shortcut | What it does |
 |---|---|
-| **Start Plex Bot** | Starts it hidden, the same way login does |
-| **Stop Plex Bot** | Stops it, and says so |
+| **Start Plex Bot** | Starts it, same as login does |
+| **Stop Plex Bot** | Stops it without hunting for the window |
 | **Plex Bot Status** | Whether it is running, how long for, and the tail of today's log |
 
-Stopping matches on the full path to this install's `index.js` in the running process, so it
-cannot take down an unrelated Node app on the same machine. The bot logs to `data/logs/`;
-`data/logs/startup-stderr.log` catches anything that goes wrong too early for the logger,
-truncated on each launch. Node must be on your PATH, which the installer checks rather than
+If the bot exits on its own, the window stays open with the exit code so you can read what
+happened instead of watching it vanish.
+
+Prefer no window at all? Run the installer with `-Hidden` and it wires up `scripts/start-bot.vbs`
+instead; stopping is then the **Stop Plex Bot** shortcut. Either way, stopping matches on the
+full path to this install's `index.js` in the running process, so it cannot take down an
+unrelated Node app on the same machine.
+
+The bot logs to `data/logs/`. Node must be on your PATH, which the installer checks rather than
 letting you find out at the next reboot. To undo all of it, run
 `scripts\uninstall-startup-shortcut.ps1`.
 
