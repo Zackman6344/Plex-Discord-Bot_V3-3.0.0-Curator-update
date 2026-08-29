@@ -47,17 +47,18 @@ function panelEmbed(statusLine, bootstrapMode) {
     return embed;
 }
 
-function pickRow() {
-    const options = store.SETTINGS.map((s) => ({
-        label: truncate(s.label, 100),
-        value: s.key,
-        description: truncate(`${s.group} · now: ${store.formatValue(s, config[s.key])}`, 100),
-    }));
-    return new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-            .setCustomId('cfg_pick')
-            .setPlaceholder('Choose a setting to edit…')
-            .addOptions(options)
+function pickRows() {
+    return store.selectPages().map((page, index) =>
+        new ActionRowBuilder().addComponents(
+            new StringSelectMenuBuilder()
+                .setCustomId(`cfg_pick_${index}`)
+                .setPlaceholder(`Edit a ${page.label} setting…`)
+                .addOptions(page.settings.map((s) => ({
+                    label: truncate(s.label, 100),
+                    value: s.key,
+                    description: truncate(`${s.group} · now: ${store.formatValue(s, config[s.key])}`, 100),
+                })))
+        )
     );
 }
 
@@ -93,7 +94,7 @@ function choiceComponents(setting) {
 }
 
 function pickComponents() {
-    return [pickRow(), closeRow()];
+    return [...pickRows(), closeRow()];
 }
 
 function buildModal(setting) {
@@ -175,7 +176,8 @@ module.exports = {
                         return renderPick(i);
                     }
 
-                    if (i.customId === 'cfg_pick') {
+                    // One menu per settings group, so the id carries which menu was used.
+                    if (i.customId.startsWith('cfg_pick')) {
                         const setting = store.getSetting(i.values[0]);
                         if (!setting) return renderPick(i);
                         activeKey = setting.key;

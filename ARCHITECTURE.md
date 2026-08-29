@@ -336,11 +336,17 @@ If the generator throws (e.g. a malformed Gemini response), nothing is written a
 `commands/config.js` is an **owner-only** wizard for editing `config/config.js` from Discord —
 no file editing or restart needed for most settings.
 
-- **UI.** An ephemeral panel (embed of current values grouped by section + a select menu of
-  editable settings). Picking a setting edits it via a **modal** (text/number), **buttons**
+- **UI.** An ephemeral panel (embed of current values grouped by section + one select menu per
+  group). Picking a setting edits it via a **modal** (text/number), **buttons**
   (on/off), or a small **select** (choice like `youtube_quality`). Built with a message
   component collector + `awaitModalSubmit`, the same self-contained pattern as
   `commands/buildcharacter.js` — so the global `interactionCreate` handler needs no changes.
+- **Panel limits.** Discord rejects a select carrying more than 25 options, and a message
+  carrying more than 5 action rows, by refusing the whole payload. One row goes to the buttons,
+  leaving four menus of 25. `configStore.selectPages()` does that division: a menu per group,
+  chunked if a group outgrows one, folded into shared menus if the groups outrun the rows.
+  Adding a 27th setting to a single flat menu is what broke `/config` once already, so
+  `test/configStore.test.js` asserts both limits and that every setting stays reachable.
 - **Schema + persistence** live in `helpers/configStore.js`: the `SETTINGS` list (key, label,
   group, type, `secret`/`restartRequired`/`snowflake` flags, validators), pure `validate` /
   `formatValue`, and `writeOverride` (persists to `data/config.overrides.json` + mutates the

@@ -86,3 +86,42 @@ test('formatValue masks secrets and renders bools/choices', () => {
     assert.strictEqual(store.formatValue(store.getSetting('youtube_quality'), 'lowestaudio'), 'Lowest (less bandwidth)');
     assert.strictEqual(store.formatValue(store.getSetting('listenChannel'), ''), '— (empty)');
 });
+
+// The panel renders one select per page plus a button row. Discord rejects a select with more
+// than 25 options and a message with more than 5 action rows, and it rejects the whole payload
+// rather than trimming, so overflowing either limit takes /config down entirely.
+test('selectPages keeps every setting reachable exactly once', () => {
+    const keys = store.selectPages().flatMap((page) => page.settings.map((s) => s.key));
+    assert.strictEqual(keys.length, store.SETTINGS.length);
+    assert.strictEqual(new Set(keys).size, store.SETTINGS.length);
+    for (const setting of store.SETTINGS) {
+        assert.ok(keys.includes(setting.key), `${setting.key} is unreachable in the panel`);
+    }
+});
+
+test('selectPages fits Discord\'s select and action-row limits', () => {
+    const pages = store.selectPages();
+    assert.ok(pages.length <= store.SELECT_ROW_LIMIT, `${pages.length} menus exceeds the row budget`);
+    for (const page of pages) {
+        assert.ok(page.settings.length <= store.SELECT_OPTION_LIMIT, `menu "${page.label}" has ${page.settings.length} options`);
+    }
+});
+
+test('selectPages gives each group its own menu while they fit', () => {
+    const labels = store.selectPages().map((page) => page.label);
+    assert.deepStrictEqual(labels, store.GROUPS.filter((g) => store.SETTINGS.some((s) => s.group === g)));
+});
+
+test('selectPages still respects both limits when the settings list outgrows them', () => {
+    const many = Array.from({ length: 200 }, (_, i) => ({
+        key: `synthetic${i}`,
+        label: `Synthetic ${i}`,
+        group: store.GROUPS[i % store.GROUPS.length],
+        type: 'bool'
+    }));
+    const pages = store.selectPages(many);
+    assert.ok(pages.length <= store.SELECT_ROW_LIMIT);
+    for (const page of pages) {
+        assert.ok(page.settings.length <= store.SELECT_OPTION_LIMIT);
+    }
+});

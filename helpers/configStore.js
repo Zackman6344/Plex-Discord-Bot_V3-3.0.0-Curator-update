@@ -58,6 +58,50 @@ const SETTINGS = [
     { key: 'kometaTheaterEnabled', label: 'Kometa Theater (in-character narration)', group: 'Broadcasts', type: 'bool', restartRequired: true },
 ];
 
+// Discord caps a string select at 25 options and a message at 5 action rows. The panel spends
+// one row on its buttons, so the settings have to fit in four menus of 25. One menu per group
+// is the readable split; a group that outgrows a menu is chunked, and groups past the row
+// budget share the last one. Kept here, away from discord.js, so the arithmetic is testable.
+const SELECT_OPTION_LIMIT = 25;
+const SELECT_ROW_LIMIT = 4;
+
+function chunk(items, size) {
+    const out = [];
+    for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+    return out;
+}
+
+function selectPages(settings = SETTINGS) {
+    const pages = [];
+    const placed = new Set();
+
+    for (const group of GROUPS) {
+        const inGroup = settings.filter((s) => s.group === group);
+        if (inGroup.length === 0) continue;
+        const parts = chunk(inGroup, SELECT_OPTION_LIMIT);
+        parts.forEach((settings, index) => {
+            pages.push({ label: parts.length > 1 ? `${group} ${index + 1}` : group, settings });
+            for (const s of settings) placed.add(s.key);
+        });
+    }
+
+    // A setting whose group isn't listed in GROUPS would otherwise be unreachable in the panel.
+    const orphans = settings.filter((s) => !placed.has(s.key));
+    for (const settings of chunk(orphans, SELECT_OPTION_LIMIT)) {
+        pages.push({ label: 'Other', settings });
+    }
+
+    if (pages.length <= SELECT_ROW_LIMIT) return pages;
+
+    // Out of rows: fold everything from the last affordable row onward into shared menus.
+    const kept = pages.slice(0, SELECT_ROW_LIMIT - 1);
+    const rest = pages.slice(SELECT_ROW_LIMIT - 1).flatMap((p) => p.settings);
+    for (const settings of chunk(rest, SELECT_OPTION_LIMIT)) {
+        kept.push({ label: 'More', settings });
+    }
+    return kept.slice(0, SELECT_ROW_LIMIT);
+}
+
 function getSetting(key) {
     return SETTINGS.find((s) => s.key === key) || null;
 }
@@ -165,6 +209,9 @@ module.exports = {
     OVERRIDES_PATH,
     GROUPS,
     SETTINGS,
+    SELECT_OPTION_LIMIT,
+    SELECT_ROW_LIMIT,
+    selectPages,
     getSetting,
     formatValue,
     validate,
