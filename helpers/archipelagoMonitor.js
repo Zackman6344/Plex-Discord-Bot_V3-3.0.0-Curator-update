@@ -112,9 +112,9 @@ function shouldRelay(watch, line) {
     const filters = watch.filters || DEFAULT_FILTERS;
     if (filters[line.group] === false) return false;
     if (watch.progressionOnly && line.group === 'items' && !(line.flags & ITEM_FLAG_PROGRESSION)) return false;
-    // Once a slot has finished, items still arriving for it change nothing. In a long async
-    // that is most of the late-game traffic.
-    if (watch.skipGoaled && line.group === 'items' && line.recipientGoaled) return false;
+    // Once a slot has goaled or released, items still arriving for it change nothing. In a long
+    // async that is most of the late-game traffic.
+    if (watch.skipGoaled && line.group === 'items' && line.recipientFinished) return false;
     return true;
 }
 
@@ -544,7 +544,7 @@ function listWatches() {
         droppedLines: state.droppedLines,
         connectedAt: state.connectedAt,
         players: state.client.players.size,
-        goaled: state.client.goaled.size
+        finished: state.client.finishedCount
     }));
 }
 

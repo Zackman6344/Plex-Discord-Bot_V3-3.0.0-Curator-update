@@ -536,17 +536,23 @@ Colour is decided per JSONMessagePart rather than from the packet's headline ite
 
 `client.colorize` is read at render time, so toggling colour applies to the next batch instead of costing a reconnect. A plain fence is used when colour is off, because a ```` ``` ```` block would show the escape codes as literal text.
 
-### Goal tracking, and skipping items sent to finished slots
+### Finished slots, and skipping items sent to them
 
-Late in an async, much of the remaining item traffic is addressed to players who have already finished. `archipelagoSkipGoaled` (default on) drops those `ItemSend` lines. Only items are suppressed: a goal, a hint or a chat line involving that slot still comes through.
+Late in an async, much of the remaining item traffic is addressed to players who are already done. `archipelagoSkipGoaled` (default on) drops those `ItemSend` lines. **Done means goaled or released**: releasing hands out everything the slot was still holding, so it is as finished as a goal even when the player never completed. Only items are suppressed; a goal, a hint or a chat line involving that slot still comes through.
 
-Knowing who has finished takes more than watching for `Goal` messages, since a watch outlives its socket and a hosted room restarts often. On every `Connected` the client clears its goal set and reads it back from the server's data storage, then subscribes for changes:
+The two halves are tracked differently, because the server stores one and only announces the other.
+
+**Goals** are read back from data storage on every `Connected`, since a watch outlives its socket and a hosted room restarts often:
 
 - `Get` with a `client_status` key per slot, and `SetNotify` on the same keys
-- `Retrieved` and `SetReply` are parsed for `ClientStatus.CLIENT_GOAL` (30)
-- a `PrintJSON` of type `Goal` also marks the slot, as a fallback
+- `Retrieved` and `SetReply` parsed for `ClientStatus.CLIENT_GOAL` (30)
+- a `PrintJSON` of type `Goal` also marks the slot
 
-The key is requested under both `_read_client_status_{team}_{slot}` and `client_status_{team}_{slot}`. The protocol docs give the read-only prefix for the sibling keys but not consistently for this one, and an unknown key is answered with null rather than an error, so asking for both costs one extra key per slot and means a wrong guess degrades to "nobody has goaled" instead of a filter that silently never fires.
+**Releases** have no readable key anywhere, so that set is built purely from `PrintJSON` type `Release` and deliberately survives a reconnect, since it cannot be rebuilt. A release announced before the bot first connected is invisible to it; a goal is not.
+
+The status key is requested under both `_read_client_status_{team}_{slot}` and `client_status_{team}_{slot}`, because the protocol docs give the read-only prefix for the sibling keys but not consistently for this one. Against archipelago.gg the prefixed form answers and the bare form returns null.
+
+**That null is a trap worth knowing about.** Both spellings arrive in one `Retrieved`, so every slot answers once with a status and once with null. Reading the null as "not goaled" deleted the status parsed one key earlier, which left the goal set empty and disabled the whole filter with no error anywhere. `_absorbStatuses` now skips null and undefined, and `test/archipelago.test.js` pins that exact response shape.
 
 ### Data package caching
 

@@ -73,7 +73,7 @@ function buildListEmbed(entries) {
                 `**Showing:** ${filters}${watch.progressionOnly ? ' · progression items only' : ''}`,
                 `**Extras:** ${watch.color !== false ? 'colour on' : 'colour off'} · ` +
                     (watch.skipGoaled !== false
-                        ? `hiding items to ${entry.goaled || 0} finished slot(s)`
+                        ? `hiding items to ${entry.finished || 0} finished slot(s)`
                         : 'showing items to finished slots')
             ].join('\n')
         });

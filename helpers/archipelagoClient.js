@@ -240,9 +240,13 @@ class ArchipelagoClient extends EventEmitter {
         this.locationNames = new Map();
         this.pendingChecksums = {};
 
-        // Slots that have finished, as "team:slot". Rebuilt from the server on every connect,
-        // because a watch outlives its socket and a hosted room restarts often.
+        // Slots that are done with, as "team:slot". Goals are rebuilt from the server on every
+        // connect, because a watch outlives its socket and a hosted room restarts often.
         this.goaled = new Set();
+        // Releases are only ever announced, never stored anywhere readable, so this set is
+        // built from what the socket hears and deliberately survives a reconnect. A release
+        // seen before the bot first connected is invisible; a goal is not.
+        this.released = new Set();
         this.team = 0;
         // Flipped per watch by the monitor; read at render time so a colour toggle costs no
         // reconnect.
@@ -251,6 +255,19 @@ class ArchipelagoClient extends EventEmitter {
 
     hasGoaled(slot, team = this.team) {
         return this.goaled.has(`${team}:${slot}`);
+    }
+
+    hasReleased(slot, team = this.team) {
+        return this.released.has(`${team}:${slot}`);
+    }
+
+    /** Done with, either way: nothing sent to this slot from here on matters. */
+    hasFinished(slot, team = this.team) {
+        return this.hasGoaled(slot, team) || this.hasReleased(slot, team);
+    }
+
+    get finishedCount() {
+        return new Set([...this.goaled, ...this.released]).size;
     }
 
     get tags() {
@@ -442,8 +459,12 @@ class ArchipelagoClient extends EventEmitter {
                 this._handleRefused(packet);
                 break;
             case 'PrintJSON': {
-                if (packet.type === 'Goal' && typeof packet.slot === 'number') {
-                    this.goaled.add(`${packet.team || 0}:${packet.slot}`);
+                if (typeof packet.slot === 'number') {
+                    const id = `${packet.team || 0}:${packet.slot}`;
+                    if (packet.type === 'Goal') this.goaled.add(id);
+                    // Releasing hands out everything the slot was still holding, so it is as
+                    // done as a goal even when the player never finished.
+                    if (packet.type === 'Release') this.released.add(id);
                 }
                 const line = renderPrintJSON(packet, this.lookupTables(), { ansi: this.colorize });
                 if (line.text) {
@@ -451,7 +472,7 @@ class ArchipelagoClient extends EventEmitter {
                     this.emit('line', {
                         ...line,
                         receiving,
-                        recipientGoaled: receiving !== null && this.hasGoaled(receiving),
+                        recipientFinished: receiving !== null && this.hasFinished(receiving),
                         packet
                     });
                 }
@@ -545,6 +566,10 @@ class ArchipelagoClient extends EventEmitter {
         for (const [key, value] of Object.entries(entries)) {
             const match = /client_status_(\d+)_(\d+)$/.exec(key);
             if (!match) continue;
+            // A key the server does not have comes back null. Both spellings are requested, so
+            // every slot answers once with a status and once with null; treating that null as
+            // "not goaled" deleted the status that had just been read one key earlier.
+            if (value === null || value === undefined) continue;
             const id = `${Number(match[1])}:${Number(match[2])}`;
             if (Number(value) === CLIENT_STATUS_GOAL) this.goaled.add(id);
             else this.goaled.delete(id);

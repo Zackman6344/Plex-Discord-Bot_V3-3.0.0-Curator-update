@@ -50,7 +50,7 @@ const SETTINGS = [
     { key: 'archipelagoPassword', label: 'Room password', group: 'Archipelago', type: 'string', secret: true },
     { key: 'archipelagoBatchSeconds', label: 'Log batch (seconds)', group: 'Archipelago', type: 'int', min: 1, max: 300 },
     { key: 'archipelagoProgressionOnly', label: 'Progression item sends only', group: 'Archipelago', type: 'bool' },
-    { key: 'archipelagoSkipGoaled', label: 'Hide items sent to finished slots', group: 'Archipelago', type: 'bool' },
+    { key: 'archipelagoSkipGoaled', label: 'Hide items sent to goaled/released slots', group: 'Archipelago', type: 'bool' },
     { key: 'archipelagoColorLines', label: 'Colour items by class', group: 'Archipelago', type: 'bool' },
     { key: 'archipelagoShowItems', label: 'Show item sends', group: 'Archipelago', type: 'bool' },
     { key: 'archipelagoShowHints', label: 'Show hints', group: 'Archipelago', type: 'bool' },

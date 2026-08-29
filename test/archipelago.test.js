@@ -212,12 +212,43 @@ test('renderPrintJSON leaves parts with no flags uncoloured', () => {
 
 test('shouldRelay drops item sends to a finished slot only when asked', () => {
     const base = { filters: { ...monitor.DEFAULT_FILTERS } };
-    const toGoaled = { group: 'items', flags: 1, recipientGoaled: true };
-    const toPlaying = { group: 'items', flags: 1, recipientGoaled: false };
+    const toGoaled = { group: 'items', flags: 1, recipientFinished: true };
+    const toPlaying = { group: 'items', flags: 1, recipientFinished: false };
 
     assert.strictEqual(monitor.shouldRelay({ ...base, skipGoaled: true }, toGoaled), false);
     assert.strictEqual(monitor.shouldRelay({ ...base, skipGoaled: true }, toPlaying), true);
     assert.strictEqual(monitor.shouldRelay({ ...base, skipGoaled: false }, toGoaled), true);
     // Only item traffic is suppressed; a goal or a chat line from that slot still comes through.
-    assert.strictEqual(monitor.shouldRelay({ ...base, skipGoaled: true }, { group: 'goals', flags: 0, recipientGoaled: true }), true);
+    assert.strictEqual(monitor.shouldRelay({ ...base, skipGoaled: true }, { group: 'goals', flags: 0, recipientFinished: true }), true);
+});
+
+test('a null answer for the unused key spelling does not erase a real status', () => {
+    // The live server answers "_read_client_status_0_1" with 30 and "client_status_0_1" with
+    // null. Both arrive in one Retrieved, and treating the null as "not goaled" wiped the
+    // status read one key earlier, which silently disabled the whole filter.
+    const c = new client.ArchipelagoClient({ target: { kind: 'direct', host: 'x', port: 1 }, slot: 's' });
+    c._absorbStatuses({
+        '_read_client_status_0_1': 30,
+        'client_status_0_1': null,
+        '_read_client_status_0_2': 0,
+        'client_status_0_2': null
+    });
+    assert.strictEqual(c.hasGoaled(1), true, 'a goal survives the null for the other spelling');
+    assert.strictEqual(c.hasGoaled(2), false, 'and a real 0 still means not goaled');
+    c.stop();
+});
+
+test('a released slot counts as finished, and survives a reconnect', () => {
+    const c = new client.ArchipelagoClient({ target: { kind: 'direct', host: 'x', port: 1 }, slot: 's' });
+    c.released.add('0:4');
+    assert.strictEqual(c.hasFinished(4), true);
+    assert.strictEqual(c.hasGoaled(4), false, 'released is tracked separately from goaled');
+
+    // Reconnecting re-reads goals from the server but cannot re-read releases, so the set it
+    // built by listening has to persist.
+    c.goaled.add('0:5');
+    c.goaled.clear();
+    assert.strictEqual(c.hasFinished(4), true, 'release outlives the goal refresh');
+    assert.strictEqual(c.finishedCount, 1);
+    c.stop();
 });

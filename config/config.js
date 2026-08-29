@@ -104,9 +104,10 @@ const defaults = {
   // Relay an item send only when its flags mark it as progression. The usual fix for a big
   // async where filler sends drown everything else.
   'archipelagoProgressionOnly' : false,
-  // Drop item sends addressed to a slot that has already finished. Late in an async most of
-  // the remaining traffic is items nobody will collect. Goal status is read from the server,
-  // so players who finished before the bot connected count too.
+  // Drop item sends addressed to a slot that has already goaled or released. Late in an async
+  // most of the remaining traffic is items nobody will collect. Goal status is read from the
+  // server, so players who goaled before the bot connected count too; a release is only seen
+  // if the bot was connected when it happened, because nothing stores it.
   'archipelagoSkipGoaled' : true,
   // Colour item names by class in the relayed log: progression magenta, useful blue, trap red,
   // filler cyan. Matches Archipelago's own clients. Needs a Discord client that renders ANSI

@@ -267,7 +267,7 @@ test('goal status comes from the server, and filters items sent to finished slot
         item: { item: 5, location: 9, player: 1, flags: 1 },
         data: [{ text: 'Zack sent a thing to Alice' }]
     });
-    assert.strictEqual(toAlice.recipientGoaled, true);
+    assert.strictEqual(toAlice.recipientFinished, true);
     assert.strictEqual(toAlice.receiving, 2);
 
     const toZack = await lineFor({
@@ -275,7 +275,7 @@ test('goal status comes from the server, and filters items sent to finished slot
         item: { item: 5, location: 9, player: 2, flags: 1 },
         data: [{ text: 'Alice sent a thing to Zack' }]
     });
-    assert.strictEqual(toZack.recipientGoaled, false);
+    assert.strictEqual(toZack.recipientFinished, false);
 
     // A goal announced while watching counts too, under the unprefixed key spelling.
     live.send(JSON.stringify([{ cmd: 'SetReply', key: 'client_status_0_1', value: 30, original_value: 20 }]));
