@@ -57,6 +57,17 @@ const ANSI = {
     filler: '\u001b[0;36m'       // cyan
 };
 
+// Discord renders ANSI code blocks on desktop and web, and not in the mobile apps, where the
+// same message arrives as plain uncoloured text. These markers carry the class independently of
+// any of that, so a phone reader sees what a desktop reader sees. Filler is deliberately left
+// unmarked: most sends are filler, and marking them all would be noise rather than signal.
+const MARKERS = {
+    progression: '🟪',
+    useful: '🟦',
+    trap: '🟥',
+    filler: ''
+};
+
 /** Which of the four item classes a NetworkItem.flags value describes. */
 function classifyItem(flags) {
     const value = Number(flags) || 0;
@@ -146,14 +157,16 @@ async function resolveRoomAddress(roomUrl) {
     throw new Error('no connect address on the room page — the room may have expired');
 }
 
-// Each part carries its own flags, so an item is coloured by what that item is rather than by
+// Each part carries its own flags, so an item is marked by what that item is rather than by
 // whatever the packet's headline item happened to be.
-function paint(text, part, ansi) {
-    if (!ansi || typeof part.flags !== 'number') return text;
-    return `${ANSI[classifyItem(part.flags)]}${text}${ANSI.reset}`;
+function paint(text, part, options) {
+    if (typeof part.flags !== 'number') return text;
+    const kind = classifyItem(part.flags);
+    const marked = options.markers && MARKERS[kind] ? `${MARKERS[kind]} ${text}` : text;
+    return options.ansi ? `${ANSI[kind]}${marked}${ANSI.reset}` : marked;
 }
 
-function renderPart(part, tables, ansi) {
+function renderPart(part, tables, options) {
     const raw = (part && part.text !== undefined && part.text !== null) ? String(part.text) : '';
     if (!part || !part.type) return raw;
 
@@ -166,10 +179,10 @@ function renderPart(part, tables, ansi) {
         case 'item_id': {
             const game = tables.gameForSlot && tables.gameForSlot(Number(part.player));
             const name = tables.itemName && tables.itemName(game, Number(raw));
-            return paint(name || `Item#${raw}`, part, ansi);
+            return paint(name || `Item#${raw}`, part, options);
         }
         case 'item_name':
-            return paint(raw, part, ansi);
+            return paint(raw, part, options);
         case 'location_id': {
             const game = tables.gameForSlot && tables.gameForSlot(Number(part.player));
             const name = tables.locationName && tables.locationName(game, Number(raw));
@@ -191,13 +204,13 @@ function renderPrintJSON(packet, tables = {}, options = {}) {
     const parts = Array.isArray(packet && packet.data) ? packet.data : [];
     const type = (packet && packet.type) || 'Text';
     const flags = packet && packet.item && typeof packet.item.flags === 'number' ? packet.item.flags : 0;
-    const ansi = !!options.ansi;
+    const render = { ansi: !!options.ansi, markers: !!options.markers };
     return {
         type,
         group: groupOf(type),
         flags,
         itemClass: classifyItem(flags),
-        text: parts.map(part => renderPart(part, tables, ansi)).join('').trim()
+        text: parts.map(part => renderPart(part, tables, render)).join('').trim()
     };
 }
 
@@ -254,6 +267,8 @@ class ArchipelagoClient extends EventEmitter {
         // Flipped per watch by the monitor; read at render time so a colour toggle costs no
         // reconnect.
         this.colorize = !!options.colorize;
+        // Same idea as colorize: read at render time, so the toggle costs no reconnect.
+        this.markers = options.markers !== false;
     }
 
     hasGoaled(slot, team = this.team) {
@@ -473,7 +488,7 @@ class ArchipelagoClient extends EventEmitter {
                     // done as a goal even when the player never finished.
                     if (packet.type === 'Release') this.released.add(id);
                 }
-                const line = renderPrintJSON(packet, this.lookupTables(), { ansi: this.colorize });
+                const line = renderPrintJSON(packet, this.lookupTables(), { ansi: this.colorize, markers: this.markers });
                 if (line.text) {
                     const receiving = typeof packet.receiving === 'number' ? packet.receiving : null;
                     this.emit('line', {
@@ -628,6 +643,7 @@ module.exports = {
     ArchipelagoClient,
     classifyItem,
     ANSI,
+    MARKERS,
     CLIENT_STATUS_GOAL,
     parseTarget,
     extractConnectAddress,

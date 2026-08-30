@@ -241,6 +241,7 @@ function makeState(watch) {
         password: watch.password,
         deathlink: !!(watch.filters && watch.filters.deaths),
         colorize: watch.color !== false,
+        markers: watch.markers !== false,
         label: watch.label
     });
     const state = {
@@ -394,6 +395,7 @@ function syncConfigWatch() {
         skipGoaled: config.archipelagoSkipGoaled !== false,
         inferFinished: config.archipelagoInferFinished !== false,
         color: config.archipelagoColorLines !== false,
+        markers: config.archipelagoItemMarkers !== false,
         paused: false,
         addedBy: null,
         addedAt: new Date().toISOString()
@@ -423,8 +425,9 @@ function syncConfigWatch() {
         if (desired.inferFinished) startCompletionPoll(existing);
         else existing.client.fullyChecked = new Set();
     }
-    // Colour is read at render time, so it applies to the next line without a new socket.
+    // Both are read at render time, so they apply to the next line without a new socket.
     existing.client.colorize = desired.color;
+    existing.client.markers = desired.markers;
     if (needsReconnect) restartWatch(CONFIG_WATCH_ID);
     return existing.watch;
 }
@@ -452,6 +455,7 @@ function applyConfig({ boot = false } = {}) {
             watch.skipGoaled = watch.skipGoaled !== false;
             watch.inferFinished = watch.inferFinished !== false;
             watch.color = watch.color !== false;
+            watch.markers = watch.markers !== false;
             startWatch(watch);
         }
         savedWatchesLoaded = true;
@@ -504,6 +508,7 @@ function addWatch(options, waitMs = 20000) {
         skipGoaled: config.archipelagoSkipGoaled !== false,
         inferFinished: config.archipelagoInferFinished !== false,
         color: config.archipelagoColorLines !== false,
+        markers: config.archipelagoItemMarkers !== false,
         paused: false,
         addedBy: options.addedBy || null,
         addedAt: new Date().toISOString()
@@ -610,6 +615,16 @@ function setColor(id, enabled) {
     return state;
 }
 
+function setMarkers(id, enabled) {
+    const state = states.get(id);
+    if (!state) return null;
+    refuseIfManaged(state, 'the item markers');
+    state.watch.markers = !!enabled;
+    state.client.markers = !!enabled;
+    persist();
+    return state;
+}
+
 function listWatches() {
     return [...states.values()].map(state => ({
         watch: state.watch,
@@ -660,6 +675,7 @@ module.exports = {
     setSkipGoaled,
     setInferFinished,
     setColor,
+    setMarkers,
     pollCompletion,
     listWatches,
     getWatch,

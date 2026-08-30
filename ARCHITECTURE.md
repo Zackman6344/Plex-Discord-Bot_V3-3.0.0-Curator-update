@@ -531,13 +531,19 @@ Everything except `deaths` is on by default. `!ap progression <id> on` narrows `
 
 `deaths` is separate because DeathLink arrives on `Bounced` rather than `PrintJSON`, and the server only routes those to clients advertising the `DeathLink` tag. Turning it on reconnects the watch so the tag is included in a fresh handshake. The bot never sends a death of its own.
 
-### Item colour
+### Item colour and markers
 
-With `archipelagoColorLines` on (the default), batches post as ```` ```ansi ```` blocks and each item name is wrapped in a colour by its own `NetworkItem.flags`: **progression magenta, useful blue, trap red, filler cyan**. That mapping is Archipelago's own, so a colour means the same thing here as in the game's text client.
+Item class is signalled two ways, because one of them only works on some clients.
 
-Colour is decided per JSONMessagePart rather than from the packet's headline item, so a line mentioning two items colours each one correctly. A trap that is also flagged progression renders as a trap, on the grounds that the warning is the more useful signal.
+**Colour** (`archipelagoColorLines`, default on): batches post as ```` ```ansi ```` blocks and each item name is wrapped by its own `NetworkItem.flags`: **progression magenta, useful blue, trap red, filler cyan**. That mapping is Archipelago's own, so a colour means the same thing here as in the game's text client. **Discord renders ANSI code blocks on desktop and web only**; the mobile apps show the same block as plain uncoloured text, which is how the gap was found.
 
-`client.colorize` is read at render time, so toggling colour applies to the next batch instead of costing a reconnect. A plain fence is used when colour is off, because a ```` ``` ```` block would show the escape codes as literal text.
+**Markers** (`archipelagoItemMarkers`, default on): a coloured square prefixed to the item name, 🟪 progression, 🟦 useful, 🟥 trap. Plain text, so every client shows it, mobile included. Filler is deliberately unmarked: most sends are filler and marking them all would be noise rather than signal.
+
+The two are independent toggles and both are on by default, so a desktop reader gets colour and a phone reader gets the marker off the same message. The marker sits inside the colour span, so on desktop it is coloured too.
+
+Class is decided per JSONMessagePart rather than from the packet's headline item, so a line mentioning two items marks each one correctly. A trap that is also flagged progression renders as a trap, on the grounds that the warning is the more useful signal.
+
+`client.colorize` and `client.markers` are both read at render time, so either toggle applies to the next batch instead of costing a reconnect. A plain fence is used when colour is off, because a ```` ``` ```` block would show the escape codes as literal text.
 
 ### Finished slots, and skipping items sent to them
 

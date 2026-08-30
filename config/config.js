@@ -119,9 +119,14 @@ const defaults = {
   // so this is deliberately slow.
   'archipelagoTrackerPollMinutes' : 15,
   // Colour item names by class in the relayed log: progression magenta, useful blue, trap red,
-  // filler cyan. Matches Archipelago's own clients. Needs a Discord client that renders ANSI
-  // code blocks; turn it off if the log arrives full of escape codes.
+  // filler cyan. Matches Archipelago's own clients. Discord renders ANSI code blocks on desktop
+  // and web only, so this does nothing in the mobile apps. Turn it off if a client of yours
+  // shows the escape codes as text instead.
   'archipelagoColorLines' : true,
+  // Prefix a coloured square to progression, useful and trap item names. Plain text, so unlike
+  // the colours above it survives every client including mobile. Filler is left unmarked
+  // because most sends are filler.
+  'archipelagoItemMarkers' : true,
 
   // Which categories of log line get relayed.
   'archipelagoShowItems'  : true,      // item sends, and cheated items

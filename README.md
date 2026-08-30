@@ -118,7 +118,8 @@ module.exports = {
   'archipelagoSkipGoaled'      : true,     // hide items sent to slots that already finished
   'archipelagoInferFinished'   : true,     // also count a 100%-checked slot as finished
   'archipelagoTrackerPollMinutes' : 15,    // how often to re-read the room tracker for that
-  'archipelagoColorLines'      : true,     // colour items: progression, useful, trap, filler
+  'archipelagoColorLines'      : true,     // colour items by class (desktop and web only)
+  'archipelagoItemMarkers'     : true,     // mark items by class; plain text, works on mobile
   'archipelagoShowItems'  : true,          // which categories of log line get relayed
   'archipelagoShowHints'  : true,
   'archipelagoShowChat'   : true,
@@ -431,7 +432,8 @@ Off unless `archipelagoEnabled` is set. The bot joins a multiworld as a read-onl
 - `!ap progression [id] on`: Item sends only when they are progression. The usual fix for a noisy async.
 - `!ap skipgoaled [id] [on|off]`: Hide items sent to slots that already finished, meaning goaled, released, or with every location checked. On by default. Goal status is read from the server, so players who goaled before the bot connected count too; a release is only seen if the bot was connected when it was announced, because nothing stores it.
 - `!ap infer [id] [on|off]`: Whether a 100%-checked slot counts as finished. On by default, and it does most of the work late in a game: on one live 29-player room, 15 slots were fully checked and 9 of those had never goaled. It reads the room's tracker page every 15 minutes, so it needs a room URL rather than a bare `host:port`. Turn it off if you would rather still see items going to someone who has checked everything but is waiting on an item to goal.
-- `!ap color [id] [on|off]`: Colour item names by class: progression magenta, useful blue, trap red, filler cyan, matching Archipelago's own clients. On by default. Turn it off if your Discord client shows escape codes instead of colour.
+- `!ap color [id] [on|off]`: Colour item names by class: progression magenta, useful blue, trap red, filler cyan, matching Archipelago's own clients. On by default. Discord renders ANSI code blocks on **desktop and web only**, so this does nothing in the mobile apps.
+- `!ap markers [id] [on|off]`: Prefix 🟪 progression, 🟦 useful, 🟥 trap to item names. Plain text, so unlike the colours it shows on every client including mobile. On by default, and it works alongside colour rather than replacing it. Filler is left unmarked because most sends are filler.
 - `!ap password [id] [password]`: Set or clear a room password. The prefix form deletes your message afterwards.
 - `!ap unwatch [id]` / `!ap retry [id]`: Stop a watch, or reconnect one the server refused.
 

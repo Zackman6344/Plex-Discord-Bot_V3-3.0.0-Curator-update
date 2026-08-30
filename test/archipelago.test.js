@@ -276,3 +276,42 @@ test('a drop before the first connect is still not announced', () => {
     assert.strictEqual(monitor.connectionNotice(state, 'error', 'cannot reach host'), null);
     assert.strictEqual(monitor.connectionNotice(state, 'disconnected', 'closed'), null);
 });
+
+test('markers ride outside ANSI so they survive a client that ignores colour', () => {
+    const packet = {
+        type: 'ItemSend',
+        data: [
+            { type: 'item_id', text: '5', player: 2, flags: 0b001 },
+            { text: ' and ' },
+            { type: 'item_id', text: '6', player: 2, flags: 0b100 },
+            { text: ' and ' },
+            { type: 'item_id', text: '7', player: 2, flags: 0b000 }
+        ]
+    };
+    const tables = {
+        gameForSlot: () => 'g',
+        itemName: (g, id) => ({ 5: 'Progressive Sword', 6: 'Ice Trap', 7: 'Rupee' })[id]
+    };
+
+    // Mobile: no ANSI honoured, so the marker is the only signal left.
+    const plain = client.renderPrintJSON(packet, tables, { ansi: false, markers: true });
+    assert.strictEqual(plain.text, '🟪 Progressive Sword and 🟥 Ice Trap and Rupee');
+    assert.ok(!plain.text.includes(client.ANSI.reset));
+
+    // Desktop: both, and the marker sits inside the colour span so it is coloured too.
+    const both = client.renderPrintJSON(packet, tables, { ansi: true, markers: true });
+    assert.ok(both.text.includes(client.ANSI.progression + '🟪 Progressive Sword' + client.ANSI.reset));
+    assert.ok(both.text.includes(client.ANSI.trap + '🟥 Ice Trap' + client.ANSI.reset));
+
+    // Filler is never marked: most sends are filler and marking them all is noise.
+    assert.ok(!plain.text.includes('Rupee') || !/[🟪🟦🟥]\s*Rupee/.test(plain.text));
+});
+
+test('markers can be turned off independently of colour', () => {
+    const packet = { type: 'ItemSend', data: [{ type: 'item_id', text: '5', player: 2, flags: 0b010 }] };
+    const tables = { gameForSlot: () => 'g', itemName: () => 'Magic Cape' };
+
+    assert.strictEqual(client.renderPrintJSON(packet, tables, { markers: false }).text, 'Magic Cape');
+    assert.strictEqual(client.renderPrintJSON(packet, tables, { markers: true }).text, '🟦 Magic Cape');
+    assert.strictEqual(client.MARKERS.filler, '', 'filler has no marker at all');
+});

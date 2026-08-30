@@ -71,7 +71,7 @@ function buildListEmbed(entries) {
                 `**State:** ${entry.status}${entry.detail ? ` (${entry.detail})` : ''}`,
                 `**Relayed:** ${entry.lineCount} line(s)${entry.droppedLines ? `, ${entry.droppedLines} dropped` : ''}`,
                 `**Showing:** ${filters}${watch.progressionOnly ? ' · progression items only' : ''}`,
-                `**Extras:** ${watch.color !== false ? 'colour on' : 'colour off'} · ` +
+                `**Extras:** ${watch.color !== false ? 'colour' : 'no colour'} · ${watch.markers !== false ? 'markers' : 'no markers'} · ` +
                     (watch.skipGoaled !== false
                         ? `hiding items to ${entry.finished || 0} finished slot(s)`
                         : 'showing items to finished slots')
@@ -129,9 +129,13 @@ module.exports = {
                     { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' },
                     { name: 'enabled', type: 'BOOLEAN', required: true, description: 'Read the room tracker for completion?' }
                 ] },
-                { name: 'color', description: 'Colour item names by class', options: [
+                { name: 'color', description: 'Colour item names by class (desktop and web only)', options: [
                     { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' },
                     { name: 'enabled', type: 'BOOLEAN', required: true, description: 'Use colour?' }
+                ] },
+                { name: 'markers', description: 'Mark item names by class (works on mobile)', options: [
+                    { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' },
+                    { name: 'enabled', type: 'BOOLEAN', required: true, description: 'Use markers?' }
                 ] },
                 { name: 'password', description: 'Set or clear a room password', options: [
                     { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' },
@@ -186,7 +190,8 @@ module.exports = {
                     `\`${prefix}ap progression <id> <on|off>\` — item sends only when they're progression.`,
                     `\`${prefix}ap skipgoaled <id> <on|off>\` — hide items sent to slots that already finished.`,
                     `\`${prefix}ap infer <id> <on|off>\` — also treat a 100%-checked slot as finished (reads the room tracker).`,
-                    `\`${prefix}ap color <id> <on|off>\` — colour item names: progression, useful, trap, filler.`,
+                    `\`${prefix}ap color <id> <on|off>\` — colour item names (desktop and web only).`,
+                    `\`${prefix}ap markers <id> <on|off>\` — mark items 🟪 progression, 🟦 useful, 🟥 trap. Works everywhere, mobile included.`,
                     `\`${prefix}ap password <id> [password]\` — set or clear the room password (the command message is deleted).`,
                     `\`${prefix}ap retry <id>\` — reconnect a watch the server refused.`
                 ].join('\n'));
@@ -321,8 +326,13 @@ module.exports = {
                     },
                     color: {
                         apply: monitor.setColor,
-                        on: 'items are coloured by class (progression, useful, trap, filler)',
+                        on: 'items are coloured by class (desktop and web only)',
                         off: 'the log is posted without colour'
+                    },
+                    markers: {
+                        apply: monitor.setMarkers,
+                        on: 'progression, useful and trap items are marked with a coloured square (works on mobile)',
+                        off: 'items are posted without markers'
                     }
                 };
 
