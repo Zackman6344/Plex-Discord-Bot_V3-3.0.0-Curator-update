@@ -252,3 +252,27 @@ test('a released slot counts as finished, and survives a reconnect', () => {
     assert.strictEqual(c.finishedCount, 1);
     c.stop();
 });
+
+test('only the first connect is announced; reconnect churn stays out of the channel', () => {
+    const state = { watch: { label: 'Configured room', slot: 'ZackWord' }, announcedConnected: false };
+
+    const first = monitor.connectionNotice(state, 'connected', 'archipelago.gg:35217');
+    assert.ok(first, 'the first connect is worth saying');
+    assert.match(first, /ZackWord/);
+    assert.match(first, /archipelago\.gg:35217/);
+
+    state.announcedConnected = true;
+
+    // A hosted room sleeps and returns on its own; none of that belongs in the channel.
+    assert.strictEqual(monitor.connectionNotice(state, 'disconnected', 'closed (1006)'), null);
+    assert.strictEqual(monitor.connectionNotice(state, 'error', 'cannot reach archipelago.gg:35217'), null);
+    assert.strictEqual(monitor.connectionNotice(state, 'connecting', 'archipelago.gg:35217'), null);
+    assert.strictEqual(monitor.connectionNotice(state, 'connected', 'archipelago.gg:35217'), null);
+});
+
+test('a drop before the first connect is still not announced', () => {
+    // Nothing has been said yet, so a failing first attempt must not post either.
+    const state = { watch: { label: 'x', slot: 's' }, announcedConnected: false };
+    assert.strictEqual(monitor.connectionNotice(state, 'error', 'cannot reach host'), null);
+    assert.strictEqual(monitor.connectionNotice(state, 'disconnected', 'closed'), null);
+});

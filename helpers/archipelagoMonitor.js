@@ -185,6 +185,20 @@ function enqueue(state, text) {
     }
 }
 
+// A hosted room sleeps on its own and comes back on the next connect, so the socket drops and
+// re-opens as a matter of course. Announcing every cycle turned the channel into a status feed
+// with the actual log buried in it. Only the first connect is announced; drops and retries stay
+// in the bot log, where `!ap list` and `!diag` can still be asked about them. A refusal is still
+// posted, because unlike a drop it needs a person.
+//
+// A deliberate restart (a changed room, `!ap retry`) builds a fresh state, so that one does
+// announce again, which is the confirmation you want after changing something.
+function connectionNotice(state, phase, detail) {
+    if (phase !== 'connected' || state.announcedConnected) return null;
+    return `🟢 **${state.watch.label}** — watching as \`${state.watch.slot}\` on \`${detail}\`. ` +
+        `Reconnects stay quiet from here.`;
+}
+
 function attach(state) {
     const { client, watch } = state;
 
@@ -196,24 +210,15 @@ function attach(state) {
     client.on('status', ({ state: phase, detail }) => {
         state.status = phase;
         state.detail = detail;
+        if (phase === 'connected') state.connectedAt = Date.now();
+
+        const notice = connectionNotice(state, phase, detail);
+        if (phase === 'connected') state.announcedConnected = true;
+        if (notice) post(state, notice);
 
         if (phase === 'connected') {
-            state.connectedAt = Date.now();
-            const first = !state.announcedConnected;
-            state.announcedConnected = true;
-            if (first || state.announcedProblem) {
-                state.announcedProblem = false;
-                post(state, `🟢 **${watch.label}** — watching as \`${watch.slot}\` on \`${detail}\`.`);
-            }
             logger.info(`[AP:${watch.label}] connected to ${detail} as ${watch.slot}`);
-            return;
-        }
-
-        if (phase === 'disconnected' || phase === 'error') {
-            if (state.announcedConnected && !state.announcedProblem) {
-                state.announcedProblem = true;
-                post(state, `🟠 **${watch.label}** — lost the room (${detail}). Retrying in the background.`);
-            }
+        } else if (phase === 'disconnected' || phase === 'error') {
             logger.warn(`[AP:${watch.label}] ${phase}: ${detail}`);
         }
     });
@@ -251,8 +256,7 @@ function makeState(watch) {
         connectedAt: null,
         lineCount: 0,
         droppedLines: 0,
-        announcedConnected: false,
-        announcedProblem: false
+        announcedConnected: false
     };
     attach(state);
     return state;
@@ -664,6 +668,7 @@ module.exports = {
     chunkLines,
     formatLine,
     shouldRelay,
+    connectionNotice,
     DEFAULT_FILTERS,
     FILTER_GROUPS,
     WATCH_FILE

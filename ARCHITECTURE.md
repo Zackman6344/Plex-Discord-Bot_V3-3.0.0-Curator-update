@@ -505,6 +505,8 @@ A hosted room is assigned a new port every time it spins up. A watch created fro
 
 Reconnect backoff runs 5s, 10s, 20s, 40s, 80s, 160s, then holds at 300s. A `ConnectionRefused` (bad slot name, bad password) is treated as fatal instead: the watch is marked paused and says so in the channel, because retrying cannot fix it.
 
+**Only the first connect is announced in the channel.** A hosted room sleeps on its own and returns on the next connect, so drops and reconnects are routine rather than incidents; posting each one turned the channel into a status feed with the log buried inside it. Drops and retries go to the bot log at WARN, and `!ap list` and `!diag` report the live state on request. `connectionNotice()` is the whole decision, kept pure and tested. A deliberate restart (a changed room, `!ap retry`) builds a fresh state and so does announce again, which is the confirmation worth having after changing something.
+
 ### Batching and safety
 
 Lines are collected for `archipelagoBatchSeconds` (default 5) and posted as one fenced block. A busy multiworld emits dozens of item sends a minute, which would hit Discord's per-channel rate limit and bury everything else in the channel. Three caps bound the damage from a burst: 1900 characters per message, 3 messages per flush with a "trimmed" note beyond that, and 500 buffered lines before the oldest are dropped.
