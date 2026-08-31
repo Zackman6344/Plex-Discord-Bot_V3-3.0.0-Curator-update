@@ -296,6 +296,22 @@ class ArchipelagoClient extends EventEmitter {
         return this.tags.every(tag => packet.tags.includes(tag)) && packet.tags.includes('Tracker');
     }
 
+    /**
+     * Is the server talking to this connection rather than reporting room activity?
+     *
+     * Two kinds, both of which were reaching the channel:
+     *  - the join/part/tags broadcast for this very client
+     *  - `Tutorial`, which the server sends to a client the instant it connects ("Now that you
+     *    are connected, you can use !help ..."). It goes to that one client, so relaying it
+     *    republished the bot's own welcome text on every reconnect. A hosted room cycles every
+     *    couple of hours, which is exactly how often it turned up.
+     */
+    isSelfDirected(packet) {
+        if (!packet) return false;
+        if (packet.type === 'Tutorial') return true;
+        return this.isSelfPresence(packet);
+    }
+
     /** Done with, however it happened: nothing sent to this slot from here on matters. */
     hasFinished(slot, team = this.team) {
         return this.hasGoaled(slot, team) || this.hasReleased(slot, team) || this.hasFullyChecked(slot, team);
@@ -508,7 +524,7 @@ class ArchipelagoClient extends EventEmitter {
                         ...line,
                         receiving,
                         recipientFinished: receiving !== null && this.hasFinished(receiving),
-                        self: this.isSelfPresence(packet),
+                        self: this.isSelfDirected(packet),
                         packet
                     });
                 }

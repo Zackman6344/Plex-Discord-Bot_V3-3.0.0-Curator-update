@@ -110,9 +110,9 @@ function chunkLines(lines, max = MAX_CHUNK) {
 }
 
 function shouldRelay(watch, line) {
-    // The bot narrating its own arrival. The room announces every client attaching to a slot,
-    // so each reconnect produced another "tracking <game> has joined" line in the channel, which
-    // is the bot talking about itself and never what the channel is for.
+    // The server talking to this connection rather than reporting room activity: the bot's own
+    // join broadcast, and the welcome text every client is handed on connect. Both repeat on
+    // every reconnect, and a hosted room reconnects every couple of hours.
     if (line.self) return false;
 
     const filters = watch.filters || DEFAULT_FILTERS;

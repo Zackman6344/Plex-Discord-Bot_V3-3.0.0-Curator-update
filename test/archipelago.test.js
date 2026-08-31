@@ -360,3 +360,28 @@ test('a deathlink tracker still recognises its own join', () => {
     assert.strictEqual(c.isSelfPresence({ type: 'Join', slot: 28, tags: ['Tracker'] }), false);
     c.stop();
 });
+
+test('the connect welcome text is never relayed', () => {
+    // Verbatim from the live room, sent to the connecting client alone. A hosted room cycles
+    // every couple of hours, so this arrived on that cadence until it was suppressed.
+    const c = new client.ArchipelagoClient({ target: { kind: 'direct', host: 'x', port: 1 }, slot: 'ZackWord' });
+    c.slotId = 28;
+
+    const tutorial = {
+        cmd: 'PrintJSON',
+        type: 'Tutorial',
+        data: [{ text: 'Now that you are connected, you can use !help to list commands to run via the server. If your client supports it, you may have additional local commands you can list with /help.' }]
+    };
+
+    assert.strictEqual(c.isSelfDirected(tutorial), true);
+    assert.strictEqual(c.isSelfPresence(tutorial), false, 'it is not a presence packet, just self-directed');
+    assert.strictEqual(monitor.shouldRelay({ filters: { ...monitor.DEFAULT_FILTERS } }, { group: 'misc', self: true }), false);
+
+    // The rest of the misc group is real room activity and still comes through.
+    assert.strictEqual(c.isSelfDirected({ type: 'Countdown', data: [{ text: '3' }] }), false);
+    assert.strictEqual(monitor.shouldRelay({ filters: { ...monitor.DEFAULT_FILTERS } }, { group: 'misc', self: false }), true);
+
+    // And the join case still routes through the same flag.
+    assert.strictEqual(c.isSelfDirected({ type: 'Join', slot: 28, tags: ['Tracker'] }), true);
+    c.stop();
+});
