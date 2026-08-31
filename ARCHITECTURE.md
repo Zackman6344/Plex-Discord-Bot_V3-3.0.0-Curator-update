@@ -513,6 +513,19 @@ Lines are collected for `archipelagoBatchSeconds` (default 5) and posted as one 
 
 Relayed text is untrusted: it comes from whoever is playing. Every post goes out with `allowedMentions: { parse: [] }`, and any ` ``` ` inside a log line is rewritten to `'''` so it cannot close the fence early and let the rest render as markdown.
 
+### The bot's own presence
+
+The room announces every client that attaches to a slot, the watched one included, so each
+reconnect produced a line like `ZackWord (Team #1) tracking Wordipelago has joined. Client(0.6.1),
+['Tracker'].` in the channel. That is the bot narrating itself, and a room that bounces a few
+times repeats it.
+
+`client.isSelfPresence(packet)` recognises those and `shouldRelay` drops them unconditionally,
+outside the category filters. The real player shares the slot but not the tag list, so tags are
+what separate the two: a `Join`/`Part`/`TagsChanged` for our numeric slot whose tags cover ours
+and include `Tracker` is us. A player's own join and part still come through under the `joins`
+filter, which is what makes a slot going quiet visible.
+
 ### Filters
 
 Seven categories. The configured room takes them from the `archipelagoShow*` settings; a `!ap watch` room takes them from `!ap filter <id> <category> <on|off>`:

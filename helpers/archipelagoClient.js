@@ -283,6 +283,19 @@ class ArchipelagoClient extends EventEmitter {
         return this.fullyChecked.has(`${team}:${slot}`);
     }
 
+    /**
+     * Is this join/part/tags broadcast about this very connection?
+     * The room announces every client that attaches to a slot, so each reconnect produces
+     * "<slot> tracking <game> has joined ... ['Tracker']" — the bot narrating itself. The real
+     * player shares the slot but not the tags, so the tag list is what separates them.
+     */
+    isSelfPresence(packet) {
+        if (!packet || !['Join', 'Part', 'TagsChanged'].includes(packet.type)) return false;
+        if (packet.slot !== this.slotId) return false;
+        if (!Array.isArray(packet.tags)) return false;
+        return this.tags.every(tag => packet.tags.includes(tag)) && packet.tags.includes('Tracker');
+    }
+
     /** Done with, however it happened: nothing sent to this slot from here on matters. */
     hasFinished(slot, team = this.team) {
         return this.hasGoaled(slot, team) || this.hasReleased(slot, team) || this.hasFullyChecked(slot, team);
@@ -495,6 +508,7 @@ class ArchipelagoClient extends EventEmitter {
                         ...line,
                         receiving,
                         recipientFinished: receiving !== null && this.hasFinished(receiving),
+                        self: this.isSelfPresence(packet),
                         packet
                     });
                 }
@@ -601,6 +615,9 @@ class ArchipelagoClient extends EventEmitter {
     _handleConnected(packet) {
         this._absorbPlayers(packet);
         if (typeof packet.team === 'number') this.team = packet.team;
+        // Numeric slot, as opposed to this.slot which is the name given in config. Needed to
+        // recognise the room's join broadcast for this very connection.
+        if (typeof packet.slot === 'number') this.slotId = packet.slot;
         this.connected = true;
         this.attempt = 0;
 

@@ -315,3 +315,48 @@ test('markers can be turned off independently of colour', () => {
     assert.strictEqual(client.renderPrintJSON(packet, tables, { markers: true }).text, '🟦 Magic Cape');
     assert.strictEqual(client.MARKERS.filler, '', 'filler has no marker at all');
 });
+
+test('the bot does not relay its own join', () => {
+    // Verbatim shape from the live room when the tracker attaches to slot 28.
+    const c = new client.ArchipelagoClient({ target: { kind: 'direct', host: 'x', port: 1 }, slot: 'ZackWord' });
+    c.slotId = 28;
+
+    const ownJoin = {
+        cmd: 'PrintJSON', type: 'Join', team: 0, slot: 28, tags: ['Tracker'],
+        data: [{ text: "ZackWord (Team #1) tracking Wordipelago has joined. Client(0.6.1), ['Tracker']." }]
+    };
+    assert.strictEqual(c.isSelfPresence(ownJoin), true);
+    assert.strictEqual(monitor.shouldRelay({ filters: { ...monitor.DEFAULT_FILTERS } }, { group: 'joins', self: true }), false);
+
+    // The real player shares the slot but not the tags, and must still come through.
+    const playerJoin = {
+        cmd: 'PrintJSON', type: 'Join', team: 0, slot: 28, tags: ['AP'],
+        data: [{ text: "ZackWord (Team #1) playing Wordipelago has joined. Client(0.6.1), ['AP']." }]
+    };
+    assert.strictEqual(c.isSelfPresence(playerJoin), false);
+    assert.strictEqual(monitor.shouldRelay({ filters: { ...monitor.DEFAULT_FILTERS } }, { group: 'joins', self: false }), true);
+
+    // Another slot's tracker is somebody else's business, but not ours to hide.
+    assert.strictEqual(c.isSelfPresence({ type: 'Join', slot: 7, tags: ['Tracker'] }), false);
+    c.stop();
+});
+
+test('isSelfPresence only ever matches presence packets', () => {
+    const c = new client.ArchipelagoClient({ target: { kind: 'direct', host: 'x', port: 1 }, slot: 'ZackWord' });
+    c.slotId = 28;
+    // An item send addressed to our own slot is real traffic, not the bot talking about itself.
+    assert.strictEqual(c.isSelfPresence({ type: 'ItemSend', slot: 28, tags: ['Tracker'] }), false);
+    assert.strictEqual(c.isSelfPresence({ type: 'Chat', slot: 28, tags: ['Tracker'] }), false);
+    assert.strictEqual(c.isSelfPresence({ type: 'Join', slot: 28 }), false, 'no tags means it cannot be identified as ours');
+    assert.strictEqual(c.isSelfPresence(null), false);
+    c.stop();
+});
+
+test('a deathlink tracker still recognises its own join', () => {
+    const c = new client.ArchipelagoClient({ target: { kind: 'direct', host: 'x', port: 1 }, slot: 'ZackWord', deathlink: true });
+    c.slotId = 28;
+    assert.strictEqual(c.isSelfPresence({ type: 'Join', slot: 28, tags: ['Tracker', 'DeathLink'] }), true);
+    // A plain tracker's join is not this connection's, so it is left alone.
+    assert.strictEqual(c.isSelfPresence({ type: 'Join', slot: 28, tags: ['Tracker'] }), false);
+    c.stop();
+});
