@@ -332,6 +332,22 @@ class ArchipelagoClient extends EventEmitter {
         return this.tags.every(tag => packet.tags.includes(tag)) && packet.tags.includes('Tracker');
     }
 
+    /**
+     * Is the server talking to this connection rather than reporting room activity?
+     *
+     * Two kinds, both of which were reaching the channel:
+     *  - the join/part/tags broadcast for this very client
+     *  - `Tutorial`, which the server sends to a client the instant it connects ("Now that you
+     *    are connected, you can use !help ..."). It goes to that one client, so relaying it
+     *    republished the bot's own welcome text on every reconnect. A hosted room cycles every
+     *    couple of hours, which is exactly how often it turned up.
+     */
+    isSelfDirected(packet) {
+        if (!packet) return false;
+        if (packet.type === 'Tutorial') return true;
+        return this.isSelfPresence(packet);
+    }
+
     /** Done with, however it happened: nothing sent to this slot from here on matters. */
     hasFinished(slot, team = this.team) {
         return this.hasGoaled(slot, team) || this.hasReleased(slot, team) || this.hasFullyChecked(slot, team);
@@ -392,6 +408,22 @@ class ArchipelagoClient extends EventEmitter {
         this.reconnectTimer = setTimeout(() => this._open(), delay);
     }
 
+    /**
+     * Is a failure right now just the room waking up?
+     *
+     * Requesting a paused room's page is what starts it, and the port is not listening for a
+     * few seconds afterwards, so the first attempt of a fresh sequence against a room URL fails
+     * as a matter of course. archipelago.gg cycles a room every couple of hours, which made that
+     * a recurring warning for something entirely routine. The second attempt onwards is a real
+     * problem and still warns.
+     *
+     * Only room URLs get this: a host:port has no wake-up step, so a failure there means what it
+     * says the first time.
+     */
+    isWakingRoom() {
+        return this.attempt === 0 && !!this.target && this.target.kind === 'room';
+    }
+
     async _resolveAddress() {
         if (this.target && this.target.kind === 'room') return resolveRoomAddress(this.target.roomUrl);
         if (this.target && this.target.kind === 'direct') return { host: this.target.host, port: this.target.port };
@@ -405,7 +437,7 @@ class ArchipelagoClient extends EventEmitter {
         try {
             address = await this._resolveAddress();
         } catch (err) {
-            this.emit('status', { state: 'error', detail: err.message });
+            this.emit('status', { state: 'error', detail: err.message, expected: this.isWakingRoom() });
             this._scheduleReconnect(err.message);
             return;
         }
@@ -500,7 +532,11 @@ class ArchipelagoClient extends EventEmitter {
         // Both schemes are out; if wss was skipped this pass, put it back in rotation so a
         // server that later gains TLS isn't stuck on plaintext forever.
         this.preferredScheme = 'wss';
-        this.emit('status', { state: 'error', detail: `cannot reach ${address.host}:${address.port}` });
+        this.emit('status', {
+            state: 'error',
+            detail: `cannot reach ${address.host}:${address.port}`,
+            expected: this.isWakingRoom()
+        });
         this._scheduleReconnect(detail);
     }
 
@@ -544,7 +580,7 @@ class ArchipelagoClient extends EventEmitter {
                         ...line,
                         receiving,
                         recipientFinished: receiving !== null && this.hasFinished(receiving),
-                        self: this.isSelfPresence(packet),
+                        self: this.isSelfDirected(packet),
                         packet
                     });
                 }

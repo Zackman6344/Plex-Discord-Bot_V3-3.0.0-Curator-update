@@ -360,3 +360,93 @@ test('a deathlink tracker still recognises its own join', () => {
     assert.strictEqual(c.isSelfPresence({ type: 'Join', slot: 28, tags: ['Tracker'] }), false);
     c.stop();
 });
+
+test('the connect welcome text is never relayed', () => {
+    // Verbatim from the live room, sent to the connecting client alone. A hosted room cycles
+    // every couple of hours, so this arrived on that cadence until it was suppressed.
+    const c = new client.ArchipelagoClient({ target: { kind: 'direct', host: 'x', port: 1 }, slot: 'ZackWord' });
+    c.slotId = 28;
+
+    const tutorial = {
+        cmd: 'PrintJSON',
+        type: 'Tutorial',
+        data: [{ text: 'Now that you are connected, you can use !help to list commands to run via the server. If your client supports it, you may have additional local commands you can list with /help.' }]
+    };
+
+    assert.strictEqual(c.isSelfDirected(tutorial), true);
+    assert.strictEqual(c.isSelfPresence(tutorial), false, 'it is not a presence packet, just self-directed');
+    assert.strictEqual(monitor.shouldRelay({ filters: { ...monitor.DEFAULT_FILTERS } }, { group: 'misc', self: true }), false);
+
+    // The rest of the misc group is real room activity and still comes through.
+    assert.strictEqual(c.isSelfDirected({ type: 'Countdown', data: [{ text: '3' }] }), false);
+    assert.strictEqual(monitor.shouldRelay({ filters: { ...monitor.DEFAULT_FILTERS } }, { group: 'misc', self: false }), true);
+
+    // And the join case still routes through the same flag.
+    assert.strictEqual(c.isSelfDirected({ type: 'Join', slot: 28, tags: ['Tracker'] }), true);
+    c.stop();
+});
+
+test('the first failure against a room URL is treated as the room waking up', () => {
+    const c = new client.ArchipelagoClient({
+        target: { kind: 'room', roomUrl: 'https://archipelago.gg/room/abcdefghijklmnop' },
+        slot: 'ZackWord'
+    });
+
+    // Requesting the room page starts a paused room, and the port is not up yet.
+    assert.strictEqual(c.isWakingRoom(), true);
+
+    // A second failure in the same sequence is a real problem and still warns.
+    c.attempt = 1;
+    assert.strictEqual(c.isWakingRoom(), false);
+    c.attempt = 5;
+    assert.strictEqual(c.isWakingRoom(), false);
+    c.stop();
+});
+
+test('a host:port target has no wake-up step, so its first failure is not excused', () => {
+    const c = new client.ArchipelagoClient({
+        target: { kind: 'direct', host: 'localhost', port: 38281 },
+        slot: 'ZackWord'
+    });
+    assert.strictEqual(c.attempt, 0);
+    assert.strictEqual(c.isWakingRoom(), false, 'a wrong host or port should say so the first time');
+    c.stop();
+});
+
+test('a room that reconnects after a successful connect is excused again', () => {
+    // attempt resets on a successful connect, so each two-hourly cycle gets one quiet attempt
+    // rather than the allowance being spent once at boot.
+    const c = new client.ArchipelagoClient({
+        target: { kind: 'room', roomUrl: 'https://archipelago.gg/room/abcdefghijklmnop' },
+        slot: 'ZackWord'
+    });
+    c.attempt = 3;
+    assert.strictEqual(c.isWakingRoom(), false);
+    c._handleConnected({ team: 0, slot: 28, players: [], slot_info: {} });
+    assert.strictEqual(c.attempt, 0, 'a successful connect resets the counter');
+    assert.strictEqual(c.isWakingRoom(), true);
+    c.stop();
+});
+
+test('the status event actually carries the expected flag, not just the predicate', async (t) => {
+    // A host that cannot resolve fails the room-page fetch the same way a sleeping room does,
+    // which is the path that used to log a warning on every cycle.
+    const c = new client.ArchipelagoClient({
+        target: { kind: 'room', roomUrl: 'https://no-such-host.invalid/room/aaaaaaaaaaaaaaaa' },
+        slot: 'ZackWord'
+    });
+    t.after(() => c.stop());
+
+    const first = await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('no error status within 30s')), 30000);
+        c.on('status', (s) => {
+            if (s.state !== 'error') return;
+            clearTimeout(timer);
+            resolve(s);
+        });
+        c.start();
+    });
+
+    assert.strictEqual(first.expected, true, 'the monitor logs this at debug rather than warn');
+    assert.ok(first.detail, 'and still says what went wrong');
+});

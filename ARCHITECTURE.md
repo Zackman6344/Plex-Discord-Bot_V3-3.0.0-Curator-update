@@ -509,7 +509,13 @@ The `Connect` handshake sends `game: ""`, `items_handling: 0`, `slot_data: false
 
 A hosted room is assigned a new port every time it spins up. A watch created from a room URL therefore stores the URL and re-reads the `'/connect host:port'` line off the room page on every connection attempt, including reconnects. A watch created from a literal `host:port` skips the lookup and connects straight out.
 
-Reconnect backoff runs 5s, 10s, 20s, 40s, 80s, 160s, then holds at 300s. A `ConnectionRefused` (bad slot name, bad password) is treated as fatal instead: the watch is marked paused and says so in the channel, because retrying cannot fix it.
+Reconnect backoff runs 5s, 10s, 20s, 40s, 80s, 160s, then holds at 300s. The **first** failure of
+a fresh sequence against a room URL is logged at debug rather than warn: requesting a paused
+room's page is what starts it, and the port is not listening for a few seconds afterwards, so
+that attempt fails as a matter of course. `client.isWakingRoom()` is the test, and `attempt`
+resets on every successful connect, so each two-hourly cycle gets its own quiet attempt instead
+of the allowance being spent once at boot. The second attempt onwards warns, and a `host:port`
+target has no wake-up step so it warns the first time. A `ConnectionRefused` (bad slot name, bad password) is treated as fatal instead: the watch is marked paused and says so in the channel, because retrying cannot fix it.
 
 **Only the first connect is announced in the channel.** A hosted room sleeps on its own and returns on the next connect, so drops and reconnects are routine rather than incidents; posting each one turned the channel into a status feed with the log buried inside it. Drops and retries go to the bot log at WARN, and `!ap list` and `!diag` report the live state on request. `connectionNotice()` is the whole decision, kept pure and tested. A deliberate restart (a changed room, `!ap retry`) builds a fresh state and so does announce again, which is the confirmation worth having after changing something.
 
@@ -519,18 +525,23 @@ Lines are collected for `archipelagoBatchSeconds` (default 5) and posted as one 
 
 Relayed text is untrusted: it comes from whoever is playing. Every post goes out with `allowedMentions: { parse: [] }`, and any ` ``` ` inside a log line is rewritten to `'''` so it cannot close the fence early and let the rest render as markdown.
 
-### The bot's own presence
+### What the server says to us, rather than about the room
 
-The room announces every client that attaches to a slot, the watched one included, so each
-reconnect produced a line like `ZackWord (Team #1) tracking Wordipelago has joined. Client(0.6.1),
-['Tracker'].` in the channel. That is the bot narrating itself, and a room that bounces a few
-times repeats it.
+Two kinds of packet are addressed to this connection rather than reporting room activity, and
+both were reaching the channel. `client.isSelfDirected(packet)` recognises them and `shouldRelay`
+drops them unconditionally, ahead of the category filters.
 
-`client.isSelfPresence(packet)` recognises those and `shouldRelay` drops them unconditionally,
-outside the category filters. The real player shares the slot but not the tag list, so tags are
+**The bot's own join.** The room announces every client that attaches to a slot, the watched one
+included, so each reconnect produced `ZackWord (Team #1) tracking Wordipelago has joined.
+Client(0.6.1), ['Tracker'].` The real player shares the slot but not the tag list, so tags are
 what separate the two: a `Join`/`Part`/`TagsChanged` for our numeric slot whose tags cover ours
 and include `Tracker` is us. A player's own join and part still come through under the `joins`
 filter, which is what makes a slot going quiet visible.
+
+**The connect welcome.** `Tutorial` ("Now that you are connected, you can use !help ...") is sent
+to a client the instant it connects, to that client alone. Relaying it republished the bot's own
+welcome text on every reconnect. A hosted room is cycled roughly every two hours, so it arrived
+on that cadence: the observed connects ran 01:00, 03:01, 05:01, 07:01 and on through the day.
 
 ### Filters
 

@@ -22,11 +22,17 @@ if ($procs.Count -eq 0) {
     }
 }
 
-$today = Join-Path $repoRoot ("data\logs\bot-{0}.log" -f (Get-Date -Format 'yyyy-MM-dd'))
-if (Test-Path $today) {
+# helpers/logger.js names its files from the UTC date, so building this from the local date
+# pointed at yesterday's file every evening west of UTC: the status window went blank, or showed
+# stale lines, exactly when something had just happened. Take whichever file was written last
+# instead, which is right regardless of timezone or a date that rolled mid-session.
+$logDir = Join-Path $repoRoot 'data\logs'
+$today = Get-ChildItem $logDir -Filter 'bot-*.log' -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime | Select-Object -Last 1
+if ($today) {
     Write-Host ""
-    Write-Host "Last 15 lines of $today"
-    Get-Content $today -Tail 15 -Encoding UTF8
+    Write-Host ("Last 15 lines of {0}" -f $today.FullName)
+    Get-Content $today.FullName -Tail 15 -Encoding UTF8
 }
 
 # Written only by the hidden launcher (start-bot.vbs); the console launcher shows errors in its
