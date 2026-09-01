@@ -427,3 +427,26 @@ test('a room that reconnects after a successful connect is excused again', () =>
     assert.strictEqual(c.isWakingRoom(), true);
     c.stop();
 });
+
+test('the status event actually carries the expected flag, not just the predicate', async (t) => {
+    // A host that cannot resolve fails the room-page fetch the same way a sleeping room does,
+    // which is the path that used to log a warning on every cycle.
+    const c = new client.ArchipelagoClient({
+        target: { kind: 'room', roomUrl: 'https://no-such-host.invalid/room/aaaaaaaaaaaaaaaa' },
+        slot: 'ZackWord'
+    });
+    t.after(() => c.stop());
+
+    const first = await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('no error status within 30s')), 30000);
+        c.on('status', (s) => {
+            if (s.state !== 'error') return;
+            clearTimeout(timer);
+            resolve(s);
+        });
+        c.start();
+    });
+
+    assert.strictEqual(first.expected, true, 'the monitor logs this at debug rather than warn');
+    assert.ok(first.detail, 'and still says what went wrong');
+});
