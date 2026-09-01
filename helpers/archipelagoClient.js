@@ -372,6 +372,22 @@ class ArchipelagoClient extends EventEmitter {
         this.reconnectTimer = setTimeout(() => this._open(), delay);
     }
 
+    /**
+     * Is a failure right now just the room waking up?
+     *
+     * Requesting a paused room's page is what starts it, and the port is not listening for a
+     * few seconds afterwards, so the first attempt of a fresh sequence against a room URL fails
+     * as a matter of course. archipelago.gg cycles a room every couple of hours, which made that
+     * a recurring warning for something entirely routine. The second attempt onwards is a real
+     * problem and still warns.
+     *
+     * Only room URLs get this: a host:port has no wake-up step, so a failure there means what it
+     * says the first time.
+     */
+    isWakingRoom() {
+        return this.attempt === 0 && !!this.target && this.target.kind === 'room';
+    }
+
     async _resolveAddress() {
         if (this.target && this.target.kind === 'room') return resolveRoomAddress(this.target.roomUrl);
         if (this.target && this.target.kind === 'direct') return { host: this.target.host, port: this.target.port };
@@ -385,7 +401,7 @@ class ArchipelagoClient extends EventEmitter {
         try {
             address = await this._resolveAddress();
         } catch (err) {
-            this.emit('status', { state: 'error', detail: err.message });
+            this.emit('status', { state: 'error', detail: err.message, expected: this.isWakingRoom() });
             this._scheduleReconnect(err.message);
             return;
         }
@@ -480,7 +496,11 @@ class ArchipelagoClient extends EventEmitter {
         // Both schemes are out; if wss was skipped this pass, put it back in rotation so a
         // server that later gains TLS isn't stuck on plaintext forever.
         this.preferredScheme = 'wss';
-        this.emit('status', { state: 'error', detail: `cannot reach ${address.host}:${address.port}` });
+        this.emit('status', {
+            state: 'error',
+            detail: `cannot reach ${address.host}:${address.port}`,
+            expected: this.isWakingRoom()
+        });
         this._scheduleReconnect(detail);
     }
 

@@ -385,3 +385,45 @@ test('the connect welcome text is never relayed', () => {
     assert.strictEqual(c.isSelfDirected({ type: 'Join', slot: 28, tags: ['Tracker'] }), true);
     c.stop();
 });
+
+test('the first failure against a room URL is treated as the room waking up', () => {
+    const c = new client.ArchipelagoClient({
+        target: { kind: 'room', roomUrl: 'https://archipelago.gg/room/abcdefghijklmnop' },
+        slot: 'ZackWord'
+    });
+
+    // Requesting the room page starts a paused room, and the port is not up yet.
+    assert.strictEqual(c.isWakingRoom(), true);
+
+    // A second failure in the same sequence is a real problem and still warns.
+    c.attempt = 1;
+    assert.strictEqual(c.isWakingRoom(), false);
+    c.attempt = 5;
+    assert.strictEqual(c.isWakingRoom(), false);
+    c.stop();
+});
+
+test('a host:port target has no wake-up step, so its first failure is not excused', () => {
+    const c = new client.ArchipelagoClient({
+        target: { kind: 'direct', host: 'localhost', port: 38281 },
+        slot: 'ZackWord'
+    });
+    assert.strictEqual(c.attempt, 0);
+    assert.strictEqual(c.isWakingRoom(), false, 'a wrong host or port should say so the first time');
+    c.stop();
+});
+
+test('a room that reconnects after a successful connect is excused again', () => {
+    // attempt resets on a successful connect, so each two-hourly cycle gets one quiet attempt
+    // rather than the allowance being spent once at boot.
+    const c = new client.ArchipelagoClient({
+        target: { kind: 'room', roomUrl: 'https://archipelago.gg/room/abcdefghijklmnop' },
+        slot: 'ZackWord'
+    });
+    c.attempt = 3;
+    assert.strictEqual(c.isWakingRoom(), false);
+    c._handleConnected({ team: 0, slot: 28, players: [], slot_info: {} });
+    assert.strictEqual(c.attempt, 0, 'a successful connect resets the counter');
+    assert.strictEqual(c.isWakingRoom(), true);
+    c.stop();
+});

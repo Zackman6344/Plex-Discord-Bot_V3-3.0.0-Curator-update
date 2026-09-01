@@ -503,7 +503,13 @@ The `Connect` handshake sends `game: ""`, `items_handling: 0`, `slot_data: false
 
 A hosted room is assigned a new port every time it spins up. A watch created from a room URL therefore stores the URL and re-reads the `'/connect host:port'` line off the room page on every connection attempt, including reconnects. A watch created from a literal `host:port` skips the lookup and connects straight out.
 
-Reconnect backoff runs 5s, 10s, 20s, 40s, 80s, 160s, then holds at 300s. A `ConnectionRefused` (bad slot name, bad password) is treated as fatal instead: the watch is marked paused and says so in the channel, because retrying cannot fix it.
+Reconnect backoff runs 5s, 10s, 20s, 40s, 80s, 160s, then holds at 300s. The **first** failure of
+a fresh sequence against a room URL is logged at debug rather than warn: requesting a paused
+room's page is what starts it, and the port is not listening for a few seconds afterwards, so
+that attempt fails as a matter of course. `client.isWakingRoom()` is the test, and `attempt`
+resets on every successful connect, so each two-hourly cycle gets its own quiet attempt instead
+of the allowance being spent once at boot. The second attempt onwards warns, and a `host:port`
+target has no wake-up step so it warns the first time. A `ConnectionRefused` (bad slot name, bad password) is treated as fatal instead: the watch is marked paused and says so in the channel, because retrying cannot fix it.
 
 **Only the first connect is announced in the channel.** A hosted room sleeps on its own and returns on the next connect, so drops and reconnects are routine rather than incidents; posting each one turned the channel into a status feed with the log buried inside it. Drops and retries go to the bot log at WARN, and `!ap list` and `!diag` report the live state on request. `connectionNotice()` is the whole decision, kept pure and tested. A deliberate restart (a changed room, `!ap retry`) builds a fresh state and so does announce again, which is the confirmation worth having after changing something.
 

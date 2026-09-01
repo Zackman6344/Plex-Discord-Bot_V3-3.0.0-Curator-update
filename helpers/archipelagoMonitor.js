@@ -212,7 +212,7 @@ function attach(state) {
         enqueue(state, line.text);
     });
 
-    client.on('status', ({ state: phase, detail }) => {
+    client.on('status', ({ state: phase, detail, expected }) => {
         state.status = phase;
         state.detail = detail;
         if (phase === 'connected') state.connectedAt = Date.now();
@@ -224,7 +224,11 @@ function attach(state) {
         if (phase === 'connected') {
             logger.info(`[AP:${watch.label}] connected to ${detail} as ${watch.slot}`);
         } else if (phase === 'disconnected' || phase === 'error') {
-            logger.warn(`[AP:${watch.label}] ${phase}: ${detail}`);
+            // `expected` marks the first attempt against a room URL, which fails while the web
+            // host is still starting the room. Routine, so it goes to debug rather than warn.
+            const line = `[AP:${watch.label}] ${phase}: ${detail}`;
+            if (expected) logger.debug(line);
+            else logger.warn(line);
         }
     });
 
