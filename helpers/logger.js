@@ -6,6 +6,8 @@
 // logging meant any failure nobody happened to be watching was unrecoverable — the run scrolled
 // past and that was that. Set PLEXBOT_LOG_TO_FILE=0 to turn the file sink off.
 //
+// Those files are kept forever unless PLEXBOT_LOG_RETENTION_DAYS says otherwise.
+//
 // Usage:
 //   const logger = require('../helpers/logger.js');
 //   logger.info('Bot ready');
@@ -29,11 +31,16 @@ const DIR = process.env.PLEXBOT_LOG_DIR || path.join(__dirname, '..', 'data', 'l
 // Off under the test runner: a `npm test` run exercises error paths deliberately, and those
 // lines landing in the real log would be noise pretending to be incidents.
 const toFile = process.env.PLEXBOT_LOG_TO_FILE !== '0' && !process.env.NODE_TEST_CONTEXT;
-const RETENTION_DAYS = 14;
+// Logs are kept indefinitely. A day of bot log is small next to what it is worth having when
+// something went wrong a month ago and nobody noticed at the time.
+// Set PLEXBOT_LOG_RETENTION_DAYS to a positive number to delete anything older than that many
+// days; unset, 0 or unparseable keeps everything.
+const RETENTION_DAYS = Math.max(0, Math.floor(Number(process.env.PLEXBOT_LOG_RETENTION_DAYS)) || 0);
 
 let lastPrune = 0;
 
 function prune() {
+    if (RETENTION_DAYS <= 0) return;
     if (Date.now() - lastPrune < 60 * 60 * 1000) return;
     lastPrune = Date.now();
     try {

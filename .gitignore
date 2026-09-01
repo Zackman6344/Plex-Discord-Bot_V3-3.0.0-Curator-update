@@ -11,9 +11,15 @@
 # treats as secret (Tautulli API key, event server token) and your Discord IDs.
 # logs/ holds the bot log and the command log, which record message content verbatim.
 # archipelago_watches.json holds room URLs, channel/user IDs, and a room password if set.
+# archipelago_claims.json maps Discord user IDs to the slots they play.
+# archipelago_goals.json is the per-user goal tally, keyed by Discord user ID.
+# archipelago_roles.json holds the IDs of roles the bot created, per guild.
 /data/config.overrides.json
 /data/logs/
 /data/archipelago_watches.json
+/data/archipelago_claims.json
+/data/archipelago_goals.json
+/data/archipelago_roles.json
 /data/archipelago/
 /data/inferred_tags.json
 /data/recent_picks.json

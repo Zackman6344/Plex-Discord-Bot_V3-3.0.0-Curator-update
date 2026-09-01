@@ -22,6 +22,7 @@
 // Events emitted:
 //   'line'    { type, group, text, flags, packet }  — one rendered log line
 //   'status'  { state, detail }                     — connecting/connected/disconnected/error
+//   'statuses'{ goaled }                            — goal statuses read back from the server
 //   'fatal'   { reason }                            — connect refused; no point retrying
 
 const EventEmitter = require('events');
@@ -67,6 +68,12 @@ const MARKERS = {
     trap: '🟥',
     filler: ''
 };
+
+// Colour is only legible inside a ```ansi fence. Anything rendered outside one — a ping, an
+// embed field — has to have the escapes taken back out or they show as literal garbage.
+function stripAnsi(text) {
+    return String(text === null || text === undefined ? '' : text).replace(/\u001b\[[0-9;]*m/g, '');
+}
 
 /** Which of the four item classes a NetworkItem.flags value describes. */
 function classifyItem(flags) {
@@ -236,6 +243,10 @@ class ArchipelagoClient extends EventEmitter {
         this.stopped = false;
         this.connected = false;
         this.address = null;
+        // RoomInfo.seed_name. Stable for the life of a multiworld and unique across them, which
+        // makes it the only durable way to say "this person's game in this room" once the watch
+        // that saw it is gone.
+        this.seedName = null;
         this.attempt = 0;
         this.reconnectTimer = null;
         this.pingTimer = null;
@@ -248,6 +259,11 @@ class ArchipelagoClient extends EventEmitter {
         this.queue = Promise.resolve();
 
         this.players = new Map();
+        // Display names, which is players-with-aliases-applied. Kept apart from `players`
+        // because an alias can be changed mid-game and slot claims are keyed on the name the
+        // seed was rolled with — matching claims against a display name would silently unclaim
+        // anyone who set one.
+        this.slotNames = new Map();
         this.slotGames = new Map();
         this.itemNames = new Map();
         this.locationNames = new Map();
@@ -269,6 +285,26 @@ class ArchipelagoClient extends EventEmitter {
         this.colorize = !!options.colorize;
         // Same idea as colorize: read at render time, so the toggle costs no reconnect.
         this.markers = options.markers !== false;
+    }
+
+    /** The unchanging slot name for a slot number, or undefined before the room has been read. */
+    slotNameFor(slotId) {
+        return this.slotNames.get(Number(slotId));
+    }
+
+    /**
+     * The room's own spelling of a slot name, matched case-insensitively.
+     * Lets someone claim `zackword` and have the claim stored as `ZackWord`, so the ping and the
+     * room agree on the name.
+     * @returns {string|null} null if the room has no such slot, or is not connected yet
+     */
+    canonicalSlotName(input) {
+        const wanted = String(input || '').trim().toLowerCase();
+        if (!wanted) return null;
+        for (const name of this.slotNames.values()) {
+            if (name.toLowerCase() === wanted) return name;
+        }
+        return null;
     }
 
     hasGoaled(slot, team = this.team) {
@@ -533,6 +569,7 @@ class ArchipelagoClient extends EventEmitter {
 
     async _handleRoomInfo(packet) {
         this.pendingChecksums = packet.datapackage_checksums || {};
+        if (packet.seed_name) this.seedName = String(packet.seed_name);
 
         const missing = [];
         for (const game of packet.games || []) {
@@ -576,6 +613,9 @@ class ArchipelagoClient extends EventEmitter {
     _absorbPlayers(packet) {
         for (const player of packet.players || []) {
             this.players.set(player.slot, player.alias || player.name);
+            // player.name is the slot name the seed was rolled with and never changes; the alias
+            // above is display-only and does.
+            if (player.name) this.slotNames.set(player.slot, player.name);
         }
         for (const [slot, info] of Object.entries(packet.slot_info || {})) {
             this.slotGames.set(Number(slot), info.game);
@@ -599,6 +639,7 @@ class ArchipelagoClient extends EventEmitter {
     }
 
     _absorbStatuses(entries) {
+        let sawStatus = false;
         for (const [key, value] of Object.entries(entries)) {
             const match = /client_status_(\d+)_(\d+)$/.exec(key);
             if (!match) continue;
@@ -607,9 +648,13 @@ class ArchipelagoClient extends EventEmitter {
             // "not goaled" deleted the status that had just been read one key earlier.
             if (value === null || value === undefined) continue;
             const id = `${Number(match[1])}:${Number(match[2])}`;
+            sawStatus = true;
             if (Number(value) === CLIENT_STATUS_GOAL) this.goaled.add(id);
             else this.goaled.delete(id);
         }
+        // The goal set is only populated once this response lands, which is well after
+        // 'connected'. Anything counting goals has to wait for this rather than for the socket.
+        if (sawStatus) this.emit('statuses', { goaled: this.goaled });
     }
 
     _handleConnected(packet) {
@@ -659,6 +704,7 @@ class ArchipelagoClient extends EventEmitter {
 module.exports = {
     ArchipelagoClient,
     classifyItem,
+    stripAnsi,
     ANSI,
     MARKERS,
     CLIENT_STATUS_GOAL,

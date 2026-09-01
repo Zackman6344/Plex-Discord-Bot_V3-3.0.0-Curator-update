@@ -128,6 +128,20 @@ const defaults = {
   // because most sends are filler.
   'archipelagoItemMarkers' : true,
 
+  // Give players a Discord role for taking part, and one per goal count.
+  // The bot creates "Archipelago" the first time somebody claims a slot with `!ap claim`, and a
+  // "3 Games Goaled" role the first time somebody reaches that count, moving them up as they
+  // finish more. A count role nobody is on any more is deleted. Only roles the bot created
+  // itself are ever touched; ids are recorded in data/archipelago_roles.json.
+  // Needs the Manage Roles permission, and the bot's own role has to sit above the ones it
+  // makes. Without the permission this logs once per guild and stays off there.
+  // Releases do not count. A release hands out the slot's items without anybody finishing it,
+  // and a 100%-checked slot can still be waiting on an item, so the tally is goals only.
+  'archipelagoRolesEnabled' : true,
+  // Name of the participant role. Created mentionable, so the room's players can be pinged as a
+  // group. The per-count roles are named automatically and are not configurable.
+  'archipelagoRoleName' : 'Archipelago',
+
   // Which categories of log line get relayed.
   'archipelagoShowItems'  : true,      // item sends, and cheated items
   'archipelagoShowHints'  : true,      // hints

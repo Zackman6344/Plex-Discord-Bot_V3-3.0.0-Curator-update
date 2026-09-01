@@ -20,7 +20,14 @@ const fs = require('fs');
 const path = require('path');
 
 const DIR = process.env.PLEXBOT_LOG_DIR || path.join(__dirname, '..', 'data', 'logs');
-const RETENTION_DAYS = 14;
+// Day-files are kept indefinitely. Set PLEXBOT_LOG_RETENTION_DAYS to a positive number to delete
+// anything older than that; unset, 0 or unparseable keeps everything. Shared with logger.js so
+// one setting covers both sinks under data/logs/.
+const RETENTION_DAYS = Math.max(0, Math.floor(Number(process.env.PLEXBOT_LOG_RETENTION_DAYS)) || 0);
+// How far back a read goes when the caller does not say. Kept separate from retention: files are
+// now kept forever, and `npm run logs` reading every day since install would only get slower.
+// Pass `{ days: 0 }` to read the lot.
+const DEFAULT_READ_DAYS = 14;
 const MAX_CONTENT = 400;
 const MAX_EMBED_TEXT = 200;
 const MAX_ARGS = 300;
@@ -68,6 +75,7 @@ function fileForToday() {
 
 /** Drop day-files older than the retention window. Cheap, and only once an hour. */
 function prune() {
+    if (RETENTION_DAYS <= 0) return;
     if (Date.now() - lastPrune < 60 * 60 * 1000) return;
     lastPrune = Date.now();
     try {
@@ -189,14 +197,17 @@ function recordEvent(kind, detail = {}) {
 }
 
 /** Non-command events, newest last. */
-function readEventLog({ limit = 40, kind = null } = {}) {
-    let events = readEvents().filter((e) => e.type === 'event');
+function readEventLog({ limit = 40, kind = null, days = DEFAULT_READ_DAYS } = {}) {
+    let events = readEvents({ days }).filter((e) => e.type === 'event');
     if (kind) events = events.filter((e) => e.kind === kind);
     return events.slice(-limit);
 }
 
-/** Every event from the retained day-files, oldest first. Malformed lines are skipped. */
-function readEvents({ days = RETENTION_DAYS } = {}) {
+/**
+ * Every event from the most recent `days` day-files, oldest first. Malformed lines are skipped.
+ * @param {{days?: number}} [options] days: 0 reads every file there is.
+ */
+function readEvents({ days = DEFAULT_READ_DAYS } = {}) {
     const events = [];
     let files = [];
     try {
@@ -204,7 +215,8 @@ function readEvents({ days = RETENTION_DAYS } = {}) {
     } catch (_) {
         return events;
     }
-    for (const name of files.slice(-days)) {
+    const window = days > 0 ? files.slice(-days) : files;
+    for (const name of window) {
         let raw = '';
         try { raw = fs.readFileSync(path.join(DIR, name), 'utf8'); } catch (_) { continue; }
         for (const line of raw.split('\n')) {
@@ -219,11 +231,17 @@ function readEvents({ days = RETENTION_DAYS } = {}) {
  * Events folded back into one record per invocation, newest first — the shape you actually want
  * when reading back "what happened".
  */
-function readInvocations({ limit = 25, command = null, userId = null, errorsOnly = false, sinceMs = null } = {}) {
+function readInvocations({ limit = 25, command = null, userId = null, errorsOnly = false, sinceMs = null, days = null } = {}) {
     const byId = new Map();
     const loose = [];
 
-    for (const event of readEvents()) {
+    // Day-files are kept forever, so a `sinceMs` reaching further back than the default read
+    // window has to widen it or the answer is quietly truncated at 14 days.
+    const wanted = days !== null ? days
+        : sinceMs ? Math.max(DEFAULT_READ_DAYS, Math.ceil(sinceMs / 86400000) + 1)
+        : DEFAULT_READ_DAYS;
+
+    for (const event of readEvents({ days: wanted })) {
         if (event.type === 'invoke') {
             byId.set(event.id, { ...event, outputs: [], ok: null, ms: null, error: null, awaited: true });
         } else if (event.type === 'outcome' && byId.has(event.id)) {
@@ -250,8 +268,8 @@ function readInvocations({ limit = 25, command = null, userId = null, errorsOnly
     return { invocations: list.slice(0, limit), unattached: loose.slice(-limit) };
 }
 
-function stats() {
-    const events = readEvents();
+function stats({ days = DEFAULT_READ_DAYS } = {}) {
+    const events = readEvents({ days });
     const invokes = events.filter((e) => e.type === 'invoke');
     const outcomes = events.filter((e) => e.type === 'outcome');
     const byCommand = {};
@@ -275,5 +293,5 @@ function _reset() {
 
 module.exports = {
     startInvocation, finishInvocation, recordOutput, recordEvent, readEventLog, readEvents, readInvocations, stats,
-    summarise, _reset, _dir: DIR, RETENTION_DAYS
+    summarise, _reset, _dir: DIR, RETENTION_DAYS, DEFAULT_READ_DAYS
 };

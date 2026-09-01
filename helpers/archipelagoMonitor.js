@@ -16,7 +16,10 @@ const config = require('../config/config.js');
 const logger = require('./logger.js');
 const configStore = require('./configStore.js');
 const tracker = require('./archipelagoTracker.js');
-const { ArchipelagoClient, parseTarget, ITEM_FLAG_PROGRESSION, CATEGORY_GROUPS, DEFAULT_PORT } = require('./archipelagoClient.js');
+const claims = require('./archipelagoClaims.js');
+const goals = require('./archipelagoGoals.js');
+const roles = require('./archipelagoRoles.js');
+const { ArchipelagoClient, parseTarget, stripAnsi, ITEM_FLAG_PROGRESSION, CATEGORY_GROUPS, DEFAULT_PORT } = require('./archipelagoClient.js');
 
 // Overridable so a test run can point at its own file, and so the store can be relocated.
 const WATCH_FILE = process.env.PLEXBOT_AP_WATCHES_FILE || path.join(__dirname, '..', 'data', 'archipelago_watches.json');
@@ -33,6 +36,13 @@ function flushDelayMs() {
 const MAX_CHUNK = 1900;
 const MAX_MESSAGES_PER_FLUSH = 3;
 const MAX_BUFFER_LINES = 500;
+// Pings go in one message per flush. Past a handful the mention is doing the work and the detail
+// is not, so the rest collapse into a count.
+const MAX_PING_LINES = 8;
+const MAX_PENDING_PINGS = 100;
+// A ping quotes a line the room composed, outside a code fence, so a player free to name
+// themselves `**` can otherwise reformat the message.
+const MARKDOWN = /([`*_~|\\])/g;
 
 const DEFAULT_FILTERS = { items: true, hints: true, chat: true, joins: true, goals: true, misc: true, deaths: false };
 const FILTER_GROUPS = Object.keys(CATEGORY_GROUPS);
@@ -124,6 +134,20 @@ function shouldRelay(watch, line) {
     return true;
 }
 
+/**
+ * Is this line worth pinging the slot's claimant about?
+ * Runs after shouldRelay, so a line already filtered out of the channel never pings — which is
+ * what keeps the skip-goaled and progression-only filters honoured here for free.
+ */
+function shouldPing(claim, line) {
+    if (!claim || claim.pings === 'off') return false;
+    // Items only, for now. A Hint packet also names a receiving slot, so hint pings are nearly
+    // free — but they want their own toggle rather than riding on this one.
+    if (!line || line.group !== 'items') return false;
+    if (claim.pings === 'progression') return !!(line.flags & ITEM_FLAG_PROGRESSION);
+    return true;
+}
+
 function describeTarget(target) {
     if (!target) return 'unknown';
     return target.kind === 'room' ? target.roomUrl : `${target.host}:${target.port}`;
@@ -141,20 +165,46 @@ async function resolveChannel(state) {
     }
 }
 
-async function post(state, content) {
+/**
+ * @param {string[]} [mentionUsers] user ids allowed to be pinged by this message. Everything
+ *   else stays suppressed: `parse: []` blocks every category, and an explicit users list is the
+ *   only thing that gets through it.
+ */
+async function post(state, content, mentionUsers = null) {
     const channel = await resolveChannel(state);
     if (!channel || typeof channel.send !== 'function') return;
     try {
-        await channel.send({ content, allowedMentions: { parse: [] } });
+        const allowedMentions = mentionUsers && mentionUsers.length
+            ? { parse: [], users: mentionUsers }
+            : { parse: [] };
+        await channel.send({ content, allowedMentions });
     } catch (err) {
         logger.warn(`[AP:${state.watch.label}] post failed:`, err.message);
         state.channel = null;
     }
 }
 
+// One message per flush, mentions deduped. Posted after the log block rather than inside it:
+// a mention inside a code fence renders as literal text and notifies nobody.
+async function flushPings(state) {
+    const pending = state.pings.splice(0, state.pings.length);
+    if (pending.length === 0) return;
+
+    const shown = pending.slice(0, MAX_PING_LINES);
+    const lines = shown.map(p => `<@${p.userId}> \`${p.slot}\` — ${p.text}`);
+    if (pending.length > shown.length) {
+        lines.push(`…and ${pending.length - shown.length} more for the same slot(s).`);
+    }
+
+    await post(state, lines.join('\n'), [...new Set(pending.map(p => p.userId))]);
+}
+
 async function flush(state) {
     state.timer = null;
-    if (state.buffer.length === 0) return;
+    if (state.buffer.length === 0) {
+        await flushPings(state);
+        return;
+    }
 
     const lines = state.buffer.splice(0, state.buffer.length);
     let chunks = chunkLines(lines);
@@ -173,6 +223,28 @@ async function flush(state) {
     if (trimmed > 0) {
         await post(state, `…${trimmed} further block(s) of log trimmed to keep the channel readable.`);
     }
+
+    await flushPings(state);
+}
+
+/**
+ * Queue a ping for whoever claimed the slot this line is addressed to.
+ * Called after enqueue(), so the flush timer it relies on is already running.
+ */
+function notePing(state, line) {
+    if (typeof line.receiving !== 'number') return;
+    const slot = state.client.slotNameFor(line.receiving);
+    if (!slot) return;
+
+    const claim = claims.find(state.watch.id, slot);
+    if (!shouldPing(claim, line)) return;
+
+    if (state.pings.length >= MAX_PENDING_PINGS) return;
+    state.pings.push({
+        userId: claim.userId,
+        slot,
+        text: stripAnsi(line.text).replace(MARKDOWN, '\\$1').substring(0, 200)
+    });
 }
 
 function enqueue(state, text) {
@@ -208,9 +280,17 @@ function attach(state) {
     const { client, watch } = state;
 
     client.on('line', (line) => {
+        // Ahead of the relay filter on purpose: a goal still counts towards the tally when the
+        // goals category is switched off for this channel.
+        if (line.type === 'Goal') syncGoalsAndRoles(state);
         if (!shouldRelay(watch, line)) return;
         enqueue(state, line.text);
+        notePing(state, line);
     });
+
+    // Goals that happened before the bot connected arrive here, not on 'connected' — the goal
+    // set is empty until the server answers the status Get.
+    client.on('statuses', () => syncGoalsAndRoles(state));
 
     client.on('status', ({ state: phase, detail }) => {
         state.status = phase;
@@ -254,6 +334,7 @@ function makeState(watch) {
         client,
         channel: null,
         buffer: [],
+        pings: [],
         timer: null,
         pollTimer: null,
         trackerUrl: null,
@@ -554,8 +635,11 @@ function removeWatch(id) {
     refuseIfManaged(state, 'the room URL or host');
     stopWatch(id);
     states.delete(id);
+    // Claims are keyed by watch id, and ids are handed out from a counter that can reach this
+    // one again. Dropping them here stops a future watch inheriting the last one's pings.
+    const releasedClaims = claims.releaseWatch(id);
     persist();
-    return state.watch;
+    return { ...state.watch, releasedClaims };
 }
 
 function setPassword(id, password) {
@@ -630,6 +714,151 @@ function setMarkers(id, enabled) {
     return state;
 }
 
+// --- goals and roles ----------------------------------------------------------------------
+
+/**
+ * Record every goal the room reports for a slot somebody has claimed.
+ *
+ * Reads `client.goaled` and nothing else. A release hands out the slot's remaining items without
+ * anyone finishing it, and a fully-checked slot can still be waiting on an item to goal, so
+ * neither belongs in a tally of games completed — even though hasFinished() folds all three
+ * together for the relay filter, which is a different question.
+ *
+ * @returns {Set<string>} the users whose tally actually changed
+ */
+function goalIdentity(state) {
+    // RoomInfo.seed_name, which every server sends and which is fixed for the multiworld's life.
+    if (state.client.seedName) return state.client.seedName;
+    // Without it, a room URL is still fixed for the room's life and safe to key on.
+    const target = state.watch.target;
+    if (target && target.kind === 'room') return target.roomUrl;
+    // A bare host:port is not safe: a hosted room takes a new port on every spin-up, so the same
+    // goal would be filed under a new key after a restart and counted a second time. Recording
+    // nothing beats recording it twice.
+    return null;
+}
+
+function recordGoals(state) {
+    const client = state.client;
+    const changed = new Set();
+
+    const identity = goalIdentity(state);
+    if (!identity) {
+        if (!state.warnedNoSeed) {
+            state.warnedNoSeed = true;
+            logger.warn(`[AP:${state.watch.label}] no seed name and no room URL — goals are not being counted ` +
+                `for this watch, because a moving host:port cannot be told apart from a new game.`);
+        }
+        return changed;
+    }
+
+    for (const id of client.goaled) {
+        const slotName = client.slotNameFor(Number(String(id).split(':')[1]));
+        if (!slotName) continue;
+
+        const claim = claims.find(state.watch.id, slotName);
+        if (!claim) continue;
+
+        const key = goals.goalKey(identity, slotName);
+        if (goals.record(claim.userId, key, { slot: slotName, watchId: state.watch.id })) {
+            changed.add(claim.userId);
+            logger.info(`[AP:${state.watch.label}] ${slotName} goaled — that is ${goals.countFor(claim.userId)} for ${claim.userId}`);
+        }
+    }
+    return changed;
+}
+
+/** Bring Discord roles in line for a set of users. Never throws into the relay. */
+async function syncRoles(state, userIds) {
+    if (!config.archipelagoRolesEnabled) return;
+    if (!userIds || userIds.size === 0) return;
+
+    const channel = await resolveChannel(state);
+    const guild = channel && channel.guild;
+    if (!guild) return;
+
+    const memberRoleName = String(config.archipelagoRoleName || '').trim() || 'Archipelago';
+    for (const userId of userIds) {
+        try {
+            await roles.syncMember(guild, userId, {
+                // Any claim anywhere keeps the participant role: a watch is not guild-scoped and
+                // the configured room has no guild id of its own to compare against.
+                claimed: claims.all().some(c => c.userId === userId),
+                goals: goals.countFor(userId),
+                memberRoleName
+            });
+        } catch (err) {
+            logger.warn(`[AP:${state.watch.label}] role sync failed for ${userId}: ${err.message}`);
+        }
+    }
+
+    try {
+        await roles.sweepCounts(guild, goals.leaderboard().map(row => row.count));
+    } catch (err) {
+        logger.debug(`[AP:${state.watch.label}] role sweep failed: ${err.message}`);
+    }
+}
+
+/** Record goals, then update whoever that moved. Fire and forget; role work is never blocking. */
+function syncGoalsAndRoles(state, alsoSync = null) {
+    const changed = recordGoals(state);
+    if (alsoSync) changed.add(alsoSync);
+    if (changed.size === 0) return;
+    syncRoles(state, changed).catch(err =>
+        logger.error(`[AP:${state.watch.label}] role sync threw:`, err.message || err));
+}
+
+// --- slot claims ------------------------------------------------------------------------
+//
+// Claims are not part of the /config-managed settings, so the configured room accepts them like
+// any other watch — refuseIfManaged deliberately does not apply here.
+
+/** Has this watch ever read the room? Slot names survive a disconnect, so this is not "connected". */
+function knowsRoom(state) {
+    return !!state && state.client.slotNames.size > 0;
+}
+
+/**
+ * Claim a slot for a Discord user.
+ * @returns {{claim: Object, verified: boolean}|null} null if there is no such watch. `verified`
+ *   is false when the room has not been read yet and the name had to be taken on trust.
+ */
+function claimSlot(id, slot, userId) {
+    const state = states.get(id);
+    if (!state) return null;
+
+    const canonical = state.client.canonicalSlotName(slot);
+    if (!canonical && knowsRoom(state)) {
+        throw new Error(`\`${String(slot).trim()}\` isn't a slot in this multiworld.`);
+    }
+
+    const claim = claims.claim({ watchId: id, slot: canonical || String(slot).trim(), userId });
+    // Picks up any goal the room already reports for the slot just claimed, then grants the
+    // participant role and whatever count role that leaves them on.
+    syncGoalsAndRoles(state, userId);
+    return { claim, verified: !!canonical };
+}
+
+function releaseSlot(id, slot) {
+    const state = states.get(id);
+    if (!state) return null;
+    const removed = claims.release(id, slot);
+    // The participant role follows the last claim out. The count role is a lifetime tally and
+    // deliberately stays.
+    if (removed) syncRoles(state, new Set([removed.userId])).catch(() => {});
+    return removed;
+}
+
+function setClaimPings(id, slot, mode) {
+    if (!states.has(id)) return null;
+    return claims.setPings(id, slot, mode);
+}
+
+function listClaims(id) {
+    if (!states.has(id)) return null;
+    return claims.forWatch(id);
+}
+
 function listWatches() {
     return [...states.values()].map(state => ({
         watch: state.watch,
@@ -681,6 +910,14 @@ module.exports = {
     setInferFinished,
     setColor,
     setMarkers,
+    claimSlot,
+    releaseSlot,
+    setClaimPings,
+    listClaims,
+    recordGoals,
+    goalIdentity,
+    syncRoles,
+    syncGoalsAndRoles,
     pollCompletion,
     listWatches,
     getWatch,
@@ -689,6 +926,7 @@ module.exports = {
     chunkLines,
     formatLine,
     shouldRelay,
+    shouldPing,
     connectionNotice,
     DEFAULT_FILTERS,
     FILTER_GROUPS,

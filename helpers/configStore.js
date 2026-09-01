@@ -55,6 +55,8 @@ const SETTINGS = [
     { key: 'archipelagoTrackerPollMinutes', label: 'Tracker re-read (minutes)', group: 'Archipelago', type: 'int', min: 1, max: 240 },
     { key: 'archipelagoColorLines', label: 'Colour items by class (desktop only)', group: 'Archipelago', type: 'bool' },
     { key: 'archipelagoItemMarkers', label: 'Mark items by class (works on mobile)', group: 'Archipelago', type: 'bool' },
+    { key: 'archipelagoRolesEnabled', label: 'Create Archipelago roles', group: 'Archipelago', type: 'bool', warn: 'Creates and assigns roles. Needs Manage Roles, and the bot\'s role above the ones it makes.' },
+    { key: 'archipelagoRoleName', label: 'Participant role name', group: 'Archipelago', type: 'string', placeholder: 'Archipelago' },
     { key: 'archipelagoShowItems', label: 'Show item sends', group: 'Archipelago', type: 'bool' },
     { key: 'archipelagoShowHints', label: 'Show hints', group: 'Archipelago', type: 'bool' },
     { key: 'archipelagoShowChat', label: 'Show chat', group: 'Archipelago', type: 'bool' },

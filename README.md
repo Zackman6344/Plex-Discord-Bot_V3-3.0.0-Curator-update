@@ -323,7 +323,7 @@ the bot.
 
 ## 🧾 Logs
 
-The bot keeps two logs under `data/logs/`, both plain text, both pruned after 14 days:
+The bot keeps two logs under `data/logs/`, both plain text, and **both kept indefinitely**:
 
 - `bot-YYYY-MM-DD.log` — everything the console prints, minus the colours.
 - `commands-YYYY-MM-DD.jsonl` — one line per event: a command being invoked (who, where, which
@@ -435,7 +435,31 @@ Off unless `archipelagoEnabled` is set. The bot joins a multiworld as a read-onl
 - `!ap color [id] [on|off]`: Colour item names by class: progression magenta, useful blue, trap red, filler cyan, matching Archipelago's own clients. On by default. Discord renders ANSI code blocks on **desktop and web only**, so this does nothing in the mobile apps.
 - `!ap markers [id] [on|off]`: Prefix 🟪 progression, 🟦 useful, 🟥 trap to item names. Plain text, so unlike the colours it shows on every client including mobile. On by default, and it works alongside colour rather than replacing it. Filler is left unmarked because most sends are filler.
 - `!ap password [id] [password]`: Set or clear a room password. The prefix form deletes your message afterwards.
-- `!ap unwatch [id]` / `!ap retry [id]`: Stop a watch, or reconnect one the server refused.
+- `!ap unwatch [id]` / `!ap retry [id]`: Stop a watch, or reconnect one the server refused. Unwatching also drops every slot claim on that watch.
+
+**Slot claims** tell the bot which slot belongs to which Discord user, so a long async can ping the right person instead of everyone reading the whole log:
+
+- `!ap claim [id] [slot name]`: Take a slot. **Anyone can claim their own**, which is the one part of `!ap` that is not owner-gated; hand-registering 29 players otherwise falls to the owner. One person can hold as many slots as they play. Owners can claim on someone's behalf by adding a mention.
+- `!ap unclaim [id] [slot name]` / `!ap claims [id]`: Give a slot back, or list who holds what. A claim can only be changed by the person holding it or by the owner.
+- `!ap pings [id] [slot name] [all|progression|off]`: How much a claimed slot notifies you. `progression` by default, since filler is most of what arrives and pinging on it trains people to mute the channel. `off` keeps the claim and stops the notifications.
+
+Claims are matched case-insensitively and stored under the spelling the room uses, so `!ap claim 1 zackword` reads back as `ZackWord`. They key on the slot name the seed was rolled with rather than a display alias, which means setting an alias mid-game does not silently unclaim you. The ping posts as its own message after the log block, because a mention inside a code fence renders as text and notifies nobody. Only the claimants named in that message can be mentioned by it.
+
+Pings inherit every filter above them. A line hidden by `progression`, `skipgoaled` or a category toggle never pings, so a slot that has already goaled goes quiet on its own.
+
+**Roles** are created and maintained by the bot once anybody claims a slot, controlled by `archipelagoRolesEnabled` (on by default) and `archipelagoRoleName`:
+
+- **The participant role**, named `Archipelago` unless you change it. Granted on the first claim and removed when someone releases their last slot. Created mentionable so the room's players can be pinged as a group.
+- **A role per goal count**, `1 Game Goaled`, `2 Games Goaled` and so on. Each person holds exactly one, and the bot moves them up as they finish. A count role nobody is on any more is deleted, so the guild only ever carries as many as are actually held.
+
+**Releases do not count.** A release hands out everything a slot was still holding without anyone finishing it, and a 100%-checked slot can still be waiting on an item to goal. Both make the relay treat a slot as finished, and neither adds to the tally. Only a real goal does.
+
+The tally is lifetime and spans rooms. It keys on the multiworld's seed name and the slot name, so it survives reconnects, a room restarting on a new port, a watch being removed, and a watch id being handed out again. Goals that happened before the bot connected are counted too, since goal status is read back from the server on every connect.
+
+- `!ap goals [@user]`: How many multiworlds someone has goaled, and which slots.
+- `!ap leaderboard`: Ranked by count.
+
+The bot needs **Manage Roles**, and its own role has to sit above the ones it creates. Without the permission it logs once per guild and leaves that guild alone. Only roles the bot created are ever assigned or deleted; their ids are recorded in `data/archipelago_roles.json`, so a role you made by hand that happens to share a name is never touched.
 
 Two things worth knowing before switching it on: the room sees a client join on the slot being watched, and a held connection stops a room hosted on archipelago.gg from idling to sleep. Watches survive a restart and reconnect on their own, including after a hosted room comes back on a new port.
 

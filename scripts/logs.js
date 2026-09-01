@@ -15,6 +15,11 @@
 //   npm run logs -- --events --kind=voice-join-failed   one kind
 //   npm run logs -- --stats          totals and the busiest commands
 //   npm run logs -- --raw            the underlying JSONL, unfolded
+//   npm run logs -- --days=60        widen the read window (default 14)
+//   npm run logs -- --all            every day-file there is
+//
+// Day-files are kept indefinitely, so anything older than the default window needs --days or
+// --all. A --since longer than the window widens it on its own.
 
 const commandLog = require('../helpers/commandLog.js');
 
@@ -24,6 +29,9 @@ const value = (name, fallback = null) => {
     const hit = args.find((a) => a.startsWith(`--${name}=`));
     return hit ? hit.slice(name.length + 3) : fallback;
 };
+
+// null lets each reader pick its own default; 0 means every day-file there is.
+const readDays = flag('all') ? 0 : (value('days') !== null ? Number(value('days')) : null);
 
 const DURATION = { s: 1000, m: 60000, h: 3600000, d: 86400000 };
 function parseSince(text) {
@@ -43,7 +51,7 @@ const clock = (iso) => {
 };
 
 if (flag('stats')) {
-    const s = commandLog.stats();
+    const s = commandLog.stats(readDays === null ? {} : { days: readDays });
     console.log(bold('Command log') + dim(` — ${s.dir}`));
     console.log(`  ${s.invocations} invocations, ${s.outputs} outputs, ${s.failures} failures, ${s.events} events total`);
     if (s.topCommands.length) {
@@ -54,7 +62,11 @@ if (flag('stats')) {
 }
 
 if (flag('events')) {
-    const events = commandLog.readEventLog({ limit: Number(value('n', 40)), kind: value('kind') });
+    const events = commandLog.readEventLog({
+        limit: Number(value('n', 40)),
+        kind: value('kind'),
+        ...(readDays === null ? {} : { days: readDays })
+    });
     if (events.length === 0) {
         console.log('No background events logged yet.');
         process.exit(0);
@@ -69,7 +81,8 @@ if (flag('events')) {
 }
 
 if (flag('raw')) {
-    for (const event of commandLog.readEvents().slice(-Number(value('n', 100)))) {
+    const rawEvents = commandLog.readEvents(readDays === null ? {} : { days: readDays });
+    for (const event of rawEvents.slice(-Number(value('n', 100)))) {
         console.log(JSON.stringify(event));
     }
     process.exit(0);
@@ -80,7 +93,8 @@ const { invocations, unattached } = commandLog.readInvocations({
     command: value('command'),
     userId: value('user'),
     errorsOnly: flag('errors'),
-    sinceMs: parseSince(value('since'))
+    sinceMs: parseSince(value('since')),
+    days: readDays
 });
 
 if (invocations.length === 0) {

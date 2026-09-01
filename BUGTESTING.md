@@ -212,7 +212,7 @@ args rather than crashes.
   0.4.x callback API, so regenerating the lockfile will bump it and can break Plex parsing. Pin
   `"xml2js": "0.4.16"` in `package.json` before regenerating, and re-test `/diag` after.
 - ~~Logs are console-only.~~ Fixed: `data/logs/` now holds both a console mirror and a structured
-  command log, pruned after 14 days. Read it with `npm run logs`.
+  command log, kept indefinitely. Read it with `npm run logs`.
 - **2 of 122 unit tests fail on your machine** (`test/plexHome.test.js`) — they assert on a missing
   `homeOwnerToken` but read your real `config/plex.js`, where it's set. It's a test-isolation bug,
   not a bot bug, but it means `npm test` isn't currently a clean signal.

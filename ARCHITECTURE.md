@@ -124,7 +124,7 @@ Two signature styles coexist in the codebase:
 | `interactionAdapter.js`    | Wraps a Discord `ChatInputCommandInteraction` to look like a `Message` so existing command process functions work unchanged against slash commands. First `.reply()` / `.channel.send()` routes through `interaction.editReply()`; subsequent calls use the real channel. See "Slash commands" below. |
 | `aiErrorHandler.js`        | `handleAIError(err, statusMsg, defaultMsg)` for AI commands; replies with an inferred reason (503 / 429 / bad key / 404 / network / SyntaxError) or the command-specific fallback. Also exports `inferReason(err)` as a pure function. |
 | `clueCache.js`             | Persistent XML clue cache for AI minigames. `getOrGenerate(media, minigame, fn, model)` checks `data/clues/<slug>-<year>.xml` first; on miss runs `fn` and appends the result as a new variant. Multiple variants per (media, minigame) accumulate; lookups pick one at random. See "AI clue cache" section below. |
-| `commandLog.js`            | Structured JSONL record of every command invocation, its outcome and the bot's replies, in `data/logs/commands-<date>.jsonl`. Secrets redacted, 14-day retention, `npm run logs` reads it back. |
+| `commandLog.js`            | Structured JSONL record of every command invocation, its outcome and the bot's replies, in `data/logs/commands-<date>.jsonl`. Secrets redacted, kept indefinitely, `npm run logs` reads it back. |
 | `selection.js`             | The probabilistic bits of queue assembly: `discoveryQuota()` (stochastic rounding, so a percentage setting behaves at small queue sizes) and `weightedShuffle()` (stronger tag matches surface near the front without being guaranteed a slot). Pure, with an injectable RNG. |
 | `plexTags.js`              | Plex mood/genre/style vocabulary + server-side tag filtering. Plex never returns Mood/Style inline on a track in a *section listing* — only `/library/metadata/<key>` carries them — so tag search must go through the section's tag filters. Exports `getVocabulary()`, `fetchTracksByTags()`, `fetchTracksByRatingKeys()`, `countTracks()`, `sampleRandomTracks()`. |
 | `tagSidecar.js`            | Local store of **approved, AI-inferred** track tags filling the gap where Plex has none (~70% of tracks here). Plex always wins per dimension; an inferred dimension Plex later fills is marked `supersededAt` rather than deleted. Atomic writes, persisted pending proposals, and the `discoveryPercent` / `repeatMemory` tuning. Writes `data/inferred_tags.json`. Never writes to Plex. |
@@ -143,6 +143,9 @@ Two signature styles coexist in the codebase:
 | `archipelagoData.js`       | Disk cache for AP data packages under `data/archipelago/datapackage/`, keyed by the per-game checksum the server publishes in `RoomInfo`. A reconnect re-downloads only the games whose checksum moved. |
 | `archipelagoMonitor.js`    | Holds one client per watched room, batches its log lines, posts them to the channel the watch was created in. Watches persist to `data/archipelago_watches.json` and reopen on boot. Disabled unless `config.archipelagoEnabled`. See "Archipelago room monitor" below. |
 | `archipelagoTracker.js`    | Reads per-slot completion (`124/124`) off a room's multiworld tracker page, which is the only place a slot's total location count exists. Pure `extractTrackerId` / `parseTrackerRows` / `fullyCheckedSlots` plus one `readCompletion` fetch. Degrades to no information rather than throwing. |
+| `archipelagoClaims.js`     | Which Discord user holds which slot in which watch, persisted to `data/archipelago_claims.json`. Storage and lookup only; whether a line is worth a ping is decided by `archipelagoMonitor.shouldPing`. See "Slot claims" below. |
+| `archipelagoGoals.js`      | Lifetime count of multiworlds each user has goaled, keyed `<seed>::<slot>` so it outlives the watch that saw it. Recording is idempotent, because the goal set is rebuilt on every reconnect. Goals only, never releases. |
+| `archipelagoRoles.js`      | Creates and assigns the participant role and the per-count "N Games Goaled" roles, and deletes count roles nobody holds. Records every role id it creates in `data/archipelago_roles.json` and only ever touches those. Degrades to doing nothing rather than throwing. |
 | `aiGameRecommender.js`     | "Pick a game" AI helper. Uses centralized `getModel()`. Powers `!pickgame`.                                                            |
 | `aiCharacterMapper.js`     | Maps gaming/media habits to a D&D class. Uses centralized `getModel()`. Powers `!buildcharacter`.                                      |
 | `characterStorage.js`      | Persists character sheets to `data/characters.json`. Used by `!buildcharacter` and `!mysheet`.                                          |
@@ -195,6 +198,9 @@ All persistent runtime state lives under `data/`. The directory is created if mi
 | `data/reviewbomb_leaderboard.json` | `commands/reviewbomb.js`           |
 | `data/survival_<category>_leaderboard.json` | `commands/releasesurvival.js` |
 | `data/archipelago_watches.json`   | `helpers/archipelagoMonitor.js`     |
+| `data/archipelago_claims.json`    | `helpers/archipelagoClaims.js`      |
+| `data/archipelago_goals.json`     | `helpers/archipelagoGoals.js`       |
+| `data/archipelago_roles.json`     | `helpers/archipelagoRoles.js`       |
 | `data/archipelago/datapackage/*.json` | `helpers/archipelagoData.js`    |
 
 Custom user playlists are separate — they live in `playlists/<name>.playlist` (gitignored). On-disk shape uses legacy French keys (`musiques`, `nom`, `titre`, `artiste`, `cle`) for backward compatibility with older playlist files; code reads/writes them using English variable names internally.
@@ -582,6 +588,41 @@ The status key is requested under both `_read_client_status_{team}_{slot}` and `
 
 **That null is a trap worth knowing about.** Both spellings arrive in one `Retrieved`, so every slot answers once with a status and once with null. Reading the null as "not goaled" deleted the status parsed one key earlier, which left the goal set empty and disabled the whole filter with no error anywhere. `_absorbStatuses` now skips null and undefined, and `test/archipelago.test.js` pins that exact response shape.
 
+### Slot claims
+
+A claim ties one Discord user to one slot in one watch, so the relay can notify the person who plays that slot. The watch id is part of the key because a slot name only means anything inside its own multiworld. The reverse is left open: on the 29-slot room this was built against, one player held 8 slots, so a user may claim as many as they like.
+
+`!ap claim` is the only mutating subcommand that is not owner-gated. Claiming for yourself is open to anyone; naming someone else still requires the owner. The alternative was the owner hand-registering every player in a large async.
+
+**Claims key on `NetworkPlayer.name`, not on the display name.** `client.players` holds `alias || name` for rendering, and an alias can be changed mid-game. Matching claims against that map would unclaim anyone who set one, silently. `client.slotNames` carries the seed name alongside it, and `canonicalSlotName()` resolves user input against that map case-insensitively so `zackword` stores and reads back as `ZackWord`.
+
+`shouldPing` runs after `shouldRelay`, so every filter above it applies for free: a line dropped by `progression`, `skipgoaled` or a category toggle cannot ping. Ping modes are `all`, `progression` (default) and `off`, held per claim rather than per watch. Only the `items` group pings. A `Hint` packet also names a receiving slot and would be nearly free to add, left out here so it can have its own toggle.
+
+**The ping is a separate message, posted after the log block.** A mention inside a code fence renders as literal text and notifies nobody, and the relay puts everything in a fence. That message is the one place in the monitor that sends with anything other than `allowedMentions: { parse: [] }`; it passes an explicit `users` whitelist of exactly the claimants named in it, so a player who names themselves `@everyone` still cannot reach anyone. The quoted line has its ANSI stripped, since colour outside a fence shows as escape text, and its markdown escaped.
+
+Claims are dropped when their watch is unwatched. Watch ids come from a counter that can reach a used number again, and a stale claim would otherwise attach itself to whatever room next took that id.
+
+Covered by 13 checks across `test/archipelagoClaims.test.js` (storage, casing, ping policy, the alias distinction) and `test/archipelagoPings.test.js`, which drives a real client against a stand-in server and asserts on what reaches the channel.
+
+### Goal tally and roles
+
+**Only a `Goal` counts.** `recordGoals` reads `client.goaled` and nothing else. A release hands out the slot's remaining items without anybody finishing it, and a fully-checked slot can still be waiting on an item to goal. Both make `hasFinished()` true, which is the right answer for the relay filter and the wrong one for a tally of games completed. Reaching for `hasFinished()` here is the mistake this section exists to prevent, and `test/archipelagoGoals.test.js` pins it with a state carrying one goal, one release and one 100%-checked slot.
+
+Records key on `<seed_name>::<slot>`. `RoomInfo.seed_name` is stable for the life of a multiworld and unique across them, which is what lets the tally outlive the things around it: a reconnect, a hosted room restarting on a new port, the watch being removed, and the watch id being handed out again. A watch id or a `host:port` would fail all four. When a server sends no seed name the target string is used instead, which is stable for a room URL and not for a hosted room's moving port.
+
+Recording is idempotent because the goal set is rebuilt from `_read_client_status_{team}_{slot}` on every connect, so the same goal is offered many times. `record()` returns true only the first time, which is what drives the role update.
+
+Two triggers, both needed:
+
+- `client.on('statuses')`, emitted by `_absorbStatuses` when the server answers the status `Get`. Goals that happened before the bot connected arrive here. The `connected` status fires too early, when the goal set is still empty.
+- A `PrintJSON` of type `Goal`, checked **ahead of `shouldRelay`** so a goal still counts when the goals category is switched off for that channel.
+
+**Roles.** The participant role follows whether the user holds any claim at all, across every watch, because a watch is not guild-scoped and the configured room has no guild id to compare against. The count role is a lifetime tally and is never removed for having dropped, only swapped upwards.
+
+The sweep asks `archipelagoGoals.leaderboard()` which counts are still held rather than asking Discord who holds a role. `role.members` reads the member cache, and the bot runs without the `GuildMembers` intent, so that cache holds only members it happens to have seen. Single-member `guild.members.fetch(id)` is a REST call and works without the intent, which is what member lookups use.
+
+Every role id the bot creates is recorded per guild in `data/archipelago_roles.json`, and assignment and deletion only ever touch ids in that file. Name matching would let the bot delete a hand-made role that happened to fit the pattern. A recorded role that has been deleted in Discord, or dragged above the bot in the hierarchy, is treated as absent and replaced rather than retried forever.
+
 ### Data package caching
 
 `RoomInfo` carries a checksum per game. Each is looked up in `data/archipelago/datapackage/<game>-<checksum>.json` first, and `GetDataPackage` is sent only for the games that missed. Some games ship id tables in the megabytes, and without the cache every reconnect would re-download all of them. Cache files are disposable; delete any and the next connect refetches it.
@@ -590,11 +631,17 @@ The status key is requested under both `_read_client_status_{team}_{slot}` and `
 
 | File | Role |
 | ---- | ---- |
-| `commands/archipelago.js` | `!ap` / `/ap` (alias `!archipelago`). Subcommands: `watch`, `list`, `status`, `unwatch`, `filter`, `progression`, `password`, `retry`. Mutating subcommands are owner-only when `config.ownerId` is set. |
-| `helpers/archipelagoClient.js` | Socket, handshake, reconnect, `PrintJSON` rendering. |
-| `helpers/archipelagoMonitor.js` | Watch store, batching, Discord relay, status notices. |
+| `commands/archipelago.js` | `!ap` / `/ap` (alias `!archipelago`). Subcommands: `watch`, `list`, `status`, `unwatch`, `filter`, `progression`, `skipgoaled`, `infer`, `color`, `markers`, `claim`, `unclaim`, `claims`, `pings`, `goals`, `leaderboard`, `password`, `retry`. Mutating subcommands are owner-only when `config.ownerId` is set, except `claim`, `unclaim` and `pings` acting on the caller's own slot. |
+| `helpers/archipelagoClient.js` | Socket, handshake, reconnect, `PrintJSON` rendering, slot name lookups. |
+| `helpers/archipelagoMonitor.js` | Watch store, batching, Discord relay, status notices, ping policy. |
+| `helpers/archipelagoClaims.js` | Slot claim storage and lookup. |
+| `helpers/archipelagoGoals.js` | Lifetime goal tally, keyed by seed and slot. |
+| `helpers/archipelagoRoles.js` | Participant and goal-count Discord roles. |
 | `helpers/archipelagoData.js` | Data package disk cache. |
 | `data/archipelago_watches.json` | Watches added with `!ap watch`, never the configured room. Gitignored: it holds the room URL, the Discord channel and user ids, and a room password in plain text if one was set. Overridable with `PLEXBOT_AP_WATCHES_FILE`, which is required under the test runner so a test run cannot read or rewrite the real one. |
+| `data/archipelago_claims.json` | Slot claims, including the configured room's. Gitignored: it maps Discord user ids to slot names. Overridable with `PLEXBOT_AP_CLAIMS_FILE`, required under the test runner on the same terms as the watch file. |
+| `data/archipelago_goals.json` | Lifetime goal tally per Discord user id. Gitignored. Overridable with `PLEXBOT_AP_GOALS_FILE`. |
+| `data/archipelago_roles.json` | Ids of the roles the bot created, per guild. Deleting it orphans those roles rather than breaking anything: the bot makes fresh ones and stops managing the old. Overridable with `PLEXBOT_AP_ROLES_FILE`. |
 
 ---
 
@@ -668,7 +715,11 @@ path for tests or an externally managed sidecar.
 
 ## Logging
 
-Two sinks, both under `data/logs/`, both pruned at 14 days.
+Two sinks, both under `data/logs/`, both kept indefinitely.
+
+Set `PLEXBOT_LOG_RETENTION_DAYS` to a positive number to delete day-files older than that; unset, 0 or unparseable keeps everything, which is the default. One variable covers both sinks.
+
+Retention and the read window are separate. Readers default to the most recent 14 day-files (`commandLog.DEFAULT_READ_DAYS`), because reading every day since install would only get slower as the pile grows. `npm run logs -- --days=60` widens it, `--all` reads the lot, and a `--since` longer than the default widens it on its own so a query cannot be quietly truncated at the window edge.
 
 **`helpers/logger.js`** mirrors console output to `bot-YYYY-MM-DD.log`. Console-only logging meant
 any failure nobody was watching scrolled past unrecoverably.

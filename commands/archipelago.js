@@ -7,6 +7,14 @@ const { EmbedBuilder } = require('discord.js');
 const config = require('../config/config.js');
 const logger = require('../helpers/logger.js');
 const monitor = require('../helpers/archipelagoMonitor.js');
+const claims = require('../helpers/archipelagoClaims.js');
+const goals = require('../helpers/archipelagoGoals.js');
+
+const PING_HELP = {
+    all: 'every item that reaches the slot',
+    progression: 'progression items only',
+    off: 'nothing — the claim stays, the pings stop'
+};
 
 const CATEGORY_HELP = {
     items: 'item sends (and cheated items)',
@@ -137,6 +145,31 @@ module.exports = {
                     { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' },
                     { name: 'enabled', type: 'BOOLEAN', required: true, description: 'Use markers?' }
                 ] },
+                { name: 'claim', description: 'Get pinged when a slot receives something', options: [
+                    { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' },
+                    { name: 'slot', type: 'STRING', required: true, description: 'The slot name you play' },
+                    { name: 'user', type: 'USER', required: false, description: 'Claim on someone else\'s behalf (owner only)' }
+                ] },
+                { name: 'unclaim', description: 'Stop being pinged for a slot', options: [
+                    { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' },
+                    { name: 'slot', type: 'STRING', required: true, description: 'The slot name to release' }
+                ] },
+                { name: 'claims', description: 'Show who has claimed which slots', options: [
+                    { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' }
+                ] },
+                { name: 'pings', description: 'Choose how much a claimed slot pings you', options: [
+                    { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' },
+                    { name: 'slot', type: 'STRING', required: true, description: 'A slot you have claimed' },
+                    { name: 'mode', type: 'STRING', required: true, description: 'How much to ping', choices: [
+                        { name: 'all', value: 'all' },
+                        { name: 'progression', value: 'progression' },
+                        { name: 'off', value: 'off' }
+                    ] }
+                ] },
+                { name: 'goals', description: 'How many multiworlds someone has goaled', options: [
+                    { name: 'user', type: 'USER', required: false, description: 'Whose tally (defaults to yours)' }
+                ] },
+                { name: 'leaderboard', description: 'Who has goaled the most', options: [] },
                 { name: 'password', description: 'Set or clear a room password', options: [
                     { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' },
                     { name: 'password', type: 'STRING', required: false, description: 'Leave empty to clear' }
@@ -192,13 +225,23 @@ module.exports = {
                     `\`${prefix}ap infer <id> <on|off>\` — also treat a 100%-checked slot as finished (reads the room tracker).`,
                     `\`${prefix}ap color <id> <on|off>\` — colour item names (desktop and web only).`,
                     `\`${prefix}ap markers <id> <on|off>\` — mark items 🟪 progression, 🟦 useful, 🟥 trap. Works everywhere, mobile included.`,
+                    `\`${prefix}ap claim <id> <slot name>\` — tell the bot that slot is yours; it pings you when progression reaches it. Anyone can claim their own.`,
+                    `\`${prefix}ap unclaim <id> <slot name>\` — give the slot back.`,
+                    `\`${prefix}ap claims <id>\` — who has claimed what.`,
+                    `\`${prefix}ap pings <id> <slot name> <${claims.PING_MODES.join('|')}>\` — how much a claimed slot pings you.`,
+                    `\`${prefix}ap goals [@user]\` — multiworlds goaled. Releases don't count.`,
+                    `\`${prefix}ap leaderboard\` — who has goaled the most.`,
                     `\`${prefix}ap password <id> [password]\` — set or clear the room password (the command message is deleted).`,
                     `\`${prefix}ap retry <id>\` — reconnect a watch the server refused.`
                 ].join('\n'));
             }
 
-            const readOnly = ['list', 'status'].includes(action);
-            if (!readOnly && !isOwner(msg)) {
+            const readOnly = ['list', 'status', 'claims', 'goals', 'leaderboard'].includes(action);
+            // Claiming is the one thing players do for themselves — gating it behind the owner
+            // would mean the owner hand-registering everyone in a 29-slot async. Acting on
+            // someone else's behalf is still owner-only, checked per action below.
+            const selfService = ['claim', 'unclaim', 'pings'].includes(action);
+            if (!readOnly && !selfService && !isOwner(msg)) {
                 return msg.channel.send('🔒 Only the bot owner can change Archipelago watches.');
             }
 
@@ -273,7 +316,10 @@ module.exports = {
                     if (id === null) return badId();
                     const removed = monitor.removeWatch(id);
                     if (!removed) return msg.channel.send(`No watch with ID ${id}.`);
-                    return msg.channel.send(`🗑️ Stopped watching **${removed.label}** (#${removed.id}).`);
+                    const alsoDropped = removed.releasedClaims
+                        ? ` ${removed.releasedClaims} slot claim(s) dropped with it.`
+                        : '';
+                    return msg.channel.send(`🗑️ Stopped watching **${removed.label}** (#${removed.id}).${alsoDropped}`);
                 }
 
                 if (action === 'retry') {
@@ -351,6 +397,141 @@ module.exports = {
                     return msg.channel.send(
                         `✅ **${state.watch.label}** (#${id}) — ${toggle ? TOGGLES[action].on : TOGGLES[action].off}.`
                     );
+                }
+
+                // --- slot claims -------------------------------------------------------
+
+                const callerId = msg.author ? msg.author.id : null;
+                // Slot names legitimately contain spaces, so the prefix form takes everything
+                // after the id as the name — minus any mention, which is a separate argument.
+                const slotArg = (from, to) => {
+                    const fromSlash = opt('slot');
+                    if (fromSlash) return String(fromSlash).trim();
+                    return words.slice(from, to).join(' ').replace(/<@!?\d+>/g, ' ').replace(/\s+/g, ' ').trim();
+                };
+                const mentionedUser = () => {
+                    const fromSlash = opt('user');
+                    if (fromSlash) return String(fromSlash);
+                    const users = msg.mentions && msg.mentions.users;
+                    const first = users && typeof users.first === 'function' ? users.first() : null;
+                    return first ? first.id : null;
+                };
+                // Any reply naming a user echoes an <@id>; none of them should actually ping.
+                const quiet = (content) => msg.channel.send({ content, allowedMentions: { parse: [] } });
+
+                if (action === 'claim') {
+                    const id = idFrom(words[1]);
+                    if (id === null) return badId();
+                    const slot = slotArg(2);
+                    if (!slot) return msg.channel.send(`Usage: \`${prefix}ap claim <id> <slot name>\``);
+
+                    const onBehalf = mentionedUser();
+                    if (onBehalf && onBehalf !== callerId && !isOwner(msg)) {
+                        return msg.channel.send('🔒 Only the bot owner can claim a slot for someone else.');
+                    }
+                    const userId = onBehalf || callerId;
+                    if (!userId) return msg.channel.send('I could not work out who to claim that for.');
+
+                    const result = monitor.claimSlot(id, slot, userId);
+                    if (!result) return msg.channel.send(`No watch with ID ${id}.`);
+
+                    const { claim, verified } = result;
+                    return quiet(
+                        `✅ ${userId === callerId ? 'You are' : `<@${userId}> is`} now on \`${claim.slot}\` — ` +
+                        `pinging for ${PING_HELP[claim.pings]}.` +
+                        (verified ? '' : `\n⚠️ I haven't read the room yet, so I couldn't check that name against it.`) +
+                        `\nChange that with \`${prefix}ap pings ${id} ${claim.slot} <${claims.PING_MODES.join('|')}>\`.`
+                    );
+                }
+
+                if (action === 'unclaim' || action === 'pings') {
+                    const id = idFrom(words[1]);
+                    if (id === null) return badId();
+
+                    // The ping mode is a closed vocabulary, so it comes off the end of the line
+                    // and whatever is left in front of it is the slot name.
+                    const slashMode = opt('mode');
+                    const tail = String(words[words.length - 1] || '').toLowerCase();
+                    const mode = action !== 'pings' ? null
+                        : slashMode ? String(slashMode)
+                        : claims.PING_MODES.includes(tail) ? tail
+                        : null;
+                    const slot = action === 'pings' && !slashMode ? slotArg(2, -1) : slotArg(2);
+
+                    if (!slot || (action === 'pings' && !mode)) {
+                        return msg.channel.send(action === 'pings'
+                            ? `Usage: \`${prefix}ap pings <id> <slot name> <${claims.PING_MODES.join('|')}>\`\n` +
+                              Object.entries(PING_HELP).map(([k, v]) => `• \`${k}\` — ${v}`).join('\n')
+                            : `Usage: \`${prefix}ap unclaim <id> <slot name>\``);
+                    }
+
+                    const list = monitor.listClaims(id);
+                    if (list === null) return msg.channel.send(`No watch with ID ${id}.`);
+                    const held = list.find(c => claims.sameSlot(c.slot, slot));
+                    if (!held) return msg.channel.send(`Nobody has claimed \`${slot}\` on watch #${id}.`);
+                    if (held.userId !== callerId && !isOwner(msg)) {
+                        return quiet(`🔒 \`${held.slot}\` is claimed by <@${held.userId}> — only they or the bot owner can change it.`);
+                    }
+
+                    if (action === 'unclaim') {
+                        const removed = monitor.releaseSlot(id, slot);
+                        return msg.channel.send(`🗑️ \`${removed.slot}\` released — no more pings for it.`);
+                    }
+                    const updated = monitor.setClaimPings(id, slot, mode);
+                    return msg.channel.send(`✅ \`${updated.slot}\` — pinging for ${PING_HELP[updated.pings]}.`);
+                }
+
+                if (action === 'claims') {
+                    const id = idFrom(words[1]);
+                    if (id === null) return badId();
+                    const list = monitor.listClaims(id);
+                    if (list === null) return msg.channel.send(`No watch with ID ${id}.`);
+                    if (list.length === 0) {
+                        return msg.channel.send(
+                            `Nobody has claimed a slot on watch #${id} yet — \`${prefix}ap claim ${id} <slot name>\` takes one.`
+                        );
+                    }
+
+                    const sorted = [...list].sort((a, b) => a.slot.localeCompare(b.slot));
+                    const shown = sorted.slice(0, 40);
+                    const lines = shown.map(c => `• \`${c.slot}\` — <@${c.userId}> (${c.pings})`);
+                    if (sorted.length > shown.length) lines.push(`…and ${sorted.length - shown.length} more.`);
+                    return quiet(`🧩 **Claimed slots on watch #${id}**\n${lines.join('\n')}`);
+                }
+
+                if (action === 'goals') {
+                    const who = mentionedUser() || callerId;
+                    const count = goals.countFor(who);
+                    const mine = who === callerId;
+
+                    if (count === 0) {
+                        return quiet(mine
+                            ? `You haven't goaled a multiworld yet, or none of the slots you goaled were claimed at the time.`
+                            : `<@${who}> has no goals recorded.`);
+                    }
+
+                    // Newest first: the recent ones are the ones anybody is asking about.
+                    const entries = goals.entriesFor(who)
+                        .sort((a, b) => String(b.at).localeCompare(String(a.at)))
+                        .slice(0, 15)
+                        .map(e => `• \`${e.slot || e.key}\``);
+                    const more = count > entries.length ? `\n…and ${count - entries.length} more.` : '';
+
+                    return quiet(
+                        `🏁 ${mine ? 'You have' : `<@${who}> has`} goaled **${count}** multiworld${count === 1 ? '' : 's'}.\n` +
+                        `${entries.join('\n')}${more}`
+                    );
+                }
+
+                if (action === 'leaderboard') {
+                    const board = goals.leaderboard().slice(0, 15);
+                    if (board.length === 0) {
+                        return msg.channel.send('No goals recorded yet. Claim a slot with `' + prefix + 'ap claim` and finish it.');
+                    }
+                    const medal = ['🥇', '🥈', '🥉'];
+                    const lines = board.map((row, i) =>
+                        `${medal[i] || `${i + 1}.`} <@${row.userId}> — **${row.count}**`);
+                    return quiet(`🏁 **Multiworlds goaled**\n${lines.join('\n')}`);
                 }
 
                 if (action === 'password') {
