@@ -10,6 +10,8 @@ const monitor = require('../helpers/archipelagoMonitor.js');
 const claims = require('../helpers/archipelagoClaims.js');
 const goals = require('../helpers/archipelagoGoals.js');
 
+const WATCH_ID_HELP = 'Watch ID — leave empty if there is only one room';
+
 const PING_HELP = {
     all: 'every item that reaches the slot',
     progression: 'progression items only',
@@ -105,15 +107,17 @@ module.exports = {
                     { name: 'label', type: 'STRING', required: false, description: 'Name to show in status output' },
                     { name: 'password', type: 'STRING', required: false, description: 'Room password — visible in channel; prefer !ap password' }
                 ] },
+                // `id` is optional throughout and trails the required options, because Discord
+                // rejects a payload where a required option follows an optional one. Leaving it
+                // out picks the only watch there is, which is the normal case.
                 { name: 'list', description: 'Show every room being watched', options: [] },
                 { name: 'status', description: 'Show detail for one watch', options: [
-                    { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' }
+                    { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
                 ] },
                 { name: 'unwatch', description: 'Stop watching a room', options: [
-                    { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' }
+                    { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
                 ] },
                 { name: 'filter', description: 'Turn one category of log line on or off', options: [
-                    { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' },
                     { name: 'category', type: 'STRING', required: true, description: 'Which lines to toggle', choices: [
                         { name: 'items', value: 'items' },
                         { name: 'hints', value: 'hints' },
@@ -123,59 +127,60 @@ module.exports = {
                         { name: 'deaths', value: 'deaths' },
                         { name: 'misc', value: 'misc' }
                     ] },
-                    { name: 'enabled', type: 'BOOLEAN', required: true, description: 'Show these lines?' }
+                    { name: 'enabled', type: 'BOOLEAN', required: true, description: 'Show these lines?' },
+                    { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
                 ] },
                 { name: 'progression', description: 'Relay only progression item sends', options: [
-                    { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' },
-                    { name: 'enabled', type: 'BOOLEAN', required: true, description: 'Progression items only?' }
+                    { name: 'enabled', type: 'BOOLEAN', required: true, description: 'Progression items only?' },
+                    { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
                 ] },
                 { name: 'skipgoaled', description: 'Hide items sent to slots that already finished', options: [
-                    { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' },
-                    { name: 'enabled', type: 'BOOLEAN', required: true, description: 'Hide them?' }
+                    { name: 'enabled', type: 'BOOLEAN', required: true, description: 'Hide them?' },
+                    { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
                 ] },
                 { name: 'infer', description: 'Also treat a 100%-checked slot as finished', options: [
-                    { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' },
-                    { name: 'enabled', type: 'BOOLEAN', required: true, description: 'Read the room tracker for completion?' }
+                    { name: 'enabled', type: 'BOOLEAN', required: true, description: 'Read the room tracker for completion?' },
+                    { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
                 ] },
                 { name: 'color', description: 'Colour item names by class (desktop and web only)', options: [
-                    { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' },
-                    { name: 'enabled', type: 'BOOLEAN', required: true, description: 'Use colour?' }
+                    { name: 'enabled', type: 'BOOLEAN', required: true, description: 'Use colour?' },
+                    { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
                 ] },
                 { name: 'markers', description: 'Mark item names by class (works on mobile)', options: [
-                    { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' },
-                    { name: 'enabled', type: 'BOOLEAN', required: true, description: 'Use markers?' }
+                    { name: 'enabled', type: 'BOOLEAN', required: true, description: 'Use markers?' },
+                    { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
                 ] },
                 { name: 'claim', description: 'Get pinged when a slot receives something', options: [
-                    { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' },
                     { name: 'slot', type: 'STRING', required: true, description: 'The slot name you play' },
-                    { name: 'user', type: 'USER', required: false, description: 'Claim on someone else\'s behalf (owner only)' }
+                    { name: 'user', type: 'USER', required: false, description: 'Claim on someone else\'s behalf (owner only)' },
+                    { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
                 ] },
                 { name: 'unclaim', description: 'Stop being pinged for a slot', options: [
-                    { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' },
-                    { name: 'slot', type: 'STRING', required: true, description: 'The slot name to release' }
+                    { name: 'slot', type: 'STRING', required: true, description: 'The slot name to release' },
+                    { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
                 ] },
                 { name: 'claims', description: 'Show who has claimed which slots', options: [
-                    { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' }
+                    { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
                 ] },
                 { name: 'pings', description: 'Choose how much a claimed slot pings you', options: [
-                    { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' },
                     { name: 'slot', type: 'STRING', required: true, description: 'A slot you have claimed' },
                     { name: 'mode', type: 'STRING', required: true, description: 'How much to ping', choices: [
                         { name: 'all', value: 'all' },
                         { name: 'progression', value: 'progression' },
                         { name: 'off', value: 'off' }
-                    ] }
+                    ] },
+                    { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
                 ] },
                 { name: 'goals', description: 'How many multiworlds someone has goaled', options: [
                     { name: 'user', type: 'USER', required: false, description: 'Whose tally (defaults to yours)' }
                 ] },
                 { name: 'leaderboard', description: 'Who has goaled the most', options: [] },
                 { name: 'password', description: 'Set or clear a room password', options: [
-                    { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' },
-                    { name: 'password', type: 'STRING', required: false, description: 'Leave empty to clear' }
+                    { name: 'password', type: 'STRING', required: false, description: 'Leave empty to clear' },
+                    { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
                 ] },
                 { name: 'retry', description: 'Reconnect a paused watch', options: [
-                    { name: 'id', type: 'INTEGER', required: true, description: 'Watch ID' }
+                    { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
                 ] }
             ]
         },
@@ -215,6 +220,8 @@ module.exports = {
                     '🧩 **Archipelago room monitor**',
                     '*Relays a multiworld\'s server log into the channel you set it up in.*',
                     '',
+                    `\`[id]\` is optional while only one room is being watched. \`${prefix}ap list\` shows the IDs when there are more.`,
+                    '',
                     `\`${prefix}ap watch <room url|host:port> <slot name>\` — start watching. The slot name is any real slot in the multiworld; the bot attaches as a read-only tracker and never receives items.`,
                     `\`${prefix}ap list\` — every watch and its state.`,
                     `\`${prefix}ap status <id>\` — detail for one watch.`,
@@ -225,10 +232,10 @@ module.exports = {
                     `\`${prefix}ap infer <id> <on|off>\` — also treat a 100%-checked slot as finished (reads the room tracker).`,
                     `\`${prefix}ap color <id> <on|off>\` — colour item names (desktop and web only).`,
                     `\`${prefix}ap markers <id> <on|off>\` — mark items 🟪 progression, 🟦 useful, 🟥 trap. Works everywhere, mobile included.`,
-                    `\`${prefix}ap claim <id> <slot name>\` — tell the bot that slot is yours; it pings you when progression reaches it. Anyone can claim their own.`,
-                    `\`${prefix}ap unclaim <id> <slot name>\` — give the slot back.`,
-                    `\`${prefix}ap claims <id>\` — who has claimed what.`,
-                    `\`${prefix}ap pings <id> <slot name> <${claims.PING_MODES.join('|')}>\` — how much a claimed slot pings you.`,
+                    `\`${prefix}ap claim [id] <slot name>\` — tell the bot that slot is yours; it pings you when progression reaches it. Anyone can claim their own.`,
+                    `\`${prefix}ap unclaim [id] <slot name>\` — give the slot back.`,
+                    `\`${prefix}ap claims [id]\` — who has claimed what.`,
+                    `\`${prefix}ap pings [id] <slot name> <${claims.PING_MODES.join('|')}>\` — how much a claimed slot pings you.`,
                     `\`${prefix}ap goals [@user]\` — multiworlds goaled. Releases don't count.`,
                     `\`${prefix}ap leaderboard\` — who has goaled the most.`,
                     `\`${prefix}ap password <id> [password]\` — set or clear the room password (the command message is deleted).`,
@@ -245,12 +252,28 @@ module.exports = {
                 return msg.channel.send('🔒 Only the bot owner can change Archipelago watches.');
             }
 
-            const idFrom = (token) => {
-                const value = opt('id');
-                const parsed = Number(value !== null ? value : token);
-                return Number.isInteger(parsed) ? parsed : null;
+            // A watch id is noise when there is only one room, so it can be left out and the one
+            // watch is assumed. In the prefix form that makes the first word ambiguous:
+            // `!ap claim 0 ZackWord` gives an id and `!ap claim ZackWord` does not. A slot could
+            // in principle be named "0", so a number is only read as an id when a watch has it.
+            const watchIds = () => monitor.listWatches().map(entry => entry.watch.id);
+            const hasExplicitId = interaction
+                ? opt('id') !== null
+                : /^\d+$/.test(String(words[1] || '')) && watchIds().includes(Number(words[1]));
+            // Where the arguments after the id start, so the rest of the parsing does not have to
+            // care whether one was given.
+            const argBase = hasExplicitId ? 2 : 1;
+            const idFrom = () => {
+                if (hasExplicitId) {
+                    const value = opt('id');
+                    return Number(value !== null ? value : words[1]);
+                }
+                const ids = watchIds();
+                return ids.length === 1 ? ids[0] : null;
             };
-            const badId = () => msg.channel.send(`Which watch? \`${prefix}ap list\` shows the IDs.`);
+            const badId = () => msg.channel.send(watchIds().length === 0
+                ? `No rooms are being watched yet. \`${prefix}ap watch <room url> <slot name>\` starts one.`
+                : `More than one room is being watched, so I need the ID. \`${prefix}ap list\` shows them.`);
 
             try {
                 if (action === 'watch') {
@@ -304,7 +327,7 @@ module.exports = {
                 }
 
                 if (action === 'status') {
-                    const id = idFrom(words[1]);
+                    const id = idFrom();
                     if (id === null) return badId();
                     const entries = monitor.listWatches().filter(e => e.watch.id === id);
                     if (entries.length === 0) return msg.channel.send(`No watch with ID ${id}.`);
@@ -312,7 +335,7 @@ module.exports = {
                 }
 
                 if (action === 'unwatch') {
-                    const id = idFrom(words[1]);
+                    const id = idFrom();
                     if (id === null) return badId();
                     const removed = monitor.removeWatch(id);
                     if (!removed) return msg.channel.send(`No watch with ID ${id}.`);
@@ -323,7 +346,7 @@ module.exports = {
                 }
 
                 if (action === 'retry') {
-                    const id = idFrom(words[1]);
+                    const id = idFrom();
                     if (id === null) return badId();
                     const state = monitor.restartWatch(id);
                     if (!state) return msg.channel.send(`No watch with ID ${id}.`);
@@ -331,13 +354,13 @@ module.exports = {
                 }
 
                 if (action === 'filter') {
-                    const id = idFrom(words[1]);
+                    const id = idFrom();
                     if (id === null) return badId();
-                    const group = String(opt('category') || words[2] || '').toLowerCase();
+                    const group = String(opt('category') || words[argBase] || '').toLowerCase();
                     const rawToggle = opt('enabled');
                     const toggle = rawToggle !== null ? !!rawToggle
-                        : truthy(words[3]) ? true
-                        : falsy(words[3]) ? false
+                        : truthy(words[argBase + 1]) ? true
+                        : falsy(words[argBase + 1]) ? false
                         : null;
 
                     if (!monitor.FILTER_GROUPS.includes(group) || toggle === null) {
@@ -383,14 +406,14 @@ module.exports = {
                 };
 
                 if (TOGGLES[action]) {
-                    const id = idFrom(words[1]);
+                    const id = idFrom();
                     if (id === null) return badId();
                     const rawToggle = opt('enabled');
                     const toggle = rawToggle !== null ? !!rawToggle
-                        : truthy(words[2]) ? true
-                        : falsy(words[2]) ? false
+                        : truthy(words[argBase]) ? true
+                        : falsy(words[argBase]) ? false
                         : null;
-                    if (toggle === null) return msg.channel.send(`Usage: \`${prefix}ap ${action} <id> <on|off>\``);
+                    if (toggle === null) return msg.channel.send(`Usage: \`${prefix}ap ${action} [id] <on|off>\``);
 
                     const state = TOGGLES[action].apply(id, toggle);
                     if (!state) return msg.channel.send(`No watch with ID ${id}.`);
@@ -420,10 +443,10 @@ module.exports = {
                 const quiet = (content) => msg.channel.send({ content, allowedMentions: { parse: [] } });
 
                 if (action === 'claim') {
-                    const id = idFrom(words[1]);
+                    const id = idFrom();
                     if (id === null) return badId();
-                    const slot = slotArg(2);
-                    if (!slot) return msg.channel.send(`Usage: \`${prefix}ap claim <id> <slot name>\``);
+                    const slot = slotArg(argBase);
+                    if (!slot) return msg.channel.send(`Usage: \`${prefix}ap claim [id] <slot name>\``);
 
                     const onBehalf = mentionedUser();
                     if (onBehalf && onBehalf !== callerId && !isOwner(msg)) {
@@ -445,7 +468,7 @@ module.exports = {
                 }
 
                 if (action === 'unclaim' || action === 'pings') {
-                    const id = idFrom(words[1]);
+                    const id = idFrom();
                     if (id === null) return badId();
 
                     // The ping mode is a closed vocabulary, so it comes off the end of the line
@@ -456,13 +479,13 @@ module.exports = {
                         : slashMode ? String(slashMode)
                         : claims.PING_MODES.includes(tail) ? tail
                         : null;
-                    const slot = action === 'pings' && !slashMode ? slotArg(2, -1) : slotArg(2);
+                    const slot = action === 'pings' && !slashMode ? slotArg(argBase, -1) : slotArg(argBase);
 
                     if (!slot || (action === 'pings' && !mode)) {
                         return msg.channel.send(action === 'pings'
-                            ? `Usage: \`${prefix}ap pings <id> <slot name> <${claims.PING_MODES.join('|')}>\`\n` +
+                            ? `Usage: \`${prefix}ap pings [id] <slot name> <${claims.PING_MODES.join('|')}>\`\n` +
                               Object.entries(PING_HELP).map(([k, v]) => `• \`${k}\` — ${v}`).join('\n')
-                            : `Usage: \`${prefix}ap unclaim <id> <slot name>\``);
+                            : `Usage: \`${prefix}ap unclaim [id] <slot name>\``);
                     }
 
                     const list = monitor.listClaims(id);
@@ -482,7 +505,7 @@ module.exports = {
                 }
 
                 if (action === 'claims') {
-                    const id = idFrom(words[1]);
+                    const id = idFrom();
                     if (id === null) return badId();
                     const list = monitor.listClaims(id);
                     if (list === null) return msg.channel.send(`No watch with ID ${id}.`);
@@ -535,7 +558,7 @@ module.exports = {
                 }
 
                 if (action === 'password') {
-                    const password = opt('password') || (interaction ? null : words.slice(2).join(' ')) || null;
+                    const password = opt('password') || (interaction ? null : words.slice(argBase).join(' ')) || null;
 
                     // The prefix form puts the password in a channel message. Delete it before
                     // anything else can fail and leave it sitting there.
@@ -543,7 +566,7 @@ module.exports = {
                         try { await msg.delete(); } catch (_) {}
                     }
 
-                    const id = idFrom(words[1]);
+                    const id = idFrom();
                     if (id === null) return badId();
 
                     const state = monitor.setPassword(id, password);

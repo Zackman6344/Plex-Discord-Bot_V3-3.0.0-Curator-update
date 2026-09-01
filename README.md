@@ -424,7 +424,9 @@ Off unless `archipelagoEnabled` is set. The bot joins a multiworld as a read-onl
 
 **The easiest way in is `/config` → Archipelago**, which holds every setting for one room: its URL (or host and port), the slot to watch from, its password, the channel the log posts to, the batch window, and the seven category filters. Saving any of them re-points the bot immediately, with no restart. That room shows up as watch `#0`, and because `/config` owns it, `!ap` will not let you edit it from the command line.
 
-`!ap` adds further rooms alongside it, each posting to the channel it was created in:
+`!ap` adds further rooms alongside it, each posting to the channel it was created in.
+
+**The `[id]` is optional while only one room is being watched**, which is the usual case, so `!ap claim ZackWord` and `/ap claim slot: ZackWord` both work. Once a second room is added the ID is required again and the bot says so rather than guessing. A number is only read as an ID when a watch actually has it, so a slot named `12345` still reaches the right place. In the slash form `id` trails the required options, because Discord rejects a command where a required option follows an optional one.
 
 - `!ap watch [room url or host:port] [slot name]`: Start relaying a room's log here. The slot name has to match a real slot in that multiworld; the bot attaches to it as an observer, receives no items, and cannot affect the person playing it.
 - `!ap list` / `!ap status [id]`: Watches, their connection state and how many lines each has relayed.
@@ -443,7 +445,7 @@ Off unless `archipelagoEnabled` is set. The bot joins a multiworld as a read-onl
 - `!ap unclaim [id] [slot name]` / `!ap claims [id]`: Give a slot back, or list who holds what. A claim can only be changed by the person holding it or by the owner.
 - `!ap pings [id] [slot name] [all|progression|off]`: How much a claimed slot notifies you. `progression` by default, since filler is most of what arrives and pinging on it trains people to mute the channel. `off` keeps the claim and stops the notifications.
 
-Claims are matched case-insensitively and stored under the spelling the room uses, so `!ap claim 1 zackword` reads back as `ZackWord`. They key on the slot name the seed was rolled with rather than a display alias, which means setting an alias mid-game does not silently unclaim you. The ping posts as its own message after the log block, because a mention inside a code fence renders as text and notifies nobody. Only the claimants named in that message can be mentioned by it.
+Claims are matched case-insensitively and stored under the spelling the room uses, so `!ap claim zackword` reads back as `ZackWord`. They key on the slot name the seed was rolled with rather than a display alias, which means setting an alias mid-game does not silently unclaim you. The ping posts as its own message after the log block, because a mention inside a code fence renders as text and notifies nobody. Only the claimants named in that message can be mentioned by it.
 
 Pings inherit every filter above them. A line hidden by `progression`, `skipgoaled` or a category toggle never pings, so a slot that has already goaled goes quiet on its own.
 

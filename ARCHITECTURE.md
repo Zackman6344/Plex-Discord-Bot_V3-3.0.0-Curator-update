@@ -615,6 +615,14 @@ Claims are dropped when their watch is unwatched. Watch ids come from a counter 
 
 Covered by 13 checks across `test/archipelagoClaims.test.js` (storage, casing, ping policy, the alias distinction) and `test/archipelagoPings.test.js`, which drives a real client against a stand-in server and asserts on what reaches the channel.
 
+### The optional watch id
+
+Every id-taking sub-command accepts the id optionally and falls back to the only watch there is. With a single room the number carries no information, and requiring it made `/ap claim` read like it wanted something the user did not have.
+
+That makes the first word ambiguous in the prefix form: `!ap claim 0 ZackWord` gives an id and `!ap claim ZackWord` does not. A number is read as an id only when a watch actually holds it, so a slot named `12345` is still a slot name. `argBase` is where the arguments after the id start, and the rest of the parsing indexes off it rather than off fixed positions. With two or more watches the id is required again and the reply says which case it is: no rooms at all reads differently from too many to guess between.
+
+In the slash form `id` is declared last on every sub-command. Discord rejects the whole registration payload when a required option follows an optional one, and `scripts/validate-slash.js` fails the build on it.
+
 ### Goal tally and roles
 
 **Only a `Goal` counts.** `recordGoals` reads `client.goaled` and nothing else. A release hands out the slot's remaining items without anybody finishing it, and a fully-checked slot can still be waiting on an item to goal. Both make `hasFinished()` true, which is the right answer for the relay filter and the wrong one for a tally of games completed. Reaching for `hasFinished()` here is the mistake this section exists to prevent, and `test/archipelagoGoals.test.js` pins it with a state carrying one goal, one release and one 100%-checked slot.
