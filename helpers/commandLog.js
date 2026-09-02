@@ -21,9 +21,12 @@ const path = require('path');
 
 const DIR = process.env.PLEXBOT_LOG_DIR || path.join(__dirname, '..', 'data', 'logs');
 // Day-files are kept indefinitely. Set PLEXBOT_LOG_RETENTION_DAYS to a positive number to delete
-// anything older than that; unset, 0 or unparseable keeps everything. Shared with logger.js so
-// one setting covers both sinks under data/logs/.
-const RETENTION_DAYS = Math.max(0, Math.floor(Number(process.env.PLEXBOT_LOG_RETENTION_DAYS)) || 0);
+// anything older than that; unset, 0 or unparseable keeps everything. The parse and the prune
+// itself live in logPrune.js, shared with logger.js, so one setting really does cover both sinks
+// rather than two copies that happen to agree.
+const logPrune = require('./logPrune.js');
+const RETENTION_DAYS = logPrune.retentionDays();
+const COMMAND_LOG = /^commands-(\d{4}-\d{2}-\d{2})\.jsonl$/;
 // How far back a read goes when the caller does not say. Kept separate from retention: files are
 // now kept forever, and `npm run logs` reading every day since install would only get slower.
 // Pass `{ days: 0 }` to read the lot.
@@ -75,19 +78,7 @@ function fileForToday() {
 
 /** Drop day-files older than the retention window. Cheap, and only once an hour. */
 function prune() {
-    if (RETENTION_DAYS <= 0) return;
-    if (Date.now() - lastPrune < 60 * 60 * 1000) return;
-    lastPrune = Date.now();
-    try {
-        const cutoff = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000;
-        for (const name of fs.readdirSync(DIR)) {
-            const match = /^commands-(\d{4}-\d{2}-\d{2})\.jsonl$/.exec(name);
-            if (!match) continue;
-            if (new Date(match[1] + 'T00:00:00Z').getTime() < cutoff) {
-                fs.unlinkSync(path.join(DIR, name));
-            }
-        }
-    } catch (_) { /* pruning is housekeeping, never worth an error */ }
+    logPrune.pruneDayFiles(DIR, COMMAND_LOG, 'command-log');
 }
 
 // Under the test runner, only write when a test has pointed PLEXBOT_LOG_DIR somewhere of its own.
@@ -200,14 +191,30 @@ function recordEvent(kind, detail = {}) {
 function readEventLog({ limit = 40, kind = null, days = DEFAULT_READ_DAYS } = {}) {
     let events = readEvents({ days }).filter((e) => e.type === 'event');
     if (kind) events = events.filter((e) => e.kind === kind);
-    return events.slice(-limit);
+    // slice(-0) is slice(0), which returns everything rather than nothing, so a limit of 0 or a
+    // typo has to be caught before it gets here.
+    const take = countOr(limit, 40);
+    return take > 0 ? events.slice(-take) : [];
+}
+
+/**
+ * Normalise a caller-supplied window or limit.
+ * A typo used to do the opposite of what was asked: `--days=abc` gave NaN, `NaN > 0` is false,
+ * and the reader fell through to "every file there is" instead of narrowing.
+ * @returns {number} a non-negative integer, or `fallback` when the value is not usable
+ */
+function countOr(value, fallback) {
+    const parsed = Math.floor(Number(value));
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 /**
  * Every event from the most recent `days` day-files, oldest first. Malformed lines are skipped.
- * @param {{days?: number}} [options] days: 0 reads every file there is.
+ * @param {{days?: number}} [options] days: 0 reads every file there is; anything unusable falls
+ *   back to the default window rather than widening.
  */
 function readEvents({ days = DEFAULT_READ_DAYS } = {}) {
+    days = countOr(days, DEFAULT_READ_DAYS);
     const events = [];
     let files = [];
     try {
@@ -236,8 +243,8 @@ function readInvocations({ limit = 25, command = null, userId = null, errorsOnly
     const loose = [];
 
     // Day-files are kept forever, so a `sinceMs` reaching further back than the default read
-    // window has to widen it or the answer is quietly truncated at 14 days.
-    const wanted = days !== null ? days
+    // window has to widen it or the answer is quietly truncated at 14 files.
+    const wanted = days !== null ? countOr(days, DEFAULT_READ_DAYS)
         : sinceMs ? Math.max(DEFAULT_READ_DAYS, Math.ceil(sinceMs / 86400000) + 1)
         : DEFAULT_READ_DAYS;
 
@@ -268,14 +275,28 @@ function readInvocations({ limit = 25, command = null, userId = null, errorsOnly
     return { invocations: list.slice(0, limit), unattached: loose.slice(-limit) };
 }
 
+/**
+ * Totals over a window of day-files, never over the whole store unless asked.
+ * `windowDays` and `filesRead` come back so a caller can say which it is: retention is unlimited
+ * now, so presenting a 14-file slice as a lifetime total under-reports without saying so.
+ */
 function stats({ days = DEFAULT_READ_DAYS } = {}) {
-    const events = readEvents({ days });
+    const window = countOr(days, DEFAULT_READ_DAYS);
+    const events = readEvents({ days: window });
+    let onDisk = 0;
+    try {
+        onDisk = fs.readdirSync(DIR).filter((f) => COMMAND_LOG.test(f)).length;
+    } catch (_) { /* the directory may not exist yet */ }
     const invokes = events.filter((e) => e.type === 'invoke');
     const outcomes = events.filter((e) => e.type === 'outcome');
     const byCommand = {};
     for (const i of invokes) byCommand[i.command] = (byCommand[i.command] || 0) + 1;
     return {
         dir: DIR,
+        // 0 means every file was read, so the totals really are lifetime.
+        windowDays: window,
+        filesOnDisk: onDisk,
+        windowed: window > 0 && onDisk > window,
         events: events.length,
         invocations: invokes.length,
         failures: outcomes.filter((o) => !o.ok).length,
@@ -293,5 +314,5 @@ function _reset() {
 
 module.exports = {
     startInvocation, finishInvocation, recordOutput, recordEvent, readEventLog, readEvents, readInvocations, stats,
-    summarise, _reset, _dir: DIR, RETENTION_DAYS, DEFAULT_READ_DAYS
+    summarise, _reset, _dir: DIR, countOr, RETENTION_DAYS, DEFAULT_READ_DAYS
 };

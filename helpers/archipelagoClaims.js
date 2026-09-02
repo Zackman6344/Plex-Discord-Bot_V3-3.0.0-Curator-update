@@ -14,81 +14,69 @@
 // time — but the canonical spelling the room reports is what gets stored, so the ping message
 // and the room agree.
 
-const fs = require('fs');
 const path = require('path');
-const logger = require('./logger.js');
-
-// Overridable so a test run can point at its own file, and so the store can be relocated.
-const CLAIM_FILE = process.env.PLEXBOT_AP_CLAIMS_FILE || path.join(__dirname, '..', 'data', 'archipelago_claims.json');
-// Under the test runner that override is required rather than optional, the same gate the watch
-// file uses. The real file maps real people to slots, and a test run has no business rewriting it.
-const usable = !process.env.NODE_TEST_CONTEXT || !!process.env.PLEXBOT_AP_CLAIMS_FILE;
+const { createStore } = require('./jsonStore.js');
 
 // How much of a slot's incoming traffic is worth a notification. Progression is the default
 // because it is the only class that changes whether booting the game up is worth it — filler is
 // most of what arrives and pinging on it would train people to mute the channel.
-const PING_MODES = ['all', 'progression', 'off'];
+// One table, so the vocabulary, its descriptions and the slash choices cannot disagree. They were
+// declared in three places, and adding a mode to the list alone would have made setPings accept
+// something the reply rendered as "pinging for undefined" and the slash form refused to offer.
+const PING_HELP = {
+    all: 'every item that reaches the slot',
+    progression: 'progression items only',
+    off: 'nothing — the claim stays, the pings stop'
+};
+const PING_MODES = Object.keys(PING_HELP);
 const DEFAULT_PING_MODE = 'progression';
 
-let cache = null;
-// Set when the file on disk could not be parsed. Writing then would replace claims that may
-// still be salvageable by hand with whatever this process holds, so the store goes read-only.
-let readOnly = false;
-
-function load() {
-    if (cache) return cache;
-    if (!usable) {
-        cache = [];
-        return cache;
-    }
-    try {
-        const parsed = JSON.parse(fs.readFileSync(CLAIM_FILE, 'utf8'));
-        cache = Array.isArray(parsed.claims) ? parsed.claims : [];
-    } catch (err) {
-        cache = [];
-        if (err.code !== 'ENOENT') {
-            readOnly = true;
-            logger.error(`Archipelago claim file unreadable (${err.message}) — claims are frozen ` +
-                `for this run so the file is not overwritten. Move ${CLAIM_FILE} aside to start fresh.`);
-        }
-    }
-    return cache;
-}
-
-function persist() {
-    if (!usable || readOnly) return;
-    try {
-        fs.mkdirSync(path.dirname(CLAIM_FILE), { recursive: true });
-        // Write-then-rename, so a kill partway through cannot leave a truncated file that the
-        // next boot parse-fails on and then overwrites.
-        const tmp = `${CLAIM_FILE}.tmp`;
-        fs.writeFileSync(tmp, JSON.stringify({ claims: load() }, null, 4));
-        fs.renameSync(tmp, CLAIM_FILE);
-    } catch (err) {
-        logger.error('Could not persist Archipelago claims:', err.message);
-    }
-}
+const store = createStore({
+    envVar: 'PLEXBOT_AP_CLAIMS_FILE',
+    defaultPath: path.join(__dirname, '..', 'data', 'archipelago_claims.json'),
+    key: 'claims',
+    shape: 'array',
+    label: 'claim'
+});
+const CLAIM_FILE = store.file;
+const { load, persist } = store;
 
 function sameSlot(a, b) {
+    // The hot path is notePing, once per relayed line, comparing the room's canonical spelling
+    // against the spelling stored from it — already equal byte for byte. The folding below costs
+    // six string allocations per claim examined, so it is worth skipping when it cannot matter.
+    if (a === b) return true;
     return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+}
+
+// Readers get copies. `all()` cloned the array but not its elements, which advertised a
+// defensive copy while `setPings` relied on the opposite: that a returned claim was live and
+// mutating it changed the store. A caller following the first signal would have edited the cache
+// with nothing persisting it, and the change would then vanish on restart or be written out
+// later by an unrelated claim.
+const copy = (claim) => (claim ? { ...claim } : null);
+
+/** The live entry, for the few places inside this module that mean to write through it. */
+function locate(watchId, slot) {
+    return load().find(c => c.watchId === watchId && sameSlot(c.slot, slot)) || null;
 }
 
 /** Every claim, across every watch. */
 function all() {
-    return [...load()];
+    return load().map(copy);
 }
 
 /** The claim on one slot, or null. At most one person holds a given slot. */
 function find(watchId, slot) {
-    return load().find(c => c.watchId === watchId && sameSlot(c.slot, slot)) || null;
+    return copy(locate(watchId, slot));
 }
 
 function forWatch(watchId) {
-    return load().filter(c => c.watchId === watchId);
+    return load().filter(c => c.watchId === watchId).map(copy);
 }
 
 function forUser(watchId, userId) {
-    return load().filter(c => c.watchId === watchId && c.userId === userId);
+    return load().filter(c => c.watchId === watchId && c.userId === userId).map(copy);
 }
 
 /**
@@ -136,29 +124,29 @@ function release(watchId, slot) {
  */
 function releaseWatch(watchId) {
     const claims = load();
-    const keep = claims.filter(c => c.watchId !== watchId);
-    const removed = claims.length - keep.length;
-    if (removed > 0) {
-        cache = keep;
-        persist();
+    // Spliced in place rather than by swapping the cache, so the store owns the array and this
+    // module never has to reach into its internals.
+    let removed = 0;
+    for (let i = claims.length - 1; i >= 0; i--) {
+        if (claims[i].watchId !== watchId) continue;
+        claims.splice(i, 1);
+        removed++;
     }
+    if (removed > 0) persist();
     return removed;
 }
 
 function setPings(watchId, slot, mode) {
     if (!PING_MODES.includes(mode)) throw new Error(`Ping mode must be one of ${PING_MODES.join(', ')}.`);
-    const entry = find(watchId, slot);
+    const entry = locate(watchId, slot);
     if (!entry) return null;
     entry.pings = mode;
     persist();
-    return entry;
+    return copy(entry);
 }
 
 /** Test seam: drop the in-memory copy so the next read comes off disk. */
-function reset() {
-    cache = null;
-    readOnly = false;
-}
+const reset = store.reset;
 
 module.exports = {
     all,
@@ -172,6 +160,7 @@ module.exports = {
     sameSlot,
     reset,
     PING_MODES,
+    PING_HELP,
     DEFAULT_PING_MODE,
     CLAIM_FILE
 };

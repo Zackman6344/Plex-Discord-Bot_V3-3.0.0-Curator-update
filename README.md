@@ -340,7 +340,13 @@ npm run logs -- --since=30m      # last half hour (s/m/h/d)
 npm run logs -- --n=50           # more of them
 npm run logs -- --stats          # totals and busiest commands
 npm run logs -- --raw            # the underlying JSONL
+npm run logs -- --days=60        # widen the read window (default: 14 day-files)
+npm run logs -- --all            # every day-file there is
 ```
+
+Reading is windowed even though keeping is not. A read looks at the **14 most recent day-files** unless told otherwise, because walking every day since install would only get slower as the pile grows. `--days` and `--all` widen it, a `--since` reaching further back widens it on its own, and `--stats` says which it is rather than presenting a window as a lifetime total.
+
+Set `PLEXBOT_LOG_RETENTION_DAYS` to a positive number to start deleting day-files older than that; unset, 0 or unparseable keeps everything, which is the default. One variable covers both logs.
 
 Output is tied back to the command that caused it, so a session reads as a transcript:
 

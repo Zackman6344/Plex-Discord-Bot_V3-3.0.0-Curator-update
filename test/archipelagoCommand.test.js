@@ -2,21 +2,15 @@
 //
 // Leaving the id out means "the only watch", which makes the first word after the sub-command
 // ambiguous in the prefix form: `!ap claim 0 ZackWord` gives one and `!ap claim ZackWord` does
-// not. A number is only read as an id when a watch actually has it, so a slot named "0" still
-// reaches the right place.
+// not. A leading integer is always read as the id, including one no watch holds, because the
+// alternative silently retargets the only watch when the id is stale.
 
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
-const os = require('node:os');
-const pathMod = require('node:path');
-const { WebSocketServer } = require('ws');
 
-const tmp = (name) => pathMod.join(os.tmpdir(), `plexbot-test-cmd-${name}-${process.pid}.json`);
-process.env.PLEXBOT_AP_CLAIMS_FILE = tmp('claims');
-process.env.PLEXBOT_AP_WATCHES_FILE = tmp('watches');
-process.env.PLEXBOT_AP_GOALS_FILE = tmp('goals');
-process.env.PLEXBOT_AP_ROLES_FILE = tmp('roles');
+const harness = require('./helpers/apServer.js');
+const stores = harness.useTempStores('cmd');   // must run before any helper is required
 
 const config = require('../config/config.js');
 const claims = require('../helpers/archipelagoClaims.js');
@@ -25,31 +19,8 @@ const ap = require('../commands/archipelago.js');
 
 const ZACK = '111111111111111111';
 
-function startFakeServer(slotNames) {
-    const wss = new WebSocketServer({ port: 0 });
-    wss.on('connection', (socket) => {
-        const send = (packets) => socket.send(JSON.stringify(packets));
-        send([{ cmd: 'RoomInfo', games: [], datapackage_checksums: {}, password: false, seed_name: 'Seed_CMD' }]);
-        socket.on('message', (raw) => {
-            for (const packet of JSON.parse(raw.toString())) {
-                if (packet.cmd !== 'Connect') continue;
-                send([{
-                    cmd: 'Connected', team: 0, slot: 1,
-                    players: slotNames.map((name, i) => ({ team: 0, slot: i + 1, name, alias: name })),
-                    slot_info: {}, missing_locations: [], checked_locations: []
-                }]);
-            }
-        });
-    });
-    return new Promise((resolve) => wss.on('listening', () => resolve({ wss, port: wss.address().port })));
-}
-
-function closeServer(wss) {
-    return new Promise((resolve) => {
-        for (const socket of wss.clients) socket.terminate();
-        wss.close(resolve);
-    });
-}
+const startFakeServer = (slotNames) => harness.startFakeServer({ slots: slotNames, seedName: 'Seed_CMD' });
+const { closeServer } = harness;
 
 // Enough of a Discord message for the command to run against. The whole payload is kept, not
 // just its text, so the mention-suppression rule can be asserted.
@@ -95,9 +66,19 @@ async function addWatch(slotNames) {
     return watch;
 }
 
+// config is a shared singleton, so what a test changes has to be put back or every later test in
+// the file inherits it and a mid-run failure leaves the module mutated.
+const savedConfig = {};
+const CONFIG_KEYS = ['archipelagoEnabled', 'ownerId', 'archipelagoRolesEnabled'];
+
+test.before(() => {
+    for (const key of CONFIG_KEYS) savedConfig[key] = config[key];
+});
+
 test.beforeEach(() => {
     config.archipelagoEnabled = true;
-    config.ownerId = '';           // claiming is self-service either way; this keeps it simple
+    config.ownerId = '';                     // claiming is self-service either way
+    config.archipelagoRolesEnabled = false;  // no Discord client in this harness
     try { fs.unlinkSync(claims.CLAIM_FILE); } catch (_) {}
     claims.reset();
 });
@@ -109,10 +90,11 @@ test.afterEach(async () => {
     servers = [];
 });
 
+// Every file the env points at, not just the one this suite reads directly: addWatch persists a
+// watch file on every test, and PIDs are reused, so a leftover could be loaded by a later run.
 test.after(() => {
-    for (const file of [claims.CLAIM_FILE]) {
-        try { fs.unlinkSync(file); } catch (_) {}
-    }
+    for (const key of CONFIG_KEYS) config[key] = savedConfig[key];
+    stores.cleanup();
 });
 
 test('with one watch, the id can be left out', async () => {

@@ -807,6 +807,10 @@ function recordGoals(state) {
         return changed;
     }
 
+    // Collected first and written once. Recording them one at a time rewrote the whole tally file
+    // synchronously per goal, on the socket's own message handler, and a first connect to a room
+    // where several claimed slots had already finished did that back to back.
+    const pending = [];
     for (const id of client.goaled) {
         const [team, slotId] = String(id).split(':').map(Number);
         // The goal set carries every team the server reports, and a slot number means a different
@@ -821,11 +825,17 @@ function recordGoals(state) {
         const claim = claims.find(state.watch.id, slotName);
         if (!claim) continue;
 
-        const key = goals.goalKey(identity, slotName);
-        if (goals.record(claim.userId, key, { slot: slotName, watchId: state.watch.id })) {
-            changed.add(claim.userId);
-            logger.info(`[AP:${state.watch.label}] ${slotName} goaled — that is ${goals.countFor(claim.userId)} for ${claim.userId}`);
-        }
+        pending.push({
+            userId: claim.userId,
+            key: goals.goalKey(identity, slotName),
+            meta: { slot: slotName, watchId: state.watch.id }
+        });
+    }
+
+    for (const { userId, key } of goals.recordAll(pending)) {
+        changed.add(userId);
+        const slot = key.split('::').pop();
+        logger.info(`[AP:${state.watch.label}] ${slot} goaled — that is ${goals.countFor(userId)} for ${userId}`);
     }
     return changed;
 }
@@ -840,20 +850,32 @@ async function syncRoles(state, userIds) {
     if (!guild) return;
 
     const memberRoleName = String(config.archipelagoRoleName || '').trim() || 'Archipelago';
+    // Built once. This was a full copy of the claim array plus a scan per user in the loop, for
+    // an answer that cannot change while the loop runs.
+    // Any claim anywhere keeps the participant role: a watch is not guild-scoped, and the
+    // configured room has no guild id of its own to compare against.
+    const claimants = new Set(claims.all().map(c => c.userId));
+
+    let countsMoved = false;
     for (const userId of userIds) {
         try {
-            await roles.syncMember(guild, userId, {
-                // Any claim anywhere keeps the participant role: a watch is not guild-scoped and
-                // the configured room has no guild id of its own to compare against.
-                claimed: claims.all().some(c => c.userId === userId),
+            const applied = await roles.syncMember(guild, userId, {
+                claimed: claimants.has(userId),
                 goals: goals.countFor(userId),
                 memberRoleName
             });
+            if (applied && [...applied.added, ...applied.removed].some(name => /Goaled$/.test(name))) {
+                countsMoved = true;
+            }
         } catch (err) {
             logger.warn(`[AP:${state.watch.label}] role sync failed for ${userId}: ${err.message}`);
         }
     }
 
+    // Only worth a pass when a count role actually moved. It used to run on every path in here,
+    // including a plain unclaim, and each run walked the whole tally to build a ranking whose
+    // order and user ids were thrown away one line later.
+    if (!countsMoved) return;
     try {
         await roles.sweepCounts(guild, goals.leaderboard().map(row => row.count));
     } catch (err) {
@@ -907,7 +929,10 @@ function releaseSlot(id, slot) {
     const removed = claims.release(id, slot);
     // The participant role follows the last claim out. The count role is a lifetime tally and
     // deliberately stays.
-    if (removed) syncRoles(state, new Set([removed.userId])).catch(() => {});
+    if (removed) {
+        syncRoles(state, new Set([removed.userId])).catch(err =>
+            logger.warn(`[AP:${state.watch.label}] role sync after unclaim failed: ${err.message || err}`));
+    }
     return removed;
 }
 

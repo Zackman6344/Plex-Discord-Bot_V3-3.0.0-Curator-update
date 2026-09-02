@@ -20,19 +20,8 @@
 // a game the previous holder had already finished — the new claimant simply had no key for it.
 // The goal belongs to whoever was on the slot when it landed, and stays there.
 
-const fs = require('fs');
 const path = require('path');
-const logger = require('./logger.js');
-
-const GOAL_FILE = process.env.PLEXBOT_AP_GOALS_FILE || path.join(__dirname, '..', 'data', 'archipelago_goals.json');
-// Same gate as the watch and claim files: a test run has no business rewriting the real tally.
-const usable = !process.env.NODE_TEST_CONTEXT || !!process.env.PLEXBOT_AP_GOALS_FILE;
-
-let cache = null;
-// Set when the file on disk could not be parsed. Writing then would replace a tally that may
-// still be salvageable by hand with whatever this process happens to have in memory, so the
-// store goes read-only for the rest of the run instead.
-let readOnly = false;
+const { createStore } = require('./jsonStore.js');
 
 /**
  * Accept both the goal-keyed shape and the original user-keyed one.
@@ -55,40 +44,19 @@ function migrate(raw) {
     return out;
 }
 
-function load() {
-    if (cache) return cache;
-    if (!usable) {
-        cache = Object.create(null);
-        return cache;
-    }
-    try {
-        const parsed = JSON.parse(fs.readFileSync(GOAL_FILE, 'utf8'));
-        cache = Object.assign(Object.create(null), migrate(parsed && parsed.goals));
-    } catch (err) {
-        cache = Object.create(null);
-        if (err.code !== 'ENOENT') {
-            readOnly = true;
-            logger.error(`Archipelago goal file unreadable (${err.message}) — the tally is frozen ` +
-                `for this run so the file is not overwritten. Move ${GOAL_FILE} aside to start fresh.`);
-        }
-    }
-    return cache;
-}
-
-function persist() {
-    if (!usable || readOnly) return;
-    try {
-        fs.mkdirSync(path.dirname(GOAL_FILE), { recursive: true });
-        // Write to a sibling and rename over the target. A kill partway through a plain write
-        // leaves a truncated file, and the next boot would parse-fail and then overwrite it with
-        // an empty tally — losing a count that cannot be re-derived from any server.
-        const tmp = `${GOAL_FILE}.tmp`;
-        fs.writeFileSync(tmp, JSON.stringify({ goals: load() }, null, 4));
-        fs.renameSync(tmp, GOAL_FILE);
-    } catch (err) {
-        logger.error('Could not persist Archipelago goals:', err.message);
-    }
-}
+const store = createStore({
+    envVar: 'PLEXBOT_AP_GOALS_FILE',
+    defaultPath: path.join(__dirname, '..', 'data', 'archipelago_goals.json'),
+    key: 'goals',
+    shape: 'object',
+    label: 'goal',
+    migrate,
+    // Keys are seed::slot strings built from server data; a null prototype keeps a hand-edited
+    // or migrated file from reaching Object.prototype through one.
+    nullPrototype: true
+});
+const GOAL_FILE = store.file;
+const { load, persist } = store;
 
 /** The identity of one game in one multiworld, independent of who was playing it. */
 function goalKey(seed, slot) {
@@ -108,6 +76,27 @@ function record(userId, key, meta = {}) {
     all[key] = { ...meta, userId: String(userId), at: new Date().toISOString() };
     persist();
     return true;
+}
+
+/**
+ * Record a batch of goals with a single write.
+ * A first connect to a room where several claimed slots have already goaled offered them one at
+ * a time, and each record() rewrote the whole file synchronously on the socket's message handler.
+ * @param {Array<{userId: string, key: string, meta?: Object}>} entries
+ * @returns {Array<{userId: string, key: string}>} only the ones that were new
+ */
+function recordAll(entries) {
+    const all = load();
+    const added = [];
+    const at = new Date().toISOString();
+
+    for (const { userId, key, meta } of entries || []) {
+        if (!userId || !key || all[key]) continue;
+        all[key] = { ...(meta || {}), userId: String(userId), at };
+        added.push({ userId, key });
+    }
+    if (added.length > 0) persist();
+    return added;
 }
 
 /** Who is credited with one goal, or null. */
@@ -155,9 +144,6 @@ function forget(userId) {
 }
 
 /** Test seam: drop the in-memory copy so the next read comes off disk. */
-function reset() {
-    cache = null;
-    readOnly = false;
-}
+const reset = store.reset;
 
-module.exports = { goalKey, record, holderOf, countFor, entriesFor, leaderboard, forget, reset, GOAL_FILE };
+module.exports = { goalKey, record, recordAll, holderOf, countFor, entriesFor, leaderboard, forget, reset, GOAL_FILE };

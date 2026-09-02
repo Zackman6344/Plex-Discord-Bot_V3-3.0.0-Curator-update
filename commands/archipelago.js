@@ -3,20 +3,22 @@
 // Front end for the Archipelago room monitor. The bot joins a multiworld as a read-only
 // tracker client and relays the server log into the channel the watch was created in.
 
-const { EmbedBuilder } = require('discord.js');
+const { EmbedBuilder, escapeMarkdown } = require('discord.js');
 const config = require('../config/config.js');
 const logger = require('../helpers/logger.js');
 const monitor = require('../helpers/archipelagoMonitor.js');
 const claims = require('../helpers/archipelagoClaims.js');
 const goals = require('../helpers/archipelagoGoals.js');
+const leaderboard = require('../helpers/leaderboard.js');
 
 const WATCH_ID_HELP = 'Watch ID — leave empty if there is only one room';
 
-const PING_HELP = {
-    all: 'every item that reaches the slot',
-    progression: 'progression items only',
-    off: 'nothing — the claim stays, the pings stop'
-};
+// Owned by archipelagoClaims, so the modes, their descriptions and the slash choices below are
+// all one list.
+const PING_HELP = claims.PING_HELP;
+
+// Slot names come from players' own YAML, and these replies are not inside a code fence.
+const slotLabel = (name) => `\`${escapeMarkdown(String(name || ''))}\``;
 
 const CATEGORY_HELP = {
     items: 'item sends (and cheated items)',
@@ -74,7 +76,7 @@ function buildListEmbed(entries) {
         embed.addFields({
             name: `${statusIcon(entry.status)} #${watch.id} — ${watch.label}${watch.managed ? ' (from /config)' : ''}`,
             value: [
-                `**Slot:** \`${watch.slot}\`${watch.password ? ' (password set)' : ''}`,
+                `**Slot:** ${slotLabel(watch.slot)}${watch.password ? ' (password set)' : ''}`,
                 `**Room:** ${monitor.describeTarget(watch.target)}`,
                 `**Address:** ${entry.address || '—'}`,
                 `**Channel:** <#${watch.channelId}>`,
@@ -164,11 +166,8 @@ module.exports = {
                 ] },
                 { name: 'pings', description: 'Choose how much a claimed slot pings you', options: [
                     { name: 'slot', type: 'STRING', required: true, description: 'A slot you have claimed' },
-                    { name: 'mode', type: 'STRING', required: true, description: 'How much to ping', choices: [
-                        { name: 'all', value: 'all' },
-                        { name: 'progression', value: 'progression' },
-                        { name: 'off', value: 'off' }
-                    ] },
+                    { name: 'mode', type: 'STRING', required: true, description: 'How much to ping',
+                        choices: claims.PING_MODES.map(mode => ({ name: mode, value: mode })) },
                     { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
                 ] },
                 { name: 'goals', description: 'How many multiworlds someone has goaled', options: [
@@ -213,11 +212,22 @@ module.exports = {
             // server error text, all written by somebody else: `!ap unclaim <@&role>` had the bot
             // echo that role mention live, and the participant role it creates is mentionable, so
             // any user could make the bot ping every Archipelago player at will.
-            const say = (payload) => msg.channel.send(
-                typeof payload === 'string'
-                    ? { content: payload, allowedMentions: { parse: [] } }
-                    : { ...payload, allowedMentions: { parse: [] } }
-            );
+            //
+            // It also never rejects. Handlers `return say(...)` without awaiting, so a rejected
+            // send would escape the try/catch below rather than being reported: a reply over
+            // Discord's 2000-character limit produced no message and no error at all.
+            const say = async (payload) => {
+                try {
+                    return await msg.channel.send(
+                        typeof payload === 'string'
+                            ? { content: payload, allowedMentions: { parse: [] } }
+                            : { ...payload, allowedMentions: { parse: [] } }
+                    );
+                } catch (err) {
+                    logger.warn(`!ap could not reply in ${msg.channel.id}:`, err.message || err);
+                    return null;
+                }
+            };
             // Same rule for the connect flow, which edits its own status message with the room
             // address and whatever error text the server sent back.
             const editQuietly = (message, content) => message.edit({ content, allowedMentions: { parse: [] } });
@@ -308,7 +318,7 @@ module.exports = {
                         return say(`Usage: \`${prefix}ap watch <room url|host:port> <slot name>\``);
                     }
 
-                    const status = await say(`🧩 Connecting to \`${target}\` as \`${slot}\`…`);
+                    const status = await say(`🧩 Connecting to \`${target}\` as ${slotLabel(slot)}…`);
                     let watch, outcome, detail;
                     try {
                         ({ watch, outcome, detail } = await monitor.addWatch({
@@ -326,7 +336,7 @@ module.exports = {
 
                     if (outcome === 'connected') {
                         return editQuietly(status, 
-                            `🟢 **Watch #${watch.id}** — connected to \`${detail}\` as \`${watch.slot}\`.\n` +
+                            `🟢 **Watch #${watch.id}** — connected to \`${detail}\` as ${slotLabel(watch.slot)}.\n` +
                             `The room log will appear here. \`${prefix}ap filter ${watch.id} items off\` if it gets noisy.`
                         );
                     }
@@ -484,7 +494,7 @@ module.exports = {
                     const heldBy = existing.find(c => claims.sameSlot(c.slot, slot));
                     if (heldBy && heldBy.userId !== userId && !isOwner(msg)) {
                         return say(
-                            `🔒 \`${heldBy.slot}\` is already claimed by <@${heldBy.userId}>. ` +
+                            `🔒 ${slotLabel(heldBy.slot)} is already claimed by <@${heldBy.userId}>. ` +
                             `They can release it with \`${prefix}ap unclaim ${id} ${heldBy.slot}\`, or the bot owner can reassign it.`
                         );
                     }
@@ -494,7 +504,7 @@ module.exports = {
 
                     const { claim, verified } = result;
                     return say(
-                        `✅ ${userId === callerId ? 'You are' : `<@${userId}> is`} now on \`${claim.slot}\` — ` +
+                        `✅ ${userId === callerId ? 'You are' : `<@${userId}> is`} now on ${slotLabel(claim.slot)} — ` +
                         `pinging for ${PING_HELP[claim.pings]}.` +
                         (verified ? '' : `\n⚠️ I haven't read the room yet, so I couldn't check that name against it.`) +
                         `\nChange that with \`${prefix}ap pings ${id} ${claim.slot} <${claims.PING_MODES.join('|')}>\`.`
@@ -525,17 +535,17 @@ module.exports = {
                     const list = monitor.listClaims(id);
                     if (list === null) return say(`No watch with ID ${id}.`);
                     const held = list.find(c => claims.sameSlot(c.slot, slot));
-                    if (!held) return say(`Nobody has claimed \`${slot}\` on watch #${id}.`);
+                    if (!held) return say(`Nobody has claimed ${slotLabel(slot)} on watch #${id}.`);
                     if (held.userId !== callerId && !isOwner(msg)) {
-                        return say(`🔒 \`${held.slot}\` is claimed by <@${held.userId}> — only they or the bot owner can change it.`);
+                        return say(`🔒 ${slotLabel(held.slot)} is claimed by <@${held.userId}> — only they or the bot owner can change it.`);
                     }
 
                     if (action === 'unclaim') {
                         const removed = monitor.releaseSlot(id, slot);
-                        return say(`🗑️ \`${removed.slot}\` released — no more pings for it.`);
+                        return say(`🗑️ ${slotLabel(removed.slot)} released — no more pings for it.`);
                     }
                     const updated = monitor.setClaimPings(id, slot, mode);
-                    return say(`✅ \`${updated.slot}\` — pinging for ${PING_HELP[updated.pings]}.`);
+                    return say(`✅ ${slotLabel(updated.slot)} — pinging for ${PING_HELP[updated.pings]}.`);
                 }
 
                 if (action === 'claims') {
@@ -549,11 +559,23 @@ module.exports = {
                         );
                     }
 
+                    // Fitted to Discord's 2000-character limit rather than to a flat count of 40:
+                    // 40 rows of this shape run to roughly 2,070 characters and the send was
+                    // rejected outright, so a big room got an error instead of its claim list.
+                    const header = `🧩 **Claimed slots on watch #${id}**`;
                     const sorted = [...list].sort((a, b) => a.slot.localeCompare(b.slot));
-                    const shown = sorted.slice(0, 40);
-                    const lines = shown.map(c => `• \`${c.slot}\` — <@${c.userId}> (${c.pings})`);
-                    if (sorted.length > shown.length) lines.push(`…and ${sorted.length - shown.length} more.`);
-                    return say(`🧩 **Claimed slots on watch #${id}**\n${lines.join('\n')}`);
+                    const all = sorted.map(c => `• ${slotLabel(c.slot)} — <@${c.userId}> (${c.pings})`);
+
+                    const budget = 1900 - header.length;
+                    const lines = [];
+                    let used = 0;
+                    for (const line of all) {
+                        if (used + line.length + 1 > budget) break;
+                        lines.push(line);
+                        used += line.length + 1;
+                    }
+                    if (lines.length < all.length) lines.push(`…and ${all.length - lines.length} more.`);
+                    return say(`${header}\n${lines.join('\n')}`);
                 }
 
                 if (action === 'goals') {
@@ -571,7 +593,7 @@ module.exports = {
                     const entries = goals.entriesFor(who)
                         .sort((a, b) => String(b.at).localeCompare(String(a.at)))
                         .slice(0, 15)
-                        .map(e => `• \`${e.slot || e.key}\``);
+                        .map(e => `• ${slotLabel(e.slot || e.key)}`);
                     const more = count > entries.length ? `\n…and ${count - entries.length} more.` : '';
 
                     return say(
@@ -581,13 +603,15 @@ module.exports = {
                 }
 
                 if (action === 'leaderboard') {
-                    const board = goals.leaderboard().slice(0, 15);
+                    const board = goals.leaderboard();
                     if (board.length === 0) {
                         return say('No goals recorded yet. Claim a slot with `' + prefix + 'ap claim` and finish it.');
                     }
-                    const medal = ['🥇', '🥈', '🥉'];
-                    const lines = board.map((row, i) =>
-                        `${medal[i] || `${i + 1}.`} <@${row.userId}> — **${row.count}**`);
+                    const lines = leaderboard.renderBoard(
+                        board,
+                        row => `<@${row.userId}> — **${row.count}**`,
+                        { limit: 15 }
+                    );
                     return say(`🏁 **Multiworlds goaled**\n${lines.join('\n')}`);
                 }
 

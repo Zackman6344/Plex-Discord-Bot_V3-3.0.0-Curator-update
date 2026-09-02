@@ -15,57 +15,49 @@
 // Nothing here is allowed to throw into the relay. A guild with the permission missing is logged
 // once and then left alone.
 
-const fs = require('fs');
 const path = require('path');
 const logger = require('./logger.js');
-
-const ROLE_FILE = process.env.PLEXBOT_AP_ROLES_FILE || path.join(__dirname, '..', 'data', 'archipelago_roles.json');
-const usable = !process.env.NODE_TEST_CONTEXT || !!process.env.PLEXBOT_AP_ROLES_FILE;
+const { createStore } = require('./jsonStore.js');
 
 // Archipelago's own purple, so the role reads as the same thing as the progression colour.
 const MEMBER_ROLE_COLOR = 0xAF52DE;
 
-let cache = null;
+const store = createStore({
+    envVar: 'PLEXBOT_AP_ROLES_FILE',
+    defaultPath: path.join(__dirname, '..', 'data', 'archipelago_roles.json'),
+    key: 'guilds',
+    shape: 'object',
+    label: 'role',
+    nullPrototype: true
+});
+const ROLE_FILE = store.file;
+const { load, persist } = store;
+
 // Guilds already reported as lacking Manage Roles. One line each, not one per goal.
 const warned = new Set();
 // Role creations in flight, keyed guild + role. syncRoles is fire-and-forget, so two goals in
 // the same frame both reached the check-then-create below and made duplicate roles that the
 // store never recorded and the sweep could therefore never delete.
 const creating = new Map();
-// Set when the file could not be parsed. Overwriting it would orphan every role it recorded.
-let readOnly = false;
+/**
+ * Record a freshly created role, and undo the creation if it cannot be written down.
+ * A role Discord has but the store does not is invisible to the sweep and to the stale-role
+ * loop in syncMember, so nothing can ever assign or delete it again: it has to come off by hand.
+ * Deleting it here costs one API call and keeps Discord and the file agreeing.
+ */
+async function remember(guild, role, write) {
+    write();
+    if (persist()) return role;
 
-function load() {
-    if (cache) return cache;
-    if (!usable) {
-        cache = {};
-        return cache;
-    }
+    logger.error(`[AP roles] could not record "${role.name}" in ${guild.name}; removing it again ` +
+        `rather than leaving a role the bot can no longer manage`);
     try {
-        const parsed = JSON.parse(fs.readFileSync(ROLE_FILE, 'utf8'));
-        cache = parsed && typeof parsed.guilds === 'object' && parsed.guilds ? parsed.guilds : {};
+        await role.delete('Archipelago monitor: could not record the role id');
     } catch (err) {
-        cache = {};
-        if (err.code !== 'ENOENT') {
-            readOnly = true;
-            logger.error(`Archipelago role file unreadable (${err.message}) — role bookkeeping is ` +
-                `frozen for this run rather than overwritten, so the roles it recorded are not orphaned. ` +
-                `Move ${ROLE_FILE} aside to start fresh.`);
-        }
+        logger.error(`[AP roles] and the cleanup delete failed too (${err.message}) — ` +
+            `"${role.name}" now needs removing by hand`);
     }
-    return cache;
-}
-
-function persist() {
-    if (!usable || readOnly) return;
-    try {
-        fs.mkdirSync(path.dirname(ROLE_FILE), { recursive: true });
-        const tmp = `${ROLE_FILE}.tmp`;
-        fs.writeFileSync(tmp, JSON.stringify({ guilds: load() }, null, 4));
-        fs.renameSync(tmp, ROLE_FILE);
-    } catch (err) {
-        logger.error('Could not persist Archipelago roles:', err.message);
-    }
+    throw new Error(`could not record the Archipelago role "${role.name}"`);
 }
 
 /**
@@ -141,8 +133,7 @@ async function ensureMemberRole(guild, name) {
             hoist: false,
             reason: 'Archipelago monitor: multiworld participants'
         });
-        guildEntry(guild.id).member = role.id;
-        persist();
+        await remember(guild, role, () => { guildEntry(guild.id).member = role.id; });
         logger.info(`[AP roles] created "${name}" in ${guild.name}`);
         return role;
     });
@@ -164,8 +155,7 @@ async function ensureCountRole(guild, count) {
             hoist: false,
             reason: 'Archipelago monitor: goal count'
         });
-        guildEntry(guild.id).counts[count] = role.id;
-        persist();
+        await remember(guild, role, () => { guildEntry(guild.id).counts[count] = role.id; });
         logger.info(`[AP roles] created "${countRoleName(count)}" in ${guild.name}`);
         return role;
     });
@@ -240,6 +230,14 @@ async function syncMember(guild, userId, state = {}) {
         applied.removed.push(stale.name);
     }
 
+    // Role changes were previously silent on success, so confirming one meant reading the store
+    // by hand. Only logged when something actually moved.
+    if (applied.added.length > 0 || applied.removed.length > 0) {
+        const parts = [];
+        if (applied.added.length) parts.push(`+${applied.added.join(', +')}`);
+        if (applied.removed.length) parts.push(`-${applied.removed.join(', -')}`);
+        logger.info(`[AP roles] ${userId} in ${guild.name}: ${parts.join(' ')}`);
+    }
     return applied;
 }
 
@@ -272,12 +270,14 @@ async function sweepCounts(guild, heldCounts) {
         changed = true;
     }
     if (changed) persist();
+    // A successful delete used to log nothing at all, so the only way to tell the sweep had run
+    // was to read the store.
+    if (deleted > 0) logger.info(`[AP roles] swept ${deleted} unused count role(s) in ${guild.name}`);
     return deleted;
 }
 
 function reset() {
-    cache = null;
-    readOnly = false;
+    store.reset();
     warned.clear();
     creating.clear();
 }

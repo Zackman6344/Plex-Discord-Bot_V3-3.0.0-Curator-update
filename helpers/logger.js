@@ -34,24 +34,13 @@ const toFile = process.env.PLEXBOT_LOG_TO_FILE !== '0' && !process.env.NODE_TEST
 // Logs are kept indefinitely. A day of bot log is small next to what it is worth having when
 // something went wrong a month ago and nobody noticed at the time.
 // Set PLEXBOT_LOG_RETENTION_DAYS to a positive number to delete anything older than that many
-// days; unset, 0 or unparseable keeps everything.
-const RETENTION_DAYS = Math.max(0, Math.floor(Number(process.env.PLEXBOT_LOG_RETENTION_DAYS)) || 0);
-
-let lastPrune = 0;
+// days; unset, 0 or unparseable keeps everything. The parse, the throttle and the cutoff live in
+// logPrune.js so this sink and the command log cannot drift apart.
+const logPrune = require('./logPrune.js');
+const BOT_LOG = /^bot-(\d{4}-\d{2}-\d{2})\.log$/;
 
 function prune() {
-    if (RETENTION_DAYS <= 0) return;
-    if (Date.now() - lastPrune < 60 * 60 * 1000) return;
-    lastPrune = Date.now();
-    try {
-        const cutoff = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000;
-        for (const name of fs.readdirSync(DIR)) {
-            const match = /^bot-(\d{4}-\d{2}-\d{2})\.log$/.exec(name);
-            if (match && new Date(match[1] + 'T00:00:00Z').getTime() < cutoff) {
-                fs.unlinkSync(path.join(DIR, name));
-            }
-        }
-    } catch (_) { /* housekeeping only */ }
+    logPrune.pruneDayFiles(DIR, BOT_LOG, 'bot-log');
 }
 
 function appendToFile(line) {

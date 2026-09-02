@@ -30,8 +30,28 @@ const value = (name, fallback = null) => {
     return hit ? hit.slice(name.length + 3) : fallback;
 };
 
-// null lets each reader pick its own default; 0 means every day-file there is.
-const readDays = flag('all') ? 0 : (value('days') !== null ? Number(value('days')) : null);
+// null lets each reader pick its own default; 0 means every day-file there is. A bad --days is
+// refused rather than silently widening the read to the whole archive, which is what Number()
+// giving NaN used to do.
+const rawDays = value('days');
+if (rawDays !== null && commandLog.countOr(rawDays, -1) < 0) {
+    console.error(`--days must be a whole number of day-files (0, or --all, reads every one); got "${rawDays}"`);
+    process.exit(2);
+}
+const readDays = flag('all') ? 0 : (rawDays !== null ? commandLog.countOr(rawDays, null) : null);
+
+// Same for --n. slice(-0) returns the whole array rather than nothing, so an unchecked 0 printed
+// the entire read window.
+const limitOf = (fallback) => {
+    const raw = value('n');
+    if (raw === null) return fallback;
+    const parsed = commandLog.countOr(raw, -1);
+    if (parsed < 1) {
+        console.error(`--n must be a positive whole number; got "${raw}"`);
+        process.exit(2);
+    }
+    return parsed;
+};
 
 const DURATION = { s: 1000, m: 60000, h: 3600000, d: 86400000 };
 function parseSince(text) {
@@ -53,7 +73,11 @@ const clock = (iso) => {
 if (flag('stats')) {
     const s = commandLog.stats(readDays === null ? {} : { days: readDays });
     console.log(bold('Command log') + dim(` — ${s.dir}`));
-    console.log(`  ${s.invocations} invocations, ${s.outputs} outputs, ${s.failures} failures, ${s.events} events total`);
+    const scope = s.windowed
+        ? `the last ${s.windowDays} of ${s.filesOnDisk} day-files`
+        : `all ${s.filesOnDisk} day-file(s)`;
+    console.log(`  ${s.invocations} invocations, ${s.outputs} outputs, ${s.failures} failures, ${s.events} events`);
+    console.log(dim(`  over ${scope}${s.windowed ? ' — pass --all for the lifetime totals' : ''}`));
     if (s.topCommands.length) {
         console.log(bold('\n  Busiest commands'));
         for (const [name, count] of s.topCommands) console.log(`    ${String(count).padStart(4)}  ${name}`);
@@ -63,7 +87,7 @@ if (flag('stats')) {
 
 if (flag('events')) {
     const events = commandLog.readEventLog({
-        limit: Number(value('n', 40)),
+        limit: limitOf(40),
         kind: value('kind'),
         ...(readDays === null ? {} : { days: readDays })
     });
@@ -82,14 +106,14 @@ if (flag('events')) {
 
 if (flag('raw')) {
     const rawEvents = commandLog.readEvents(readDays === null ? {} : { days: readDays });
-    for (const event of rawEvents.slice(-Number(value('n', 100)))) {
+    for (const event of rawEvents.slice(-limitOf(100))) {
         console.log(JSON.stringify(event));
     }
     process.exit(0);
 }
 
 const { invocations, unattached } = commandLog.readInvocations({
-    limit: Number(value('n', 15)),
+    limit: limitOf(15),
     command: value('command'),
     userId: value('user'),
     errorsOnly: flag('errors'),

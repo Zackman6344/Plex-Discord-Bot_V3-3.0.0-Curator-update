@@ -5,13 +5,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
-const os = require('node:os');
-const pathMod = require('node:path');
-const { WebSocketServer } = require('ws');
 
-process.env.PLEXBOT_AP_CLAIMS_FILE = pathMod.join(os.tmpdir(), 'plexbot-test-ping-claims-' + process.pid + '.json');
-process.env.PLEXBOT_AP_WATCHES_FILE = pathMod.join(os.tmpdir(), 'plexbot-test-ping-watches-' + process.pid + '.json');
+const ap = require('./helpers/apServer.js');
+const stores = ap.useTempStores('ping');   // must run before any helper is required
 
 const config = require('../config/config.js');
 const claims = require('../helpers/archipelagoClaims.js');
@@ -20,81 +16,27 @@ const { ITEM_FLAG_PROGRESSION } = require('../helpers/archipelagoClient.js');
 
 const ZACK = '111111111111111111';
 
-// The room the bot watches from is slot 2; the claimed slot the items are addressed to is 1.
-function startFakeServer() {
-    const wss = new WebSocketServer({ port: 0 });
-    let live = null;
+// The bot watches from slot 2; the claimed slot the items are addressed to is 1. The alias on
+// slot 1 deliberately differs from its name, so a claim matched against the wrong one fails this
+// test rather than passing by luck.
+const startFakeServer = () => ap.startFakeServer({
+    slots: ['ZackWord', 'Watcher'],
+    watchSlot: 2,
+    seedName: 'Seed_PING'
+});
+const { closeServer, waitFor } = ap;
 
-    wss.on('connection', (socket) => {
-        live = socket;
-        const send = (packets) => socket.send(JSON.stringify(packets));
-        send([{ cmd: 'RoomInfo', games: [], datapackage_checksums: {}, password: false }]);
-
-        socket.on('message', (raw) => {
-            for (const packet of JSON.parse(raw.toString())) {
-                if (packet.cmd !== 'Connect') continue;
-                send([{
-                    cmd: 'Connected', team: 0, slot: 2,
-                    players: [
-                        // An alias that differs from the name, so a claim matched against the
-                        // wrong one would fail this test rather than pass it by luck.
-                        { team: 0, slot: 1, name: 'ZackWord', alias: 'Zack (afk)' },
-                        { team: 0, slot: 2, name: 'Watcher', alias: 'Watcher' }
-                    ],
-                    slot_info: {}, missing_locations: [], checked_locations: []
-                }]);
-            }
-        });
-    });
-
-    return new Promise((resolve) => wss.on('listening', () => resolve({
-        wss,
-        port: wss.address().port,
-        // No data package is loaded, so an item_name part renders its own text — which keeps
-        // this test about the ping path rather than about name resolution.
-        sendItem: (receiving, flags, name = 'Progressive Sword') => live.send(JSON.stringify([{
-            cmd: 'PrintJSON', type: 'ItemSend', receiving,
-            item: { item: 1, location: 2, player: 2, flags },
-            data: [
-                { text: 'Watcher sent ' },
-                { type: 'item_name', text: name, flags },
-                { text: ' to ZackWord' }
-            ]
-        }]))
-    })));
-}
-
-function closeServer(wss) {
-    return new Promise((resolve) => {
-        for (const socket of wss.clients) socket.terminate();
-        wss.close(resolve);
-    });
-}
-
-const posted = [];
-const fakeDiscord = {
-    channels: {
-        fetch: async (id) => ({
-            id,
-            send: async (payload) => { posted.push(payload); return {}; }
-        })
-    }
-};
-
-function waitFor(predicate, what, timeoutMs = 15000) {
-    return new Promise((resolve, reject) => {
-        const started = Date.now();
-        const tick = () => {
-            const hit = predicate();
-            if (hit) return resolve(hit);
-            if (Date.now() - started > timeoutMs) return reject(new Error(`timed out waiting for ${what}`));
-            setTimeout(tick, 50);
-        };
-        tick();
-    });
-}
+const discord = ap.fakeDiscord();
+const posted = discord.posted;
+const fakeDiscord = discord.client;
 
 const pingMessage = () => posted.find(p => String(p.content).includes(`<@${ZACK}>`));
+
+// addWatch persists a watch file on every test, and PIDs get reused, so a leftover could be
+// picked up by a later run against the same tmp path.
+test.after(() => {
+    stores.cleanup();
+});
 
 test('a claimed slot gets a ping outside the fence, with a real mention whitelist', async (t) => {
     const savedEnabled = config.archipelagoEnabled;
@@ -111,7 +53,7 @@ test('a claimed slot gets a ping outside the fence, with a real mention whitelis
         await closeServer(server.wss);
         config.archipelagoEnabled = savedEnabled;
         config.archipelagoBatchSeconds = savedBatch;
-        try { fs.unlinkSync(claims.CLAIM_FILE); } catch (_) {}
+        
         claims.reset();
     });
 
@@ -157,7 +99,7 @@ test('a filler item does not ping a slot set to progression only', async (t) => 
         await closeServer(server.wss);
         config.archipelagoEnabled = savedEnabled;
         config.archipelagoBatchSeconds = savedBatch;
-        try { fs.unlinkSync(claims.CLAIM_FILE); } catch (_) {}
+        
         claims.reset();
     });
 
