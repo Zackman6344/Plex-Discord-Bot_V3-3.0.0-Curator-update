@@ -45,12 +45,16 @@ const creating = new Map();
  * loop in syncMember, so nothing can ever assign or delete it again: it has to come off by hand.
  * Deleting it here costs one API call and keeps Discord and the file agreeing.
  */
-async function remember(guild, role, write) {
+async function remember(guild, role, write, undo) {
     write();
     if (persist()) return role;
 
     logger.error(`[AP roles] could not record "${role.name}" in ${guild.name}; removing it again ` +
         `rather than leaving a role the bot can no longer manage`);
+    // The id has to come back out of the cache too, or a later successful write from some other
+    // path would put the id of a deleted role on disk, where the sweep would count it as one of
+    // ours forever.
+    undo();
     try {
         await role.delete('Archipelago monitor: could not record the role id');
     } catch (err) {
@@ -58,6 +62,22 @@ async function remember(guild, role, write) {
             `"${role.name}" now needs removing by hand`);
     }
     throw new Error(`could not record the Archipelago role "${role.name}"`);
+}
+
+/**
+ * Is it safe to create a role right now?
+ * Creating one we cannot write down means deleting it again, and with a store that keeps failing
+ * to write that is a create-and-delete pair per claim and per goal, against the most heavily rate
+ * limited endpoints Discord has. One warning and then nothing is the better failure.
+ */
+function canCreate(guild) {
+    if (store.healthy()) return true;
+    if (!warned.has(`store:${guild.id}`)) {
+        warned.add(`store:${guild.id}`);
+        logger.error(`[AP roles] ${ROLE_FILE} is not writable, so no new roles will be created ` +
+            `in ${guild.name}. Existing ones keep working; fix the file and restart.`);
+    }
+    return false;
 }
 
 /**
@@ -119,6 +139,7 @@ async function ensureMemberRole(guild, name) {
         return existing;
     }
 
+    if (!canCreate(guild)) return null;
     return once(guild.id, 'member', async () => {
         // Re-check inside the guard: a run that queued behind another may find it already made.
         const made = usableRole(guild, guildEntry(guild.id).member);
@@ -133,7 +154,9 @@ async function ensureMemberRole(guild, name) {
             hoist: false,
             reason: 'Archipelago monitor: multiworld participants'
         });
-        await remember(guild, role, () => { guildEntry(guild.id).member = role.id; });
+        await remember(guild, role,
+            () => { guildEntry(guild.id).member = role.id; },
+            () => { guildEntry(guild.id).member = null; });
         logger.info(`[AP roles] created "${name}" in ${guild.name}`);
         return role;
     });
@@ -143,6 +166,7 @@ async function ensureCountRole(guild, count) {
     const existing = usableRole(guild, guildEntry(guild.id).counts[count]);
     if (existing) return existing;
 
+    if (!canCreate(guild)) return null;
     return once(guild.id, `count:${count}`, async () => {
         const made = usableRole(guild, guildEntry(guild.id).counts[count]);
         if (made) return made;
@@ -155,7 +179,9 @@ async function ensureCountRole(guild, count) {
             hoist: false,
             reason: 'Archipelago monitor: goal count'
         });
-        await remember(guild, role, () => { guildEntry(guild.id).counts[count] = role.id; });
+        await remember(guild, role,
+            () => { guildEntry(guild.id).counts[count] = role.id; },
+            () => { delete guildEntry(guild.id).counts[count]; });
         logger.info(`[AP roles] created "${countRoleName(count)}" in ${guild.name}`);
         return role;
     });
@@ -250,6 +276,16 @@ async function sweepCounts(guild, heldCounts) {
     if (!guild || !canManageRoles(guild)) return 0;
     const entry = guildEntry(guild.id);
     const keep = new Set([...(heldCounts || [])].map(Number));
+
+    // A tally that reads empty while count roles exist is far more likely to be a lost or
+    // quarantined goal file than a genuine "nobody has goaled any more", which cannot happen:
+    // the tally only grows. Sweeping on that reading would delete every count role in the guild.
+    if (keep.size === 0 && Object.keys(entry.counts).length > 0) {
+        logger.warn(`[AP roles] refusing to sweep ${Object.keys(entry.counts).length} count role(s) ` +
+            `in ${guild.name}: the goal tally reads empty, which usually means it was lost rather ` +
+            `than that everyone un-goaled.`);
+        return 0;
+    }
 
     let deleted = 0;
     let changed = false;

@@ -37,7 +37,6 @@ const MAX_ARGS = 300;
 
 let counter = 0;
 let redactions = null;
-let lastPrune = 0;
 
 /** Values that must never reach disk, discovered once from the local config. */
 function secrets() {
@@ -204,6 +203,10 @@ function readEventLog({ limit = 40, kind = null, days = DEFAULT_READ_DAYS } = {}
  * @returns {number} a non-negative integer, or `fallback` when the value is not usable
  */
 function countOr(value, fallback) {
+    // Number('') and Number('   ') are 0, so an empty --days read as "every file there is" and
+    // slipped past the guard that exists to stop exactly that. Absent and blank are not a count.
+    if (value === null || value === undefined) return fallback;
+    if (typeof value === 'string' && value.trim() === '') return fallback;
     const parsed = Math.floor(Number(value));
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
@@ -308,7 +311,9 @@ function stats({ days = DEFAULT_READ_DAYS } = {}) {
 // exported for tests
 function _reset() {
     redactions = null;
-    lastPrune = 0;
+    // The prune throttle lives in logPrune now, so zeroing a local was resetting nothing: seven
+    // test files call this expecting a clean module and silently kept an hour-old throttle.
+    logPrune.resetThrottle();
     counter = 0;
 }
 

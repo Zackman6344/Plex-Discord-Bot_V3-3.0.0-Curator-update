@@ -138,8 +138,10 @@ test('slot lookups use the seed name, not a display alias', () => {
     });
 
     // players carries the alias for rendering; slotNames carries the name claims are keyed on.
-    assert.strictEqual(client.players.get(1), 'Zack (afk)');
+    // Both are keyed team:slot, because slot numbers repeat across teams.
+    assert.strictEqual(client.players.get('0:1'), 'Zack (afk)');
     assert.strictEqual(client.slotNameFor(1), 'ZackWord');
+    assert.deepStrictEqual(client.slotsOnTeam(0), [1, 2]);
 
     assert.strictEqual(client.canonicalSlotName('zackword'), 'ZackWord');
     assert.strictEqual(client.canonicalSlotName('  HILDA '), 'Hilda');

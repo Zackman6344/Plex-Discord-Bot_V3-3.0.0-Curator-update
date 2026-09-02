@@ -19,6 +19,7 @@ const goals = require('../helpers/archipelagoGoals.js');
 const roles = require('../helpers/archipelagoRoles.js');
 const claims = require('../helpers/archipelagoClaims.js');
 const monitor = require('../helpers/archipelagoMonitor.js');
+const leaderboard = require('../helpers/leaderboard.js');
 
 const ZACK = '111111111111111111';
 const ALICE = '222222222222222222';
@@ -353,7 +354,10 @@ test("another team's goal on the same slot number is not credited here", () => {
     assert.strictEqual(goals.countFor(ZACK), 0);
 });
 
-test('a corrupt store is left alone rather than overwritten', () => {
+// A damaged file has to survive AND the store has to keep working. Overwriting it lost the tally
+// outright; freezing the store instead was worse, because writes were still accepted and reported
+// as successful while never reaching disk, and the role sweep then acted on the empty reading.
+test('a corrupt store is moved aside, and the store keeps working', () => {
     goals.record(ZACK, goals.goalKey('S1', 'a'));
     assert.strictEqual(goals.countFor(ZACK), 1);
 
@@ -362,10 +366,36 @@ test('a corrupt store is left alone rather than overwritten', () => {
     goals.reset();
 
     assert.strictEqual(goals.countFor(ZACK), 0, 'nothing readable in memory');
-    goals.record(ALICE, goals.goalKey('S1', 'b'));   // would have overwritten the file before
 
-    const raw = fs.readFileSync(goals.GOAL_FILE, 'utf8');
-    assert.match(raw, /trunc/, 'the damaged file is preserved for salvage, not replaced');
+    // The damaged content is preserved under a sibling name, not at the original path.
+    const dir = pathMod.dirname(goals.GOAL_FILE);
+    const base = pathMod.basename(goals.GOAL_FILE);
+    const quarantined = fs.readdirSync(dir).filter(f => f.startsWith(`${base}.corrupt-`));
+    assert.strictEqual(quarantined.length, 1, `expected one quarantined file, got ${quarantined}`);
+    assert.match(fs.readFileSync(pathMod.join(dir, quarantined[0]), 'utf8'), /trunc/);
+
+    // And a write afterwards actually lands, rather than being accepted and lost.
+    assert.strictEqual(goals.record(ALICE, goals.goalKey('S1', 'b')), true);
+    goals.reset();
+    assert.strictEqual(goals.countFor(ALICE), 1, 'the write reached disk');
+
+    for (const f of quarantined) fs.unlinkSync(pathMod.join(dir, f));
+});
+
+test('a file that parses but has the wrong shape is quarantined too', () => {
+    goals.record(ZACK, goals.goalKey('S1', 'a'));
+    // An object store handed an array: typeof [] is 'object', so this used to be Object.assigned
+    // index by index into {0: …} and then silently overwritten on the next write.
+    fs.writeFileSync(goals.GOAL_FILE, JSON.stringify({ goals: ['nonsense'] }));
+    goals.reset();
+
+    assert.strictEqual(goals.countFor(ZACK), 0);
+    const dir = pathMod.dirname(goals.GOAL_FILE);
+    const base = pathMod.basename(goals.GOAL_FILE);
+    const quarantined = fs.readdirSync(dir).filter(f => f.startsWith(`${base}.corrupt-`));
+    assert.strictEqual(quarantined.length, 1, 'the wrong-shape file was preserved');
+
+    for (const f of quarantined) fs.unlinkSync(pathMod.join(dir, f));
 });
 
 test('the older user-keyed file shape is migrated on read', () => {
@@ -426,4 +456,26 @@ test('the participant role follows a rename in config', async () => {
 
     await roles.syncMember(guild, ZACK, { claimed: true, goals: 0, memberRoleName: 'Multiworld' });
     assert.deepStrictEqual(roleNames(), ['Multiworld'], 'renamed in place, not duplicated');
+});
+
+// --- leaderboard rendering --------------------------------------------------------------------
+
+test('positions past the podium carry their rank, not an identical badge', () => {
+    const rows = [9, 8, 7, 6, 5].map((count, i) => ({ userId: `u${i}`, count }));
+    const lines = leaderboard.renderBoard(rows, r => `<@${r.userId}> — ${r.count}`);
+
+    assert.ok(lines[0].startsWith('🥇'));
+    assert.ok(lines[2].startsWith('🥉'));
+    // A flat 🏅 for everything below third makes fourth and twelfth indistinguishable, which is
+    // the one thing a ranked list is for.
+    assert.ok(lines[3].startsWith('4.'), `4th was ${JSON.stringify(lines[3])}`);
+    assert.ok(lines[4].startsWith('5.'), `5th was ${JSON.stringify(lines[4])}`);
+});
+
+test('renderBoard caps and says how many it left out', () => {
+    const rows = Array.from({ length: 20 }, (_, i) => ({ userId: `u${i}`, count: 20 - i }));
+    const lines = leaderboard.renderBoard(rows, r => `${r.userId}`, { limit: 5 });
+
+    assert.strictEqual(lines.length, 6);
+    assert.match(lines[5], /…and 15 more/);
 });

@@ -34,7 +34,9 @@ const value = (name, fallback = null) => {
 // refused rather than silently widening the read to the whole archive, which is what Number()
 // giving NaN used to do.
 const rawDays = value('days');
-if (rawDays !== null && commandLog.countOr(rawDays, -1) < 0) {
+// A plain decimal integer, so "0x10" and "1e3" are rejected rather than quietly meaning 16 and
+// 1000 to somebody who mistyped a window.
+if (rawDays !== null && (!/^\d+$/.test(rawDays.trim()) || commandLog.countOr(rawDays, -1) < 0)) {
     console.error(`--days must be a whole number of day-files (0, or --all, reads every one); got "${rawDays}"`);
     process.exit(2);
 }

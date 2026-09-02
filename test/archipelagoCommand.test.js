@@ -263,3 +263,52 @@ test('the claim confirmation names a user without pinging them', async () => {
         assert.deepStrictEqual(payload.allowedMentions, { parse: [] });
     }
 });
+
+// --- slot names in replies -------------------------------------------------------------------
+
+test('a slot name is shown as written, with no escape artefacts', async () => {
+    // Underscores are everywhere in Archipelago slot names. Escaping markdown and THEN wrapping
+    // in backticks put a literal backslash on screen, because Discord does no escape processing
+    // inside an inline code span.
+    const watch = await addWatch(['Zack_Word']);
+
+    const msg = await run('claim', 'Zack_Word');
+    assert.match(said(msg), /`Zack_Word`/, 'shown as written');
+    // Built from the character code so no quoting layer can eat the backslash and leave this
+    // silently asserting that the reply contains no underscore.
+    const BACKSLASH = String.fromCharCode(92);
+    assert.ok(!said(msg).includes(BACKSLASH), `a literal backslash reached the reply: ${said(msg)}`);
+    assert.strictEqual(claims.find(watch.id, 'Zack_Word').userId, ZACK);
+});
+
+test('a backtick in a slot name cannot break out of the code span', async () => {
+    await addWatch(['ZackWord']);
+
+    const msg = await run('unclaim', 'we`ird');
+    const text = said(msg);
+    // Exactly two backticks: the pair this reply opened and closed.
+    assert.strictEqual((text.match(/`/g) || []).length, 2,
+        `the span was not closed cleanly: ${text}`);
+});
+
+// --- password ---------------------------------------------------------------------------------
+
+test('a numeric password is not mistaken for a request to clear', async () => {
+    const watch = await addWatch(['ZackWord']);
+    monitor.setPassword(watch.id, 'original');
+
+    // `!ap password 0` reads the 0 as the watch id, leaving nothing after it. Clearing silently
+    // would destroy a password whose only other copy is the message just deleted.
+    const msg = await run('password', String(watch.id));
+    assert.match(said(msg), /would clear the password/);
+    assert.strictEqual(monitor.getWatch(watch.id).password, 'original', 'untouched');
+});
+
+test('clearing a password still works when asked for in words', async () => {
+    const watch = await addWatch(['ZackWord']);
+    monitor.setPassword(watch.id, 'original');
+
+    const msg = await run('password', String(watch.id), 'clear');
+    assert.match(said(msg), /password cleared/);
+    assert.strictEqual(monitor.getWatch(watch.id).password, null);
+});

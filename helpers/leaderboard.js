@@ -10,11 +10,16 @@
 // rather than in a pass of its own.
 
 const MEDALS = ['🥇', '🥈', '🥉'];
-const REST = '🏅';
 
-/** The marker for one zero-based rank. */
+/**
+ * The marker for one zero-based rank.
+ * Past third it is the position, not a medal. A ranked list whose entries below the podium are
+ * all an identical 🏅 cannot be read as a ranking at all: fourth and twelfth look the same, and
+ * ties give no order. The four game commands still use a flat 🏅 there; this is the shape they
+ * should move to when one of them is next touched.
+ */
 function medal(index) {
-    return MEDALS[index] || REST;
+    return MEDALS[index] || `${index + 1}.`;
 }
 
 /**
@@ -32,4 +37,4 @@ function renderBoard(rows, format, options = {}) {
     return lines;
 }
 
-module.exports = { medal, renderBoard, MEDALS, REST };
+module.exports = { medal, renderBoard, MEDALS };

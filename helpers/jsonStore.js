@@ -12,10 +12,15 @@
 //   Writes go to a sibling `.tmp` and rename over the target, so a kill between the truncate and
 //   the write cannot leave a half-file.
 //
-//   A file that fails to parse puts the store READ-ONLY for the run and logs an error naming it,
-//   rather than being replaced by whatever the process happens to hold. The previous shape
-//   (parse-fail, reset the cache to empty, overwrite on the next write) turned one interrupted
-//   write into permanent data loss.
+//   A file that cannot be read is MOVED ASIDE to `<file>.corrupt-<timestamp>` and the store
+//   starts empty but fully writable.
+//
+// That second rule has now been wrong twice in opposite directions. Overwriting the bad file
+// turned one interrupted write into permanent loss. Freezing the store read-only instead was
+// worse: writes were still accepted and reported as successful, so a run's goals were announced
+// and role-synced against a tally that never reached disk, and `sweepCounts` then deleted the
+// count roles the real tally would have kept. Quarantining gives both halves — the damaged file
+// survives for salvage, and the bot keeps working with an empty store rather than a lying one.
 
 const fs = require('fs');
 const path = require('path');
@@ -41,12 +46,37 @@ function createStore(options) {
     const usable = !process.env.NODE_TEST_CONTEXT || !!process.env[envVar];
 
     let cache = null;
-    let readOnly = false;
+    // Cleared on a successful write, set when one fails. Read by consumers that take an action in
+    // the world (creating a Discord role) which is only safe if it can be written down.
+    let writeFailed = false;
 
     const empty = () => (shape === 'array' ? [] : (nullPrototype ? Object.create(null) : {}));
 
     function valid(value) {
-        return shape === 'array' ? Array.isArray(value) : (value && typeof value === 'object');
+        if (shape === 'array') return Array.isArray(value);
+        // typeof [] is 'object', so an array reaching an object store would be Object.assigned
+        // index by index into {0: …, 1: …} rather than rejected.
+        return !!value && typeof value === 'object' && !Array.isArray(value);
+    }
+
+    /**
+     * Move a file that cannot be used out of the way so the store can start clean.
+     * @returns {string|null} where it went
+     */
+    function quarantine(why) {
+        const aside = `${file}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+        try {
+            fs.renameSync(file, aside);
+            logger.error(`Archipelago ${label} file unusable (${why}) — moved to ${aside} and ` +
+                `starting fresh. The old contents are intact there if they are worth salvaging.`);
+            return aside;
+        } catch (err) {
+            logger.error(`Archipelago ${label} file unusable (${why}) and could not be moved aside ` +
+                `(${err.message}). Refusing to overwrite ${file}; fix it by hand.`);
+            // Could not preserve it, so do not clobber it either.
+            writeFailed = true;
+            return null;
+        }
     }
 
     function load() {
@@ -58,17 +88,25 @@ function createStore(options) {
         try {
             const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
             const raw = parsed ? parsed[key] : null;
-            const shaped = migrate ? migrate(raw) : raw;
-            cache = valid(shaped)
-                ? (shape === 'array' ? shaped : Object.assign(empty(), shaped))
-                : empty();
+            cache = empty();
+
+            // The RAW value is shape-checked before migrate() sees it. A migrate hook normalises
+            // as it goes, so checking only its output hid the problem: handing the goal store an
+            // array made migrate return an empty object, which looks perfectly valid.
+            const present = raw !== null && raw !== undefined;
+            if (present && !valid(raw)) {
+                quarantine(`"${key}" is not ${shape === 'array' ? 'an array' : 'an object'}`);
+            } else if (present) {
+                const shaped = migrate ? migrate(raw) : raw;
+                if (valid(shaped)) {
+                    cache = shape === 'array' ? shaped : Object.assign(empty(), shaped);
+                } else {
+                    quarantine(`"${key}" could not be read into the expected shape`);
+                }
+            }
         } catch (err) {
             cache = empty();
-            if (err.code !== 'ENOENT') {
-                readOnly = true;
-                logger.error(`Archipelago ${label} file unreadable (${err.message}) — it is frozen ` +
-                    `for this run rather than overwritten. Move ${file} aside to start fresh.`);
-            }
+            if (err.code !== 'ENOENT') quarantine(err.message);
         }
         return cache;
     }
@@ -76,14 +114,18 @@ function createStore(options) {
     /** @returns {boolean} whether the store is now safely on disk */
     function persist() {
         if (!usable) return true;
-        if (readOnly) return false;
+        // Loaded first, so a persist that is the very first call on the store cannot write an
+        // empty collection over a file nothing has looked at yet.
+        const data = load();
         try {
             fs.mkdirSync(path.dirname(file), { recursive: true });
             const tmp = `${file}.tmp`;
-            fs.writeFileSync(tmp, JSON.stringify({ [key]: load() }, null, 4));
+            fs.writeFileSync(tmp, JSON.stringify({ [key]: data }, null, 4));
             fs.renameSync(tmp, file);
+            writeFailed = false;
             return true;
         } catch (err) {
+            writeFailed = true;
             logger.error(`Could not persist Archipelago ${label}s:`, err.message);
             return false;
         }
@@ -92,10 +134,10 @@ function createStore(options) {
     /** Test seam: drop the in-memory copy so the next read comes off disk. */
     function reset() {
         cache = null;
-        readOnly = false;
+        writeFailed = false;
     }
 
-    return { file, usable, load, persist, reset, isReadOnly: () => readOnly };
+    return { file, usable, load, persist, reset, healthy: () => !writeFailed };
 }
 
 module.exports = { createStore };

@@ -21,6 +21,9 @@ const ZACK = '111111111111111111';
 // test rather than passing by luck.
 const startFakeServer = () => ap.startFakeServer({
     slots: ['ZackWord', 'Watcher'],
+    // Deliberately divergent: if the bot ever read `alias` where it should read `name`, the
+    // assertion on the ping's slot name below would fail instead of passing by luck.
+    aliases: { ZackWord: 'Zack (afk)' },
     watchSlot: 2,
     seedName: 'Seed_PING'
 });
@@ -120,4 +123,93 @@ test('a filler item does not ping a slot set to progression only', async (t) => 
     await waitFor(() => posted.find(p => String(p.content).includes('Blue Rupee')), 'the log block');
 
     assert.strictEqual(pingMessage(), undefined, 'filler must not ping a progression-only claim');
+});
+
+// A message assembled without a length bound is rejected outright past 2000 characters, and
+// post() swallows that, so an over-long ping notified NOBODY - worse than the partial drop the
+// by-claimant grouping was written to fix. Every claimant must end up mentioned somewhere.
+test('a flush with many claimants still mentions every one, within the length limit', async (t) => {
+    const savedEnabled = config.archipelagoEnabled;
+    const savedBatch = config.archipelagoBatchSeconds;
+    config.archipelagoEnabled = false;
+    config.archipelagoBatchSeconds = 1;
+
+    const CLAIMANTS = 20;
+    const slots = Array.from({ length: CLAIMANTS }, (_, i) => `Slot${i}`).concat('Watcher');
+    const server = await ap.startFakeServer({ slots, watchSlot: slots.length, seedName: 'Seed_MANY' });
+    let watchId = null;
+
+    t.after(async () => {
+        if (watchId !== null) monitor.removeWatch(watchId);
+        await closeServer(server.wss);
+        config.archipelagoEnabled = savedEnabled;
+        config.archipelagoBatchSeconds = savedBatch;
+        claims.reset();
+    });
+
+    monitor.startArchipelagoMonitor(fakeDiscord);
+    const { watch } = await monitor.addWatch({
+        target: `localhost:${server.port}`, slot: 'Watcher', channelId: 'chan-many'
+    }, 15000);
+    watchId = watch.id;
+
+    const users = [];
+    for (let i = 0; i < CLAIMANTS; i++) {
+        const userId = `${900000000000000000 + i}`;
+        users.push(userId);
+        claims.claim({ watchId: watch.id, slot: `Slot${i}`, userId });
+    }
+    posted.length = 0;
+
+    // A long item name, so each line is near the 200-character cap notePing allows.
+    const longName = 'Progressive '.repeat(14) + 'Sword';
+    for (let i = 0; i < CLAIMANTS; i++) server.sendItem(i + 1, ITEM_FLAG_PROGRESSION, longName);
+
+    await waitFor(
+        () => users.every(id => posted.some(p => String(p.content).includes(`<@${id}>`))),
+        'every claimant to be mentioned somewhere'
+    );
+
+    for (const payload of posted) {
+        assert.ok(String(payload.content).length <= 2000,
+            `a message ran to ${String(payload.content).length} characters, which Discord rejects`);
+    }
+});
+
+test('somebody holding several slots sees each of them, not just the first', async (t) => {
+    const savedEnabled = config.archipelagoEnabled;
+    const savedBatch = config.archipelagoBatchSeconds;
+    config.archipelagoEnabled = false;
+    config.archipelagoBatchSeconds = 1;
+
+    const server = await ap.startFakeServer({
+        slots: ['SlotOne', 'SlotTwo', 'Watcher'], watchSlot: 3, seedName: 'Seed_MULTI'
+    });
+    let watchId = null;
+
+    t.after(async () => {
+        if (watchId !== null) monitor.removeWatch(watchId);
+        await closeServer(server.wss);
+        config.archipelagoEnabled = savedEnabled;
+        config.archipelagoBatchSeconds = savedBatch;
+        claims.reset();
+    });
+
+    monitor.startArchipelagoMonitor(fakeDiscord);
+    const { watch } = await monitor.addWatch({
+        target: `localhost:${server.port}`, slot: 'Watcher', channelId: 'chan-multi'
+    }, 15000);
+    watchId = watch.id;
+
+    claims.claim({ watchId: watch.id, slot: 'SlotOne', userId: ZACK });
+    claims.claim({ watchId: watch.id, slot: 'SlotTwo', userId: ZACK });
+    posted.length = 0;
+
+    server.sendItem(1, ITEM_FLAG_PROGRESSION, 'Sword');
+    server.sendItem(2, ITEM_FLAG_PROGRESSION, 'Shield');
+
+    await waitFor(() => posted.some(p => String(p.content).includes('SlotTwo')), 'the second slot');
+    const all = posted.map(p => String(p.content)).join('\n');
+    assert.match(all, /SlotOne/, 'the first slot is named');
+    assert.match(all, /SlotTwo/, 'and so is the second, rather than collapsing to "(+1 more)"');
 });

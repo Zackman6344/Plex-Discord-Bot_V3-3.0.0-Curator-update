@@ -36,9 +36,10 @@ function flushDelayMs() {
 const MAX_CHUNK = 1900;
 const MAX_MESSAGES_PER_FLUSH = 3;
 const MAX_BUFFER_LINES = 500;
-// Pings go in one message per flush. Past a handful the mention is doing the work and the detail
-// is not, so the rest collapse into a count.
-const MAX_PING_LINES = 8;
+// Pings are chunked to the message limit, like the log relay. 1900 leaves room for nothing in
+// particular here, but keeps the two paths using the same budget.
+const MAX_PING_CHARS = 1900;
+const MAX_PING_MESSAGES = 2;
 const MAX_PENDING_PINGS = 100;
 // A ping quotes a line the room composed, outside a code fence, so a player free to name
 // themselves `**` can otherwise reformat the message. discord.js owns the escaping rules and
@@ -197,26 +198,30 @@ async function flushPings(state) {
     const pending = state.pings.splice(0, state.pings.length);
     if (pending.length === 0) return;
 
-    const byUser = new Map();
-    for (const ping of pending) {
-        if (!byUser.has(ping.userId)) byUser.set(ping.userId, []);
-        byUser.get(ping.userId).push(ping);
+    // One line per item, so somebody holding several slots still sees which of them moved.
+    // Grouping by claimant instead showed only their first item and dropped the rest silently.
+    const lines = pending.map(p => `<@${p.userId}> \`${p.slot.replace(/`/g, "'")}\` — ${p.text}`);
+
+    // Packed to the message limit and sent as however many messages that takes, using the same
+    // chunker the log relay uses. A single message assembled without a length bound is rejected
+    // outright once it passes 2000 characters, and post() swallows that, so on a busy flush
+    // NOBODY was notified — worse than the partial drop this code replaced.
+    const chunks = chunkLines(lines, MAX_PING_CHARS);
+    const send = chunks.slice(0, MAX_PING_MESSAGES);
+
+    for (const chunk of send) {
+        const ids = [...new Set(pending.map(p => p.userId))].filter(id => chunk.includes(`<@${id}>`));
+        await post(state, chunk, ids);
     }
 
-    const lines = [];
-    const overflow = [];
-    for (const [userId, entries] of byUser) {
-        if (lines.length < MAX_PING_LINES) {
-            const first = entries[0];
-            const more = entries.length > 1 ? ` (+${entries.length - 1} more)` : '';
-            lines.push(`<@${userId}> \`${escapeMarkdown(first.slot)}\` — ${first.text}${more}`);
-        } else {
-            overflow.push(`<@${userId}>`);
-        }
+    // Anyone whose line did not make the cut still needs a mention, or their claim did nothing
+    // at all. Their ids being in allowedMentions is not enough: with no `<@id>` in the content
+    // Discord notifies nobody.
+    const missed = [...new Set(pending.map(p => p.userId))]
+        .filter(id => !send.some(chunk => chunk.includes(`<@${id}>`)));
+    if (missed.length > 0) {
+        await post(state, `…and more items for ${missed.map(id => `<@${id}>`).join(' ')}`, missed);
     }
-    if (overflow.length > 0) lines.push(`…and items for ${overflow.join(' ')}`);
-
-    await post(state, lines.join('\n'), [...byUser.keys()]);
 }
 
 async function flush(state) {
@@ -430,22 +435,38 @@ function stopWatch(id) {
 
 // Rebuilds the client so a changed password, slot, or DeathLink tag takes effect — all
 // three are only read during the connect handshake.
-function restartWatch(id) {
+/**
+ * Rebuild the client so a changed password, slot or DeathLink tag takes effect.
+ * @param {number} id
+ * @param {{sameRoom?: boolean}} [options] sameRoom false when the watch has been re-pointed at a
+ *   different multiworld, so nothing identifying the old one is carried over.
+ */
+function restartWatch(id, { sameRoom = true } = {}) {
     const existing = states.get(id);
     if (!existing) return null;
     stopWatch(id);
     const state = makeState(existing.watch);
     state.channel = existing.channel;
-    // All of these survive the new socket: the tracker id is fixed for the room's life, and
-    // completion read before the reconnect is still true after it.
-    state.trackerUrl = existing.trackerUrl;
-    state.client.fullyChecked = existing.client.fullyChecked;
-    state.client.released = existing.client.released;
-    // Slot names too, or a restart silently disables the claim-name check that knowsRoom() gates:
-    // until the fresh handshake lands, `!ap claim ZackWordd` would be stored as typed. A restart
-    // is exactly when the room may be unreachable, so that window is not short.
-    state.client.slotNames = existing.client.slotNames;
-    state.client.seedName = existing.client.seedName;
+    // Carried across only when the new socket is going to the SAME room. A /config re-point
+    // reuses this path with a different multiworld, where every one of these is a lie: the goal
+    // key would keep the old seed, so a slot name shared by both rooms is deduped against the old
+    // room's goal and never credited, and canonicalSlotName would "verify" claims against slots
+    // that no longer exist.
+    if (sameRoom) {
+        // The tracker id is fixed for the room's life, and completion read before the reconnect
+        // is still true after it.
+        state.trackerUrl = existing.trackerUrl;
+        state.client.fullyChecked = existing.client.fullyChecked;
+        state.client.released = existing.client.released;
+        // Slot names too, or a restart silently disables the claim-name check that knowsRoom()
+        // gates: until the fresh handshake lands, `!ap claim ZackWordd` would be stored as typed.
+        // A restart is exactly when the room may be unreachable, so that window is not short.
+        state.client.slotNames = existing.client.slotNames;
+        state.client.seedName = existing.client.seedName;
+        // And the team those names are keyed under. Without it a fresh client defaults to team 0
+        // while holding a team-1 map, so knowsRoom() is true and every lookup misses.
+        state.client.team = existing.client.team;
+    }
     states.set(id, state);
     existing.watch.paused = false;
     state.client.start();
@@ -495,7 +516,7 @@ function syncConfigWatch() {
             // With no state for id 0, listClaims(0) answers null and `!ap claims` / `!ap unclaim`
             // report "No watch with ID 0", so claims left here would be unreachable from the
             // command surface and would attach to whatever room /config names next.
-            const dropped = claims.releaseWatch(CONFIG_WATCH_ID);
+            const dropped = releaseClaimsFor(existing, CONFIG_WATCH_ID);
             logger.info('Archipelago configured room cleared — its settings are no longer complete' +
                 (dropped > 0 ? `, ${dropped} slot claim(s) released with it` : ''));
         }
@@ -543,7 +564,7 @@ function syncConfigWatch() {
     // removeWatch cannot cover this, because refuseIfManaged rejects the managed watch.
     // A slot or password change is the same room, so only the target is grounds for dropping.
     if (roomChanged) {
-        const dropped = claims.releaseWatch(CONFIG_WATCH_ID);
+        const dropped = releaseClaimsFor(existing, CONFIG_WATCH_ID);
         if (dropped > 0) {
             logger.info(`Archipelago configured room re-pointed — ${dropped} slot claim(s) released with the old room`);
         }
@@ -561,7 +582,7 @@ function syncConfigWatch() {
     // Both are read at render time, so they apply to the next line without a new socket.
     existing.client.colorize = desired.color;
     existing.client.markers = desired.markers;
-    if (needsReconnect) restartWatch(CONFIG_WATCH_ID);
+    if (needsReconnect) restartWatch(CONFIG_WATCH_ID, { sameRoom: !roomChanged });
     return existing.watch;
 }
 
@@ -680,19 +701,12 @@ function removeWatch(id) {
     const state = states.get(id);
     if (!state) return null;
     refuseIfManaged(state, 'the room URL or host');
-    // Captured before the claims go, so the participant role can be taken off anyone this leaves
-    // holding nothing. Without it their role outlived every claim they had.
-    const affected = new Set(claims.forWatch(id).map(c => c.userId));
     stopWatch(id);
     states.delete(id);
     // Claims are keyed by watch id, and ids are handed out from a counter that can reach this
-    // one again. Dropping them here stops a future watch inheriting the last one's pings.
-    const releasedClaims = claims.releaseWatch(id);
-    if (affected.size > 0) {
-        // The state is gone, so the role sync borrows this one purely for its channel and guild.
-        syncRoles(state, affected).catch(err =>
-            logger.warn(`[AP:${state.watch.label}] role sync after unwatch failed: ${err.message || err}`));
-    }
+    // one again. Dropping them here stops a future watch inheriting the last one's pings. The
+    // state is already gone, so the role sync borrows this one purely for its channel and guild.
+    const releasedClaims = releaseClaimsFor(state, id);
     persist();
     return { ...state.watch, releasedClaims };
 }
@@ -883,6 +897,23 @@ async function syncRoles(state, userIds) {
     }
 }
 
+/**
+ * Drop every claim on a watch and take the participant role off anyone that leaves holding
+ * nothing. Three paths reach this: `!ap unwatch`, a /config re-point, and /config losing a
+ * required setting. Only the first had the role sync, so the other two left the role stuck on
+ * people with no claims and nothing to re-evaluate it later.
+ * @returns {number} how many claims went
+ */
+function releaseClaimsFor(state, id) {
+    const affected = new Set(claims.forWatch(id).map(c => c.userId));
+    const dropped = claims.releaseWatch(id);
+    if (dropped > 0 && state) {
+        syncRoles(state, affected).catch(err =>
+            logger.warn(`[AP] role sync after releasing watch ${id} failed: ${err.message || err}`));
+    }
+    return dropped;
+}
+
 /** Record goals, then update whoever that moved. Fire and forget; role work is never blocking. */
 function syncGoalsAndRoles(state, alsoSync = null) {
     const changed = recordGoals(state);
@@ -955,7 +986,7 @@ function listWatches() {
         lineCount: state.lineCount,
         droppedLines: state.droppedLines,
         connectedAt: state.connectedAt,
-        players: state.client.players.size,
+        players: state.client.slotsOnTeam().length,
         finished: state.client.finishedCount
     }));
 }

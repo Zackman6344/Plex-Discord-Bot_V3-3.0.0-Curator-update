@@ -17,8 +17,14 @@ const WATCH_ID_HELP = 'Watch ID — leave empty if there is only one room';
 // all one list.
 const PING_HELP = claims.PING_HELP;
 
-// Slot names come from players' own YAML, and these replies are not inside a code fence.
-const slotLabel = (name) => `\`${escapeMarkdown(String(name || ''))}\``;
+// Slot names come from players' own YAML, so they reach a reply as text nobody here wrote.
+//
+// Wrapping them in an inline code span is the containment: Discord applies no markdown inside
+// one, so nothing needs escaping. Running escapeMarkdown first was actively wrong, because the
+// backslashes it inserts are not escapes inside a span, they are literal characters — a slot
+// named `Zack_Word` rendered as `Zack\_Word`, and underscores are everywhere in slot names. The
+// only character that matters is the backtick, which would close the span early.
+const slotLabel = (name) => `\`${String(name || '').replace(/`/g, "'")}\``;
 
 const CATEGORY_HELP = {
     items: 'item sends (and cheated items)',
@@ -230,7 +236,20 @@ module.exports = {
             };
             // Same rule for the connect flow, which edits its own status message with the room
             // address and whatever error text the server sent back.
-            const editQuietly = (message, content) => message.edit({ content, allowedMentions: { parse: [] } });
+            //
+            // `message` is whatever say() returned, which is null when the first send failed, so
+            // this falls back to saying it fresh rather than dereferencing that. It swallows on
+            // the same terms as say() too: handlers `return editQuietly(...)` without awaiting, so
+            // a rejection here would escape the try/catch below exactly as one from send did.
+            const editQuietly = async (message, content) => {
+                if (!message) return say(content);
+                try {
+                    return await message.edit({ content, allowedMentions: { parse: [] } });
+                } catch (err) {
+                    logger.warn(`!ap could not edit its status message in ${msg.channel.id}:`, err.message || err);
+                    return say(content);
+                }
+            };
 
             if (!config.archipelagoEnabled) {
                 return say(
@@ -616,7 +635,8 @@ module.exports = {
                 }
 
                 if (action === 'password') {
-                    const password = opt('password') || (interaction ? null : words.slice(argBase).join(' ')) || null;
+                    const typed = interaction ? null : words.slice(argBase).join(' ');
+                    const password = opt('password') || typed || null;
 
                     // The prefix form puts the password in a channel message. Delete it before
                     // anything else can fail and leave it sitting there.
@@ -627,10 +647,23 @@ module.exports = {
                     const id = idFrom();
                     if (id === null) return badId();
 
-                    const state = monitor.setPassword(id, password);
+                    // Clearing has to be asked for in words. Since a leading integer is always
+                    // read as the watch id, `!ap password 0` meaning "set it to 0" left nothing
+                    // after the id and would otherwise have silently CLEARED the password —
+                    // after deleting the only copy of it the user had.
+                    if (!interaction && !typed) {
+                        return say(
+                            `That would clear the password rather than set one. ` +
+                            `Use \`${prefix}ap password ${id} clear\` if that is what you meant, ` +
+                            `or \`/ap password\` with the field left empty.`
+                        );
+                    }
+                    const clearing = !password || (!interaction && typed.trim().toLowerCase() === 'clear');
+
+                    const state = monitor.setPassword(id, clearing ? null : password);
                     if (!state) return say(`No watch with ID ${id}.`);
                     return say(
-                        `🔑 **${state.watch.label}** (#${id}) — password ${password ? 'set' : 'cleared'}; reconnecting.`
+                        `🔑 **${state.watch.label}** (#${id}) — password ${clearing ? 'cleared' : 'set'}; reconnecting.`
                     );
                 }
 

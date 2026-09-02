@@ -47,6 +47,9 @@ function useTempStores(prefix) {
  * A server that completes the RoomInfo -> Connect -> Connected handshake.
  * @param {Object} [options]
  * @param {string[]} [options.slots]     slot names, numbered from 1 in order
+ * @param {Object}   [options.aliases]   slot name -> display alias. Defaults to the name, but a
+ *   test that cares whether the bot reads `name` or `alias` must set a DIFFERENT one, or both
+ *   fields carry the same string and the assertion passes either way.
  * @param {string}   [options.seedName]  RoomInfo.seed_name; the goal tally keys on it
  * @param {number}   [options.watchSlot] which slot the connecting client is told it is
  * @param {boolean}  [options.refuse]    answer Connect with ConnectionRefused instead
@@ -55,6 +58,7 @@ function useTempStores(prefix) {
 function startFakeServer(options = {}) {
     const {
         slots = ['SlotA', 'SlotB'],
+        aliases = {},
         seedName = 'Seed_TEST',
         watchSlot = 1,
         refuse = false
@@ -81,7 +85,7 @@ function startFakeServer(options = {}) {
                     cmd: 'Connected',
                     team: 0,
                     slot: watchSlot,
-                    players: slots.map((name, i) => ({ team: 0, slot: i + 1, name, alias: name })),
+                    players: slots.map((name, i) => ({ team: 0, slot: i + 1, name, alias: aliases[name] || name })),
                     slot_info: {},
                     missing_locations: [],
                     checked_locations: []

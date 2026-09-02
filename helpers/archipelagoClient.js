@@ -367,7 +367,7 @@ class ArchipelagoClient extends EventEmitter {
 
     lookupTables() {
         return {
-            playerName: (slot) => this.players.get(slot),
+            playerName: (slot) => this.players.get(`${this.team}:${slot}`),
             gameForSlot: (slot) => this.slotGames.get(slot),
             itemName: (game, id) => {
                 const table = this.itemNames.get(game);
@@ -392,6 +392,11 @@ class ArchipelagoClient extends EventEmitter {
         if (this.socket) {
             try { this.socket.close(); } catch (_) {}
             try { this.socket.removeAllListeners(); } catch (_) {}
+            // A socket closed while its handshake is still in flight emits one more 'error', and
+            // an EventEmitter with no 'error' listener rethrows it as an uncaught exception.
+            // Stopping a watch mid-connect is routine: `!ap retry`, a password change, and the
+            // /config wizard all rebuild the client, sometimes before the previous one is up.
+            try { this.socket.on('error', () => {}); } catch (_) {}
             this.socket = null;
         }
         this.connected = false;
@@ -609,7 +614,9 @@ class ArchipelagoClient extends EventEmitter {
 
     async _handleRoomInfo(packet) {
         this.pendingChecksums = packet.datapackage_checksums || {};
-        if (packet.seed_name) this.seedName = String(packet.seed_name);
+        // Assigned unconditionally. Keeping the previous value when a server sends none let a
+        // re-pointed watch carry the old multiworld's goal key into a different room.
+        this.seedName = packet.seed_name ? String(packet.seed_name) : null;
 
         const missing = [];
         for (const game of packet.games || []) {
@@ -650,9 +657,22 @@ class ArchipelagoClient extends EventEmitter {
         }
     }
 
+    /** Slot numbers on one team, in the order the room reported them. */
+    slotsOnTeam(team = this.team) {
+        const prefix = `${team}:`;
+        const slots = [];
+        for (const key of this.slotNames.keys()) {
+            if (key.startsWith(prefix)) slots.push(Number(key.slice(prefix.length)));
+        }
+        return slots;
+    }
+
     _absorbPlayers(packet) {
         for (const player of packet.players || []) {
-            this.players.set(player.slot, player.alias || player.name);
+            // Keyed by team like slotNames below, and for the same reason: slot numbers repeat
+            // across teams, so a flat key let team 1's entry overwrite team 0's and every relayed
+            // line naming that slot rendered the wrong player.
+            this.players.set(`${player.team || 0}:${player.slot}`, player.alias || player.name);
             // player.name is the slot name the seed was rolled with and never changes; the alias
             // above is display-only and does.
             //
@@ -675,7 +695,9 @@ class ArchipelagoClient extends EventEmitter {
     // wrong guess degrades to "nobody has goaled" instead of a silently dead filter.
     _statusKeys() {
         const keys = [];
-        for (const slot of this.players.keys()) {
+        // This connection's own team only. Iterating every key would have asked for another
+        // team's slot numbers under this team's prefix once the maps became team-keyed.
+        for (const slot of this.slotsOnTeam()) {
             keys.push(`_read_client_status_${this.team}_${slot}`);
             keys.push(`client_status_${this.team}_${slot}`);
         }
@@ -702,8 +724,16 @@ class ArchipelagoClient extends EventEmitter {
     }
 
     _handleConnected(packet) {
-        this._absorbPlayers(packet);
+        // Team first, so everything below is keyed and filtered against the right one.
         if (typeof packet.team === 'number') this.team = packet.team;
+        // Connected is the room describing itself from scratch, and a reconnect may be to a
+        // different multiworld entirely after a /config re-point. _absorbPlayers only ever sets,
+        // so without this the old room's slot names would linger and canonicalSlotName would
+        // "verify" claims against slots that no longer exist.
+        this.players.clear();
+        this.slotNames.clear();
+        this.slotGames.clear();
+        this._absorbPlayers(packet);
         // Numeric slot, as opposed to this.slot which is the name given in config. Needed to
         // recognise the room's join broadcast for this very connection.
         if (typeof packet.slot === 'number') this.slotId = packet.slot;
@@ -717,7 +747,7 @@ class ArchipelagoClient extends EventEmitter {
             this._send({ cmd: 'SetNotify', keys });
         }
 
-        this.emit('status', { state: 'connected', detail: this.address, slots: this.players.size });
+        this.emit('status', { state: 'connected', detail: this.address, slots: this.slotsOnTeam().length });
     }
 
     _handleRefused(packet) {

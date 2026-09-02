@@ -139,3 +139,19 @@ test('PLEXBOT_LOG_RETENTION_DAYS prunes both sinks when it is set', () => {
 
     fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// --- flag parsing -------------------------------------------------------------------------
+
+test('an absent or blank window falls back rather than meaning "everything"', () => {
+    // Number('') is 0 and 0 means "read every day-file", so a blank --days used to widen the read
+    // instead of erroring, sliding straight past the guard written to stop exactly that.
+    assert.strictEqual(commandLog.countOr('', -1), -1);
+    assert.strictEqual(commandLog.countOr('   ', -1), -1);
+    assert.strictEqual(commandLog.countOr(null, -1), -1);
+    assert.strictEqual(commandLog.countOr(undefined, -1), -1);
+    assert.strictEqual(commandLog.countOr('abc', -1), -1);
+
+    // Real values still parse.
+    assert.strictEqual(commandLog.countOr('0', -1), 0);
+    assert.strictEqual(commandLog.countOr('60', -1), 60);
+});
