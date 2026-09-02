@@ -208,15 +208,29 @@ module.exports = {
                 return found && found.value !== undefined && found.value !== null ? found.value : null;
             };
 
+            // Nothing this command says should ping anybody, so every reply goes through here
+            // rather than each site remembering. Replies quote slot names, player names and
+            // server error text, all written by somebody else: `!ap unclaim <@&role>` had the bot
+            // echo that role mention live, and the participant role it creates is mentionable, so
+            // any user could make the bot ping every Archipelago player at will.
+            const say = (payload) => msg.channel.send(
+                typeof payload === 'string'
+                    ? { content: payload, allowedMentions: { parse: [] } }
+                    : { ...payload, allowedMentions: { parse: [] } }
+            );
+            // Same rule for the connect flow, which edits its own status message with the room
+            // address and whatever error text the server sent back.
+            const editQuietly = (message, content) => message.edit({ content, allowedMentions: { parse: [] } });
+
             if (!config.archipelagoEnabled) {
-                return msg.channel.send(
+                return say(
                     '🧩 The Archipelago monitor is switched off.\n' +
                     'Set `archipelagoEnabled: true` in `config/config.js` and restart the bot to use it.'
                 );
             }
 
             if (!action || action === 'help' || action === 'menu' || action === '?') {
-                return msg.channel.send([
+                return say([
                     '🧩 **Archipelago room monitor**',
                     '*Relays a multiworld\'s server log into the channel you set it up in.*',
                     '',
@@ -249,29 +263,37 @@ module.exports = {
             // someone else's behalf is still owner-only, checked per action below.
             const selfService = ['claim', 'unclaim', 'pings'].includes(action);
             if (!readOnly && !selfService && !isOwner(msg)) {
-                return msg.channel.send('🔒 Only the bot owner can change Archipelago watches.');
+                return say('🔒 Only the bot owner can change Archipelago watches.');
             }
 
             // A watch id is noise when there is only one room, so it can be left out and the one
             // watch is assumed. In the prefix form that makes the first word ambiguous:
-            // `!ap claim 0 ZackWord` gives an id and `!ap claim ZackWord` does not. A slot could
-            // in principle be named "0", so a number is only read as an id when a watch has it.
+            // `!ap claim 0 ZackWord` gives an id and `!ap claim ZackWord` does not.
+            //
+            // A leading integer is ALWAYS taken as the id, whether or not a watch currently holds
+            // it. Deciding that on whether the id exists looks friendlier and is not: a stale id
+            // then reads as the next argument instead, which silently retargets the only watch.
+            // `!ap unwatch 999` deleted the one live room, `!ap password 7 hunter2` stored the
+            // password "7 hunter2", and `!ap progression 0 on` read the 0 as "off" and inverted
+            // the setting. Answering "no watch with ID 7" is recoverable; none of those were.
+            //
+            // The cost is that a slot literally named "12345" needs the explicit form,
+            // `!ap claim <id> 12345`, which is a trade worth making in this direction.
             const watchIds = () => monitor.listWatches().map(entry => entry.watch.id);
-            const hasExplicitId = interaction
-                ? opt('id') !== null
-                : /^\d+$/.test(String(words[1] || '')) && watchIds().includes(Number(words[1]));
+            const idToken = interaction || !/^\d+$/.test(String(words[1] || '')) ? null : words[1];
+            const hasExplicitId = interaction ? opt('id') !== null : idToken !== null;
             // Where the arguments after the id start, so the rest of the parsing does not have to
             // care whether one was given.
             const argBase = hasExplicitId ? 2 : 1;
             const idFrom = () => {
                 if (hasExplicitId) {
                     const value = opt('id');
-                    return Number(value !== null ? value : words[1]);
+                    return Number(value !== null ? value : idToken);
                 }
                 const ids = watchIds();
                 return ids.length === 1 ? ids[0] : null;
             };
-            const badId = () => msg.channel.send(watchIds().length === 0
+            const badId = () => say(watchIds().length === 0
                 ? `No rooms are being watched yet. \`${prefix}ap watch <room url> <slot name>\` starts one.`
                 : `More than one room is being watched, so I need the ID. \`${prefix}ap list\` shows them.`);
 
@@ -283,10 +305,10 @@ module.exports = {
                     const password = opt('password') || null;
 
                     if (!target || !slot) {
-                        return msg.channel.send(`Usage: \`${prefix}ap watch <room url|host:port> <slot name>\``);
+                        return say(`Usage: \`${prefix}ap watch <room url|host:port> <slot name>\``);
                     }
 
-                    const status = await msg.channel.send(`🧩 Connecting to \`${target}\` as \`${slot}\`…`);
+                    const status = await say(`🧩 Connecting to \`${target}\` as \`${slot}\`…`);
                     let watch, outcome, detail;
                     try {
                         ({ watch, outcome, detail } = await monitor.addWatch({
@@ -299,11 +321,11 @@ module.exports = {
                             addedBy: msg.author ? msg.author.id : null
                         }));
                     } catch (err) {
-                        return status.edit(`❌ ${err.message}`);
+                        return editQuietly(status, `❌ ${err.message}`);
                     }
 
                     if (outcome === 'connected') {
-                        return status.edit(
+                        return editQuietly(status, 
                             `🟢 **Watch #${watch.id}** — connected to \`${detail}\` as \`${watch.slot}\`.\n` +
                             `The room log will appear here. \`${prefix}ap filter ${watch.id} items off\` if it gets noisy.`
                         );
@@ -314,43 +336,43 @@ module.exports = {
                             : /InvalidPassword/i.test(detail)
                                 ? `\nThe room wants a password: \`${prefix}ap password ${watch.id} <password>\`.`
                                 : '';
-                        return status.edit(`🔴 **Watch #${watch.id}** — the server refused the connection (\`${detail}\`).${hint}`);
+                        return editQuietly(status, `🔴 **Watch #${watch.id}** — the server refused the connection (\`${detail}\`).${hint}`);
                     }
-                    return status.edit(
+                    return editQuietly(status, 
                         `🟡 **Watch #${watch.id}** — saved, but no connection yet${detail ? ` (${detail})` : ''}.\n` +
                         `I'll keep retrying in the background; \`${prefix}ap status ${watch.id}\` to check.`
                     );
                 }
 
                 if (action === 'list') {
-                    return msg.channel.send({ embeds: [buildListEmbed(monitor.listWatches())] });
+                    return say({ embeds: [buildListEmbed(monitor.listWatches())] });
                 }
 
                 if (action === 'status') {
                     const id = idFrom();
                     if (id === null) return badId();
                     const entries = monitor.listWatches().filter(e => e.watch.id === id);
-                    if (entries.length === 0) return msg.channel.send(`No watch with ID ${id}.`);
-                    return msg.channel.send({ embeds: [buildListEmbed(entries)] });
+                    if (entries.length === 0) return say(`No watch with ID ${id}.`);
+                    return say({ embeds: [buildListEmbed(entries)] });
                 }
 
                 if (action === 'unwatch') {
                     const id = idFrom();
                     if (id === null) return badId();
                     const removed = monitor.removeWatch(id);
-                    if (!removed) return msg.channel.send(`No watch with ID ${id}.`);
+                    if (!removed) return say(`No watch with ID ${id}.`);
                     const alsoDropped = removed.releasedClaims
                         ? ` ${removed.releasedClaims} slot claim(s) dropped with it.`
                         : '';
-                    return msg.channel.send(`🗑️ Stopped watching **${removed.label}** (#${removed.id}).${alsoDropped}`);
+                    return say(`🗑️ Stopped watching **${removed.label}** (#${removed.id}).${alsoDropped}`);
                 }
 
                 if (action === 'retry') {
                     const id = idFrom();
                     if (id === null) return badId();
                     const state = monitor.restartWatch(id);
-                    if (!state) return msg.channel.send(`No watch with ID ${id}.`);
-                    return msg.channel.send(`🔄 Reconnecting **${state.watch.label}** (#${id})…`);
+                    if (!state) return say(`No watch with ID ${id}.`);
+                    return say(`🔄 Reconnecting **${state.watch.label}** (#${id})…`);
                 }
 
                 if (action === 'filter') {
@@ -364,16 +386,16 @@ module.exports = {
                         : null;
 
                     if (!monitor.FILTER_GROUPS.includes(group) || toggle === null) {
-                        return msg.channel.send(
+                        return say(
                             `Usage: \`${prefix}ap filter <id> <${monitor.FILTER_GROUPS.join('|')}> <on|off>\`\n` +
                             Object.entries(CATEGORY_HELP).map(([k, v]) => `• \`${k}\` — ${v}`).join('\n')
                         );
                     }
 
                     const state = monitor.setFilter(id, group, toggle);
-                    if (!state) return msg.channel.send(`No watch with ID ${id}.`);
+                    if (!state) return say(`No watch with ID ${id}.`);
                     const note = group === 'deaths' ? ' Reconnecting so the DeathLink tag takes effect.' : '';
-                    return msg.channel.send(`✅ **${state.watch.label}** (#${id}) — \`${group}\` ${toggle ? 'on' : 'off'}.${note}`);
+                    return say(`✅ **${state.watch.label}** (#${id}) — \`${group}\` ${toggle ? 'on' : 'off'}.${note}`);
                 }
 
                 // progression / skipgoaled / color all read "<id> <on|off>" the same way.
@@ -413,11 +435,11 @@ module.exports = {
                         : truthy(words[argBase]) ? true
                         : falsy(words[argBase]) ? false
                         : null;
-                    if (toggle === null) return msg.channel.send(`Usage: \`${prefix}ap ${action} [id] <on|off>\``);
+                    if (toggle === null) return say(`Usage: \`${prefix}ap ${action} [id] <on|off>\``);
 
                     const state = TOGGLES[action].apply(id, toggle);
-                    if (!state) return msg.channel.send(`No watch with ID ${id}.`);
-                    return msg.channel.send(
+                    if (!state) return say(`No watch with ID ${id}.`);
+                    return say(
                         `✅ **${state.watch.label}** (#${id}) — ${toggle ? TOGGLES[action].on : TOGGLES[action].off}.`
                     );
                 }
@@ -440,26 +462,38 @@ module.exports = {
                     return first ? first.id : null;
                 };
                 // Any reply naming a user echoes an <@id>; none of them should actually ping.
-                const quiet = (content) => msg.channel.send({ content, allowedMentions: { parse: [] } });
 
                 if (action === 'claim') {
                     const id = idFrom();
                     if (id === null) return badId();
                     const slot = slotArg(argBase);
-                    if (!slot) return msg.channel.send(`Usage: \`${prefix}ap claim [id] <slot name>\``);
+                    if (!slot) return say(`Usage: \`${prefix}ap claim [id] <slot name>\``);
 
                     const onBehalf = mentionedUser();
                     if (onBehalf && onBehalf !== callerId && !isOwner(msg)) {
-                        return msg.channel.send('🔒 Only the bot owner can claim a slot for someone else.');
+                        return say('🔒 Only the bot owner can claim a slot for someone else.');
                     }
                     const userId = onBehalf || callerId;
-                    if (!userId) return msg.channel.send('I could not work out who to claim that for.');
+                    if (!userId) return say('I could not work out who to claim that for.');
+
+                    // Claiming is open to everyone, so it needs the ownership check that unclaim
+                    // and pings carry: without it any player could take a slot somebody else was
+                    // already on, silently stopping their pings and inheriting its goals.
+                    const existing = monitor.listClaims(id);
+                    if (existing === null) return say(`No watch with ID ${id}.`);
+                    const heldBy = existing.find(c => claims.sameSlot(c.slot, slot));
+                    if (heldBy && heldBy.userId !== userId && !isOwner(msg)) {
+                        return say(
+                            `🔒 \`${heldBy.slot}\` is already claimed by <@${heldBy.userId}>. ` +
+                            `They can release it with \`${prefix}ap unclaim ${id} ${heldBy.slot}\`, or the bot owner can reassign it.`
+                        );
+                    }
 
                     const result = monitor.claimSlot(id, slot, userId);
-                    if (!result) return msg.channel.send(`No watch with ID ${id}.`);
+                    if (!result) return say(`No watch with ID ${id}.`);
 
                     const { claim, verified } = result;
-                    return quiet(
+                    return say(
                         `✅ ${userId === callerId ? 'You are' : `<@${userId}> is`} now on \`${claim.slot}\` — ` +
                         `pinging for ${PING_HELP[claim.pings]}.` +
                         (verified ? '' : `\n⚠️ I haven't read the room yet, so I couldn't check that name against it.`) +
@@ -482,35 +516,35 @@ module.exports = {
                     const slot = action === 'pings' && !slashMode ? slotArg(argBase, -1) : slotArg(argBase);
 
                     if (!slot || (action === 'pings' && !mode)) {
-                        return msg.channel.send(action === 'pings'
+                        return say(action === 'pings'
                             ? `Usage: \`${prefix}ap pings [id] <slot name> <${claims.PING_MODES.join('|')}>\`\n` +
                               Object.entries(PING_HELP).map(([k, v]) => `• \`${k}\` — ${v}`).join('\n')
                             : `Usage: \`${prefix}ap unclaim [id] <slot name>\``);
                     }
 
                     const list = monitor.listClaims(id);
-                    if (list === null) return msg.channel.send(`No watch with ID ${id}.`);
+                    if (list === null) return say(`No watch with ID ${id}.`);
                     const held = list.find(c => claims.sameSlot(c.slot, slot));
-                    if (!held) return msg.channel.send(`Nobody has claimed \`${slot}\` on watch #${id}.`);
+                    if (!held) return say(`Nobody has claimed \`${slot}\` on watch #${id}.`);
                     if (held.userId !== callerId && !isOwner(msg)) {
-                        return quiet(`🔒 \`${held.slot}\` is claimed by <@${held.userId}> — only they or the bot owner can change it.`);
+                        return say(`🔒 \`${held.slot}\` is claimed by <@${held.userId}> — only they or the bot owner can change it.`);
                     }
 
                     if (action === 'unclaim') {
                         const removed = monitor.releaseSlot(id, slot);
-                        return msg.channel.send(`🗑️ \`${removed.slot}\` released — no more pings for it.`);
+                        return say(`🗑️ \`${removed.slot}\` released — no more pings for it.`);
                     }
                     const updated = monitor.setClaimPings(id, slot, mode);
-                    return msg.channel.send(`✅ \`${updated.slot}\` — pinging for ${PING_HELP[updated.pings]}.`);
+                    return say(`✅ \`${updated.slot}\` — pinging for ${PING_HELP[updated.pings]}.`);
                 }
 
                 if (action === 'claims') {
                     const id = idFrom();
                     if (id === null) return badId();
                     const list = monitor.listClaims(id);
-                    if (list === null) return msg.channel.send(`No watch with ID ${id}.`);
+                    if (list === null) return say(`No watch with ID ${id}.`);
                     if (list.length === 0) {
-                        return msg.channel.send(
+                        return say(
                             `Nobody has claimed a slot on watch #${id} yet — \`${prefix}ap claim ${id} <slot name>\` takes one.`
                         );
                     }
@@ -519,7 +553,7 @@ module.exports = {
                     const shown = sorted.slice(0, 40);
                     const lines = shown.map(c => `• \`${c.slot}\` — <@${c.userId}> (${c.pings})`);
                     if (sorted.length > shown.length) lines.push(`…and ${sorted.length - shown.length} more.`);
-                    return quiet(`🧩 **Claimed slots on watch #${id}**\n${lines.join('\n')}`);
+                    return say(`🧩 **Claimed slots on watch #${id}**\n${lines.join('\n')}`);
                 }
 
                 if (action === 'goals') {
@@ -528,7 +562,7 @@ module.exports = {
                     const mine = who === callerId;
 
                     if (count === 0) {
-                        return quiet(mine
+                        return say(mine
                             ? `You haven't goaled a multiworld yet, or none of the slots you goaled were claimed at the time.`
                             : `<@${who}> has no goals recorded.`);
                     }
@@ -540,7 +574,7 @@ module.exports = {
                         .map(e => `• \`${e.slot || e.key}\``);
                     const more = count > entries.length ? `\n…and ${count - entries.length} more.` : '';
 
-                    return quiet(
+                    return say(
                         `🏁 ${mine ? 'You have' : `<@${who}> has`} goaled **${count}** multiworld${count === 1 ? '' : 's'}.\n` +
                         `${entries.join('\n')}${more}`
                     );
@@ -549,12 +583,12 @@ module.exports = {
                 if (action === 'leaderboard') {
                     const board = goals.leaderboard().slice(0, 15);
                     if (board.length === 0) {
-                        return msg.channel.send('No goals recorded yet. Claim a slot with `' + prefix + 'ap claim` and finish it.');
+                        return say('No goals recorded yet. Claim a slot with `' + prefix + 'ap claim` and finish it.');
                     }
                     const medal = ['🥇', '🥈', '🥉'];
                     const lines = board.map((row, i) =>
                         `${medal[i] || `${i + 1}.`} <@${row.userId}> — **${row.count}**`);
-                    return quiet(`🏁 **Multiworlds goaled**\n${lines.join('\n')}`);
+                    return say(`🏁 **Multiworlds goaled**\n${lines.join('\n')}`);
                 }
 
                 if (action === 'password') {
@@ -570,16 +604,16 @@ module.exports = {
                     if (id === null) return badId();
 
                     const state = monitor.setPassword(id, password);
-                    if (!state) return msg.channel.send(`No watch with ID ${id}.`);
-                    return msg.channel.send(
+                    if (!state) return say(`No watch with ID ${id}.`);
+                    return say(
                         `🔑 **${state.watch.label}** (#${id}) — password ${password ? 'set' : 'cleared'}; reconnecting.`
                     );
                 }
 
-                return msg.channel.send(`Unknown sub-command \`${action}\`. Try \`${prefix}ap help\`.`);
+                return say(`Unknown sub-command \`${action}\`. Try \`${prefix}ap help\`.`);
             } catch (err) {
                 logger.error('!ap failed:', err);
-                return msg.channel.send(`❌ ${err.message || 'Something went wrong — check the bot log.'}`);
+                return say(`❌ ${err.message || 'Something went wrong — check the bot log.'}`);
             }
         }
     }

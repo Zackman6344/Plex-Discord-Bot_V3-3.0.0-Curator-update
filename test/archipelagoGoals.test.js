@@ -87,10 +87,13 @@ function fakeState({ goaled = [], released = [], fullyChecked = [], seedName = '
         },
         client: {
             seedName,
+            // The team the connection is on. recordGoals only attributes its own team, so a fake
+            // without this looked like a client on no team and nothing was ever recorded.
+            team: 0,
             goaled: new Set(goaled.map(s => `0:${s}`)),
             released: new Set(released.map(s => `0:${s}`)),
             fullyChecked: new Set(fullyChecked.map(s => `0:${s}`)),
-            slotNameFor: (id) => names[id]
+            slotNameFor: (id, team = 0) => (team === 0 ? names[id] : undefined)
         }
     };
 }
@@ -193,9 +196,10 @@ test('a room URL keeps the tally stable across a restart when no seed name arriv
 
 // --- roles --------------------------------------------------------------------------------
 
-function fakeGuild({ canManage = true, present = [ZACK, ALICE] } = {}) {
+function fakeGuild({ canManage = true, present = [ZACK, ALICE], fetchDelayMs = 0, failAddOf = null } = {}) {
     const roleCache = new Map();
     const held = new Map();
+    const ops = [];
     let nextId = 100;
 
     const guild = {
@@ -207,9 +211,11 @@ function fakeGuild({ canManage = true, present = [ZACK, ALICE] } = {}) {
                 const id = `role-${nextId++}`;
                 const role = {
                     id, name, position: 1,
+                    setName: async (next) => { role.name = next; ops.push(`rename:${next}`); },
                     delete: async () => { roleCache.delete(id); }
                 };
                 roleCache.set(id, role);
+                ops.push(`create:${name}`);
                 return role;
             }
         },
@@ -219,6 +225,9 @@ function fakeGuild({ canManage = true, present = [ZACK, ALICE] } = {}) {
                 roles: { highest: { position: 99 } }
             },
             fetch: async (userId) => {
+                // A real fetch is a REST round-trip; widening it opens the window two fire-and-
+                // forget syncs used to race in.
+                if (fetchDelayMs) await new Promise(r => setTimeout(r, fetchDelayMs));
                 if (!present.includes(userId)) {
                     const err = new Error('Unknown Member');
                     err.code = 10007;
@@ -230,8 +239,12 @@ function fakeGuild({ canManage = true, present = [ZACK, ALICE] } = {}) {
                     id: userId,
                     roles: {
                         cache: { has: (id) => mine.has(id) },
-                        add: async (role) => { mine.add(role.id); },
-                        remove: async (role) => { mine.delete(role.id); }
+                        add: async (role) => {
+                            if (failAddOf && role.name === failAddOf) throw new Error('429 rate limited');
+                            ops.push(`add:${role.name}`);
+                            mine.add(role.id);
+                        },
+                        remove: async (role) => { ops.push(`remove:${role.name}`); mine.delete(role.id); }
                     }
                 };
             }
@@ -243,7 +256,7 @@ function fakeGuild({ canManage = true, present = [ZACK, ALICE] } = {}) {
         .filter(Boolean)
         .sort();
 
-    return { guild, namesFor, roleNames: () => [...roleCache.values()].map(r => r.name).sort() };
+    return { guild, namesFor, ops, roleNames: () => [...roleCache.values()].map(r => r.name).sort() };
 }
 
 test('claiming grants the participant role, goaling adds a count role', async () => {
@@ -309,4 +322,108 @@ test('a role dragged above the bot is replaced rather than retried forever', asy
     await roles.syncMember(guild, ALICE, { claimed: true, goals: 0, memberRoleName: 'Archipelago' });
     assert.deepStrictEqual(namesFor(ALICE), ['Archipelago']);
     assert.strictEqual(guild.roles.cache.size, 2, 'a fresh one, the unusable one left alone');
+});
+
+// --- the goal belongs to the game, not to whoever currently holds the slot -------------------
+
+test('a goal already counted is not re-counted when the slot changes hands', () => {
+    claims.claim({ watchId: 1, slot: 'ZackWord', userId: ZACK });
+    const state = fakeState({ goaled: [1] });
+
+    assert.strictEqual(monitor.recordGoals(state).size, 1);
+    assert.strictEqual(goals.countFor(ZACK), 1);
+
+    // The slot moves to somebody else. Every reconnect replays the whole goal set, and keying
+    // the record per user meant the new holder simply had no key for it and was credited again.
+    claims.claim({ watchId: 1, slot: 'ZackWord', userId: ALICE });
+    assert.strictEqual(monitor.recordGoals(state).size, 0, 'nothing new to record');
+    assert.strictEqual(goals.countFor(ALICE), 0, 'the new holder is not handed the old goal');
+    assert.strictEqual(goals.countFor(ZACK), 1, 'it stays with whoever earned it');
+});
+
+test("another team's goal on the same slot number is not credited here", () => {
+    claims.claim({ watchId: 1, slot: 'ZackWord', userId: ZACK });
+
+    // Slot numbers repeat across teams, and a claim carries no team, so only the connection's
+    // own team can be attributed.
+    const otherTeam = fakeState({});
+    otherTeam.client.goaled = new Set(['1:1']);
+
+    assert.strictEqual(monitor.recordGoals(otherTeam).size, 0);
+    assert.strictEqual(goals.countFor(ZACK), 0);
+});
+
+test('a corrupt store is left alone rather than overwritten', () => {
+    goals.record(ZACK, goals.goalKey('S1', 'a'));
+    assert.strictEqual(goals.countFor(ZACK), 1);
+
+    // Simulate a kill partway through a write.
+    fs.writeFileSync(goals.GOAL_FILE, '{"goals": {"trunc');
+    goals.reset();
+
+    assert.strictEqual(goals.countFor(ZACK), 0, 'nothing readable in memory');
+    goals.record(ALICE, goals.goalKey('S1', 'b'));   // would have overwritten the file before
+
+    const raw = fs.readFileSync(goals.GOAL_FILE, 'utf8');
+    assert.match(raw, /trunc/, 'the damaged file is preserved for salvage, not replaced');
+});
+
+test('the older user-keyed file shape is migrated on read', () => {
+    fs.writeFileSync(goals.GOAL_FILE, JSON.stringify({
+        goals: { [ZACK]: { 'SEED::SlotA': { at: '2026-01-01T00:00:00.000Z', slot: 'SlotA' } } }
+    }));
+    goals.reset();
+
+    assert.strictEqual(goals.countFor(ZACK), 1);
+    assert.strictEqual(goals.holderOf('SEED::SlotA'), ZACK);
+    // And the migrated record now blocks a re-credit, which was the point.
+    assert.strictEqual(goals.record(ALICE, 'SEED::SlotA'), false);
+});
+
+// --- role mechanics -------------------------------------------------------------------------
+
+test('the new count role is added before the old one is removed', async () => {
+    const { guild, ops } = fakeGuild();
+    await roles.syncMember(guild, ZACK, { claimed: true, goals: 3, memberRoleName: 'Archipelago' });
+    ops.length = 0;
+
+    await roles.syncMember(guild, ZACK, { claimed: true, goals: 4, memberRoleName: 'Archipelago' });
+
+    const added = ops.indexOf('add:4 Games Goaled');
+    const removed = ops.indexOf('remove:3 Games Goaled');
+    assert.ok(added >= 0 && removed >= 0, `expected both ops, got ${JSON.stringify(ops)}`);
+    assert.ok(added < removed, `add must precede remove, got ${JSON.stringify(ops)}`);
+});
+
+test('a failed add leaves the old count role in place rather than none', async () => {
+    const { guild, namesFor } = fakeGuild({ failAddOf: '4 Games Goaled' });
+    await roles.syncMember(guild, ZACK, { claimed: true, goals: 3, memberRoleName: 'Archipelago' });
+
+    await assert.rejects(
+        () => roles.syncMember(guild, ZACK, { claimed: true, goals: 4, memberRoleName: 'Archipelago' }),
+        /429/
+    );
+    assert.ok(namesFor(ZACK).includes('3 Games Goaled'), 'the member is not left with no count role');
+});
+
+test('two concurrent syncs create one role, not two', async () => {
+    const { guild, roleNames } = fakeGuild({ fetchDelayMs: 20 });
+
+    // Both goal in the same frame; syncRoles is fire-and-forget, so these overlap for real.
+    await Promise.all([
+        roles.syncMember(guild, ZACK, { claimed: true, goals: 1, memberRoleName: 'Archipelago' }),
+        roles.syncMember(guild, ALICE, { claimed: true, goals: 1, memberRoleName: 'Archipelago' })
+    ]);
+
+    assert.deepStrictEqual(roleNames(), ['1 Game Goaled', 'Archipelago'],
+        'a duplicate here would be unrecorded, unassignable and unsweepable');
+});
+
+test('the participant role follows a rename in config', async () => {
+    const { guild, roleNames } = fakeGuild();
+    await roles.syncMember(guild, ZACK, { claimed: true, goals: 0, memberRoleName: 'Archipelago' });
+    assert.deepStrictEqual(roleNames(), ['Archipelago']);
+
+    await roles.syncMember(guild, ZACK, { claimed: true, goals: 0, memberRoleName: 'Multiworld' });
+    assert.deepStrictEqual(roleNames(), ['Multiworld'], 'renamed in place, not duplicated');
 });

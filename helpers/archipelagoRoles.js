@@ -28,6 +28,12 @@ const MEMBER_ROLE_COLOR = 0xAF52DE;
 let cache = null;
 // Guilds already reported as lacking Manage Roles. One line each, not one per goal.
 const warned = new Set();
+// Role creations in flight, keyed guild + role. syncRoles is fire-and-forget, so two goals in
+// the same frame both reached the check-then-create below and made duplicate roles that the
+// store never recorded and the sweep could therefore never delete.
+const creating = new Map();
+// Set when the file could not be parsed. Overwriting it would orphan every role it recorded.
+let readOnly = false;
 
 function load() {
     if (cache) return cache;
@@ -39,20 +45,39 @@ function load() {
         const parsed = JSON.parse(fs.readFileSync(ROLE_FILE, 'utf8'));
         cache = parsed && typeof parsed.guilds === 'object' && parsed.guilds ? parsed.guilds : {};
     } catch (err) {
-        if (err.code !== 'ENOENT') logger.warn('Archipelago role file unreadable:', err.message);
         cache = {};
+        if (err.code !== 'ENOENT') {
+            readOnly = true;
+            logger.error(`Archipelago role file unreadable (${err.message}) — role bookkeeping is ` +
+                `frozen for this run rather than overwritten, so the roles it recorded are not orphaned. ` +
+                `Move ${ROLE_FILE} aside to start fresh.`);
+        }
     }
     return cache;
 }
 
 function persist() {
-    if (!usable) return;
+    if (!usable || readOnly) return;
     try {
         fs.mkdirSync(path.dirname(ROLE_FILE), { recursive: true });
-        fs.writeFileSync(ROLE_FILE, JSON.stringify({ guilds: load() }, null, 4));
+        const tmp = `${ROLE_FILE}.tmp`;
+        fs.writeFileSync(tmp, JSON.stringify({ guilds: load() }, null, 4));
+        fs.renameSync(tmp, ROLE_FILE);
     } catch (err) {
         logger.error('Could not persist Archipelago roles:', err.message);
     }
+}
+
+/**
+ * Serialise role creation per guild+key, so overlapping syncs share one create instead of racing.
+ * @param {string} key stable identity for the role being created, e.g. "member" or "count:3"
+ */
+function once(guildId, key, make) {
+    const id = `${guildId}:${key}`;
+    if (creating.has(id)) return creating.get(id);
+    const inflight = make().finally(() => creating.delete(id));
+    creating.set(id, inflight);
+    return inflight;
 }
 
 function guildEntry(guildId) {
@@ -88,40 +113,62 @@ function usableRole(guild, roleId) {
 async function ensureMemberRole(guild, name) {
     const entry = guildEntry(guild.id);
     const existing = usableRole(guild, entry.member);
-    if (existing) return existing;
+    if (existing) {
+        // archipelagoRoleName is a live setting, so follow it rather than leaving the role stuck
+        // on whatever it was first created as.
+        if (existing.name !== name) {
+            try {
+                await existing.setName(name, 'Archipelago monitor: participant role renamed in /config');
+                logger.info(`[AP roles] renamed the participant role to "${name}" in ${guild.name}`);
+            } catch (err) {
+                logger.warn(`[AP roles] could not rename the participant role in ${guild.name}: ${err.message}`);
+            }
+        }
+        return existing;
+    }
 
-    const role = await guild.roles.create({
-        name,
-        color: MEMBER_ROLE_COLOR,
-        // Mentionable so the room's players can be pinged as a group, which is most of the point
-        // of having the role at all.
-        mentionable: true,
-        hoist: false,
-        reason: 'Archipelago monitor: multiworld participants'
+    return once(guild.id, 'member', async () => {
+        // Re-check inside the guard: a run that queued behind another may find it already made.
+        const made = usableRole(guild, guildEntry(guild.id).member);
+        if (made) return made;
+
+        const role = await guild.roles.create({
+            name,
+            color: MEMBER_ROLE_COLOR,
+            // Mentionable so the room's players can be pinged as a group, which is most of the
+            // point of having the role at all.
+            mentionable: true,
+            hoist: false,
+            reason: 'Archipelago monitor: multiworld participants'
+        });
+        guildEntry(guild.id).member = role.id;
+        persist();
+        logger.info(`[AP roles] created "${name}" in ${guild.name}`);
+        return role;
     });
-    entry.member = role.id;
-    persist();
-    logger.info(`[AP roles] created "${name}" in ${guild.name}`);
-    return role;
 }
 
 async function ensureCountRole(guild, count) {
-    const entry = guildEntry(guild.id);
-    const existing = usableRole(guild, entry.counts[count]);
+    const existing = usableRole(guild, guildEntry(guild.id).counts[count]);
     if (existing) return existing;
 
-    const role = await guild.roles.create({
-        name: countRoleName(count),
-        // Left uncoloured on purpose: a coloured count role would outrank the participant role
-        // and repaint everyone's name every time they goal.
-        mentionable: false,
-        hoist: false,
-        reason: 'Archipelago monitor: goal count'
+    return once(guild.id, `count:${count}`, async () => {
+        const made = usableRole(guild, guildEntry(guild.id).counts[count]);
+        if (made) return made;
+
+        const role = await guild.roles.create({
+            name: countRoleName(count),
+            // Left uncoloured on purpose: a coloured count role would outrank the participant
+            // role and repaint everyone's name every time they goal.
+            mentionable: false,
+            hoist: false,
+            reason: 'Archipelago monitor: goal count'
+        });
+        guildEntry(guild.id).counts[count] = role.id;
+        persist();
+        logger.info(`[AP roles] created "${countRoleName(count)}" in ${guild.name}`);
+        return role;
     });
-    entry.counts[count] = role.id;
-    persist();
-    logger.info(`[AP roles] created "${countRoleName(count)}" in ${guild.name}`);
-    return role;
 }
 
 /** Fetch a member without relying on the cache, which is thin without the GuildMembers intent. */
@@ -176,6 +223,14 @@ async function syncMember(guild, userId, state = {}) {
     // Exactly one count role at a time. Goals are a lifetime tally, so this one is never removed
     // for having dropped, only ever swapped upwards.
     const wanted = goals > 0 ? await ensureCountRole(guild, goals) : null;
+    // Add the new one before removing the old. The other order leaves the member on no count role
+    // at all if the add fails — a 429 burst when several slots goal in one flush is enough — and
+    // nothing retries, because syncGoalsAndRoles only fires when the tally actually changes and
+    // by then the goal is already recorded.
+    if (wanted && !member.roles.cache.has(wanted.id)) {
+        await member.roles.add(wanted, `Archipelago: ${goals} goal(s)`);
+        applied.added.push(wanted.name);
+    }
     for (const roleId of Object.values(entry.counts)) {
         if (wanted && roleId === wanted.id) continue;
         if (!member.roles.cache.has(roleId)) continue;
@@ -183,10 +238,6 @@ async function syncMember(guild, userId, state = {}) {
         if (!stale) continue;
         await member.roles.remove(stale, 'Archipelago: goal count changed');
         applied.removed.push(stale.name);
-    }
-    if (wanted && !member.roles.cache.has(wanted.id)) {
-        await member.roles.add(wanted, `Archipelago: ${goals} goal(s)`);
-        applied.added.push(wanted.name);
     }
 
     return applied;
@@ -226,7 +277,9 @@ async function sweepCounts(guild, heldCounts) {
 
 function reset() {
     cache = null;
+    readOnly = false;
     warned.clear();
+    creating.clear();
 }
 
 module.exports = {

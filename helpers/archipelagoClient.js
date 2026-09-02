@@ -287,22 +287,26 @@ class ArchipelagoClient extends EventEmitter {
         this.markers = options.markers !== false;
     }
 
-    /** The unchanging slot name for a slot number, or undefined before the room has been read. */
-    slotNameFor(slotId) {
-        return this.slotNames.get(Number(slotId));
+    /**
+     * The unchanging slot name for a slot number, or undefined before the room has been read.
+     * Defaults to the team this connection is on, which is the only one anything here acts for.
+     */
+    slotNameFor(slotId, team = this.team) {
+        return this.slotNames.get(`${team}:${Number(slotId)}`);
     }
 
     /**
-     * The room's own spelling of a slot name, matched case-insensitively.
+     * The room's own spelling of a slot name on this team, matched case-insensitively.
      * Lets someone claim `zackword` and have the claim stored as `ZackWord`, so the ping and the
      * room agree on the name.
-     * @returns {string|null} null if the room has no such slot, or is not connected yet
+     * @returns {string|null} null if the team has no such slot, or the room is not read yet
      */
-    canonicalSlotName(input) {
+    canonicalSlotName(input, team = this.team) {
         const wanted = String(input || '').trim().toLowerCase();
         if (!wanted) return null;
-        for (const name of this.slotNames.values()) {
-            if (name.toLowerCase() === wanted) return name;
+        const prefix = `${team}:`;
+        for (const [key, name] of this.slotNames) {
+            if (key.startsWith(prefix) && name.toLowerCase() === wanted) return name;
         }
         return null;
     }
@@ -651,7 +655,11 @@ class ArchipelagoClient extends EventEmitter {
             this.players.set(player.slot, player.alias || player.name);
             // player.name is the slot name the seed was rolled with and never changes; the alias
             // above is display-only and does.
-            if (player.name) this.slotNames.set(player.slot, player.name);
+            //
+            // Keyed by team as well as slot, matching how goaled/released/fullyChecked are keyed.
+            // Slot numbers repeat across teams, so a flat key let team 1's name overwrite team 0's
+            // and a goal from either was credited to whoever claimed the surviving name.
+            if (player.name) this.slotNames.set(`${player.team || 0}:${player.slot}`, player.name);
         }
         for (const [slot, info] of Object.entries(packet.slot_info || {})) {
             this.slotGames.set(Number(slot), info.game);

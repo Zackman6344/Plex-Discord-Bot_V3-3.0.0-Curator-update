@@ -41,8 +41,9 @@ const MAX_BUFFER_LINES = 500;
 const MAX_PING_LINES = 8;
 const MAX_PENDING_PINGS = 100;
 // A ping quotes a line the room composed, outside a code fence, so a player free to name
-// themselves `**` can otherwise reformat the message.
-const MARKDOWN = /([`*_~|\\])/g;
+// themselves `**` can otherwise reformat the message. discord.js owns the escaping rules and
+// covers cases a local regex did not, notably code blocks and headers.
+const { escapeMarkdown } = require('discord.js');
 
 const DEFAULT_FILTERS = { items: true, hints: true, chat: true, joins: true, goals: true, misc: true, deaths: false };
 const FILTER_GROUPS = Object.keys(CATEGORY_GROUPS);
@@ -186,17 +187,36 @@ async function post(state, content, mentionUsers = null) {
 
 // One message per flush, mentions deduped. Posted after the log block rather than inside it:
 // a mention inside a code fence renders as literal text and notifies nobody.
+//
+// Grouped by claimant rather than by item. The cap used to be applied to events, so a flush
+// carrying items for more than MAX_PING_LINES slots rendered only the first few and silently
+// dropped the rest — their ids were still in the mention whitelist, but with no `<@id>` in the
+// content Discord notified nobody, which is the one thing a claim exists to do. Whoever is past
+// the detail cap now still gets a mention on the trailing line.
 async function flushPings(state) {
     const pending = state.pings.splice(0, state.pings.length);
     if (pending.length === 0) return;
 
-    const shown = pending.slice(0, MAX_PING_LINES);
-    const lines = shown.map(p => `<@${p.userId}> \`${p.slot}\` — ${p.text}`);
-    if (pending.length > shown.length) {
-        lines.push(`…and ${pending.length - shown.length} more for the same slot(s).`);
+    const byUser = new Map();
+    for (const ping of pending) {
+        if (!byUser.has(ping.userId)) byUser.set(ping.userId, []);
+        byUser.get(ping.userId).push(ping);
     }
 
-    await post(state, lines.join('\n'), [...new Set(pending.map(p => p.userId))]);
+    const lines = [];
+    const overflow = [];
+    for (const [userId, entries] of byUser) {
+        if (lines.length < MAX_PING_LINES) {
+            const first = entries[0];
+            const more = entries.length > 1 ? ` (+${entries.length - 1} more)` : '';
+            lines.push(`<@${userId}> \`${escapeMarkdown(first.slot)}\` — ${first.text}${more}`);
+        } else {
+            overflow.push(`<@${userId}>`);
+        }
+    }
+    if (overflow.length > 0) lines.push(`…and items for ${overflow.join(' ')}`);
+
+    await post(state, lines.join('\n'), [...byUser.keys()]);
 }
 
 async function flush(state) {
@@ -243,7 +263,7 @@ function notePing(state, line) {
     state.pings.push({
         userId: claim.userId,
         slot,
-        text: stripAnsi(line.text).replace(MARKDOWN, '\\$1').substring(0, 200)
+        text: escapeMarkdown(stripAnsi(line.text)).substring(0, 200)
     });
 }
 
@@ -416,11 +436,16 @@ function restartWatch(id) {
     stopWatch(id);
     const state = makeState(existing.watch);
     state.channel = existing.channel;
-    // Both survive the new socket: the tracker id is fixed for the room's life, and completion
-    // read before the reconnect is still true after it.
+    // All of these survive the new socket: the tracker id is fixed for the room's life, and
+    // completion read before the reconnect is still true after it.
     state.trackerUrl = existing.trackerUrl;
     state.client.fullyChecked = existing.client.fullyChecked;
     state.client.released = existing.client.released;
+    // Slot names too, or a restart silently disables the claim-name check that knowsRoom() gates:
+    // until the fresh handshake lands, `!ap claim ZackWordd` would be stored as typed. A restart
+    // is exactly when the room may be unreachable, so that window is not short.
+    state.client.slotNames = existing.client.slotNames;
+    state.client.seedName = existing.client.seedName;
     states.set(id, state);
     existing.watch.paused = false;
     state.client.start();
@@ -467,7 +492,12 @@ function syncConfigWatch() {
         if (existing) {
             stopWatch(CONFIG_WATCH_ID);
             states.delete(CONFIG_WATCH_ID);
-            logger.info('Archipelago configured room cleared — its settings are no longer complete');
+            // With no state for id 0, listClaims(0) answers null and `!ap claims` / `!ap unclaim`
+            // report "No watch with ID 0", so claims left here would be unreachable from the
+            // command surface and would attach to whatever room /config names next.
+            const dropped = claims.releaseWatch(CONFIG_WATCH_ID);
+            logger.info('Archipelago configured room cleared — its settings are no longer complete' +
+                (dropped > 0 ? `, ${dropped} slot claim(s) released with it` : ''));
         }
         return null;
     }
@@ -499,12 +529,25 @@ function syncConfigWatch() {
 
     // Target, slot, password and the DeathLink tag are only read during the connect handshake,
     // so a change to any of them needs a fresh socket. The rest apply to the next batch.
+    const roomChanged = JSON.stringify(existing.watch.target) !== JSON.stringify(desired.target);
     const needsReconnect =
-        JSON.stringify(existing.watch.target) !== JSON.stringify(desired.target) ||
+        roomChanged ||
         existing.watch.slot !== desired.slot ||
         (existing.watch.password || null) !== desired.password ||
         !!existing.watch.filters.deaths !== !!desired.filters.deaths;
     const channelChanged = existing.watch.channelId !== desired.channelId;
+
+    // The configured room keeps id 0 across a re-point, so its claims would otherwise be
+    // inherited by whatever multiworld /config now names: a slot present in both rooms would ping
+    // the person who claimed it in the old one, and credit them the new seed's goal for it.
+    // removeWatch cannot cover this, because refuseIfManaged rejects the managed watch.
+    // A slot or password change is the same room, so only the target is grounds for dropping.
+    if (roomChanged) {
+        const dropped = claims.releaseWatch(CONFIG_WATCH_ID);
+        if (dropped > 0) {
+            logger.info(`Archipelago configured room re-pointed — ${dropped} slot claim(s) released with the old room`);
+        }
+    }
 
     const inferChanged = !!existing.watch.inferFinished !== !!desired.inferFinished;
     Object.assign(existing.watch, desired);
@@ -637,11 +680,19 @@ function removeWatch(id) {
     const state = states.get(id);
     if (!state) return null;
     refuseIfManaged(state, 'the room URL or host');
+    // Captured before the claims go, so the participant role can be taken off anyone this leaves
+    // holding nothing. Without it their role outlived every claim they had.
+    const affected = new Set(claims.forWatch(id).map(c => c.userId));
     stopWatch(id);
     states.delete(id);
     // Claims are keyed by watch id, and ids are handed out from a counter that can reach this
     // one again. Dropping them here stops a future watch inheriting the last one's pings.
     const releasedClaims = claims.releaseWatch(id);
+    if (affected.size > 0) {
+        // The state is gone, so the role sync borrows this one purely for its channel and guild.
+        syncRoles(state, affected).catch(err =>
+            logger.warn(`[AP:${state.watch.label}] role sync after unwatch failed: ${err.message || err}`));
+    }
     persist();
     return { ...state.watch, releasedClaims };
 }
@@ -757,7 +808,14 @@ function recordGoals(state) {
     }
 
     for (const id of client.goaled) {
-        const slotName = client.slotNameFor(Number(String(id).split(':')[1]));
+        const [team, slotId] = String(id).split(':').map(Number);
+        // The goal set carries every team the server reports, and a slot number means a different
+        // player on each of them. A claim has no team, so only this connection's team can be
+        // attributed with any confidence; crediting another team's goal to the claimant who
+        // happens to share a slot number is worse than not counting it.
+        if (team !== client.team) continue;
+
+        const slotName = client.slotNameFor(slotId, team);
         if (!slotName) continue;
 
         const claim = claims.find(state.watch.id, slotName);

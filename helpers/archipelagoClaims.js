@@ -31,6 +31,9 @@ const PING_MODES = ['all', 'progression', 'off'];
 const DEFAULT_PING_MODE = 'progression';
 
 let cache = null;
+// Set when the file on disk could not be parsed. Writing then would replace claims that may
+// still be salvageable by hand with whatever this process holds, so the store goes read-only.
+let readOnly = false;
 
 function load() {
     if (cache) return cache;
@@ -42,17 +45,25 @@ function load() {
         const parsed = JSON.parse(fs.readFileSync(CLAIM_FILE, 'utf8'));
         cache = Array.isArray(parsed.claims) ? parsed.claims : [];
     } catch (err) {
-        if (err.code !== 'ENOENT') logger.warn('Archipelago claim file unreadable:', err.message);
         cache = [];
+        if (err.code !== 'ENOENT') {
+            readOnly = true;
+            logger.error(`Archipelago claim file unreadable (${err.message}) — claims are frozen ` +
+                `for this run so the file is not overwritten. Move ${CLAIM_FILE} aside to start fresh.`);
+        }
     }
     return cache;
 }
 
 function persist() {
-    if (!usable) return;
+    if (!usable || readOnly) return;
     try {
         fs.mkdirSync(path.dirname(CLAIM_FILE), { recursive: true });
-        fs.writeFileSync(CLAIM_FILE, JSON.stringify({ claims: load() }, null, 4));
+        // Write-then-rename, so a kill partway through cannot leave a truncated file that the
+        // next boot parse-fails on and then overwrites.
+        const tmp = `${CLAIM_FILE}.tmp`;
+        fs.writeFileSync(tmp, JSON.stringify({ claims: load() }, null, 4));
+        fs.renameSync(tmp, CLAIM_FILE);
     } catch (err) {
         logger.error('Could not persist Archipelago claims:', err.message);
     }
@@ -146,6 +157,7 @@ function setPings(watchId, slot, mode) {
 /** Test seam: drop the in-memory copy so the next read comes off disk. */
 function reset() {
     cache = null;
+    readOnly = false;
 }
 
 module.exports = {
