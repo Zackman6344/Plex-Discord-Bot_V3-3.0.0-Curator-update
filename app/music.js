@@ -14,6 +14,7 @@ module.exports = function(client, bot) {
   const playbackButtons = require('../helpers/playbackButtons.js');
   const tagInference = require('../helpers/tagInference.js');
   const commandLog = require('../helpers/commandLog.js');
+  const interactionFallback = require('../helpers/interactionFallback.js');
 
   // Correlates the bot's own messages back to whatever command last ran in that channel, so the
   // log reads as "this was asked, this came back" instead of two unrelated streams. Correlation
@@ -227,6 +228,13 @@ module.exports = function(client, bot) {
     } catch (err) {
       logger.error(`Failed to defer interaction for /${name}:`, err.message || err);
       commandLog.finishInvocation(logId, { ok: false, ms: Date.now() - startedAt, error: err });
+      // The interaction can no longer be answered through its own token, so all Discord shows
+      // the user is a bare "This interaction failed". An ordinary channel message is the only
+      // route left, and this is worth explaining: the command did not break, it never ran.
+      const said = await interactionFallback.explainFailedDefer(client, interaction, name, err);
+      if (said) {
+        commandLog.recordOutput({ id: logId, kind: 'message', channelId: interaction.channelId, payload: said });
+      }
       return;
     }
 
