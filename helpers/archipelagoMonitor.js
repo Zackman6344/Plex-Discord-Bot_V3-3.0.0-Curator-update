@@ -66,16 +66,48 @@ function loadStore() {
             watches: Array.isArray(parsed.watches) ? parsed.watches : []
         };
     } catch (err) {
-        if (err.code !== 'ENOENT') logger.warn('Archipelago watch file unreadable:', err.message);
+        if (err.code !== 'ENOENT') quarantineWatchFile(err.message);
         return { nextId: 1, watches: [] };
     }
 }
 
+// This file holds a room password and is the only copy of every `!ap watch` room, but it is the
+// one Archipelago store that never moved onto jsonStore.js, so it had neither of that module's
+// two rules. It gets both here rather than a migration, because its `{nextId, watches}` envelope
+// does not fit createStore's single-key shape and a format change is not worth the risk.
+//
+// Rule one: a file that cannot be read is moved aside instead of being silently replaced. A kill
+// during the old bare writeFileSync truncated it, the next boot read zero watches, and the first
+// persist() after that wrote the empty store straight over it.
+let watchWritesBlocked = false;
+
+function quarantineWatchFile(why) {
+    const aside = `${WATCH_FILE}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    try {
+        fs.renameSync(WATCH_FILE, aside);
+        logger.error(`Archipelago watch file unusable (${why}) — moved to ${aside} and starting ` +
+            `with no saved rooms. Any room password is still in that file.`);
+    } catch (renameErr) {
+        logger.error(`Archipelago watch file unusable (${why}) and could not be moved aside ` +
+            `(${renameErr.message}). Refusing to overwrite ${WATCH_FILE}; fix it by hand.`);
+        watchWritesBlocked = true;
+    }
+}
+
+// Rule two: writes go to a sibling `.tmp` and rename over the target, so a kill between the
+// truncate and the write cannot leave a half-file behind.
 function saveStore(store) {
     if (!usable) return;
+    if (watchWritesBlocked) {
+        logger.error(`Not writing Archipelago watches: ${WATCH_FILE} is damaged and could not be ` +
+            `moved aside, so overwriting it would destroy the only copy.`);
+        return;
+    }
     try {
         fs.mkdirSync(path.dirname(WATCH_FILE), { recursive: true });
-        fs.writeFileSync(WATCH_FILE, JSON.stringify(store, null, 4));
+        const tmp = `${WATCH_FILE}.tmp`;
+        fs.writeFileSync(tmp, JSON.stringify(store, null, 4));
+        fs.renameSync(tmp, WATCH_FILE);
     } catch (err) {
         logger.error('Could not persist Archipelago watches:', err.message);
     }
@@ -341,6 +373,11 @@ function attach(state) {
         state.status = 'stopped';
         state.detail = reason;
         state.watch.paused = true;
+        // A refusal stops the socket but nothing here called stopWatch, so the completion poll
+        // kept running for the life of the process — and with trackerUrl still null it re-fetched
+        // the room page each time, which is the request that wakes a sleeping hosted room.
+        if (state.pollTimer) clearInterval(state.pollTimer);
+        state.pollTimer = null;
         persist();
         logger.error(`[AP:${watch.label}] connection refused: ${reason}`);
         post(state, `🔴 **${watch.label}** — the server refused the connection (\`${reason}\`). ` +
@@ -571,7 +608,14 @@ function syncConfigWatch() {
     }
 
     const inferChanged = !!existing.watch.inferFinished !== !!desired.inferFinished;
+    // `desired` always carries paused:false, so assigning it cleared the pause a refused
+    // connection had set — without reconnecting anything. getStatus() then reported 0 paused and
+    // !diag went from "1 of 1 watch(es) paused after a refused connection" to a green
+    // "0/1 room(s) connected" for a room that was never coming back. Only a reconnect clears it,
+    // and restartWatch does that itself.
+    const wasPaused = existing.watch.paused;
     Object.assign(existing.watch, desired);
+    if (!needsReconnect) existing.watch.paused = wasPaused;
     if (channelChanged) existing.channel = null;
     if (inferChanged) {
         if (existing.pollTimer) clearInterval(existing.pollTimer);
@@ -893,7 +937,9 @@ async function syncRoles(state, userIds) {
     try {
         await roles.sweepCounts(guild, goals.leaderboard().map(row => row.count));
     } catch (err) {
-        logger.debug(`[AP:${state.watch.label}] role sweep failed: ${err.message}`);
+        // Warn rather than debug: debug is dropped below the default level and never reaches the
+        // log file, so a sweep failing every time left nothing to find.
+        logger.warn(`[AP:${state.watch.label}] role sweep failed: ${err.message}`);
     }
 }
 

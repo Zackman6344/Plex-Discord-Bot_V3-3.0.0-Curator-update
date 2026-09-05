@@ -145,7 +145,7 @@ Two signature styles coexist in the codebase:
 | `archipelagoMonitor.js`    | Holds one client per watched room, batches its log lines, posts them to the channel the watch was created in. Watches persist to `data/archipelago_watches.json` and reopen on boot. Disabled unless `config.archipelagoEnabled`. See "Archipelago room monitor" below. |
 | `archipelagoTracker.js`    | Reads per-slot completion (`124/124`) off a room's multiworld tracker page, which is the only place a slot's total location count exists. Pure `extractTrackerId` / `parseTrackerRows` / `fullyCheckedSlots` plus one `readCompletion` fetch. Degrades to no information rather than throwing. |
 | `archipelagoClaims.js`     | Which Discord user holds which slot in which watch, persisted to `data/archipelago_claims.json`. Storage and lookup only; whether a line is worth a ping is decided by `archipelagoMonitor.shouldPing`. See "Slot claims" below. |
-| `jsonStore.js`             | One small JSON file holding one collection: env-overridable path, test gate, lazy cache, atomic write, and a corrupt file left read-only rather than overwritten. The three Archipelago stores are built on it. |
+| `jsonStore.js`             | One small JSON file holding one collection: env-overridable path, test gate, lazy cache, atomic write, and a corrupt file moved aside to `<file>.corrupt-<timestamp>` rather than overwritten. The claims, goals and roles stores are built on it. |
 | `logPrune.js`              | Day-file housekeeping shared by both sinks under `data/logs/`: the `PLEXBOT_LOG_RETENTION_DAYS` parse, the hourly throttle and the cutoff. No dependencies, so `logger.js` can use it. |
 | `leaderboard.js`           | One ranked-list renderer. Only the Archipelago leaderboard calls in so far; the four game commands still carry their own copies and disagree on the fourth-place marker. |
 | `archipelagoGoals.js`      | Lifetime count of multiworlds each user has goaled, keyed `<seed>::<slot>` so it outlives the watch that saw it and so a slot changing hands cannot re-credit a finished game. Recording is idempotent, because the goal set is rebuilt on every reconnect. Goals only, never releases. Migrates the original user-keyed file shape on read. |
@@ -609,11 +609,15 @@ The status key is requested under both `_read_client_status_{team}_{slot}` and `
 
 ### Store durability
 
-All three files this feature owns go through `helpers/jsonStore.js`, which owns the rules below so they cannot drift apart. Claims, goals and roles each had their own copy of the same forty lines, differing only in the filename, the wrapper key and whether the empty value was an array or an object.
+Claims, goals and roles go through `helpers/jsonStore.js`, which owns the rules below so they cannot drift apart. Each had its own copy of the same forty lines, differing only in the filename, the wrapper key and whether the empty value was an array or an object.
+
+The feature owns a **fourth** file, `data/archipelago_watches.json`, which does not. Its `{nextId, watches}` envelope does not fit `createStore`'s single-key shape, so `archipelagoMonitor.js` implements the same two rules directly rather than changing the on-disk format. It went without them for longer than the others, and it is the file that holds a room password: a kill during the old bare `writeFileSync` truncated it, the next boot read zero watches, and the first `persist()` after that wrote the empty store straight over it, taking every saved room and its password with it.
 
 They are written through a `.tmp` sibling and renamed over the target, so a kill between the truncate and the write cannot leave a half-file. A file that cannot be used is **moved aside** to `<file>.corrupt-<timestamp>` and the store starts empty but fully writable. That covers both an unparseable file and one that parses into the wrong shape, and the raw value is shape-checked before any `migrate` hook sees it, because a hook that normalises as it goes turns a bad value into a valid-looking empty one.
 
 **This rule has been wrong twice, in opposite directions, and both were worse than quarantine.** Overwriting the damaged file turned one interrupted write into permanent loss. Freezing the store read-only instead was worse still: writes were accepted and reported as successful while never reaching disk, so a run's goals were announced and role-synced against a tally that did not exist, and `sweepCounts` then deleted the count roles the real tally would have kept. Quarantine gives both halves, and `archipelagoRoles.sweepCounts` additionally refuses to sweep when the tally reads empty while count roles exist, since the tally only ever grows.
+
+If the quarantine rename itself fails — a held handle, EPERM from a backup agent — the store sets `blocked` and `persist()` refuses from then on. Without that, the next write destroyed the damaged file one line after the log said `Refusing to overwrite ...; fix it by hand`. Callers are told: `goals.record`/`recordAll` roll their entry back out of the cache and report nothing recorded, and `claims.claim` restores the previous holder and throws, because a claim confirmed with `✅ You are now on ...` that never reached disk works until the next restart and then stops with nothing to point at.
 
 The goal and role stores are built on null-prototype objects, since their keys come from server data and a file edited by hand could otherwise reach `Object.prototype` through one. The old shape (parse-fail, reset the cache to empty, then overwrite on the next write) turned one interrupted write into a permanently lost tally, which is the one thing here that cannot be re-derived from any server. `helpers/tagSidecar.js:118` had the pattern already.
 
@@ -770,7 +774,9 @@ Two sinks, both under `data/logs/`, both kept indefinitely.
 
 Set `PLEXBOT_LOG_RETENTION_DAYS` to a positive number to delete day-files older than that; unset, 0 or unparseable keeps everything, which is the default. One variable covers both sinks.
 
-Retention and the read window are separate. Readers default to the most recent 14 day-files (`commandLog.DEFAULT_READ_DAYS`), because reading every day since install would only get slower as the pile grows. `npm run logs -- --days=60` widens it, `--all` reads the lot, and a `--since` longer than the default widens it on its own so a query cannot be quietly truncated at the window edge.
+Retention and the read window are separate. Readers default to the most recent 14 day-files (`commandLog.DEFAULT_READ_DAYS`), because reading every day since install would only get slower as the pile grows. `npm run logs -- --days=60` widens it, `--all` reads the lot, and a `--since` longer than the default widens it on its own.
+
+Everything else that reads is windowed, so every reader **says so** whenever there are more day-files on disk than it read. `commandLog.windowInfo()` answers that without reading any of them, and shares `windowFor()` with `readInvocations` so the note cannot describe a window nobody used. This was `--stats`-only at first, and the gap was not cosmetic: a search whose match fell outside the window answered `No invocations logged yet.` with a year of files sitting in `data/logs/`.
 
 **`helpers/logger.js`** mirrors console output to `bot-YYYY-MM-DD.log`. Console-only logging meant
 any failure nobody was watching scrolled past unrecoverably.

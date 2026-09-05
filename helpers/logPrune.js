@@ -47,7 +47,12 @@ function pruneDayFiles(dir, pattern, key) {
         for (const name of fs.readdirSync(dir)) {
             const match = pattern.exec(name);
             if (!match) continue;
-            if (new Date(`${match[1]}T00:00:00Z`).getTime() >= cutoff) continue;
+            // A name can match the pattern and still not be a date: `bot-2024-13-01.log` parses to
+            // NaN, and NaN fails every comparison. Testing `>= cutoff` and continuing therefore
+            // deleted what the older `< cutoff` test kept. Anything undatable is left alone —
+            // housekeeping has no business removing a file it cannot place in time.
+            const at = new Date(`${match[1]}T00:00:00Z`).getTime();
+            if (!Number.isFinite(at) || at >= cutoff) continue;
             fs.unlinkSync(path.join(dir, name));
             removed++;
         }

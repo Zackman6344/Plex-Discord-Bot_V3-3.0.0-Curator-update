@@ -560,6 +560,13 @@ class ArchipelagoClient extends EventEmitter {
 
     async _handlePacket(packet) {
         if (!packet || !packet.cmd) return;
+        // stop() detaches the socket but cannot un-queue what is already chained behind an awaited
+        // dataCache.load, and the queue outlives the socket. Without this, a Connected that landed
+        // during a restart ran slotNames.clear() on the Map restartWatch had just handed to the
+        // replacement client by reference — killing every ping and the claim-name check — and a
+        // queued fatal re-persisted the watch file after applyConfig had already emptied states.
+        // start() clears this flag, so a client that is restarted rather than replaced still runs.
+        if (this.stopped) return;
 
         switch (packet.cmd) {
             case 'RoomInfo':

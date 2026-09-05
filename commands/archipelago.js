@@ -106,6 +106,26 @@ module.exports = {
     command: {
         usage: '!ap [watch/list/status/unwatch/filter/progression/password/retry]',
         description: 'Watch an Archipelago multiworld and relay its log into this channel.',
+        // The command log records every invocation's arguments before dispatch, and commandLog's
+        // own redaction only knows the static secrets in config/. A room password is typed at
+        // runtime, so without this it landed in data/logs/commands-*.jsonl in clear text — and
+        // day-files are now kept forever, which turned a 14-day exposure into a permanent one.
+        // `!ap password` deletes the Discord message carrying the secret; this is the same care
+        // applied to the copy that goes to disk.
+        //
+        // Token order differs between the two forms: prefix gives `password <id> <secret>`, the
+        // slash builder gives `password <secret> <id>`. Keeping the subcommand and any bare
+        // integer covers both without depending on which is which, and `clear` is not a secret.
+        redactArgs(args) {
+            const words = String(args || '').trim().split(/\s+/);
+            if (words[0] !== 'password') return args;
+            return words
+                .map((word, i) => {
+                    if (i === 0 || /^\d+$/.test(word) || word.toLowerCase() === 'clear') return word;
+                    return '[redacted]';
+                })
+                .join(' ');
+        },
         slash: {
             description: 'Watch an Archipelago room and relay its log here',
             subcommands: [
@@ -486,7 +506,15 @@ module.exports = {
                 const mentionedUser = () => {
                     const fromSlash = opt('user');
                     if (fromSlash) return String(fromSlash);
-                    const users = msg.mentions && msg.mentions.users;
+                    // `mentions.users` is built from the API's mentions array, which includes the
+                    // author of a replied-to message whenever the reply ping is left on — its
+                    // default. So `!ap claim <slot>` sent as a reply to somebody claimed the slot
+                    // for THEM, with no `<@id>` anywhere in the text. `parsedUsers` is the set
+                    // discord.js parses out of the message content, which is the question being
+                    // asked here. The fallback covers the slash adapter's mentions proxy and the
+                    // test fakes, neither of which has the getter.
+                    const mentions = msg.mentions;
+                    const users = (mentions && mentions.parsedUsers) || (mentions && mentions.users);
                     const first = users && typeof users.first === 'function' ? users.first() : null;
                     return first ? first.id : null;
                 };

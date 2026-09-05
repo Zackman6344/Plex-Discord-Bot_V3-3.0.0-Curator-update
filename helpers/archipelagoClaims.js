@@ -101,9 +101,17 @@ function claim({ watchId, slot, userId, pings }) {
         claimedAt: new Date().toISOString()
     };
 
+    const previous = existing >= 0 ? claims[existing] : null;
     if (existing >= 0) claims[existing] = entry;
     else claims.push(entry);
-    persist();
+    if (!persist()) {
+        // Put the cache back and say so. Reporting "✅ you are now on <slot>" for a claim that
+        // never reached disk is worse than refusing: the pings work until the next restart and
+        // then stop, with nothing to point at.
+        if (existing >= 0) claims[existing] = previous;
+        else claims.pop();
+        throw new Error('I could not save that claim — the claims file is not writable. Nothing changed.');
+    }
     return entry;
 }
 

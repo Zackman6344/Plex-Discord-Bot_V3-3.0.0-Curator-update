@@ -38,9 +38,14 @@ function describe(name, err) {
 /**
  * Post the explanation into the channel the command came from.
  * Never throws: this is the fallback path, and the failure it explains is already logged.
+ * @param {{ephemeral?: boolean}} [options] ephemeral commands get no channel message at all. The
+ *   only route left is a public one, and a command that asked for a private reply should not have
+ *   its failure announced to the room instead — /config is the case that matters. Those callers
+ *   fall back to Discord's own "This interaction failed", which only the invoker sees.
  * @returns {string|null} what was posted, or null if nothing could be
  */
-async function explainFailedDefer(client, interaction, name, err) {
+async function explainFailedDefer(client, interaction, name, err, options = {}) {
+    if (options.ephemeral) return null;
     const content = describe(name, err);
     try {
         const channel = interaction.channel
