@@ -30,15 +30,23 @@ const { getModel } = require('./geminiAPI.js');
 
 const STORE_PATH = path.join(__dirname, '..', 'data', 'kometa_theater.json');
 const QUEUE_PATH = path.join(__dirname, '..', 'data', 'kometa_theater_queue.json');
+const TAIL_PATH = path.join(__dirname, '..', 'data', 'kometa_theater_tail.json');
 const GRACE_MS = 3000;   // wait this long after a "Finished" line so its `changes` webhook can arrive
 const IDLE_MS = 750;     // poll cadence when the queue is empty
+const WATCHDOG_MS = 5 * 60 * 1000; // silent log + empty queues for this long = the run died
+const MAX_SESSION_ERRORS = 5;
 
 // --- pure helpers (exported for tests) -----------------------------------------------------
 
-// "…| Finished Nicolas Cage Collection |…" -> "Nicolas Cage". Ignores the run-end line
-// "Finished Collections Run". Returns null when the line isn't a collection-finished line.
+// The run's closing separator. Kometa words it "Finished Run" for a full run and
+// "Finished Collections Run" / "Finished Playlists Run" for a narrowed one (kometa.py:480), so
+// all three have to count — matching only the middle one left nothing able to end a session.
+const RUN_END_RE = /Finished(?:\s+\w+)?\s+Run\b/;
+
+// "…| Finished Nicolas Cage Collection |…" -> "Nicolas Cage". Ignores the run-end separator.
+// Returns null when the line isn't a collection-finished line.
 function parseFinishedCollection(line) {
-    if (!line || /Finished\s+Collections\s+Run/.test(line)) return null;
+    if (!line || RUN_END_RE.test(line)) return null;
     const m = /Finished\s+(.+?)\s+Collection\b/.exec(line);
     if (!m) return null;
     const name = m[1].trim();
@@ -54,6 +62,56 @@ function parseProcessed(line) {
     return { total: parseInt(m[1], 10), added: parseInt(m[2], 10) };
 }
 
+// "…|          Movies Library          |…" -> "Movies". Kometa heads each library's section with
+// a bare "<Name> Library" separator (kometa.py:644). Its other separators name a library too —
+// "Applying Overlays for the Movies Library", "Skipping X Library" — so a line only counts when
+// the name stands alone. Missing one costs a shared persona, never a crash.
+function parseLibraryHeader(line) {
+    if (!line || !/\[INFO\]/.test(line)) return null; // skips ERROR lines and traceback continuations
+    const m = /\|\s+([^|]+?)\s+Library\s+\|/.exec(line);
+    if (!m) return null;
+    const name = m[1].trim();
+    if (!name || name.length > 40 || name.includes(':')) return null;
+    // "Mapping <Name> Library" (kometa.py:1129, new in 2.4.8) would otherwise be read as a
+    // library called "Mapping <Name>" and mis-key every collection under it.
+    if (/\s(?:for|from|in|of|to|under|this)\s|^(?:skipping|deleting|applying|mapping|removing|caching|no|overlay)\b/i.test(name)) return null;
+    return name;
+}
+
+// Two libraries can hold collections of the same name — both of yours pull the same default
+// files, so "IMDb Top 250" exists twice — and they are genuinely different collections. Keying
+// the seen-set, the personas and the changes buffer by library as well is what stops the second
+// library's pass from replaying the first library's cast under the same voices.
+function collectionKey(library, name) {
+    const norm = normalizeName(name);
+    const lib = normalizeName(library || '').replace(/\s+library$/, '');
+    return lib ? `${lib}::${norm}` : norm;
+}
+
+// "…| 3 Movies Missing |…" -> 3. Kometa reports this per collection (builder.py:4825/4897),
+// between the "Processed" line and the "Finished" separator, and only when something IS missing.
+function parseMissing(line) {
+    const m = /(\d+)\s+(?:Movie|Show)s?\s+Missing\b/.exec(line || '');
+    return m ? parseInt(m[1], 10) : null;
+}
+
+// How complete a collection is: what it holds against what its source list wanted. No missing
+// line logged means nothing was missing, so `missing` of null counts as zero — but a null
+// `present` (the collection never built, e.g. minimum not met) is genuinely unknown, and gets no
+// mood rather than a wrong one.
+function describeCompleteness(present, missing) {
+    if (present == null) return null;
+    const have = present;
+    const wanted = have + (missing == null ? 0 : missing);
+    if (wanted <= 0) return null;
+    const ratio = have / wanted;
+    const tier = ratio >= 0.99 ? 'complete'
+        : ratio >= 0.75 ? 'nearly'
+            : ratio >= 0.4 ? 'patchy'
+                : 'threadbare';
+    return { have, wanted, ratio, tier };
+}
+
 // Align a log name ("Nicolas Cage") with a webhook name ("The Nicolas Cage Collection").
 function normalizeName(name) {
     return String(name || '')
@@ -62,6 +120,31 @@ function normalizeName(name) {
         .replace(/\s+collection$/, '')
         .replace(/\s+/g, ' ')
         .trim();
+}
+
+// The model likes to wrap its JSON in prose, or follow it with a second object once it has room
+// to ramble. A greedy /\{[\s\S]*\}/ then spans from the first brace to the LAST one and
+// JSON.parse throws, costing that collection its persona — so take the first balanced object.
+function extractJsonObject(text) {
+    const str = String(text || '');
+    const start = str.indexOf('{');
+    if (start < 0) return null;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = start; i < str.length; i++) {
+        const ch = str[i];
+        if (inString) {
+            if (escaped) escaped = false;
+            else if (ch === '\\') escaped = true;
+            else if (ch === '"') inString = false;
+            continue;
+        }
+        if (ch === '"') inString = true;
+        else if (ch === '{') depth++;
+        else if (ch === '}' && --depth === 0) return str.slice(start, i + 1);
+    }
+    return null;
 }
 
 // The whole rule: static ONLY when a collection is both unseen and empty; otherwise it reports in.
@@ -97,12 +180,17 @@ const genQueue = [];            // raw collections awaiting generation: { name, 
 let postQueue = [];             // rendered, ready-to-post specs (persisted to disk): { kind, ... }
 let generating = false;         // true while a spec is mid-generation (don't end the session under it)
 let pendingCounts = null;       // last "N Processed M Added" seen, attached to the next Finished line
+let pendingMissing = null;      // last "N Movies Missing" seen, same attachment
 let sessionActive = false;
 let ending = false;
 let produceTimer = null;
 let consumeTimer = null;
 let stopTailer = null;
 let channelCache = null;
+let sessionErrors = [];  // what Kometa reported wrong this run, folded into the sign-off
+let lastLogActivity = 0; // last line the tailer saw — the run's pulse, for the watchdog
+let currentLibrary = null; // library whose collections the log is currently walking
+let tailOffset = 0;        // how far into the log we've read, mirrored into TAIL_PATH
 
 // --- persistence ----------------------------------------------------------------------------
 
@@ -161,15 +249,42 @@ function savePostQueue() {
     }
 }
 
+// Where the tailer had reached, so a restart mid-run picks the log up where it left off instead
+// of seeking to EOF and silently dropping every collection still to come. The post queue already
+// survives a restart; without this the generation queue behind it did not.
+function loadTail() {
+    try {
+        if (fs.existsSync(TAIL_PATH)) {
+            const o = JSON.parse(fs.readFileSync(TAIL_PATH, 'utf8'));
+            if (o && o.path === config.kometaLogPath && Number.isFinite(o.offset)) return o;
+        }
+    } catch (err) {
+        logger.warn('Kometa Theater tail load failed:', err.message || err);
+    }
+    return null;
+}
+
+function saveTail() {
+    try {
+        fs.mkdirSync(path.dirname(TAIL_PATH), { recursive: true });
+        fs.writeFileSync(TAIL_PATH, JSON.stringify({
+            path: config.kometaLogPath, offset: tailOffset, session: sessionActive,
+        }));
+    } catch (err) {
+        logger.debug('Kometa Theater tail save failed:', err.message || err);
+    }
+}
+
 // --- Gemini (fast model, graceful fallback) -------------------------------------------------
 
 function theaterModel() {
     if (!_model) {
         _model = getModel({
             model: config.kometaTheaterModel || undefined, // blank → geminiAPI DEFAULT_MODEL
-            // Moderate temperature keeps voices coherent (high temp was producing nonsense); the
-            // generous token budget gives each prompt room to finish instead of being cut short.
-            generationConfig: { temperature: 0.9, maxOutputTokens: 1000 },
+            // Moderate temperature keeps voices coherent (high temp was producing nonsense). The
+            // token budget has to cover the model's own reasoning as well as the line it finally
+            // writes: at 1000 nearly six in ten replies died on MAX_TOKENS mid-sentence.
+            generationConfig: { temperature: 0.9, maxOutputTokens: 3000 },
         });
     }
     return _model;
@@ -185,9 +300,9 @@ async function ensurePersona(name, norm) {
             + `Make each distinct, never a generic soldier or radio operator, and ALWAYS unmistakably tied to "${name}".\n`
             + `Return ONLY JSON: {"callsign":"<a short, characterful name/handle that fits the theme>","vibe":"<2-3 sentences: who or what they are, their attitude, and how they talk — all rooted in the collection's theme>"}.`;
         const res = await theaterModel().generateContent(prompt);
-        const m = res.response.text().match(/\{[\s\S]*\}/);
-        if (m) {
-            const o = JSON.parse(m[0]);
+        const raw = extractJsonObject(res.response.text());
+        if (raw) {
+            const o = JSON.parse(raw);
             if (o.callsign && o.vibe) persona = { callsign: String(o.callsign).slice(0, 80), vibe: String(o.vibe).slice(0, 600) };
         }
     } catch (err) {
@@ -217,6 +332,16 @@ function pickCutoff() {
     return CUTOFFS[Math.floor(Math.random() * CUTOFFS.length)];
 }
 
+// How a collection feels about itself, by how much of it is actually there. This is the whole
+// point of reading the missing counts: a complete collection should sound smug and a threadbare
+// one should sound furious, rather than every unit having the same even temper.
+const MOODS = {
+    complete: 'Your collection is COMPLETE — every title it is meant to hold is present. You are delighted about this, triumphant, possibly insufferable about it.',
+    nearly: 'Your collection is very nearly complete. You are pleased on the whole, though the handful of stragglers nag at you.',
+    patchy: 'Your collection has real, visible gaps. You are irritable about it and pointed about what is still missing.',
+    threadbare: 'Your collection is mostly MISSING — far more absent than present. You are ANGRY: aggrieved, indignant, and in no mood to hide it from the server.',
+};
+
 async function generateReport(persona, ctx, isNew) {
     let context;
     if (ctx.hasChange) {
@@ -226,11 +351,17 @@ async function generateReport(persona, ctx, isNew) {
     } else {
         context = `Nothing was added or removed from you this run${ctx.total ? ` — you currently hold ${ctx.total} titles` : ''}. React however your character would to a quiet, uneventful check-in.`;
     }
+    let mood = '';
+    if (ctx.completeness) {
+        const c = ctx.completeness;
+        mood = `${MOODS[c.tier]} (You hold ${c.have} of the ${c.wanted} titles you should — ${Math.round(c.ratio * 100)}%.) `
+            + `Let that feeling drive the whole reply; you may reference how full or empty you are, but stay in character.\n`;
+    }
     const intro = isNew ? 'This is the first time the server has met you — introduce yourself in your own unmistakable style. ' : '';
     try {
         const prompt = `You ARE this character. Name/handle: "${persona.callsign}". Persona: ${persona.vibe}\n`
             + `You are the voice of a Plex media collection. The server just checked on you during a library update.\n`
-            + `${intro}${context}\n`
+            + `${intro}${context}\n${mood}`
             + `Respond ENTIRELY as this character — let their personality and voice completely dominate, and keep it rooted in their theme. Do NOT default to a military "reporting for duty" or "callsign reporting in" format unless that is truly who they are.\n`
             + `Write 2-3 complete, coherent sentences (~200-400 characters), plain text, addressed to the server. No markdown, no quotes, no stage directions.`;
         const res = await theaterModel().generateContent(prompt);
@@ -292,23 +423,50 @@ function beginSession() {
     if (sessionActive) return;
     sessionActive = true;
     ending = false;
+    sessionErrors = [];
+    lastLogActivity = Date.now();
+    currentLibrary = null;
+    saveTail();
     post({ content: '📡 **Incoming transmission…** Collections, report for duty.' });
 }
 
-async function endSession() {
+// `lost` = Kometa stopped writing to its log without ever sending run_end, so the run died or
+// was killed mid-roll-call. Closing either way matters: while sessionActive stays true the
+// beginSession() guard swallows the NEXT run's opener too.
+async function endSession(lost = false) {
     sessionActive = false;
     ending = false;
     changeBuffer.clear();
     pendingCounts = null;
-    await post({ content: '📡 *…all units accounted for. Signing off until the next run.*' });
+    currentLibrary = null;
+    saveTail();
+    const errors = sessionErrors.slice();
+    sessionErrors = [];
+    const closer = lost
+        ? '📡 *…the roll-call cuts out mid-sentence. Nothing further came down the line.*'
+        : '📡 *…all units accounted for. Signing off until the next run.*';
+    if (!errors.length) {
+        await post({ content: closer });
+        return;
+    }
+    await post({
+        content: closer,
+        embeds: [new EmbedBuilder()
+            .setColor(lost ? 0xED4245 : 0xFEE75C)
+            .setAuthor({ name: '📻 interference on the line' })
+            .setDescription(errors.map((e) => `• ${e}`).join('\n').slice(0, 4000))
+            .setTimestamp()],
+    });
 }
 
-function enqueue(name, counts) {
+function enqueue(name, counts, missing) {
     if (!sessionActive) beginSession();
     genQueue.push({
         name,
-        norm: normalizeName(name),
+        library: currentLibrary,
+        key: collectionKey(currentLibrary, name),
         total: counts ? counts.total : null,
+        missing,
         added: counts ? counts.added : null,
         readyAt: Date.now() + GRACE_MS,
     });
@@ -316,9 +474,9 @@ function enqueue(name, counts) {
 
 // Turn a raw collection into a ready-to-post spec — this is where the Gemini time is spent.
 async function renderSpec(item) {
-    const isSeen = seenSet.has(item.norm);
-    const wh = changeBuffer.get(item.norm) || null;
-    changeBuffer.delete(item.norm);
+    const isSeen = seenSet.has(item.key);
+    const wh = changeBuffer.get(item.key) || null;
+    changeBuffer.delete(item.key);
 
     const addedTitles = wh ? wh.added : [];
     const removedTitles = wh ? wh.removed : [];
@@ -329,17 +487,23 @@ async function renderSpec(item) {
     // read a count (null → assume content, so a real collection is never wrongly shown as static).
     const hasContent = item.total == null || item.total > 0 || hasChange;
 
-    markSeen(item.norm); // either way, we've now met it
+    markSeen(item.key); // either way, we've now met it
 
     if (classifyKind(isSeen, hasContent) === 'static') {
         return { kind: 'static', text: buildStaticText(item.name) };
     }
 
     // Comes alive: a brand-new unit with contents introduces itself; an established one reports in.
-    const persona = await ensurePersona(item.name, item.norm);
-    const ctx = { addedTitles, removedTitles, addedCount, created, hasChange, total: item.total };
+    const persona = await ensurePersona(item.name, item.key);
+    const ctx = {
+        addedTitles, removedTitles, addedCount, created, hasChange, total: item.total,
+        completeness: describeCompleteness(item.total, item.missing),
+    };
     const text = await generateReport(persona, ctx, /* isNew */ !isSeen);
-    return { kind: 'report', name: item.name, callsign: persona.callsign, text, hasChange };
+    // The footer carries the library so the same collection name coming round again on the next
+    // library reads as a different unit rather than the roll call starting over.
+    const label = item.library ? `${item.name} · ${item.library}` : item.name;
+    return { kind: 'report', name: label, callsign: persona.callsign, text, hasChange };
 }
 
 function postSpec(spec) {
@@ -383,8 +547,9 @@ async function consume() {
             savePostQueue();
             await postSpec(spec);
             nextDelay = config.kometaTheaterDelayMs || 5000;
-        } else if (sessionActive && ending && genQueue.length === 0 && !generating) {
-            await endSession();
+        } else if (sessionActive && genQueue.length === 0 && !generating) {
+            if (ending) await endSession();
+            else if (Date.now() - lastLogActivity > WATCHDOG_MS) await endSession(true);
         }
     } catch (err) {
         logger.error('Kometa Theater post failed:', err.message || err);
@@ -404,9 +569,9 @@ function scheduleConsume(ms) {
 
 // --- log tailer -----------------------------------------------------------------------------
 
-function startTailer(filePath, onLine) {
-    let offset = 0;
-    let primed = false;
+function startTailer(filePath, onLine, resumeFrom) {
+    let offset = Number.isFinite(resumeFrom) ? resumeFrom : 0;
+    let primed = Number.isFinite(resumeFrom);
     const decoder = new StringDecoder('utf8');
     let pending = '';
     let stopped = false;
@@ -423,6 +588,8 @@ function startTailer(filePath, onLine) {
                     const buf = Buffer.alloc(len);
                     await fh.read(buf, 0, len, offset);
                     offset = stat.size;
+                    tailOffset = offset;
+                    saveTail();
                     pending += decoder.write(buf);
                     let idx;
                     while ((idx = pending.indexOf('\n')) >= 0) {
@@ -445,11 +612,16 @@ function startTailer(filePath, onLine) {
 }
 
 function onLogLine(line) {
+    lastLogActivity = Date.now();
     const counts = parseProcessed(line);
     if (counts) { pendingCounts = counts; return; }
-    if (/Finished\s+Collections\s+Run/.test(line)) { onRunEnd(); return; }
+    const library = parseLibraryHeader(line);
+    if (library) { currentLibrary = library; pendingCounts = null; pendingMissing = null; return; }
+    const missing = parseMissing(line);
+    if (missing != null) { pendingMissing = missing; return; }
+    if (RUN_END_RE.test(line)) { onRunEnd(); return; }
     const name = parseFinishedCollection(line);
-    if (name) { enqueue(name, pendingCounts); pendingCounts = null; }
+    if (name) { enqueue(name, pendingCounts, pendingMissing); pendingCounts = null; pendingMissing = null; }
 }
 
 // --- feed hooks (called by helpers/broadcast.js when theater mode is on) ---------------------
@@ -466,12 +638,23 @@ function onChanges(payload) {
     const p = payload || {};
     const name = p.collection || p.playlist;
     if (!name) return;
-    changeBuffer.set(normalizeName(name), {
+    changeBuffer.set(collectionKey(p.library_name, name), {
         added: (Array.isArray(p.additions) ? p.additions : []).map((a) => a && a.title).filter(Boolean),
         removed: (Array.isArray(p.removals) ? p.removals : []).map((a) => a && a.title).filter(Boolean),
         created: !!p.created,
         ts: Date.now(),
     });
+}
+
+// Kometa fires `error` once per saved error and once per config warning, so posting them as
+// they land would spam the channel on every run — which is why they used to be dropped outright.
+// Collecting them for the sign-off keeps the channel quiet AND makes a run that dies partway
+// visible, instead of an opener followed by permanent silence.
+function onError(payload) {
+    const text = String((payload || {}).error || '').trim().replace(/\s+/g, ' ').slice(0, 300);
+    if (!text || !sessionActive) return;
+    if (sessionErrors.length >= MAX_SESSION_ERRORS || sessionErrors.includes(text)) return;
+    sessionErrors.push(text);
 }
 
 function startKometaTheater(client) {
@@ -482,11 +665,23 @@ function startKometaTheater(client) {
     _client = client;
     loadStore();
     postQueue = loadPostQueue(); // resume any messages queued up before a restart
-    stopTailer = startTailer(config.kometaLogPath, onLogLine);
+    const tail = loadTail();
+    let resumeFrom;
+    if (tail) {
+        // A log smaller than the saved offset rotated while we were down: read the new one whole.
+        let size = null;
+        try { size = fs.statSync(config.kometaLogPath).size; } catch (_) { /* gone; prime at EOF */ }
+        if (size != null) resumeFrom = size < tail.offset ? 0 : tail.offset;
+        // Carry the open session across so the roll call continues rather than re-announcing.
+        if (resumeFrom != null) tailOffset = resumeFrom;
+        if (resumeFrom != null && tail.session) { sessionActive = true; lastLogActivity = Date.now(); }
+    }
+    stopTailer = startTailer(config.kometaLogPath, onLogLine, resumeFrom);
     scheduleProduce(IDLE_MS); // generator: fills the queue continuously
     scheduleConsume(IDLE_MS); // poster: drains the queue at the pace
     logger.info(`Kometa Theater enabled — narrating runs from ${config.kometaLogPath}`
-        + (postQueue.length ? ` (resuming ${postQueue.length} queued transmissions)` : ''));
+        + (resumeFrom != null ? ` (resuming at byte ${resumeFrom}${sessionActive ? ', session still open' : ''})` : '')
+        + (postQueue.length ? ` (${postQueue.length} queued transmissions)` : ''));
 }
 
 function isEnabled() {
@@ -499,10 +694,16 @@ module.exports = {
     onRunStart,
     onRunEnd,
     onChanges,
+    onError,
     // exported for tests
     parseFinishedCollection,
     parseProcessed,
+    parseMissing,
+    describeCompleteness,
+    parseLibraryHeader,
+    collectionKey,
     normalizeName,
     classifyKind,
     buildStaticText,
+    extractJsonObject,
 };

@@ -304,13 +304,15 @@ function resolveCover(coverPath) {
 async function broadcastKometaRun(client, payload) {
     const p = payload || {};
 
-    // Theater mode: hand run boundaries + changes to the in-character narrator, and swallow
-    // everything else (incl. Kometa's noisy startup `error`/`version` webhooks — those fire once
-    // per config warning and would spam the channel). The theater is the only output while on.
+    // Theater mode: hand run boundaries, changes and errors to the in-character narrator and
+    // swallow the rest (e.g. Kometa's `version` webhook). Errors are handed over rather than
+    // dropped so a run that dies partway still closes out — the theater batches them into its
+    // sign-off instead of posting one card per config warning. It is the only output while on.
     if (kometaTheater.isEnabled()) {
         if (p.event === 'changes') kometaTheater.onChanges(p);
         else if (p.event === 'run_start') kometaTheater.onRunStart(p);
         else if (p.event === 'run_end') kometaTheater.onRunEnd(p);
+        else if (p.event === 'error') kometaTheater.onError(p);
         return;
     }
 

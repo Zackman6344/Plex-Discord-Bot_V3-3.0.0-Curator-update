@@ -138,7 +138,7 @@ Two signature styles coexist in the codebase:
 | `eventServer.js`           | Localhost-only inbound HTTP listener (`config.eventServerPort`, default 8799). `POST /kometa` and `POST /playnite/start` relay to the broadcast channel; `GET /health` is a ping. Optional `?token=` check. Disabled unless `config.eventServerEnabled`. See "Broadcasts" below. |
 | `broadcast.js`            | Builds + sends the broadcast embeds. Pure builders `buildKometaEmbed` / `buildKometaChangesEmbed` / `buildGameLaunchEmbed` / `buildGamePresenceEmbed` / `buildStartupEmbed` + `pickChannelId(type)` / `startupChannelId()` / `isNoteworthyChange(payload)` (all unit-tested); senders route Kometa → `kometaChannelId` and game launches → `gameLaunchChannelId` (each falling back to `broadcastChannelId`), gate `changes` events through the noteworthy filter, attach Playnite cover art, and swallow send failures. `broadcastStartup(client)` posts a boot confirmation to a single channel. |
 | `gamePresence.js`         | Launcher-agnostic game-launch detection via Discord activity. `startGamePresence(client)` watches `presenceUpdate` for the owner and broadcasts newly-started `Playing` games (pure `startedGames(prev, activities)` diff, unit-tested). No-op unless `config.gamePresenceEnabled` (which also gates the privileged `GuildPresences` intent in `app/utils.js`). |
-| `kometaTheater.js`        | "Silly mode" that narrates a Kometa run in-character. Tails `meta.log` for per-collection coverage (single-pattern `parseFinishedCollection`) + `changes` webhooks (fed via `onChanges`) for detail; a paced worker posts per-collection persona dialogue (fast Gemini, persisted per name) or garbled `buildStaticText` for unseen+unadded collections. Pure `parseFinishedCollection`/`normalizeName`/`classifyKind`/`buildStaticText` unit-tested. No-op unless `config.kometaTheaterEnabled`. See "Kometa Theater" below. |
+| `kometaTheater.js`        | "Silly mode" that narrates a Kometa run in-character. Tails `meta.log` for per-collection coverage, the owning library, and missing counts, plus `changes` webhooks (fed via `onChanges`) for detail; a paced worker posts per-collection persona dialogue (fast Gemini, persisted per library+name) or garbled `buildStaticText` for unseen+unadded collections. Errors arrive via `onError` and are batched into the sign-off. Pure `parseFinishedCollection`/`parseProcessed`/`parseMissing`/`parseLibraryHeader`/`collectionKey`/`describeCompleteness`/`extractJsonObject`/`normalizeName`/`classifyKind`/`buildStaticText` unit-tested. No-op unless `config.kometaTheaterEnabled`. See "Kometa Theater" below. |
 | `configStore.js`          | Backing store + schema for the `/config` wizard. Holds the editable `SETTINGS` list, pure `formatValue`/`validate` helpers (unit-tested), and `readOverrides`/`writeOverride`/`removeOverride`. Writes `data/config.overrides.json` and mutates the live config object so most changes apply without a restart. No discord.js. See "In-Discord config wizard" below. |
 | `archipelagoClient.js`     | One read-only WebSocket connection to an Archipelago multiworld. Runs the `RoomInfo` → `GetDataPackage` → `Connect` handshake, resolves item/location/player ids to names, renders `PrintJSON` packets into log lines, reconnects with backoff. Also exports the pure `parseTarget()`, `extractConnectAddress()` and `renderPrintJSON()`. |
 | `archipelagoData.js`       | Disk cache for AP data packages under `data/archipelago/datapackage/`, keyed by the per-game checksum the server publishes in `RoomInfo`. A reconnect re-downloads only the games whose checksum moved. |
@@ -206,6 +206,9 @@ All persistent runtime state lives under `data/`. The directory is created if mi
 | `data/archipelago_goals.json`     | `helpers/archipelagoGoals.js`       |
 | `data/archipelago_roles.json`     | `helpers/archipelagoRoles.js`       |
 | `data/archipelago/datapackage/*.json` | `helpers/archipelagoData.js`    |
+| `data/kometa_theater.json`        | `helpers/kometaTheater.js` (personas + the `seen` set, keyed `library::collection`) |
+| `data/kometa_theater_queue.json`  | `helpers/kometaTheater.js` (rendered-but-unposted transmissions) |
+| `data/kometa_theater_tail.json`   | `helpers/kometaTheater.js` (log byte offset + whether a session was open) |
 
 Custom user playlists are separate — they live in `playlists/<name>.playlist` (gitignored). On-disk shape uses legacy French keys (`musiques`, `nom`, `titre`, `artiste`, `cle`) for backward compatibility with older playlist files; code reads/writes them using English variable names internally.
 
@@ -458,21 +461,45 @@ routes those events into the theater via `onChanges`/`onRunStart`/`onRunEnd`).
 - **Hybrid inputs.** Kometa's `changes` webhook only reports *changed* collections, so it can't see
   the ones that pass through unchanged. The theater tails **`meta.log`** for coverage — one clean
   `Finished <Name> Collection` line per collection (incl. unchanged) — and uses the buffered
-  `changes` webhooks for the add/remove detail. Correlated by `normalizeName`; a short grace period
-  before each post lets the matching webhook arrive.
+  `changes` webhooks for the add/remove detail. It also reads the `<Name> Library` section header
+  (`parseLibraryHeader`) and the per-collection `N Movies Missing` line (`parseMissing`).
+  Correlated by `collectionKey(library, name)`. Two libraries can hold collections of the same
+  name, and keying on the name alone made the second library's pass read as the roll call starting
+  over. A short grace period before each post lets the webhook arrive.
 - **Classification** (`classifyKind(isSeen, hasAdditions)`): unseen **and** gained nothing → garbled
   `buildStaticText` (no Gemini); otherwise it "reports in" — a brand-new collection with items
   introduces itself, an established one just reports (commenting on changes when present).
-- **Personas** are per-collection-name, minted once via a fast model (`config.kometaTheaterModel`
-  → `getModel`) and persisted in `data/kometa_theater.json` alongside the `seen` set. Gemini and
-  Discord failures fall back to templated text; a parse error can't crash the bot.
+- **Mood** (`describeCompleteness`): what a collection holds against what its source list wanted
+  (the `Processed` count vs the `Missing` count) grades it complete / nearly / patchy / threadbare,
+  and that tier goes into the prompt so a full collection sounds smug and a gutted one sounds
+  furious. A collection that never built has no held count, so it gets no mood rather than a wrong one.
+- **Personas** are per library+collection-name, minted once via a fast model (`config.kometaTheaterModel`
+  → `getModel`) and persisted in `data/kometa_theater.json` alongside the `seen` set. The reply's
+  JSON is taken with `extractJsonObject`, which scans for the first *balanced* object. A greedy
+  `{…}` match spanned into trailing prose and threw once the token budget gave the model room to
+  ramble.
+  Gemini and Discord failures fall back to templated text; a parse error can't crash the bot.
 - **Pacing**: a self-scheduling worker drains one collection every `config.kometaTheaterDelayMs`
   (the deliberate Discord-side slowdown). No cap — bounded by the number of collections processed.
-- **Log tailer**: polls the file, seeks to EOF at boot (only new lines), handles rotation
-  (`size < offset` → reset), decodes UTF-8 via `StringDecoder`, read-only.
+- **Log tailer**: polls the file, handles rotation (`size < offset` → reset), decodes UTF-8 via
+  `StringDecoder`, read-only. Its byte offset is persisted to `data/kometa_theater_tail.json` after
+  every read, so a restart mid-run **resumes where it stopped**: `postQueue` already survived a
+  restart, but the generation queue behind it did not, so seeking to EOF silently dropped every
+  collection still to come. A saved position larger than the current file means the log rotated
+  while the bot was down → start at byte 0; no saved position at all → seek to EOF as before. The
+  file also records whether a session was open, so a resumed run continues the roll call instead of
+  re-announcing the opener.
 
-**Brittleness (accepted):** depends on Kometa's log wording (`Finished (.+?) Collection`). Isolated
-to one regex; degrades to fewer lines rather than failing.
+- **Session end**: `run_end` (webhook, or the `Finished … Run` separator) drains the queue and posts
+  the sign-off. If Kometa dies without either, a watchdog closes the session after `WATCHDOG_MS` of
+  no log movement. Without it `sessionActive` stayed true and swallowed the *next* run's opener.
+  Errors are collected by `onError` and appended to the sign-off as a single card, never posted one
+  by one: Kometa fires that hook once per config warning too.
+
+**Brittleness (accepted):** depends on Kometa's log wording: `Finished (.+?) Collection`,
+`N X Processed M X Added`, `N X Missing`, `<Name> Library`, `Finished … Run`. Each is one isolated
+regex that degrades to less detail rather than failing. Kometa 2.4.8 added a `Mapping <Name> Library`
+separator that `parseLibraryHeader` must reject, so re-check these after a Kometa upgrade.
 
 ---
 

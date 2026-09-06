@@ -11,7 +11,10 @@ const config = require('../config/config.js');
 const logger = require('./logger.js');
 const broadcast = require('./broadcast.js');
 
-const MAX_BODY_BYTES = 64 * 1024; // generous for these small JSON payloads
+// Kometa's `changes` payload carries the collection poster and background base64-inlined
+// (webhooks.py get_image_encoded) whenever the artwork isn't a URL, so a local 250 KB poster
+// arrives as ~340 KB of JSON. The old 64 KB ceiling silently 413'd exactly those events.
+const MAX_BODY_BYTES = 4 * 1024 * 1024;
 let isListening = false;
 
 function readBody(req) {

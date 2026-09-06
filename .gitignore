@@ -30,6 +30,8 @@
 /data/characters.json
 /data/hitster_stats.json
 /data/kometa_theater.json
+/data/kometa_theater_queue.json
+/data/kometa_theater_tail.json
 /data/*_leaderboard.json
 /data/clues/
 # Older builds wrote some of the same files next to the config or at the project root.
