@@ -85,6 +85,46 @@ test('a re-claim that cannot be written puts the previous holder back', () => {
     }
 });
 
+test('a release that cannot be written refuses and keeps the claim', () => {
+    claims.claim({ watchId: 1, slot: 'ZackWord', userId: 'u1' });
+    const undo = breakWrites(claims.CLAIM_FILE);
+    try {
+        assert.throws(() => claims.release(1, 'ZackWord'), /not writable/i);
+        assert.strictEqual(claims.forWatch(1).length, 1,
+            'a release announced but not written comes back on the next restart');
+    } finally {
+        undo();
+    }
+});
+
+test('a ping change that cannot be written refuses and keeps the old mode', () => {
+    claims.claim({ watchId: 1, slot: 'ZackWord', userId: 'u1', pings: 'progression' });
+    const undo = breakWrites(claims.CLAIM_FILE);
+    try {
+        assert.throws(() => claims.setPings(1, 'ZackWord', 'off'), /not writable/i);
+        assert.strictEqual(claims.find(1, 'ZackWord').pings, 'progression',
+            'the mode the user was told was saved must not linger in the cache');
+    } finally {
+        undo();
+    }
+});
+
+test('releaseWatch rolls back and reports nothing released, rather than throwing', () => {
+    // The /config sync paths reach this one, and a throw there abandons a reconfiguration
+    // half-applied — so this is the one that answers 0 instead.
+    claims.claim({ watchId: 7, slot: 'A', userId: 'u1' });
+    claims.claim({ watchId: 7, slot: 'B', userId: 'u2' });
+    const undo = breakWrites(claims.CLAIM_FILE);
+    try {
+        let count = null;
+        assert.doesNotThrow(() => { count = claims.releaseWatch(7); });
+        assert.strictEqual(count, 0, 'the caller must not report claims released that are still on disk');
+        assert.strictEqual(claims.forWatch(7).length, 2, 'and both claims are still there');
+    } finally {
+        undo();
+    }
+});
+
 test('a damaged file that cannot be moved aside is never overwritten', () => {
     const PRECIOUS = '{"goals": {"SEED::IRREPLACEABLE": {"userId":"u9"';
     fs.writeFileSync(goals.GOAL_FILE, PRECIOUS);
