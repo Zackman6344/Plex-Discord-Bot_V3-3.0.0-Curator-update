@@ -48,6 +48,11 @@ const ITEM_FLAG_TRAP = 0b100;
 // noise, which is what the skip-goaled filter exists to drop.
 const CLIENT_STATUS_GOAL = 30;
 
+// HintStatus, as observed on a live room: 0 unspecified, 30 priority, 40 found. 10 (no priority)
+// and 20 (avoid) are defined by the protocol and simply had no instances there. `found` and
+// status 40 agree, so `found` stays the thing the code branches on and status is display only.
+const HINT_STATUS = { 0: '', 10: '', 20: 'avoid', 30: 'priority', 40: 'found' };
+
 // Discord renders a subset of ANSI inside a ```ansi block. The mapping follows Archipelago's
 // own clients so the colours mean the same thing here as in the game's text client.
 const ANSI = {
@@ -276,6 +281,10 @@ class ArchipelagoClient extends EventEmitter {
         // built from what the socket hears and deliberately survives a reconnect. A release
         // seen before the bot first connected is invisible; a goal is not.
         this.released = new Set();
+        // Every hint in the multiworld, keyed "team:findingPlayer:location". The server stores a
+        // hint under both the finder's and the receiver's slot, so reading all slots returns each
+        // one twice; the map is what dedupes them. Rebuilt from scratch on every connect.
+        this.hints = new Map();
         // Slots whose locations are all checked. Not knowable over the socket at all, so the
         // monitor fills this from the room's tracker page. See helpers/archipelagoTracker.js.
         this.fullyChecked = new Set();
@@ -604,9 +613,13 @@ class ArchipelagoClient extends EventEmitter {
             }
             case 'Retrieved':
                 this._absorbStatuses(packet.keys || {});
+                this._absorbHints(packet.keys || {});
                 break;
             case 'SetReply':
-                if (packet.key) this._absorbStatuses({ [packet.key]: packet.value });
+                if (packet.key) {
+                    this._absorbStatuses({ [packet.key]: packet.value });
+                    this._absorbHints({ [packet.key]: packet.value });
+                }
                 break;
             case 'RoomUpdate':
                 this._absorbPlayers(packet);
@@ -711,6 +724,56 @@ class ArchipelagoClient extends EventEmitter {
         return keys;
     }
 
+    // One key per slot on this team. Unlike the status key there is no second spelling to guess
+    // at: `_read_hints_{team}_{slot}` is given consistently in the protocol docs and answered on
+    // a live room for every slot, not only the connected one.
+    _hintKeys() {
+        return this.slotsOnTeam().map(slot => `_read_hints_${this.team}_${slot}`);
+    }
+
+    /**
+     * Absorb hint lists. Each hint is stored by the server under both the finding and the
+     * receiving slot, so reading every slot returns roughly two entries per hint; keying on
+     * finder and location is what collapses them back to one.
+     */
+    _absorbHints(entries) {
+        let sawHints = false;
+        for (const [key, value] of Object.entries(entries)) {
+            const match = /_read_hints_(\d+)_(\d+)$/.exec(key);
+            // A key the server does not have answers null, which is not the same as a slot with
+            // no hints answering []. Only an array says anything.
+            if (!match || !Array.isArray(value)) continue;
+            sawHints = true;
+            const team = Number(match[1]);
+            for (const hint of value) {
+                if (!hint || typeof hint.location !== 'number') continue;
+                this.hints.set(`${team}:${hint.finding_player}:${hint.location}`, { ...hint, team });
+            }
+        }
+        // Like 'statuses', this lands well after 'connected'. Anything acting on hints has to
+        // wait for the answer rather than for the socket.
+        if (sawHints) this.emit('hints', { hints: this.hints });
+    }
+
+    /**
+     * Hints nobody has collected yet, newest server state.
+     * `found` is what decides it: an already-found hint is history, not something anyone is
+     * still waiting on.
+     */
+    outstandingHints() {
+        return [...this.hints.values()].filter(h => !h.found);
+    }
+
+    /** Outstanding hints whose item still has to be dug out of the given slot's world. */
+    hintsToFindIn(slot, team = this.team) {
+        return this.outstandingHints().filter(h => h.team === team && h.finding_player === slot);
+    }
+
+    /** Outstanding hints the given slot is waiting to receive. */
+    hintsAwaitedBy(slot, team = this.team) {
+        return this.outstandingHints().filter(h => h.team === team && h.receiving_player === slot);
+    }
+
     _absorbStatuses(entries) {
         let sawStatus = false;
         for (const [key, value] of Object.entries(entries)) {
@@ -748,7 +811,10 @@ class ArchipelagoClient extends EventEmitter {
         this.attempt = 0;
 
         this.goaled.clear();
-        const keys = this._statusKeys();
+        // Cleared for the same reason as the slot maps above: a reconnect may be to a different
+        // multiworld, and holding another room's hints would report them as this one's.
+        this.hints.clear();
+        const keys = [...this._statusKeys(), ...this._hintKeys()];
         if (keys.length > 0) {
             this._send({ cmd: 'Get', keys });
             this._send({ cmd: 'SetNotify', keys });
@@ -785,6 +851,7 @@ class ArchipelagoClient extends EventEmitter {
 module.exports = {
     ArchipelagoClient,
     classifyItem,
+    HINT_STATUS,
     stripAnsi,
     ANSI,
     MARKERS,

@@ -26,12 +26,14 @@ function useTempStores(prefix) {
         claims: file('claims'),
         watches: file('watches'),
         goals: file('goals'),
-        roles: file('roles')
+        roles: file('roles'),
+        hints: file('hints')
     };
     process.env.PLEXBOT_AP_CLAIMS_FILE = paths.claims;
     process.env.PLEXBOT_AP_WATCHES_FILE = paths.watches;
     process.env.PLEXBOT_AP_GOALS_FILE = paths.goals;
     process.env.PLEXBOT_AP_ROLES_FILE = paths.roles;
+    process.env.PLEXBOT_AP_HINTS_FILE = paths.hints;
 
     return {
         paths,
@@ -53,6 +55,9 @@ function useTempStores(prefix) {
  * @param {string}   [options.seedName]  RoomInfo.seed_name; the goal tally keys on it
  * @param {number}   [options.watchSlot] which slot the connecting client is told it is
  * @param {boolean}  [options.refuse]    answer Connect with ConnectionRefused instead
+ * @param {Object}   [options.hints]     slot number -> Hint[], answered to the data-storage Get.
+ *   Left out, the Get goes unanswered exactly as before, so a test that does not care about
+ *   hints sees no Retrieved and nothing downstream of one fires.
  * @returns {Promise<{wss, port, sendPacket, sendItem, received}>}
  */
 function startFakeServer(options = {}) {
@@ -61,7 +66,8 @@ function startFakeServer(options = {}) {
         aliases = {},
         seedName = 'Seed_TEST',
         watchSlot = 1,
-        refuse = false
+        refuse = false,
+        hints = null
     } = options;
 
     const wss = new WebSocketServer({ port: 0 });   // 0 = let the OS pick, so a busy port cannot flake
@@ -76,6 +82,18 @@ function startFakeServer(options = {}) {
         socket.on('message', (raw) => {
             for (const packet of JSON.parse(raw.toString())) {
                 received.push(packet);
+                // Answer the data-storage read the client makes on connect, but only for the
+                // keys this test actually supplied. Answering everything would fire the hint and
+                // status paths in tests that are about neither.
+                if (packet.cmd === 'Get' && hints) {
+                    const keys = {};
+                    for (const key of packet.keys || []) {
+                        const match = /_read_hints_\d+_(\d+)$/.exec(key);
+                        if (match && hints[Number(match[1])]) keys[key] = hints[Number(match[1])];
+                    }
+                    if (Object.keys(keys).length > 0) send([{ cmd: 'Retrieved', keys }]);
+                    continue;
+                }
                 if (packet.cmd !== 'Connect') continue;
                 if (refuse) {
                     send([{ cmd: 'ConnectionRefused', errors: ['InvalidSlot'] }]);
@@ -126,13 +144,23 @@ function closeServer(wss) {
  */
 function fakeDiscord() {
     const posted = [];
+    const dms = [];
     return {
         posted,
+        dms,
         client: {
             channels: {
                 fetch: async (id) => ({
                     id,
                     send: async (payload) => { posted.push(payload); return {}; }
+                })
+            },
+            // A hint ping set to `dm` never reaches a channel, so a test asserting it has to be
+            // able to see the direct message instead.
+            users: {
+                fetch: async (id) => ({
+                    id,
+                    send: async (payload) => { dms.push({ userId: id, payload }); return {}; }
                 })
             }
         }

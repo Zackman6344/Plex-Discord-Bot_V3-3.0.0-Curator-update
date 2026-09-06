@@ -678,6 +678,59 @@ That makes the first word ambiguous in the prefix form: `!ap claim 0 ZackWord` g
 
 In the slash form `id` is declared last on every sub-command. Discord rejects the whole registration payload when a required option follows an optional one, and `scripts/validate-slash.js` fails the build on it.
 
+### Hints
+
+`_read_hints_{team}_{slot}` is readable for every slot, not only the connected one, and until now
+nothing read it. It rides the same `Get`/`SetNotify` the status keys use, added to the same
+request on connect.
+
+**Each hint arrives twice.** The server files one under the finder and again under the receiver,
+so reading all 29 slots on the room this was built against returned 2,031 entries for 1,043
+hints. `client.hints` keys on `team:finding_player:location`, which is what collapses the pair.
+
+`outstandingHints()` filters on `found`, since an already-collected hint is history. 45 of those
+1,043 were outstanding.
+
+Name resolution follows the same split as `PrintJSON`: **the item belongs to the receiver's game
+and the location to the finder's.** Getting that backwards mostly resolves to nothing, and
+occasionally to a name from the wrong game. One item id in this room's packages exists in five
+of them.
+
+`!ap hints [id] [slot]` lists them, priority first (`HintStatus` 30; 0 is unspecified and 40 is
+found). The slot filter matches either side, so a claimant sees both what they owe and what they
+are waiting on.
+
+### The hint ping, and why it starts off
+
+When somebody hints an item out of your world, **the finder is pinged, not the receiver.** The
+receiver placed the hint and already knows; the finder is the one who can act on it.
+
+Per claim, `off` by default, set with `!ap hintpings [id] <slot> <off|dm|channel>`. It is a
+separate setting from `pings` rather than a mode of it, because it is a different event and a
+much easier one to resent: it is a request for someone's time, it arrives whether or not they are
+playing, and one slot can be the target of many at once. `dm` never falls back to the channel,
+because choosing it was a choice to keep this out of the channel.
+
+**The first read of a multiworld is seeded silently.** Every connect replays the entire hint list,
+and a hosted room forces a reconnect roughly every two hours, so without a record of what has been
+seen each cycle would re-announce everything outstanding. Worse, the first read is a backlog
+rather than news: on the live room 45 hints were outstanding and **20 of them sat against a single
+slot**, so announcing on discovery would have opened with twenty pings for whoever held it.
+`archipelagoHints.seedBaseline()` records them all as seen without notifying anyone, and only
+hints created after that point are announced.
+
+The seeded marker is explicit rather than inferred from "this seed has no keys yet". A room whose
+first hint had not been placed would otherwise seed on that first hint and swallow it.
+
+Keyed `<seed>::<team>:<finder>:<location>`, on the seed for the same reason the goal tally is: a
+hint belongs to a multiworld, which outlives the watch id pointing at it. A failed write returns
+nothing rather than risk announcing twice, since a ping sent against a record that never persisted
+fires again on every connect after it.
+
+Covered by `test/archipelagoHints.test.js` (16 checks on the reading, the baseline and the opt-in)
+and `test/archipelagoHintPings.test.js`, which drives a real client against the stand-in server
+and asserts a 20-hint backlog pings nobody.
+
 ### Goal tally and roles
 
 **Only a `Goal` counts.** `recordGoals` reads `client.goaled` and nothing else. A release hands out the slot's remaining items without anybody finishing it, and a fully-checked slot can still be waiting on an item to goal. Both make `hasFinished()` true, which is the right answer for the relay filter and the wrong one for a tally of games completed. Reaching for `hasFinished()` here is the mistake this section exists to prevent, and `test/archipelagoGoals.test.js` pins it with a state carrying one goal, one release and one 100%-checked slot.

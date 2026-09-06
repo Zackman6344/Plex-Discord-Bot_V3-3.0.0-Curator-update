@@ -193,6 +193,16 @@ module.exports = {
                 { name: 'claims', description: 'Show who has claimed which slots', options: [
                     { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
                 ] },
+                { name: 'hints', description: 'Outstanding hints nobody has collected yet', options: [
+                    { name: 'slot', type: 'STRING', required: false, description: 'Only hints involving this slot' },
+                    { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
+                ] },
+                { name: 'hintpings', description: 'Be told when someone wants an item out of your world', options: [
+                    { name: 'slot', type: 'STRING', required: true, description: 'A slot you have claimed' },
+                    { name: 'mode', type: 'STRING', required: true, description: 'How to be told, if at all',
+                        choices: claims.HINT_PING_MODES.map(mode => ({ name: mode, value: mode })) },
+                    { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
+                ] },
                 { name: 'pings', description: 'Choose how much a claimed slot pings you', options: [
                     { name: 'slot', type: 'STRING', required: true, description: 'A slot you have claimed' },
                     { name: 'mode', type: 'STRING', required: true, description: 'How much to ping',
@@ -302,6 +312,8 @@ module.exports = {
                     `\`${prefix}ap unclaim [id] <slot name>\` — give the slot back.`,
                     `\`${prefix}ap claims [id]\` — who has claimed what.`,
                     `\`${prefix}ap pings [id] <slot name> <${claims.PING_MODES.join('|')}>\` — how much a claimed slot pings you.`,
+                    `\`${prefix}ap hints [id] [slot]\` — hints nobody has collected yet, priority ones first.`,
+                    `\`${prefix}ap hintpings [id] <slot name> <${claims.HINT_PING_MODES.join('|')}>\` — be told when someone wants an item out of your world. Starts off.`,
                     `\`${prefix}ap goals [@user]\` — multiworlds goaled. Releases don't count.`,
                     `\`${prefix}ap leaderboard\` — who has goaled the most.`,
                     `\`${prefix}ap password <id> [password]\` — set or clear the room password (the command message is deleted).`,
@@ -596,6 +608,83 @@ module.exports = {
                     }
                     const updated = monitor.setClaimPings(id, slot, mode);
                     return say(`✅ ${slotLabel(updated.slot)} — pinging for ${PING_HELP[updated.pings]}.`);
+                }
+
+                if (action === 'hintpings') {
+                    const id = idFrom();
+                    if (id === null) return badId();
+
+                    // Same shape as `pings`: a closed vocabulary at the end of the line, so
+                    // whatever sits in front of it is the slot name.
+                    const slashMode = opt('mode');
+                    const tail = String(words[words.length - 1] || '').toLowerCase();
+                    const mode = slashMode ? String(slashMode)
+                        : claims.HINT_PING_MODES.includes(tail) ? tail
+                        : null;
+                    const slot = slashMode ? slotArg(argBase) : slotArg(argBase, -1);
+
+                    if (!slot || !mode) {
+                        return say(
+                            `Usage: \`${prefix}ap hintpings [id] <slot name> <${claims.HINT_PING_MODES.join('|')}>\`` +
+                            `\n` + Object.entries(claims.HINT_PING_HELP).map(([k, v]) => `• \`${k}\` — ${v}`).join('\n') +
+                            `\n\nSeparate from \`${prefix}ap pings\`, which is about items arriving for you. ` +
+                            `Hint pings fire when somebody wants an item out of **your** world, and start off.`
+                        );
+                    }
+
+                    const list = monitor.listClaims(id);
+                    if (list === null) return say(`No watch with ID ${id}.`);
+                    const held = list.find(c => claims.sameSlot(c.slot, slot));
+                    if (!held) return say(`Nobody has claimed ${slotLabel(slot)} on watch #${id}.`);
+                    if (held.userId !== callerId && !isOwner(msg)) {
+                        return say(`🔒 ${slotLabel(held.slot)} is claimed by <@${held.userId}> — only they or the bot owner can change it.`);
+                    }
+
+                    const updated = monitor.setClaimHintPings(id, slot, mode);
+                    return say(`✅ ${slotLabel(updated.slot)} — hints for your world send ${claims.HINT_PING_HELP[claims.hintPingMode(updated)]}.`);
+                }
+
+                if (action === 'hints') {
+                    const id = idFrom();
+                    if (id === null) return badId();
+                    const list = monitor.listHints(id);
+                    if (list === null) return say(`No watch with ID ${id}.`);
+                    if (list.length === 0) {
+                        return say(`No outstanding hints on watch #${id}. Everything hinted has been found.`);
+                    }
+
+                    // Optional slot filter, which is what anyone actually holding a slot wants.
+                    const only = slotArg(argBase);
+                    const rows = only
+                        ? list.filter(h => claims.sameSlot(h.finder, only) || claims.sameSlot(h.receiver, only))
+                        : list;
+                    if (only && rows.length === 0) {
+                        return say(`No outstanding hints involving ${slotLabel(only)} on watch #${id}.`);
+                    }
+
+                    // Priority first: somebody flagged those as the ones that matter.
+                    const sorted = [...rows].sort((a, b) =>
+                        (b.priority - a.priority) || a.finder.localeCompare(b.finder));
+
+                    const header = only
+                        ? `🔎 **Outstanding hints involving ${slotLabel(only)}** (watch #${id})`
+                        : `🔎 **${rows.length} outstanding hint(s)** on watch #${id}`;
+                    const all = sorted.map(h =>
+                        `• ${h.priority ? '⭐ ' : ''}**${escapeMarkdown(h.item)}** for ${slotLabel(h.receiver)}` +
+                        ` — in ${slotLabel(h.finder)}'s world at ${escapeMarkdown(h.where)}`);
+
+                    // Same budgeting as `claims`: 2000 characters is a hard limit and an
+                    // oversized send is rejected outright rather than truncated by Discord.
+                    const budget = 1900 - header.length;
+                    const lines = [];
+                    let used = 0;
+                    for (const line of all) {
+                        if (used + line.length + 1 > budget) break;
+                        lines.push(line);
+                        used += line.length + 1;
+                    }
+                    if (lines.length < all.length) lines.push(`…and ${all.length - lines.length} more.`);
+                    return say(`${header}\n${lines.join('\n')}`);
                 }
 
                 if (action === 'claims') {

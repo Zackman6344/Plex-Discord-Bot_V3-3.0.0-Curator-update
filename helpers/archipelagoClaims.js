@@ -31,6 +31,19 @@ const PING_HELP = {
 const PING_MODES = Object.keys(PING_HELP);
 const DEFAULT_PING_MODE = 'progression';
 
+// Being told someone hinted an item out of YOUR world is a different event from receiving one,
+// and a much easier one to resent: it is a request for your time, it arrives whether or not you
+// are playing, and in a big async one slot can be the target of twenty at once. So it is its own
+// setting rather than a mode of the one above, and it defaults to OFF. Nobody is opted in to
+// being nudged by strangers.
+const HINT_PING_HELP = {
+    off: 'nothing — hints for your world stay silent',
+    dm: 'a direct message, so nothing lands in the channel',
+    channel: 'a mention in the relay channel, like item pings'
+};
+const HINT_PING_MODES = Object.keys(HINT_PING_HELP);
+const DEFAULT_HINT_PING_MODE = 'off';
+
 const store = createStore({
     envVar: 'PLEXBOT_AP_CLAIMS_FILE',
     defaultPath: path.join(__dirname, '..', 'data', 'archipelago_claims.json'),
@@ -96,8 +109,11 @@ function claim({ watchId, slot, userId, pings }) {
         watchId,
         slot: name,
         userId: String(userId),
-        // A re-claim of a slot you already hold keeps the ping mode you had set on it.
+        // A re-claim of a slot you already hold keeps the ping modes you had set on it.
         pings: existing >= 0 && claims[existing].userId === String(userId) ? claims[existing].pings : mode,
+        hintPings: existing >= 0 && claims[existing].userId === String(userId)
+            ? (claims[existing].hintPings || DEFAULT_HINT_PING_MODE)
+            : DEFAULT_HINT_PING_MODE,
         claimedAt: new Date().toISOString()
     };
 
@@ -158,6 +174,31 @@ function releaseWatch(watchId) {
     return removed;
 }
 
+function setHintPings(watchId, slot, mode) {
+    if (!HINT_PING_MODES.includes(mode)) {
+        throw new Error(`Hint ping mode must be one of ${HINT_PING_MODES.join(', ')}.`);
+    }
+    const entry = locate(watchId, slot);
+    if (!entry) return null;
+    const before = entry.hintPings;
+    entry.hintPings = mode;
+    if (!persist()) {
+        entry.hintPings = before;
+        throw new Error('I could not save that hint ping setting — the claims file is not writable. Nothing changed.');
+    }
+    return copy(entry);
+}
+
+/**
+ * How a claim wants to hear about hints. Claims written before this setting existed have no
+ * field at all, and must read as off rather than as undefined: the whole point is that nobody
+ * is opted in without saying so.
+ */
+function hintPingMode(claim) {
+    const mode = claim && claim.hintPings;
+    return HINT_PING_MODES.includes(mode) ? mode : DEFAULT_HINT_PING_MODE;
+}
+
 function setPings(watchId, slot, mode) {
     if (!PING_MODES.includes(mode)) throw new Error(`Ping mode must be one of ${PING_MODES.join(', ')}.`);
     const entry = locate(watchId, slot);
@@ -183,10 +224,15 @@ module.exports = {
     release,
     releaseWatch,
     setPings,
+    setHintPings,
+    hintPingMode,
     sameSlot,
     reset,
     PING_MODES,
     PING_HELP,
     DEFAULT_PING_MODE,
+    HINT_PING_MODES,
+    HINT_PING_HELP,
+    DEFAULT_HINT_PING_MODE,
     CLAIM_FILE
 };

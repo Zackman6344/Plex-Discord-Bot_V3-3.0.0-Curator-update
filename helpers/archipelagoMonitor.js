@@ -16,6 +16,9 @@ const config = require('../config/config.js');
 const logger = require('./logger.js');
 const configStore = require('./configStore.js');
 const tracker = require('./archipelagoTracker.js');
+const hintStore = require('./archipelagoHints.js');
+// HintStatus 30. Anything else is either unremarkable or already found.
+const HINT_PRIORITY = 30;
 const claims = require('./archipelagoClaims.js');
 const goals = require('./archipelagoGoals.js');
 const roles = require('./archipelagoRoles.js');
@@ -333,6 +336,77 @@ function connectionNotice(state, phase, detail) {
         `Reconnects stay quiet from here.`;
 }
 
+/**
+ * Tell a claimant when somebody hints an item out of their world.
+ *
+ * The finder is pinged, not the receiver. A hint says "this item is in your world and I want
+ * it", so the person who can act on it is whoever has to go and check that location. The
+ * receiver already knows: they placed the hint.
+ *
+ * Off for everyone until they say otherwise. Opting in is per claim, `off`/`dm`/`channel`.
+ */
+async function announceHints(state) {
+    const client = state.client;
+    const seed = client.seedName || describeTarget(state.watch.target);
+    const outstanding = client.outstandingHints();
+    const keyOf = h => hintStore.hintKey(seed, h.team, h.finding_player, h.location);
+
+    // First sight of this multiworld: record the lot without telling anyone. The room this was
+    // built against had 45 outstanding hints, 20 of them against one slot, and announcing on
+    // discovery would have opened with twenty pings of backlog.
+    if (!hintStore.isSeeded(seed)) {
+        const ok = hintStore.seedBaseline(seed, outstanding.map(keyOf));
+        logger.info(`[AP:${state.watch.label}] hint baseline ${ok ? 'seeded' : 'FAILED to seed'} ` +
+            `with ${outstanding.length} outstanding hint(s); announcements start from here`);
+        return;
+    }
+
+    // Every connect replays the whole list, so only keys never recorded before are news. A
+    // failed write returns nothing rather than risk announcing a hint twice.
+    const fresh = hintStore.recordAll(outstanding.map(keyOf));
+    if (fresh.length === 0) return;
+
+    const byKey = new Map(outstanding.map(h => [keyOf(h), h]));
+    for (const key of fresh) {
+        const hint = byKey.get(key);
+        if (!hint) continue;
+
+        const slot = client.slotNameFor(hint.finding_player, hint.team);
+        if (!slot) continue;
+        const claim = claims.find(state.watch.id, slot);
+        const mode = claims.hintPingMode(claim);
+        if (!claim || mode === 'off') continue;
+
+        const tables = client.lookupTables();
+        const item = tables.itemName(tables.gameForSlot(hint.receiving_player), hint.item) || `Item#${hint.item}`;
+        const where = tables.locationName(tables.gameForSlot(hint.finding_player), hint.location) || `Location#${hint.location}`;
+        const asker = tables.playerName(hint.receiving_player) || `Player#${hint.receiving_player}`;
+        const priority = hint.status === HINT_PRIORITY ? ' **(priority)**' : '';
+
+        const body = `🔎 \`${escapeMarkdown(String(asker))}\` is waiting on ` +
+            `**${escapeMarkdown(item)}** from your world \`${slot.replace(/`/g, "'")}\` ` +
+            `— it is at ${escapeMarkdown(where)}${priority}.`;
+
+        if (mode === 'dm') await dmClaimant(state, claim.userId, body);
+        else await post(state, `<@${claim.userId}> ${body}`, [claim.userId]);
+    }
+}
+
+/**
+ * A hint ping the claimant asked to receive privately.
+ * Falls back to nothing rather than to the channel: someone who chose `dm` chose it to keep this
+ * out of the channel, and a closed-DM fallback would defeat the setting they picked.
+ */
+async function dmClaimant(state, userId, body) {
+    if (!discord) return;
+    try {
+        const user = await discord.users.fetch(userId);
+        await user.send({ content: body, allowedMentions: { parse: [] } });
+    } catch (err) {
+        logger.warn(`[AP:${state.watch.label}] could not DM ${userId} about a hint:`, err.message);
+    }
+}
+
 function attach(state) {
     const { client, watch } = state;
 
@@ -348,6 +422,11 @@ function attach(state) {
     // Goals that happened before the bot connected arrive here, not on 'connected' — the goal
     // set is empty until the server answers the status Get.
     client.on('statuses', () => syncGoalsAndRoles(state));
+
+    client.on('hints', () => {
+        announceHints(state).catch(err =>
+            logger.error(`[AP:${watch.label}] hint announce threw:`, err.message || err));
+    });
 
     client.on('status', ({ state: phase, detail, expected }) => {
         state.status = phase;
@@ -1018,6 +1097,35 @@ function setClaimPings(id, slot, mode) {
     return claims.setPings(id, slot, mode);
 }
 
+function setClaimHintPings(id, slot, mode) {
+    if (!states.has(id)) return null;
+    return claims.setHintPings(id, slot, mode);
+}
+
+/**
+ * Outstanding hints on a watch, resolved to names for display.
+ * Null when there is no such watch, an empty array when the room simply has none, so the caller
+ * can tell "wrong id" from "nothing to show".
+ */
+function listHints(id) {
+    const state = states.get(id);
+    if (!state) return null;
+
+    const client = state.client;
+    const tables = client.lookupTables();
+    return client.outstandingHints().map(hint => ({
+        finder: client.slotNameFor(hint.finding_player, hint.team) || `Player#${hint.finding_player}`,
+        receiver: tables.playerName(hint.receiving_player) || `Player#${hint.receiving_player}`,
+        // The item belongs to the receiver's game and the location to the finder's. Getting
+        // that pair the wrong way round resolves to nothing, or worse to a name from another
+        // game: one id in this room's packages exists in five of them.
+        item: tables.itemName(tables.gameForSlot(hint.receiving_player), hint.item) || `Item#${hint.item}`,
+        where: tables.locationName(tables.gameForSlot(hint.finding_player), hint.location) || `Location#${hint.location}`,
+        priority: hint.status === HINT_PRIORITY,
+        entrance: hint.entrance || ''
+    }));
+}
+
 function listClaims(id) {
     if (!states.has(id)) return null;
     return claims.forWatch(id);
@@ -1075,6 +1183,8 @@ module.exports = {
     setColor,
     setMarkers,
     claimSlot,
+    listHints,
+    setClaimHintPings,
     releaseSlot,
     setClaimPings,
     listClaims,
