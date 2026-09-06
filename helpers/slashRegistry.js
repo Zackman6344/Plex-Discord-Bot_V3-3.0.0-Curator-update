@@ -147,6 +147,48 @@ async function registerAll(client, commands) {
  * Only string-valued options contribute; user/channel/role/etc. should be read
  * via `interaction.options.getUser()` etc. inside the command if needed.
  */
+/**
+ * The values of any options the spec marks `sensitive: true`, for the caller to strip before the
+ * arg string reaches the command log.
+ *
+ * Positional redaction cannot do this job: `buildQueryString` flattens options into a bare
+ * space-joined string, and with two optional options in a row (`/ap watch` has `label` then
+ * `password`) the index of the secret depends on what else was filled in. Matching on the value
+ * the user actually supplied is exact regardless of shape.
+ * @returns {string[]} raw values, longest first so a secret containing another is redacted whole
+ */
+function sensitiveValues(interaction, slashSpec) {
+    const found = [];
+    if (!interaction || !interaction.options || !slashSpec) return found;
+
+    // Never throws. The caller uses this to decide what may be written to the command log, and it
+    // runs before the dispatcher's own try/catch — an exception here would take the command down
+    // with it, and worse, would do so on exactly the invocations carrying a secret.
+    const collect = (optList) => {
+        if (!Array.isArray(optList)) return;
+        for (const opt of optList) {
+            if (!opt || !opt.sensitive) continue;
+            try {
+                const got = interaction.options.get(opt.name);
+                if (got && got.value !== undefined && got.value !== null && String(got.value) !== '') {
+                    found.push(String(got.value));
+                }
+            } catch (_) { /* option absent or a shape we do not recognise */ }
+        }
+    };
+
+    if (Array.isArray(slashSpec.subcommands) && slashSpec.subcommands.length > 0) {
+        let subName = null;
+        try { subName = interaction.options.getSubcommand(false); } catch (_) {}
+        const subSpec = subName && slashSpec.subcommands.find(s => s.name === subName);
+        if (subSpec) collect(subSpec.options);
+    } else {
+        collect(slashSpec.options);
+    }
+
+    return found.sort((a, b) => b.length - a.length);
+}
+
 function buildQueryString(interaction, slashSpec) {
     const parts = [];
 
@@ -185,4 +227,4 @@ function buildQueryString(interaction, slashSpec) {
     return parts.join(' ');
 }
 
-module.exports = { registerAll, buildSpec, buildQueryString };
+module.exports = { registerAll, buildSpec, buildQueryString, sensitiveValues };

@@ -20,10 +20,16 @@ module.exports = function(client, bot) {
   // how to redact the static secrets in config/. A command that takes a secret typed at runtime
   // (a room password) declares `redactArgs` and gets to rewrite its own arg string first. A
   // redactor that throws must not fall back to the raw text, which is the thing being protected.
-  function loggableArgs(cmd, args) {
-    if (!cmd || typeof cmd.redactArgs !== 'function') return args;
+  // `secrets` are the values of slash options marked `sensitive` in the spec, stripped by value
+  // because buildQueryString flattens options into a bare string and two optional options in a
+  // row leave the secret at no fixed position.
+  function loggableArgs(cmd, args, secrets = []) {
+    let text = String(args == null ? '' : args);
     try {
-      return cmd.redactArgs(args);
+      for (const secret of secrets) {
+        if (secret) text = text.split(secret).join('[redacted]');
+      }
+      return cmd && typeof cmd.redactArgs === 'function' ? cmd.redactArgs(text) : text;
     } catch (err) {
       logger.warn('Arg redaction threw; logging a placeholder instead:', err.message || err);
       return '[redaction failed]';
@@ -225,7 +231,7 @@ module.exports = function(client, bot) {
     const logId = commandLog.startInvocation({
       path: 'slash',
       command: name,
-      args: loggableArgs(cmd, query),
+      args: loggableArgs(cmd, query, slashRegistry.sensitiveValues(interaction, cmd.slash)),
       user: interaction.user && interaction.user.username,
       userId: interaction.user && interaction.user.id,
       channel: interaction.channel && interaction.channel.name,

@@ -118,7 +118,10 @@ module.exports = {
         // integer covers both without depending on which is which, and `clear` is not a secret.
         redactArgs(args) {
             const words = String(args || '').trim().split(/\s+/);
-            if (words[0] !== 'password') return args;
+            // Lowercased to match how the dispatcher reads it (`action` at the top of process()).
+            // Comparing case-sensitively meant `!ap PASSWORD 3 hunter2` ran as the password
+            // command and was logged in full, which is the whole thing this exists to prevent.
+            if ((words[0] || '').toLowerCase() !== 'password') return args;
             return words
                 .map((word, i) => {
                     if (i === 0 || /^\d+$/.test(word) || word.toLowerCase() === 'clear') return word;
@@ -133,7 +136,7 @@ module.exports = {
                     { name: 'room', type: 'STRING', required: true, description: 'Room URL, or host:port of the server' },
                     { name: 'slot', type: 'STRING', required: true, description: 'An existing slot name to observe from' },
                     { name: 'label', type: 'STRING', required: false, description: 'Name to show in status output' },
-                    { name: 'password', type: 'STRING', required: false, description: 'Room password — visible in channel; prefer !ap password' }
+                    { name: 'password', type: 'STRING', required: false, sensitive: true, description: 'Room password — visible in channel; prefer !ap password' }
                 ] },
                 // `id` is optional throughout and trails the required options, because Discord
                 // rejects a payload where a required option follows an optional one. Leaving it
@@ -201,7 +204,7 @@ module.exports = {
                 ] },
                 { name: 'leaderboard', description: 'Who has goaled the most', options: [] },
                 { name: 'password', description: 'Set or clear a room password', options: [
-                    { name: 'password', type: 'STRING', required: false, description: 'Leave empty to clear' },
+                    { name: 'password', type: 'STRING', required: false, sensitive: true, description: 'Leave empty to clear' },
                     { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
                 ] },
                 { name: 'retry', description: 'Reconnect a paused watch', options: [
