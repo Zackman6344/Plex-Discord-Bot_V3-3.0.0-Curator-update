@@ -26,13 +26,22 @@ if ($procs.Count -eq 0) {
 # pointed at yesterday's file every evening west of UTC: the status window went blank, or showed
 # stale lines, exactly when something had just happened. Take whichever file was written last
 # instead, which is right regardless of timezone or a date that rolled mid-session.
+#
+# Taking the newest file lost the signal the date-named lookup used to carry: with retention now
+# unlimited, old bot-*.log files are never removed, so there is always a candidate and a days-old
+# log printed under a header that reads like live output. Say how old it is instead.
 $logDir = Join-Path $repoRoot 'data\logs'
-$today = Get-ChildItem $logDir -Filter 'bot-*.log' -ErrorAction SilentlyContinue |
+$newestLog = Get-ChildItem $logDir -Filter 'bot-*.log' -ErrorAction SilentlyContinue |
     Sort-Object LastWriteTime | Select-Object -Last 1
-if ($today) {
+if ($newestLog) {
+    $age = (Get-Date) - $newestLog.LastWriteTime
     Write-Host ""
-    Write-Host ("Last 15 lines of {0}" -f $today.FullName)
-    Get-Content $today.FullName -Tail 15 -Encoding UTF8
+    if ($age.TotalHours -lt 24) {
+        Write-Host ("Last 15 lines of {0} (written {1:N0} min ago)" -f $newestLog.Name, $age.TotalMinutes)
+    } else {
+        Write-Host ("Last 15 lines of {0} — STALE, last written {1:N1} days ago, so this is not live output" -f $newestLog.Name, $age.TotalDays) -ForegroundColor Yellow
+    }
+    Get-Content $newestLog.FullName -Tail 15 -Encoding UTF8
 }
 
 # Written only by the hidden launcher (start-bot.vbs); the console launcher shows errors in its

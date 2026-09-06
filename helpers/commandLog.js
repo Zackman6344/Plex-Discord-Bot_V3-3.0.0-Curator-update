@@ -245,11 +245,7 @@ function readInvocations({ limit = 25, command = null, userId = null, errorsOnly
     const byId = new Map();
     const loose = [];
 
-    // Day-files are kept forever, so a `sinceMs` reaching further back than the default read
-    // window has to widen it or the answer is quietly truncated at 14 files.
-    const wanted = days !== null ? countOr(days, DEFAULT_READ_DAYS)
-        : sinceMs ? Math.max(DEFAULT_READ_DAYS, Math.ceil(sinceMs / 86400000) + 1)
-        : DEFAULT_READ_DAYS;
+    const wanted = windowFor({ days, sinceMs });
 
     for (const event of readEvents({ days: wanted })) {
         if (event.type === 'invoke') {
@@ -276,6 +272,37 @@ function readInvocations({ limit = 25, command = null, userId = null, errorsOnly
         list = list.filter((i) => new Date(i.t).getTime() >= cutoff);
     }
     return { invocations: list.slice(0, limit), unattached: loose.slice(-limit) };
+}
+
+/**
+ * How many day-files a read should cover. One copy, because readInvocations decides this and
+ * windowInfo has to report the same answer — two copies would drift and the report would then
+ * describe a window nobody read.
+ * Day-files are kept forever, so a `sinceMs` reaching further back than the default window has to
+ * widen it or the answer is quietly truncated at DEFAULT_READ_DAYS files.
+ * @returns {number} 0 meaning every file there is
+ */
+function windowFor({ days = null, sinceMs = null } = {}) {
+    if (days !== null && days !== undefined) return countOr(days, DEFAULT_READ_DAYS);
+    if (sinceMs) return Math.max(DEFAULT_READ_DAYS, Math.ceil(sinceMs / 86400000) + 1);
+    return DEFAULT_READ_DAYS;
+}
+
+/**
+ * How the read window compares to what is actually on disk, without reading any of it.
+ * Retention is unlimited but reads still default to DEFAULT_READ_DAYS, so every reader needs to
+ * be able to say "there is more than this" — previously only `--stats` could, and a search whose
+ * match fell outside the window answered "nothing logged yet" with a year of files sitting there.
+ * @param {{days?: number}} [options] days 0 means the whole store, so nothing is hidden
+ * @returns {{windowDays: number, filesOnDisk: number, windowed: boolean}}
+ */
+function windowInfo({ days = null, sinceMs = null } = {}) {
+    const window = windowFor({ days, sinceMs });
+    let onDisk = 0;
+    try {
+        onDisk = fs.readdirSync(DIR).filter((f) => COMMAND_LOG.test(f)).length;
+    } catch (_) { /* the directory may not exist yet */ }
+    return { windowDays: window, filesOnDisk: onDisk, windowed: window > 0 && onDisk > window };
 }
 
 /**
@@ -319,5 +346,5 @@ function _reset() {
 
 module.exports = {
     startInvocation, finishInvocation, recordOutput, recordEvent, readEventLog, readEvents, readInvocations, stats,
-    summarise, _reset, _dir: DIR, countOr, RETENTION_DAYS, DEFAULT_READ_DAYS
+    summarise, _reset, _dir: DIR, countOr, windowInfo, RETENTION_DAYS, DEFAULT_READ_DAYS
 };

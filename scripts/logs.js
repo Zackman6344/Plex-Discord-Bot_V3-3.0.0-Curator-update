@@ -93,8 +93,14 @@ if (flag('events')) {
         kind: value('kind'),
         ...(readDays === null ? {} : { days: readDays })
     });
+    // Same disclosure as the invocation listing: this read is windowed and the store is not.
+    const eventWindow = commandLog.windowInfo({ days: readDays });
+    const eventNote = eventWindow.windowed
+        ? `read the newest ${eventWindow.windowDays} of ${eventWindow.filesOnDisk} day-files — pass --all, or --days=N, to widen`
+        : null;
     if (events.length === 0) {
-        console.log('No background events logged yet.');
+        console.log(eventNote ? 'No background events in the window read.' : 'No background events logged yet.');
+        if (eventNote) console.log(dim(`(${eventNote})`));
         process.exit(0);
     }
     for (const e of events) {
@@ -103,6 +109,7 @@ if (flag('events')) {
         const label = /fail|error|exception|rejection/.test(kind) ? red(kind) : bold(kind);
         console.log(`${dim(clock(t))}  ${label}  ${dim(detail)}`);
     }
+    if (eventNote) console.log(dim(`(${eventNote})`));
     process.exit(0);
 }
 
@@ -123,8 +130,17 @@ const { invocations, unattached } = commandLog.readInvocations({
     days: readDays
 });
 
+// Day-files are kept forever but reads still default to a window, so every answer here has to say
+// when there is more behind it. Without this, a search whose match fell outside the window
+// reported "No invocations logged yet." with a year of files sitting on disk.
+const readWindow = commandLog.windowInfo({ days: readDays, sinceMs: parseSince(value('since')) });
+const windowNote = readWindow.windowed
+    ? `read the newest ${readWindow.windowDays} of ${readWindow.filesOnDisk} day-files — pass --all, or --days=N, to widen`
+    : null;
+
 if (invocations.length === 0) {
-    console.log('No invocations logged yet.');
+    console.log(windowNote ? 'No matching invocations in the window read.' : 'No invocations logged yet.');
+    if (windowNote) console.log(dim(`(${windowNote})`));
     console.log(dim(`(looking in ${commandLog._dir} — the bot writes there as commands run)`));
     process.exit(0);
 }
@@ -164,3 +180,5 @@ for (const inv of invocations.slice().reverse()) {
 if (unattached.length && !flag('command') && !flag('errors')) {
     console.log(dim(`(${unattached.length} message(s) not tied to a command — background broadcasts, game timers, and the like)`));
 }
+
+if (windowNote) console.log(dim(`(${windowNote})`));

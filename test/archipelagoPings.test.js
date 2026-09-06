@@ -155,7 +155,11 @@ test('a flush with many claimants still mentions every one, within the length li
 
     const users = [];
     for (let i = 0; i < CLAIMANTS; i++) {
-        const userId = `${900000000000000000 + i}`;
+        // Built as a string, not by adding to a number. 900000000000000000 is past
+        // Number.MAX_SAFE_INTEGER, where the gap between representable doubles is 128, so
+        // `900000000000000000 + i` rounded all twenty of these to the SAME id — and the test
+        // that exists to prove nobody is dropped was checking one person twenty times.
+        const userId = `9000000000000000${String(i).padStart(2, '0')}`;
         users.push(userId);
         claims.claim({ watchId: watch.id, slot: `Slot${i}`, userId });
     }

@@ -49,6 +49,9 @@ function createStore(options) {
     // Cleared on a successful write, set when one fails. Read by consumers that take an action in
     // the world (creating a Discord role) which is only safe if it can be written down.
     let writeFailed = false;
+    // Set only when a damaged file could not be moved aside. Unlike writeFailed this never clears
+    // on its own: the file stays unsafe to write until a person deals with it.
+    let blocked = false;
 
     const empty = () => (shape === 'array' ? [] : (nullPrototype ? Object.create(null) : {}));
 
@@ -73,8 +76,11 @@ function createStore(options) {
         } catch (err) {
             logger.error(`Archipelago ${label} file unusable (${why}) and could not be moved aside ` +
                 `(${err.message}). Refusing to overwrite ${file}; fix it by hand.`);
-            // Could not preserve it, so do not clobber it either.
+            // Could not preserve it, so do not clobber it either. `blocked` is what makes that
+            // stick: writeFailed alone only stops role creation, and persist() went on to write
+            // over the very file this branch just promised to leave for salvage.
             writeFailed = true;
+            blocked = true;
             return null;
         }
     }
@@ -117,6 +123,13 @@ function createStore(options) {
         // Loaded first, so a persist that is the very first call on the store cannot write an
         // empty collection over a file nothing has looked at yet.
         const data = load();
+        // A file that could not be quarantined is the only copy of data nobody has salvaged yet.
+        // Writing over it is worse than losing this one write, so this refuses until a restart.
+        if (blocked) {
+            logger.error(`Not writing Archipelago ${label}s: ${file} is damaged and could not be ` +
+                `moved aside, so overwriting it would destroy the only copy. Fix it by hand.`);
+            return false;
+        }
         try {
             fs.mkdirSync(path.dirname(file), { recursive: true });
             const tmp = `${file}.tmp`;
@@ -135,6 +148,7 @@ function createStore(options) {
     function reset() {
         cache = null;
         writeFailed = false;
+        blocked = false;
     }
 
     return { file, usable, load, persist, reset, healthy: () => !writeFailed };

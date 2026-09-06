@@ -101,9 +101,17 @@ function claim({ watchId, slot, userId, pings }) {
         claimedAt: new Date().toISOString()
     };
 
+    const previous = existing >= 0 ? claims[existing] : null;
     if (existing >= 0) claims[existing] = entry;
     else claims.push(entry);
-    persist();
+    if (!persist()) {
+        // Put the cache back and say so. Reporting "✅ you are now on <slot>" for a claim that
+        // never reached disk is worse than refusing: the pings work until the next restart and
+        // then stop, with nothing to point at.
+        if (existing >= 0) claims[existing] = previous;
+        else claims.pop();
+        throw new Error('I could not save that claim — the claims file is not writable. Nothing changed.');
+    }
     return entry;
 }
 
@@ -113,26 +121,40 @@ function release(watchId, slot) {
     const index = claims.findIndex(c => c.watchId === watchId && sameSlot(c.slot, slot));
     if (index < 0) return null;
     const [removed] = claims.splice(index, 1);
-    persist();
+    // Same rule as claim(): a release the user is told happened, but which never reached disk,
+    // comes back on the next restart with their pings quietly restored.
+    if (!persist()) {
+        claims.splice(index, 0, removed);
+        throw new Error('I could not save that release — the claims file is not writable. Nothing changed.');
+    }
     return removed;
 }
 
 /**
  * Drop every claim on a watch. Called when a watch is forgotten, so claims can't outlive the
  * room they refer to and then attach themselves to a later watch that reuses the id.
- * @returns {number} how many were removed
+ * @returns {number} how many were removed, and 0 if the removal could not be written down
  */
 function releaseWatch(watchId) {
     const claims = load();
     // Spliced in place rather than by swapping the cache, so the store owns the array and this
     // module never has to reach into its internals.
+    const snapshot = [...claims];
     let removed = 0;
     for (let i = claims.length - 1; i >= 0; i--) {
         if (claims[i].watchId !== watchId) continue;
         claims.splice(i, 1);
         removed++;
     }
-    if (removed > 0) persist();
+    // Rolled back like claim() and release(), but silently: the callers that reach this are the
+    // /config sync paths, and throwing there would abandon a reconfiguration half-applied. The
+    // persist failure is already logged by the store, and answering 0 keeps the caller from
+    // reporting claims released that are still on disk.
+    if (removed > 0 && !persist()) {
+        claims.length = 0;
+        claims.push(...snapshot);
+        return 0;
+    }
     return removed;
 }
 
@@ -140,8 +162,12 @@ function setPings(watchId, slot, mode) {
     if (!PING_MODES.includes(mode)) throw new Error(`Ping mode must be one of ${PING_MODES.join(', ')}.`);
     const entry = locate(watchId, slot);
     if (!entry) return null;
+    const before = entry.pings;
     entry.pings = mode;
-    persist();
+    if (!persist()) {
+        entry.pings = before;
+        throw new Error('I could not save that ping setting — the claims file is not writable. Nothing changed.');
+    }
     return copy(entry);
 }
 

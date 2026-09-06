@@ -16,6 +16,26 @@ module.exports = function(client, bot) {
   const commandLog = require('../helpers/commandLog.js');
   const interactionFallback = require('../helpers/interactionFallback.js');
 
+  // Arguments are written to the command log before the command runs, and commandLog only knows
+  // how to redact the static secrets in config/. A command that takes a secret typed at runtime
+  // (a room password) declares `redactArgs` and gets to rewrite its own arg string first. A
+  // redactor that throws must not fall back to the raw text, which is the thing being protected.
+  // `secrets` are the values of slash options marked `sensitive` in the spec, stripped by value
+  // because buildQueryString flattens options into a bare string and two optional options in a
+  // row leave the secret at no fixed position.
+  function loggableArgs(cmd, args, secrets = []) {
+    let text = String(args == null ? '' : args);
+    try {
+      for (const secret of secrets) {
+        if (secret) text = text.split(secret).join('[redacted]');
+      }
+      return cmd && typeof cmd.redactArgs === 'function' ? cmd.redactArgs(text) : text;
+    } catch (err) {
+      logger.warn('Arg redaction threw; logging a placeholder instead:', err.message || err);
+      return '[redaction failed]';
+    }
+  }
+
   // Correlates the bot's own messages back to whatever command last ran in that channel, so the
   // log reads as "this was asked, this came back" instead of two unrelated streams. Correlation
   // is best-effort by design: a background broadcast lands with no invocation attached, which is
@@ -100,7 +120,7 @@ module.exports = function(client, bot) {
               const logId = commandLog.startInvocation({
                 path: 'prefix',
                 command: cmdTxt,
-                args: query,
+                args: loggableArgs(cmd, query),
                 user: message.author && message.author.username,
                 userId: message.author && message.author.id,
                 channel: message.channel && message.channel.name,
@@ -211,7 +231,7 @@ module.exports = function(client, bot) {
     const logId = commandLog.startInvocation({
       path: 'slash',
       command: name,
-      args: query,
+      args: loggableArgs(cmd, query, slashRegistry.sensitiveValues(interaction, cmd.slash)),
       user: interaction.user && interaction.user.username,
       userId: interaction.user && interaction.user.id,
       channel: interaction.channel && interaction.channel.name,
@@ -231,7 +251,8 @@ module.exports = function(client, bot) {
       // The interaction can no longer be answered through its own token, so all Discord shows
       // the user is a bare "This interaction failed". An ordinary channel message is the only
       // route left, and this is worth explaining: the command did not break, it never ran.
-      const said = await interactionFallback.explainFailedDefer(client, interaction, name, err);
+      const said = await interactionFallback.explainFailedDefer(client, interaction, name, err,
+        { ephemeral: !!cmd.slash.ephemeral });
       if (said) {
         commandLog.recordOutput({ id: logId, kind: 'message', channelId: interaction.channelId, payload: said });
       }

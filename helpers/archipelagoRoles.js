@@ -239,6 +239,11 @@ async function syncMember(guild, userId, state = {}) {
     // Exactly one count role at a time. Goals are a lifetime tally, so this one is never removed
     // for having dropped, only ever swapped upwards.
     const wanted = goals > 0 ? await ensureCountRole(guild, goals) : null;
+    // `wanted` is null for two very different reasons: nobody has goaled, or the role could not be
+    // made because the store is unwritable. Treating them alike meant the brake that exists to stop
+    // role churn instead took the count role a member already held and put nothing back — one line
+    // after canCreate() logged "Existing ones keep working".
+    const couldNotMakeIt = goals > 0 && !wanted;
     // Add the new one before removing the old. The other order leaves the member on no count role
     // at all if the add fails — a 429 burst when several slots goal in one flush is enough — and
     // nothing retries, because syncGoalsAndRoles only fires when the tally actually changes and
@@ -248,6 +253,7 @@ async function syncMember(guild, userId, state = {}) {
         applied.added.push(wanted.name);
     }
     for (const roleId of Object.values(entry.counts)) {
+        if (couldNotMakeIt) break;
         if (wanted && roleId === wanted.id) continue;
         if (!member.roles.cache.has(roleId)) continue;
         const stale = guild.roles.cache.get(roleId);
@@ -298,7 +304,10 @@ async function sweepCounts(guild, heldCounts) {
                 deleted++;
             } catch (err) {
                 // Keep the record so the next sweep tries again rather than orphaning the role.
-                logger.debug(`[AP roles] could not delete "${role.name}": ${err.message}`);
+                // Warn, not debug: logger drops debug below the default level without writing it
+                // to the file either, so a role that can never be deleted retried on every sweep
+                // and left no evidence anywhere that it was failing.
+                logger.warn(`[AP roles] could not delete "${role.name}": ${err.message}`);
                 continue;
             }
         }

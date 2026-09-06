@@ -74,7 +74,14 @@ function record(userId, key, meta = {}) {
     if (all[key]) return false;
 
     all[key] = { ...meta, userId: String(userId), at: new Date().toISOString() };
-    persist();
+    if (!persist()) {
+        // Rolled back so "recorded" and "on disk" cannot disagree. Leaving it in the cache meant
+        // the goal was announced and role-synced from memory, then absent after a restart — and
+        // re-credited on the next connect to whoever held the slot by then, which is exactly the
+        // ownership this file's header says a goal must keep.
+        delete all[key];
+        return false;
+    }
     return true;
 }
 
@@ -95,7 +102,10 @@ function recordAll(entries) {
         all[key] = { ...(meta || {}), userId: String(userId), at };
         added.push({ userId, key });
     }
-    if (added.length > 0) persist();
+    if (added.length > 0 && !persist()) {
+        for (const { key } of added) delete all[key];
+        return [];
+    }
     return added;
 }
 
