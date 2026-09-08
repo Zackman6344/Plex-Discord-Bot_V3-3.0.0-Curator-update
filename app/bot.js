@@ -8,6 +8,7 @@ const logger = require('../helpers/logger.js');
 const commandLog = require('../helpers/commandLog.js');
 const { getPlex } = require('../helpers/plexClient.js');
 const playbackButtons = require('../helpers/playbackButtons.js');
+const plexResolve = require('../helpers/plexResolve.js');
 const { Readable } = require('stream');
 const {
 	NoSubscriberBehavior,
@@ -406,6 +407,109 @@ class Bot extends EventEmitter{
 	}
 
 	/**
+	 * Fetch a track's audio from Plex, repairing a dead key if that is what went wrong.
+	 *
+	 * `fetch` does not throw on 404, and Plex answers a dead part key with an HTML error page,
+	 * so without the `ok` check that page became the audio stream: it ended instantly, the player
+	 * went Idle, and the queue advanced. A 47-track playlist drained in about ten seconds with
+	 * nothing logged anywhere, because nothing had failed in a way JavaScript noticed.
+	 *
+	 * A key dies whenever the file behind it moves, which a re-scan or a drive changing letter
+	 * both do. The title and artist are the durable half of a saved track, so a 404 is treated as
+	 * "look it up again" rather than as "gone".
+	 *
+	 * @returns {Promise<Response|null>} a response with a real body, or null when the track
+	 *   cannot be played and the user has been told
+	 */
+	async openPlexStream(track, message) {
+		const attempt = async (key) => {
+			try {
+				const res = await fetch(PLEX_PLAY_START + key + PLEX_PLAY_END);
+				return res.ok ? res : { failed: true, status: res.status };
+			} catch (err) {
+				return { failed: true, status: (err && err.message) || 'network error' };
+			}
+		};
+
+		const first = await attempt(track.key);
+		if (!first.failed) return first;
+
+		logger.warn(`Plex refused "${track.title}" (${first.status}); looking the track up again`);
+		const found = await plexResolve.resolveKey(this, track);
+		if (found && found.key && found.key !== track.key) {
+			const second = await attempt(found.key);
+			if (!second.failed) {
+				// Kept on the queue entry so a replay of this track uses the working key too.
+				track.key = found.key;
+				commandLog.recordEvent('track-key-repaired', {
+					title: track.title, artist: track.artist, playlist: track.playlist || null
+				});
+				logger.info(`Repaired the Plex key for "${track.title}"`);
+				// Saved back where it came from, so the search is paid once rather than on every
+				// play. Failure here is not worth interrupting playback for.
+				if (track.playlist) {
+					plexResolve.persistKey(this.config.playlistsDir, track.playlist, track, found.key)
+						.then(saved => { if (saved) logger.info(`Updated ${track.playlist}.playlist with the new key`); })
+						.catch(() => {});
+				}
+				return second;
+			}
+		}
+
+		this.noteUnplayable(track, first.status, message);
+		return null;
+	}
+
+	/**
+	 * Report a track that cannot be played, without turning a broken library into 47 messages.
+	 *
+	 * The first few say what happened, because one bad track in a good playlist is worth naming.
+	 * Past that the channel learns nothing from repetition, so the rest are counted and reported
+	 * once when playback stops.
+	 */
+	noteUnplayable(track, status, message) {
+		if (!this.unplayable) this.unplayable = [];
+		this.unplayable.push({ title: track.title, artist: track.artist, status });
+		commandLog.recordEvent('track-unplayable', {
+			title: track.title, artist: track.artist, status, playlist: track.playlist || null
+		});
+		logger.warn(`Could not play "${track.title}" by ${track.artist}: Plex said ${status}`);
+
+		if (this.unplayable.length <= 3 && message && message.channel) {
+			const label = track.title ? `**${track.title}**` : 'a track';
+			message.channel.send(
+				`⚠️ Could not fetch ${label} from Plex (${status}). Skipping.`
+			).catch(() => {});
+		}
+	}
+
+	/** Advance past a track that could not be fetched, ending playback if it was the last one. */
+	skipUnplayable(message) {
+		this.songQueue.shift();
+		if (this.songQueue.length > 0) {
+			this.playSong(message);
+			return;
+		}
+		this.isPlaying = false;
+		this.reportUnplayable(message);
+		this.emit('finish', message);
+		this.playbackCompletion(message);
+	}
+
+	/** One summary for everything that was skipped, once the queue is done. */
+	reportUnplayable(message) {
+		const skipped = this.unplayable || [];
+		this.unplayable = [];
+		if (skipped.length <= 3 || !message || !message.channel) return;
+
+		const statuses = [...new Set(skipped.map(s => s.status))].join(', ');
+		message.channel.send(
+			`⚠️ ${skipped.length} tracks could not be fetched from Plex (${statuses}). ` +
+			`That usually means the files have moved and the library needs a re-scan.`
+		).catch(() => {});
+	}
+
+	/**
 	 * Where the next track should play.
 	 *
 	 * Stay in the channel we are already connected to — queueing a song shouldn't drag the bot
@@ -573,8 +677,14 @@ class Bot extends EventEmitter{
 				
 				let readstream;
 				if(this.songQueue[0].key) {
-					const urlPlex = PLEX_PLAY_START + this.songQueue[0].key + PLEX_PLAY_END;
-					let response = await fetch(urlPlex);
+					const response = await this.openPlexStream(this.songQueue[0], message);
+					// Nothing playable, and the user has already been told why. Move on rather
+					// than handing 85 bytes of HTML to the audio player, which is what used to
+					// drain a whole playlist in ten seconds without a word in the log.
+					if (!response) {
+						this.skipUnplayable(message);
+						return;
+					}
 					readstream = Readable.from(response.body, {highWaterMark: 20971520});
 				} else {
 					readstream = ytdl(this.songQueue[0].url, { format: 'audioonly', quality: config.youtube_quality || 'highestaudio' });
@@ -601,12 +711,14 @@ class Bot extends EventEmitter{
 							// no songs left in queue, continue with playback completion events
 							else {
 								this.isPlaying = false;
+								this.reportUnplayable(message);
 								this.emit('finish', message);
 								this.playbackCompletion(message);
 							}
 						}
 					} else {
 						this.isPlaying = false;
+						this.reportUnplayable(message);
 						this.emit('finish', message);
 						this.playbackCompletion(message);
 					}

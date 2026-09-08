@@ -47,7 +47,9 @@ module.exports = {
           }
           // On-disk track keys (artiste/titre/cle) kept as-is for playlist file compatibility.
           playlist.musiques.forEach(function (track){
-            let queued = {'artist' : track.artiste, 'title': track.titre};
+            // `playlist` rides along so a key repaired at play time can be written back into the
+            // file it came from, rather than being re-derived on every play.
+            let queued = {'artist' : track.artiste, 'title': track.titre, 'playlist': args[0]};
             if(track.cle) {
               queued.key = track.cle;
             } else {

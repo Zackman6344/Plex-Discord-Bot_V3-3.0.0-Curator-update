@@ -780,6 +780,46 @@ Every role id the bot creates is recorded per guild in `data/archipelago_roles.j
 
 ---
 
+## Playing a saved playlist
+
+A `.playlist` file stores each track as `{artiste, titre, cle}`, where `cle` is a Plex part key of
+the form `/library/parts/<partId>/<updatedAt>/file.flac`.
+
+**That key is not durable.** It only means anything while the library row behind it does, and the
+row changes whenever the file moves: a re-scan, a re-import, or a drive changing letter. A
+playlist saved months ago is a list of paths into a library that has moved on.
+
+**Plex answers a dead key with an HTML 404, and `fetch` does not throw on one.** So the 85-byte
+error page became the audio resource, ended instantly, the player went Idle and the queue
+advanced. A 47-track playlist drained in about ten seconds with nothing written to any log,
+because as far as JavaScript was concerned nothing had failed. That is the shape of the bug this
+section exists to prevent, and `Bot.openPlexStream()` is where it is caught:
+
+1. Fetch the stored key. `response.ok` decides whether it is audio, not whether the request
+   completed.
+2. On a failure, look the track up again by title and artist through `helpers/plexResolve.js`,
+   which are the durable half of a saved entry.
+3. If that yields a **different** key, retry once. A lookup that returns the same key that just
+   failed is not retried; that is what a library still pointing at a missing file does, and
+   fetching it again would only waste a round trip.
+4. Otherwise report the track and skip it.
+
+A repair updates the queue entry, so a replay uses the working key, and is written back into the
+playlist file it came from by `persistKey()` so the search is paid once rather than on every play.
+Entries carry a `playlist` field for that, set when the queue is built. The write goes through a
+sibling temp file and a rename, and never throws: playback has already succeeded by then, and
+failing to record the repair is not worth interrupting it for.
+
+**Matching refuses to guess.** `bestMatch()` requires the artist to agree, because a search for a
+common title returns every cover in the library and queueing the first would quietly play the
+wrong recording. With no artist recorded, exactly one title match is accepted and two are not.
+Titles are compared with case, punctuation and apostrophes folded away, since a stored title and a
+Plex title rarely agree byte for byte.
+
+**Reporting is capped.** A wholly broken library means every track fails, and 47 individual
+complaints would be worse than the silence they replaced. The first three are named, the rest are
+counted, and one summary at the end says how many and that a re-scan is probably what is needed.
+
 ## Logging
 
 Every log line goes through `helpers/logger.js`. Format:
