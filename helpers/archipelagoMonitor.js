@@ -1104,32 +1104,18 @@ function setClaimHintPings(id, slot, mode) {
 }
 
 /**
- * Outstanding hints on a watch, resolved to names for display.
- * Null when there is no such watch, an empty array when the room simply has none, so the caller
- * can tell "wrong id" from "nothing to show".
- */
-/**
- * The earliest sphere a slot still has unchecked locations in.
+ * The one-off work behind a suggestion: the tracker's address, the seed's spheres, and every
+ * slot's checked locations.
  *
- * Sphere only. Nothing here reads which item is at a location, or prefers one location over
- * another for any reason but the sphere number, because the moment it did the answer would be
- * telling somebody what is there.
- *
- * @returns {Promise<Object>} a result object whose `ok` says whether there is an answer, and
- *   whose other fields say why not when there is not
+ * Separated from the per-slot arithmetic because somebody holding eight slots in a big async
+ * would otherwise re-fetch the tracker's 400 KB of check data eight times to answer one command.
  */
-async function suggestNext(id, slotName) {
+async function prepareSuggest(id) {
     const state = states.get(id);
     if (!state) return { ok: false, reason: 'no-watch' };
 
-    const client = state.client;
     const target = state.watch.target;
     if (!target || target.kind !== 'room') return { ok: false, reason: 'not-a-room' };
-
-    const slot = client.canonicalSlotName ? client.canonicalSlotName(slotName) : slotName;
-    if (!slot) return { ok: false, reason: 'unknown-slot' };
-    const slotId = client.slotIdFor ? client.slotIdFor(slot) : null;
-    if (slotId === null || slotId === undefined) return { ok: false, reason: 'unknown-slot' };
 
     try {
         if (!state.trackerUrl) {
@@ -1141,6 +1127,7 @@ async function suggestNext(id, slotName) {
         const trackerId = state.trackerUrl.split('/').pop();
 
         // Read once per multiworld and kept for as long as the watch points at that one.
+        const client = state.client;
         const seed = client.seedName || describeTarget(target);
         const spoilerDir = path.join(__dirname, '..', 'data', 'archipelago', 'spoilers');
         if (!state.spheres || state.spheres.seed !== seed) {
@@ -1152,20 +1139,60 @@ async function suggestNext(id, slotName) {
             logger.info(`[AP:${state.watch.label}] sphere data loaded from ${loaded.path} (${loaded.rows.length} rows)`);
         }
 
-        const checkedIds = await tracker.readCheckedIds(trackerId);
-        const ids = checkedIds.get(`${client.team}:${slotId}`) || [];
-        const table = client.locationNames.get(client.slotGames.get(slotId));
-        const checked = new Set(ids.map(i => table && table.get(i)).filter(Boolean));
-
-        const next = spheres.soonestInLogic(state.spheres.rows, checked, slot);
-        if (!next) return { ok: false, reason: 'nothing-left', slot };
-        return { ok: true, slot, source: state.spheres.source, ...next };
+        return { ok: true, state, client, checkedIds: await tracker.readCheckedIds(trackerId) };
     } catch (err) {
-        logger.warn(`[AP:${state.watch.label}] could not work out what is next for ${slot}:`, err.message || err);
+        logger.warn(`[AP:${state.watch.label}] could not read what is next:`, err.message || err);
         return { ok: false, reason: 'failed', detail: err.message };
     }
 }
 
+/** One slot's answer, off an already-prepared read. No I/O. */
+function suggestFor(prep, slotName) {
+    const { state, client, checkedIds } = prep;
+
+    const slot = client.canonicalSlotName ? client.canonicalSlotName(slotName) : slotName;
+    if (!slot) return { ok: false, reason: 'unknown-slot', slot: slotName };
+    const slotId = client.slotIdFor ? client.slotIdFor(slot) : null;
+    if (slotId === null || slotId === undefined) return { ok: false, reason: 'unknown-slot', slot: slotName };
+
+    const ids = checkedIds.get(`${client.team}:${slotId}`) || [];
+    // Location ids come back from the tracker; the spoiler talks in names, and the game's data
+    // package is what joins the two.
+    const table = client.locationNames.get(client.slotGames.get(slotId));
+    const checked = new Set(ids.map(i => table && table.get(i)).filter(Boolean));
+
+    const next = spheres.soonestInLogic(state.spheres.rows, checked, slot);
+    if (!next) return { ok: false, reason: 'nothing-left', slot };
+    return { ok: true, slot, source: state.spheres.source, ...next };
+}
+
+/**
+ * What is soonest reachable across every slot asked about.
+ *
+ * Sphere only. Nothing here reads which item is at a location, or prefers one location over
+ * another for any reason but the sphere number, because the moment it did the answer would be
+ * telling somebody what is there.
+ *
+ * @returns {Promise<{ok: boolean, reason?: string, want?: string, results?: Array}>} one entry
+ *   per slot asked about, in the order asked, each carrying its own `ok`; a false `ok` on the
+ *   outer object means the read itself failed and there are no entries at all
+ */
+async function suggestNextAll(id, slotNames) {
+    const prep = await prepareSuggest(id);
+    if (!prep.ok) return prep;
+    return { ok: true, results: (slotNames || []).map(name => suggestFor(prep, name)) };
+}
+
+async function suggestNext(id, slotName) {
+    const all = await suggestNextAll(id, [slotName]);
+    return all.ok ? all.results[0] : all;
+}
+
+/**
+ * Outstanding hints on a watch, resolved to names for display.
+ * Null when there is no such watch, an empty array when the room simply has none, so the caller
+ * can tell "wrong id" from "nothing to show".
+ */
 function listHints(id) {
     const state = states.get(id);
     if (!state) return null;
@@ -1244,6 +1271,11 @@ module.exports = {
     claimSlot,
     listHints,
     suggestNext,
+    suggestNextAll,
+    // Exported for the tests: the id-to-name join is the part of a suggestion that can be
+    // wrong without anything throwing, and reaching it through suggestNextAll would mean
+    // faking a room page, a tracker endpoint and a data package to test arithmetic.
+    suggestFor,
     setClaimHintPings,
     releaseSlot,
     setClaimPings,

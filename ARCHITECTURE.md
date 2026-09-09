@@ -767,6 +767,22 @@ sphere 2 needs sphere 1's items, and so on.
 **Only for slots the caller has claimed**, the bot owner included. A suggestion is a nudge about
 what is in somebody's world, so it goes to the person playing it and to nobody else.
 
+**Naming a slot is optional, and leaving it out answers for every slot the caller holds.** Asking
+per slot was the first shape and it was the wrong default: somebody playing four games had to
+remember and type four slot names to be told the same four things, and the answer they wanted was
+always the union. A named slot still narrows it, and a slot the caller has not claimed is refused
+whether or not they hold others.
+
+The read behind an answer is split in two for that reason. `prepareSuggest(id)` does the I/O once
+per command — resolving the room page to a tracker id, loading the spoiler, and pulling every
+slot's checked locations — and `suggestFor(prep, slot)` is arithmetic on that with no I/O at all.
+Answering eight claimed slots through the old single-slot path would have re-fetched the tracker's
+400 KB of check data eight times to answer one command.
+
+A reply holding several slots gives each fewer locations (four rather than fifteen) and stops at a
+1,900-character budget, counting off any slots it could not fit rather than being cut in half by
+Discord at 2,000.
+
 **Ordered by the sphere number and nothing else.** The item at a location is never read, and no
 location is preferred over another for what it holds. The reply says where to go, never what is
 there, because the second sentence is the spoiler.

@@ -630,59 +630,71 @@ module.exports = {
                         );
                     }
 
-                    let slot = slotArg(argBase);
-                    if (!slot) {
-                        if (mine.length === 1) slot = mine[0].slot;
-                        else {
-                            return say(
-                                `You hold ${mine.length} slots on watch #${id}, so name the one you mean:\n` +
-                                mine.map(c => `• \`${prefix}ap next ${id} ${c.slot}\``).join('\n')
-                            );
-                        }
-                    } else if (!mine.some(c => claims.sameSlot(c.slot, slot))) {
-                        return say(`${slotLabel(slot)} is not yours. \`${prefix}ap next\` only answers for slots you have claimed.`);
+                    // No slot named means all of them. Holding several is the normal case in a
+                    // big async, and asking which one every time made the command a chore.
+                    const named = slotArg(argBase);
+                    if (named && !mine.some(c => claims.sameSlot(c.slot, named))) {
+                        return say(`${slotLabel(named)} is not yours. \`${prefix}ap next\` only answers for slots you have claimed.`);
                     }
+                    const wanted = named ? [named] : mine.map(c => c.slot);
 
-                    const status = await say(`🧭 Working out what is open earliest for ${slotLabel(slot)}…`);
-                    const result = await monitor.suggestNext(id, slot);
+                    const status = await say(named
+                        ? `🧭 Working out what is open for ${slotLabel(named)}…`
+                        : `🧭 Working out what is open across your ${wanted.length} slot(s)…`);
+                    const outcome = await monitor.suggestNextAll(id, wanted);
                     const reply = (text) => (status && status.edit ? status.edit(text).catch(() => say(text)) : say(text));
 
-                    if (!result.ok) {
+                    if (!outcome.ok) {
                         const why = {
                             'no-watch': `No watch with ID ${id}.`,
                             'not-a-room': 'Sphere data comes from the room\'s tracker, so this only works for a watch made from a room URL.',
-                            'unknown-slot': `${slotLabel(slot)} is not a slot in this multiworld.`,
                             'no-tracker': 'That room does not link a tracker, so there is no sphere data to read.',
                             'need-spoiler': `I have no sphere data for this multiworld.\n` +
                                 `The room's own sphere tracker only lists locations that have **already** been checked, ` +
                                 `so it can never say what is next. Drop the seed's spoiler log at:\n` +
-                                `\`${result.want || 'data/archipelago/spoilers/<seed>.txt'}\``,
-                            'nothing-left': `${slotLabel(result.slot || slot)} has nothing unchecked left.`
-                        }[result.reason] || `I could not work that out${result.detail ? ` (${result.detail})` : ''}.`;
+                                `\`${outcome.want || 'data/archipelago/spoilers/<seed>.txt'}\``
+                        }[outcome.reason] || `I could not work that out${outcome.detail ? ` (${outcome.detail})` : ''}.`;
                         return reply(`🧭 ${why}`);
                     }
 
-                    if (result.sphere === null) {
-                        return reply(
-                            `🧭 ${slotLabel(result.slot)} has nothing left that you can reach yet. ` +
-                            `${result.beyond} location(s) are still open, but all of them sit past sphere ${result.reach}, ` +
-                            `so they are waiting on items from elsewhere.`
-                        );
-                    }
+                    // One slot gets the full list; several get a few each, so a player holding
+                    // eight of them still gets an answer inside one message.
+                    const many = outcome.results.length > 1;
+                    const perSlot = many ? 4 : 15;
+                    const blocks = outcome.results.map((r) => {
+                        const head = `**${r.slot}**`;
+                        if (!r.ok) {
+                            if (r.reason === 'nothing-left') return `${head} — nothing left to check.`;
+                            if (r.reason === 'unknown-slot') return `${head} — not a slot in this multiworld.`;
+                            return `${head} — could not work that out.`;
+                        }
+                        if (r.sphere === null) {
+                            return `${head} — nothing reachable yet; ${r.beyond} open past sphere ${r.reach}.`;
+                        }
+                        const shown = r.locations.slice(0, perSlot).map(l => `• ${escapeMarkdown(l)}`);
+                        if (r.locations.length > perSlot) {
+                            shown.push(`• …${r.locations.length - perSlot} more in sphere ${r.sphere}`);
+                        }
+                        const tail = r.beyond ? `, ${r.beyond} past sphere ${r.reach}` : '';
+                        return `${head} — sphere ${r.sphere} (${r.remaining} reachable${tail})\n${shown.join('\n')}`;
+                    });
 
-                    const shown = result.locations.slice(0, 15);
-                    const lines = shown.map(l => `• ${escapeMarkdown(l)}`);
-                    if (result.locations.length > shown.length) {
-                        lines.push(`…and ${result.locations.length - shown.length} more in this sphere.`);
+                    const header = many
+                        ? `🧭 **Soonest reachable across your ${outcome.results.length} slots**`
+                        : '🧭 **Soonest reachable**';
+                    const footer = '_Ordered by sphere, held to what each slot has shown it can reach. Nothing here says what is in them._';
+
+                    // 2000 characters is a hard limit and an oversized send is rejected outright.
+                    const budget = 1900 - header.length - footer.length;
+                    const kept = [];
+                    let used = 0;
+                    for (const block of blocks) {
+                        if (used + block.length + 2 > budget) break;
+                        kept.push(block);
+                        used += block.length + 2;
                     }
-                    const from = result.source === 'spoiler' ? 'the supplied spoiler' : 'the room tracker';
-                    return reply(
-                        `🧭 **${slotLabel(result.slot)} — earliest open sphere: ${result.sphere}**\n` +
-                        `${lines.join('\n')}\n` +
-                        `_${result.remaining} reachable and unchecked` +
-                        `${result.beyond ? `, ${result.beyond} more past sphere ${result.reach}` : ''}. ` +
-                        `From ${from}. Nothing here says what is in them._`
-                    );
+                    if (kept.length < blocks.length) kept.push(`…and ${blocks.length - kept.length} more slot(s).`);
+                    return reply(`${header}\n${kept.join('\n\n')}\n${footer}`);
                 }
 
                 if (action === 'hintpings') {
