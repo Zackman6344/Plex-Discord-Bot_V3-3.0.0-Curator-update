@@ -657,11 +657,31 @@ module.exports = {
                         return reply(`🧭 ${why}`);
                     }
 
+                    // Finished slots are counted off in one line rather than given a block
+                    // each. Anyone deep into a big async has more done than running, and a reply
+                    // that is mostly "nothing left to check" buries the slots they can act on.
+                    const isDone = (r) => !r.ok && r.reason === 'finished';
+                    const done = outcome.results.filter(isDone);
+                    const live = outcome.results.filter(r => !isDone(r));
+
+                    const describeDone = (r) => (r.how === 'goaled' ? 'goaled'
+                        : r.how === 'released' ? 'released'
+                        : 'finished');
+
+                    if (live.length === 0) {
+                        // Naming one slot and being told it is done is the whole answer; being
+                        // told every slot is done is worth saying plainly rather than as a
+                        // heading over nothing.
+                        return reply(done.length === 1
+                            ? `🧭 ${slotLabel(done[0].slot)} has already ${describeDone(done[0])} — nothing left to suggest.`
+                            : `🧭 All ${done.length} of your slots are finished — nothing left to suggest.`);
+                    }
+
                     // One slot gets the full list; several get a few each, so a player holding
                     // eight of them still gets an answer inside one message.
-                    const many = outcome.results.length > 1;
+                    const many = live.length > 1;
                     const perSlot = many ? 4 : 15;
-                    const blocks = outcome.results.map((r) => {
+                    const blocks = live.map((r) => {
                         const head = `**${r.slot}**`;
                         if (!r.ok) {
                             if (r.reason === 'nothing-left') return `${head} — nothing left to check.`;
@@ -680,9 +700,16 @@ module.exports = {
                     });
 
                     const header = many
-                        ? `🧭 **Soonest reachable across your ${outcome.results.length} slots**`
+                        ? `🧭 **Soonest reachable across ${live.length} of your slots**`
                         : '🧭 **Soonest reachable**';
-                    const footer = '_Ordered by sphere, held to what each slot has shown it can reach. Nothing here says what is in them._';
+                    const doneNames = done.length <= 4
+                        ? ` (${done.map(r => slotLabel(r.slot)).join(', ')})`
+                        : '';
+                    const skipped = done.length > 0
+                        ? ` ${done.length} finished slot${done.length === 1 ? '' : 's'} skipped${doneNames}._`
+                        : '_';
+                    const footer = '_Ordered by sphere, held to what each slot has shown it can reach. '
+                        + `Nothing here says what is in them.${skipped}`;
 
                     // 2000 characters is a hard limit and an oversized send is rejected outright.
                     const budget = 1900 - header.length - footer.length;

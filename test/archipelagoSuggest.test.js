@@ -44,12 +44,17 @@ const SPOILER = [
 ].join('\n');
 
 /** The maps the real client builds, with the same keying: slotGames by number, the rest by name. */
-function prep(checked) {
+function prep(checked, over) {
     const invert = (table) => new Map(Object.entries(table).map(([name, id]) => [id, name]));
     const names = { 4: 'DaveSMetroid', 28: 'ZackWord' };
 
+    const finished = (over && over.finished) || {};
     const client = {
         team: 0,
+        hasGoaled: (slot) => finished[slot] === 'goaled',
+        hasReleased: (slot) => finished[slot] === 'released',
+        hasFullyChecked: (slot) => finished[slot] === 'complete',
+        hasFinished: (slot) => Boolean(finished[slot]),
         slotGames: new Map([[4, 'Super Metroid'], [28, 'Wordipelago']]),
         locationNames: new Map([
             ['Super Metroid', invert(METROID)],
@@ -150,4 +155,67 @@ test('slots are answered independently off one prepared read', () => {
     assert.deepStrictEqual(both.map(r => r.slot), ['DaveSMetroid', 'ZackWord']);
     assert.deepStrictEqual(both[0].locations, ['X-Ray Scope']);
     assert.strictEqual(both[1].sphere, null, 'ZackWord cleared sphere 1 and cannot reach 2 yet');
+});
+
+// --- slots that are already done ---------------------------------------------------------------
+//
+// Measured on the live room this was built against: of six finished slots, three carried
+// client_status 30 and three carried 0 while sitting at 100% checked. All three of the latter
+// were releases. A release hands out every remaining item, which is why it reaches 100%, and it
+// is only ever seen live in a PrintJSON — there is no data-storage key to read it back from
+// after a restart. So "100% checked with no goal status" cannot be resolved to goal or release,
+// and is reported as neither.
+
+test('a goaled slot is skipped rather than given a sphere', () => {
+    // It would otherwise reach "nothing left" only once every playthrough row happened to be
+    // checked, which is a different question and a slower way to get there.
+    const out = monitor.suggestFor(prep({}, { finished: { 28: 'goaled' } }), 'ZackWord');
+    assert.strictEqual(out.ok, false);
+    assert.strictEqual(out.reason, 'finished');
+    assert.strictEqual(out.how, 'goaled');
+    assert.strictEqual(out.slot, 'ZackWord');
+});
+
+test('a released slot is skipped, and says released', () => {
+    // A release ends a slot without the spoiler's view of it changing at all, so nothing in the
+    // sphere arithmetic would ever notice.
+    const out = monitor.suggestFor(prep({}, { finished: { 4: 'released' } }), 'DaveSMetroid');
+    assert.strictEqual(out.reason, 'finished');
+    assert.strictEqual(out.how, 'released');
+});
+
+test('100% checked with no goal status is reported as neither', () => {
+    // The honest answer. A slot released while the bot was down looks exactly like one that
+    // goaled without its client ever saying so, and this room proved the first is the common case.
+    const out = monitor.suggestFor(prep({}, { finished: { 28: 'complete' } }), 'ZackWord');
+    assert.strictEqual(out.reason, 'finished');
+    assert.strictEqual(out.how, 'complete');
+});
+
+test('a finished slot is skipped even with locations still open in the spoiler', () => {
+    // ZackWord has both its playthrough rows unchecked here, so the sphere path would happily
+    // suggest one. Being done outranks that.
+    const open = monitor.suggestFor(prep({}), 'ZackWord');
+    assert.strictEqual(open.ok, true, 'the same slot has an answer when it is not finished');
+    const out = monitor.suggestFor(prep({}, { finished: { 28: 'goaled' } }), 'ZackWord');
+    assert.strictEqual(out.ok, false);
+    assert.strictEqual(out.reason, 'finished');
+});
+
+test('one slot finishing does not silence the others', () => {
+    // The case the all-claimed-slots default has to get right: a player deep into a big async
+    // has more done than running, and the running ones are the whole point of the reply.
+    const p = prep({ '0:4': [82000] }, { finished: { 28: 'released' } });
+    assert.strictEqual(monitor.suggestFor(p, 'ZackWord').reason, 'finished');
+    const dave = monitor.suggestFor(p, 'DaveSMetroid');
+    assert.strictEqual(dave.ok, true);
+    assert.deepStrictEqual(dave.locations, ['X-Ray Scope']);
+});
+
+test('a client with no finished-state predicates still answers', () => {
+    // suggestFor is exported and called with a prepared read; a client built before these
+    // predicates existed must not take the command down.
+    const p = prep({ '0:4': [82000] });
+    delete p.client.hasFinished;
+    assert.strictEqual(monitor.suggestFor(p, 'DaveSMetroid').ok, true);
 });

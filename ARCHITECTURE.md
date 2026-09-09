@@ -783,6 +783,27 @@ A reply holding several slots gives each fewer locations (four rather than fifte
 1,900-character budget, counting off any slots it could not fit rather than being cut in half by
 Discord at 2,000.
 
+**Finished slots are skipped, and that check comes before the sphere arithmetic.** A finished slot
+does eventually reach "nothing left" on its own, but only once every one of its playthrough rows
+happens to be checked, and a release ends a slot without the spoiler's view of it changing at all.
+They are counted off in the footer rather than given a block each: anyone deep into a big async has
+more slots done than running, and a reply that is mostly "nothing left to check" buries the ones
+they can act on. Naming a finished slot explicitly still answers about that slot.
+
+**How a slot finished is often unknowable, and the reply does not guess.** Goal status is read back
+from data storage at every connect, so it survives a restart. A release is not: it arrives once as
+a live `PrintJSON`, there is no key to re-read it from, and `client.released` starts empty on every
+boot. A slot released while the bot was down is therefore indistinguishable from one that goaled
+without its client ever reporting it — both are simply at 100% checked. That third state is carried
+as `how: 'complete'` and rendered as "finished".
+
+This is not hypothetical. On the room this was built against, six slots were done: three carried
+`client_status` 30 and three carried 0 while sitting at 100% checked, and all three of the latter
+were releases. Calling 100%-checked "goaled" would have been wrong every time it mattered.
+
+The relay filter is unaffected by any of this — a release checks every remaining location, so
+`inferFinished` already catches released slots through the tracker's 100% column.
+
 **Ordered by the sphere number and nothing else.** The item at a location is never read, and no
 location is preferred over another for what it holds. The reply says where to go, never what is
 there, because the second sentence is the spoiler.

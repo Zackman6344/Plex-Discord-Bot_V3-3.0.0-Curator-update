@@ -1155,6 +1155,23 @@ function suggestFor(prep, slotName) {
     const slotId = client.slotIdFor ? client.slotIdFor(slot) : null;
     if (slotId === null || slotId === undefined) return { ok: false, reason: 'unknown-slot', slot: slotName };
 
+    // A slot that is done has nothing worth pointing at. Checked before the sphere arithmetic
+    // rather than left to fall out of it: a finished slot does reach "nothing left", but only
+    // once every one of its playthrough rows is checked, and a release ends a slot without
+    // touching the spoiler's view of it at all.
+    //
+    // `how` is what is actually known, which is not always the outcome. Goal status is read
+    // back from data storage, so it survives a restart. A release is only ever seen live, in a
+    // PrintJSON that arrives once, and there is no key to re-read it from — so a slot released
+    // while the bot was down is indistinguishable from one that goaled without its client ever
+    // saying so. Both land as 'complete', and the reply says finished rather than guessing.
+    if (client.hasFinished && client.hasFinished(slotId)) {
+        const how = client.hasGoaled(slotId) ? 'goaled'
+            : client.hasReleased(slotId) ? 'released'
+            : 'complete';
+        return { ok: false, reason: 'finished', slot, how };
+    }
+
     const ids = checkedIds.get(`${client.team}:${slotId}`) || [];
     // Location ids come back from the tracker; the spoiler talks in names, and the game's data
     // package is what joins the two.
