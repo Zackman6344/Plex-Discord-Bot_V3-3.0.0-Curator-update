@@ -760,13 +760,33 @@ Every role id the bot creates is recorded per guild in `data/archipelago_roles.j
 
 ### Suggesting what to check next
 
-`!ap next [id] [slot]` answers with the unchecked locations in the **earliest sphere** a slot
-still has anything open in. A sphere is a generation-time idea: sphere 1 is reachable with
-nothing, sphere 2 needs sphere 1's items, and so on.
+`!ap next [id] [slot]` answers with the unchecked locations in the soonest sphere a slot can
+**actually reach**. A sphere is a generation-time idea: sphere 1 is reachable with nothing,
+sphere 2 needs sphere 1's items, and so on.
+
+**Only for slots the caller has claimed**, the bot owner included. A suggestion is a nudge about
+what is in somebody's world, so it goes to the person playing it and to nobody else.
 
 **Ordered by the sphere number and nothing else.** The item at a location is never read, and no
 location is preferred over another for what it holds. The reply says where to go, never what is
 there, because the second sentence is the spoiler.
+
+**Earliest unchecked is the wrong answer on its own.** Spheres describe the whole multiworld, not
+one player's progress, so a slot's lowest unchecked sphere is frequently one it has no way into
+yet: the items that open it are still in somebody else's world. Pointing at a location nobody can
+see is worse than saying nothing.
+
+Without the seed's logic rules, what is knowable is how far a slot has demonstrably got. **If a
+location in sphere N has been checked, sphere N was reachable**, and spheres are ordered by what
+they require, so everything at or below N is reachable too. That highest checked sphere is the
+`reach`, and only unchecked locations at or below it are offered. A slot that has checked nothing
+has a reach of 1, which needs nothing by definition.
+
+It is a floor rather than the true frontier: a slot that has just received the item opening its
+next sphere is held back until it checks something there. That direction is deliberate, since a
+suggestion you cannot act on is the failure worth avoiding. When everything within reach is done,
+the reply says so and counts what is waiting beyond it, which reads differently from "nothing
+left".
 
 **The web sphere tracker cannot do this, which was measured rather than assumed.**
 `/sphere_tracker/<id>` is linked from every room page and looks like exactly the right source. It

@@ -1157,7 +1157,7 @@ async function suggestNext(id, slotName) {
         const table = client.locationNames.get(client.slotGames.get(slotId));
         const checked = new Set(ids.map(i => table && table.get(i)).filter(Boolean));
 
-        const next = spheres.earliestUnchecked(state.spheres.rows, checked, slot);
+        const next = spheres.soonestInLogic(state.spheres.rows, checked, slot);
         if (!next) return { ok: false, reason: 'nothing-left', slot };
         return { ok: true, slot, source: state.spheres.source, ...next };
     } catch (err) {

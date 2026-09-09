@@ -194,7 +194,7 @@ module.exports = {
                     { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
                 ] },
                 { name: 'next', description: 'Unchecked locations that opened up earliest for a slot', options: [
-                    { name: 'slot', type: 'STRING', required: false, description: 'Whose slot (defaults to yours)' },
+                    { name: 'slot', type: 'STRING', required: false, description: 'One of your claimed slots (defaults to it)' },
                     { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
                 ] },
                 { name: 'hints', description: 'Outstanding hints nobody has collected yet', options: [
@@ -316,7 +316,7 @@ module.exports = {
                     `\`${prefix}ap unclaim [id] <slot name>\` — give the slot back.`,
                     `\`${prefix}ap claims [id]\` — who has claimed what.`,
                     `\`${prefix}ap pings [id] <slot name> <${claims.PING_MODES.join('|')}>\` — how much a claimed slot pings you.`,
-                    `\`${prefix}ap next [id] [slot]\` — the unchecked locations that opened up earliest for a slot.`,
+                    `\`${prefix}ap next [id] [slot]\` — the soonest locations you can actually reach on a slot you have claimed.`,
                     `\`${prefix}ap hints [id] [slot]\` — hints nobody has collected yet, priority ones first.`,
                     `\`${prefix}ap hintpings [id] <slot name> <${claims.HINT_PING_MODES.join('|')}>\` — be told when someone wants an item out of your world. Starts off.`,
                     `\`${prefix}ap goals [@user]\` — multiworlds goaled. Releases don't count.`,
@@ -619,17 +619,28 @@ module.exports = {
                     const id = idFrom();
                     if (id === null) return badId();
 
-                    // Defaults to the caller's own claim, since "what should I do next" is almost
-                    // always about your own slot and typing its name again adds nothing.
+                    // Answered only for slots the caller holds. A suggestion is a nudge about
+                    // what is in somebody's world, so it goes to the person playing it and to
+                    // nobody else, the bot owner included.
+                    const mine = (monitor.listClaims(id) || []).filter(c => c.userId === callerId);
+                    if (mine.length === 0) {
+                        return say(
+                            `You have not claimed a slot on watch #${id}. ` +
+                            `\`${prefix}ap claim ${id} <slot name>\` takes one, and \`${prefix}ap next\` answers for slots you hold.`
+                        );
+                    }
+
                     let slot = slotArg(argBase);
                     if (!slot) {
-                        const mine = (monitor.listClaims(id) || []).filter(c => c.userId === callerId);
                         if (mine.length === 1) slot = mine[0].slot;
-                        else if (mine.length === 0) {
-                            return say(`Which slot? You have not claimed one on watch #${id}, so tell me: \`${prefix}ap next [id] <slot name>\`.`);
-                        } else {
-                            return say(`You hold ${mine.length} slots on watch #${id}, so name the one you mean: \`${prefix}ap next [id] <slot name>\`.`);
+                        else {
+                            return say(
+                                `You hold ${mine.length} slots on watch #${id}, so name the one you mean:\n` +
+                                mine.map(c => `• \`${prefix}ap next ${id} ${c.slot}\``).join('\n')
+                            );
                         }
+                    } else if (!mine.some(c => claims.sameSlot(c.slot, slot))) {
+                        return say(`${slotLabel(slot)} is not yours. \`${prefix}ap next\` only answers for slots you have claimed.`);
                     }
 
                     const status = await say(`🧭 Working out what is open earliest for ${slotLabel(slot)}…`);
@@ -651,6 +662,14 @@ module.exports = {
                         return reply(`🧭 ${why}`);
                     }
 
+                    if (result.sphere === null) {
+                        return reply(
+                            `🧭 ${slotLabel(result.slot)} has nothing left that you can reach yet. ` +
+                            `${result.beyond} location(s) are still open, but all of them sit past sphere ${result.reach}, ` +
+                            `so they are waiting on items from elsewhere.`
+                        );
+                    }
+
                     const shown = result.locations.slice(0, 15);
                     const lines = shown.map(l => `• ${escapeMarkdown(l)}`);
                     if (result.locations.length > shown.length) {
@@ -660,8 +679,9 @@ module.exports = {
                     return reply(
                         `🧭 **${slotLabel(result.slot)} — earliest open sphere: ${result.sphere}**\n` +
                         `${lines.join('\n')}\n` +
-                        `_${result.remaining} unchecked in total, sphere data from ${from}. ` +
-                        `Nothing here says what is in them._`
+                        `_${result.remaining} reachable and unchecked` +
+                        `${result.beyond ? `, ${result.beyond} more past sphere ${result.reach}` : ''}. ` +
+                        `From ${from}. Nothing here says what is in them._`
                     );
                 }
 

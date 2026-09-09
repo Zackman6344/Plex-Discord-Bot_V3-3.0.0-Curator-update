@@ -87,44 +87,67 @@ test('lines outside a sphere block are ignored', () => {
 
 // --- choosing what to suggest ----------------------------------------------------------------
 
-test('the earliest sphere with anything unchecked is the answer', () => {
+test('the soonest reachable sphere is the answer, not the earliest unchecked one', () => {
     const rows = spheres.parsePlaythrough(SPOILER);
-    // Morphing Ball done, so sphere 1 still has the Energy Tank open.
-    const next = spheres.earliestUnchecked(rows, new Set(['Morphing Ball']), 'DaveSMetroid');
+    // Checked the Morphing Ball in sphere 1, so sphere 1 is proven reachable and nothing beyond.
+    const next = spheres.soonestInLogic(rows, new Set(['Morphing Ball']), 'DaveSMetroid');
     assert.strictEqual(next.sphere, 1);
     assert.deepStrictEqual(next.locations, ['Energy Tank, Brinstar Ceiling']);
-    assert.strictEqual(next.remaining, 3, 'Energy Tank, Varia Suit and the Missile');
+    assert.strictEqual(next.reach, 1);
+    assert.strictEqual(next.remaining, 1, 'only what is within reach counts');
+    assert.strictEqual(next.beyond, 2, 'the sphere 2 and 3 locations are held back');
 });
 
-test('a finished sphere is skipped for the next one', () => {
+test('a sphere the slot has not proven it can enter is never suggested', () => {
     const rows = spheres.parsePlaythrough(SPOILER);
-    const next = spheres.earliestUnchecked(
+    // Everything in sphere 1 done, nothing in 2 or 3. Sphere 2 needs items from elsewhere, so
+    // pointing at it would be pointing at a door they cannot open.
+    const next = spheres.soonestInLogic(
         rows, new Set(['Morphing Ball', 'Energy Tank, Brinstar Ceiling']), 'DaveSMetroid');
-    assert.strictEqual(next.sphere, 2);
-    assert.deepStrictEqual(next.locations, ['Varia Suit']);
+    assert.strictEqual(next.sphere, null, 'nothing reachable is not the same as nothing left');
+    assert.strictEqual(next.beyond, 2);
+    assert.strictEqual(next.reach, 1);
+});
+
+test('checking something deeper raises the reach and opens what was skipped', () => {
+    const rows = spheres.parsePlaythrough(SPOILER);
+    // Varia Suit is sphere 2, so sphere 2 is proven; the sphere 1 Energy Tank is now offered.
+    const next = spheres.soonestInLogic(rows, new Set(['Morphing Ball', 'Varia Suit']), 'DaveSMetroid');
+    assert.strictEqual(next.reach, 2);
+    assert.strictEqual(next.sphere, 1);
+    assert.deepStrictEqual(next.locations, ['Energy Tank, Brinstar Ceiling']);
+    assert.strictEqual(next.beyond, 1, 'the sphere 3 Missile is still out of reach');
+});
+
+test('a slot that has checked nothing gets sphere 1, which needs nothing', () => {
+    const rows = spheres.parsePlaythrough(SPOILER);
+    const next = spheres.soonestInLogic(rows, new Set(), 'DaveSMetroid');
+    assert.strictEqual(next.reach, 1);
+    assert.strictEqual(next.sphere, 1);
+    assert.deepStrictEqual(next.locations, ['Energy Tank, Brinstar Ceiling', 'Morphing Ball']);
 });
 
 test('matching a checked location ignores case and stray spacing', () => {
     const rows = spheres.parsePlaythrough(SPOILER);
-    const next = spheres.earliestUnchecked(rows, new Set(['  morphing BALL  ']), 'DaveSMetroid');
+    const next = spheres.soonestInLogic(rows, new Set(['  morphing BALL  ']), 'DaveSMetroid');
     assert.ok(!next.locations.includes('Morphing Ball'));
 });
 
-test('a slot with everything checked answers null, not an empty list', () => {
+test('a slot with everything checked answers null, not an empty sphere', () => {
     const rows = spheres.parsePlaythrough(SPOILER);
     const done = new Set(['Morphing Ball', 'Energy Tank, Brinstar Ceiling', 'Varia Suit', 'Missile (Draygon)']);
-    assert.strictEqual(spheres.earliestUnchecked(rows, done, 'DaveSMetroid'), null);
+    assert.strictEqual(spheres.soonestInLogic(rows, done, 'DaveSMetroid'), null);
 });
 
 test('a slot nobody has heard of answers null', () => {
     const rows = spheres.parsePlaythrough(SPOILER);
-    assert.strictEqual(spheres.earliestUnchecked(rows, new Set(), 'NotARealSlot'), null);
-    assert.strictEqual(spheres.earliestUnchecked(rows, new Set(), ''), null);
+    assert.strictEqual(spheres.soonestInLogic(rows, new Set(), 'NotARealSlot'), null);
+    assert.strictEqual(spheres.soonestInLogic(rows, new Set(), ''), null);
 });
 
 test('one slot is never answered with another slot locations', () => {
     const rows = spheres.parsePlaythrough(SPOILER);
-    const next = spheres.earliestUnchecked(rows, new Set(), 'ZackWord');
+    const next = spheres.soonestInLogic(rows, new Set(), 'ZackWord');
     assert.deepStrictEqual(next.locations, ['Used A']);
     assert.strictEqual(next.sphere, 1);
 });

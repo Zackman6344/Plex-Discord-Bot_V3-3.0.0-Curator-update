@@ -21,7 +21,8 @@
 // anyone has reached them. A spoiler has to be supplied per multiworld for this to work at all.
 //
 // The Playthrough lists only the placements the seed's completion depends on, so suggestions are
-// few and every one of them is load-bearing. They are ordered by nothing but the sphere number.
+// few and every one of them is load-bearing. They are ordered by nothing but the sphere number,
+// and held back to what the slot has shown it can reach.
 
 const fs = require('fs').promises;
 const path = require('path');
@@ -68,30 +69,60 @@ function parsePlaythrough(text) {
 }
 
 /**
- * The earliest sphere a slot still has unchecked locations in, and those locations.
+ * The soonest locations a slot can actually reach right now.
  *
- * Only the earliest is returned rather than a ranked list of everything: a slot part-way through
- * a big game has hundreds of unchecked locations, and "here are the ones you could have reached
- * first" is a shorter and more actionable answer than an ordering of all of them.
+ * "Earliest unchecked sphere" is the wrong answer on its own. Spheres are a property of the
+ * whole multiworld, not of one player's progress: a slot's lowest unchecked sphere can be one it
+ * has no way into yet, because the items that open it are still sitting in somebody else's
+ * world. Pointing someone at a location they cannot see is worse than saying nothing.
+ *
+ * What is knowable without the seed's logic rules is how far the slot has demonstrably got.
+ * **If a location in sphere N has been checked, sphere N was reachable**, and spheres are ordered
+ * by what they require, so everything at or below N is reachable too. That highest checked sphere
+ * is the reach, and only unchecked locations at or below it are offered.
+ *
+ * It is a floor, not the true frontier. A slot may have just received the item opening the next
+ * sphere and not checked anything there yet, in which case that sphere is held back until it
+ * does. Erring that way is deliberate: a suggestion you cannot act on is the failure worth
+ * avoiding.
+ *
+ * A slot that has checked nothing has a reach of sphere 1, which needs nothing by definition.
  *
  * @param {Array} rows        sphere rows from the spoiler
  * @param {Set<string>} checked  location names already checked, compared case-insensitively
  * @param {string} finder     the slot to answer for
- * @returns {{sphere: number, locations: string[], remaining: number}|null}
+ * @returns {{sphere: number, locations: string[], remaining: number, reach: number,
+ *   beyond: number}|null} `remaining` counts what is open within reach, `beyond` what is open
+ *   past it, so a caller can say "nothing you can reach yet" rather than "nothing left"
  */
-function earliestUnchecked(rows, checked, finder) {
+function soonestInLogic(rows, checked, finder) {
     const want = String(finder || '').trim().toLowerCase();
     if (!want) return null;
 
     const done = new Set([...(checked || [])].map(name => String(name).trim().toLowerCase()));
-    const open = (rows || []).filter(r =>
-        String(r.finder || '').trim().toLowerCase() === want &&
-        !done.has(String(r.location || '').trim().toLowerCase()));
-    if (open.length === 0) return null;
+    const mine = (rows || []).filter(r => String(r.finder || '').trim().toLowerCase() === want);
+    if (mine.length === 0) return null;
 
-    const sphere = Math.min(...open.map(r => r.sphere));
-    const locations = open.filter(r => r.sphere === sphere).map(r => r.location).sort();
-    return { sphere, locations, remaining: open.length };
+    const isDone = r => done.has(String(r.location || '').trim().toLowerCase());
+    const cleared = mine.filter(isDone).map(r => r.sphere);
+    const reach = cleared.length > 0 ? Math.max(...cleared) : 1;
+
+    const open = mine.filter(r => !isDone(r));
+    const reachable = open.filter(r => r.sphere <= reach);
+    if (reachable.length === 0) {
+        return open.length === 0 ? null
+            : { sphere: null, locations: [], remaining: 0, reach, beyond: open.length };
+    }
+
+    const sphere = Math.min(...reachable.map(r => r.sphere));
+    const locations = reachable.filter(r => r.sphere === sphere).map(r => r.location).sort();
+    return {
+        sphere,
+        locations,
+        remaining: reachable.length,
+        reach,
+        beyond: open.length - reachable.length
+    };
 }
 
 /** Where a hand-supplied spoiler for one multiworld is looked for. */
@@ -120,7 +151,7 @@ async function loadSpheres({ seed, spoilerDir }) {
 
 module.exports = {
     parsePlaythrough,
-    earliestUnchecked,
+    soonestInLogic,
     spoilerPath,
     loadSpheres
 };
