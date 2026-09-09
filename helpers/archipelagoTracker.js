@@ -115,4 +115,35 @@ async function readCompletion(roomUrl, options = {}) {
     return { rows, fullyChecked: fullyCheckedSlots(rows, team), trackerUrl };
 }
 
-module.exports = { extractTrackerId, parseTrackerRows, fullyCheckedSlots, readCompletion };
+/**
+ * Every slot's checked location ids, from the tracker's JSON API.
+ *
+ * The per-slot HTML page carries a plain `Location | Checked` table and was the obvious source.
+ * It is not usable: a game with a custom tracker in the web host renders something else
+ * entirely, and Super Metroid's page in the room this was built against had no such table at
+ * all. The JSON answers identically for every game.
+ *
+ * Ids rather than names, because that is what the API returns; the caller turns them into names
+ * with the data package for that slot's game, which the client already holds in memory.
+ *
+ * @returns {Promise<Map<string, number[]>>} keyed "team:slot"
+ */
+async function readCheckedIds(trackerId, options = {}) {
+    const origin = options.origin || 'https://archipelago.gg';
+    const json = JSON.parse(await fetchText(`${origin}/api/tracker/${trackerId}`, options.timeoutMs || 30000));
+
+    const out = new Map();
+    for (const entry of json.player_checks_done || []) {
+        if (!entry || !Array.isArray(entry.locations)) continue;
+        out.set(`${entry.team || 0}:${entry.player}`, entry.locations);
+    }
+    return out;
+}
+
+module.exports = {
+    extractTrackerId,
+    parseTrackerRows,
+    fullyCheckedSlots,
+    readCheckedIds,
+    readCompletion
+};

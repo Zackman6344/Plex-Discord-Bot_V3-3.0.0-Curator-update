@@ -193,6 +193,10 @@ module.exports = {
                 { name: 'claims', description: 'Show who has claimed which slots', options: [
                     { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
                 ] },
+                { name: 'next', description: 'Unchecked locations that opened up earliest for a slot', options: [
+                    { name: 'slot', type: 'STRING', required: false, description: 'Whose slot (defaults to yours)' },
+                    { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
+                ] },
                 { name: 'hints', description: 'Outstanding hints nobody has collected yet', options: [
                     { name: 'slot', type: 'STRING', required: false, description: 'Only hints involving this slot' },
                     { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
@@ -312,6 +316,7 @@ module.exports = {
                     `\`${prefix}ap unclaim [id] <slot name>\` — give the slot back.`,
                     `\`${prefix}ap claims [id]\` — who has claimed what.`,
                     `\`${prefix}ap pings [id] <slot name> <${claims.PING_MODES.join('|')}>\` — how much a claimed slot pings you.`,
+                    `\`${prefix}ap next [id] [slot]\` — the unchecked locations that opened up earliest for a slot.`,
                     `\`${prefix}ap hints [id] [slot]\` — hints nobody has collected yet, priority ones first.`,
                     `\`${prefix}ap hintpings [id] <slot name> <${claims.HINT_PING_MODES.join('|')}>\` — be told when someone wants an item out of your world. Starts off.`,
                     `\`${prefix}ap goals [@user]\` — multiworlds goaled. Releases don't count.`,
@@ -608,6 +613,56 @@ module.exports = {
                     }
                     const updated = monitor.setClaimPings(id, slot, mode);
                     return say(`✅ ${slotLabel(updated.slot)} — pinging for ${PING_HELP[updated.pings]}.`);
+                }
+
+                if (action === 'next') {
+                    const id = idFrom();
+                    if (id === null) return badId();
+
+                    // Defaults to the caller's own claim, since "what should I do next" is almost
+                    // always about your own slot and typing its name again adds nothing.
+                    let slot = slotArg(argBase);
+                    if (!slot) {
+                        const mine = (monitor.listClaims(id) || []).filter(c => c.userId === callerId);
+                        if (mine.length === 1) slot = mine[0].slot;
+                        else if (mine.length === 0) {
+                            return say(`Which slot? You have not claimed one on watch #${id}, so tell me: \`${prefix}ap next [id] <slot name>\`.`);
+                        } else {
+                            return say(`You hold ${mine.length} slots on watch #${id}, so name the one you mean: \`${prefix}ap next [id] <slot name>\`.`);
+                        }
+                    }
+
+                    const status = await say(`🧭 Working out what is open earliest for ${slotLabel(slot)}…`);
+                    const result = await monitor.suggestNext(id, slot);
+                    const reply = (text) => (status && status.edit ? status.edit(text).catch(() => say(text)) : say(text));
+
+                    if (!result.ok) {
+                        const why = {
+                            'no-watch': `No watch with ID ${id}.`,
+                            'not-a-room': 'Sphere data comes from the room\'s tracker, so this only works for a watch made from a room URL.',
+                            'unknown-slot': `${slotLabel(slot)} is not a slot in this multiworld.`,
+                            'no-tracker': 'That room does not link a tracker, so there is no sphere data to read.',
+                            'need-spoiler': `I have no sphere data for this multiworld.\n` +
+                                `The room's own sphere tracker only lists locations that have **already** been checked, ` +
+                                `so it can never say what is next. Drop the seed's spoiler log at:\n` +
+                                `\`${result.want || 'data/archipelago/spoilers/<seed>.txt'}\``,
+                            'nothing-left': `${slotLabel(result.slot || slot)} has nothing unchecked left.`
+                        }[result.reason] || `I could not work that out${result.detail ? ` (${result.detail})` : ''}.`;
+                        return reply(`🧭 ${why}`);
+                    }
+
+                    const shown = result.locations.slice(0, 15);
+                    const lines = shown.map(l => `• ${escapeMarkdown(l)}`);
+                    if (result.locations.length > shown.length) {
+                        lines.push(`…and ${result.locations.length - shown.length} more in this sphere.`);
+                    }
+                    const from = result.source === 'spoiler' ? 'the supplied spoiler' : 'the room tracker';
+                    return reply(
+                        `🧭 **${slotLabel(result.slot)} — earliest open sphere: ${result.sphere}**\n` +
+                        `${lines.join('\n')}\n` +
+                        `_${result.remaining} unchecked in total, sphere data from ${from}. ` +
+                        `Nothing here says what is in them._`
+                    );
                 }
 
                 if (action === 'hintpings') {

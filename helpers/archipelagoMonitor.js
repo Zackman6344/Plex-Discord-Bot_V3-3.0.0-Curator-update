@@ -17,6 +17,7 @@ const logger = require('./logger.js');
 const configStore = require('./configStore.js');
 const tracker = require('./archipelagoTracker.js');
 const hintStore = require('./archipelagoHints.js');
+const spheres = require('./archipelagoSpheres.js');
 // HintStatus 30. Anything else is either unremarkable or already found.
 const HINT_PRIORITY = 30;
 const claims = require('./archipelagoClaims.js');
@@ -1107,6 +1108,64 @@ function setClaimHintPings(id, slot, mode) {
  * Null when there is no such watch, an empty array when the room simply has none, so the caller
  * can tell "wrong id" from "nothing to show".
  */
+/**
+ * The earliest sphere a slot still has unchecked locations in.
+ *
+ * Sphere only. Nothing here reads which item is at a location, or prefers one location over
+ * another for any reason but the sphere number, because the moment it did the answer would be
+ * telling somebody what is there.
+ *
+ * @returns {Promise<Object>} a result object whose `ok` says whether there is an answer, and
+ *   whose other fields say why not when there is not
+ */
+async function suggestNext(id, slotName) {
+    const state = states.get(id);
+    if (!state) return { ok: false, reason: 'no-watch' };
+
+    const client = state.client;
+    const target = state.watch.target;
+    if (!target || target.kind !== 'room') return { ok: false, reason: 'not-a-room' };
+
+    const slot = client.canonicalSlotName ? client.canonicalSlotName(slotName) : slotName;
+    if (!slot) return { ok: false, reason: 'unknown-slot' };
+    const slotId = client.slotIdFor ? client.slotIdFor(slot) : null;
+    if (slotId === null || slotId === undefined) return { ok: false, reason: 'unknown-slot' };
+
+    try {
+        if (!state.trackerUrl) {
+            const html = await (await fetch(target.roomUrl, { signal: AbortSignal.timeout(30000) })).text();
+            const trackerId = tracker.extractTrackerId(html);
+            if (!trackerId) return { ok: false, reason: 'no-tracker' };
+            state.trackerUrl = `${new URL(target.roomUrl).origin}/tracker/${trackerId}`;
+        }
+        const trackerId = state.trackerUrl.split('/').pop();
+
+        // Read once per multiworld and kept for as long as the watch points at that one.
+        const seed = client.seedName || describeTarget(target);
+        const spoilerDir = path.join(__dirname, '..', 'data', 'archipelago', 'spoilers');
+        if (!state.spheres || state.spheres.seed !== seed) {
+            const loaded = await spheres.loadSpheres({ seed, spoilerDir });
+            if (!loaded) {
+                return { ok: false, reason: 'need-spoiler', want: spheres.spoilerPath(spoilerDir, seed) };
+            }
+            state.spheres = { seed, ...loaded };
+            logger.info(`[AP:${state.watch.label}] sphere data loaded from ${loaded.path} (${loaded.rows.length} rows)`);
+        }
+
+        const checkedIds = await tracker.readCheckedIds(trackerId);
+        const ids = checkedIds.get(`${client.team}:${slotId}`) || [];
+        const table = client.locationNames.get(client.slotGames.get(slotId));
+        const checked = new Set(ids.map(i => table && table.get(i)).filter(Boolean));
+
+        const next = spheres.earliestUnchecked(state.spheres.rows, checked, slot);
+        if (!next) return { ok: false, reason: 'nothing-left', slot };
+        return { ok: true, slot, source: state.spheres.source, ...next };
+    } catch (err) {
+        logger.warn(`[AP:${state.watch.label}] could not work out what is next for ${slot}:`, err.message || err);
+        return { ok: false, reason: 'failed', detail: err.message };
+    }
+}
+
 function listHints(id) {
     const state = states.get(id);
     if (!state) return null;
@@ -1184,6 +1243,7 @@ module.exports = {
     setMarkers,
     claimSlot,
     listHints,
+    suggestNext,
     setClaimHintPings,
     releaseSlot,
     setClaimPings,

@@ -758,6 +758,41 @@ Role creation is serialised per guild and role by a small in-flight guard. `sync
 
 Every role id the bot creates is recorded per guild in `data/archipelago_roles.json`, and assignment and deletion only ever touch ids in that file. Name matching would let the bot delete a hand-made role that happened to fit the pattern. A recorded role that has been deleted in Discord, or dragged above the bot in the hierarchy, is treated as absent and replaced rather than retried forever.
 
+### Suggesting what to check next
+
+`!ap next [id] [slot]` answers with the unchecked locations in the **earliest sphere** a slot
+still has anything open in. A sphere is a generation-time idea: sphere 1 is reachable with
+nothing, sphere 2 needs sphere 1's items, and so on.
+
+**Ordered by the sphere number and nothing else.** The item at a location is never read, and no
+location is preferred over another for what it holds. The reply says where to go, never what is
+there, because the second sentence is the spoiler.
+
+**The web sphere tracker cannot do this, which was measured rather than assumed.**
+`/sphere_tracker/<id>` is linked from every room page and looks like exactly the right source. It
+is not: it lists only locations that have **already been checked**. Every slot's row count on the
+room this was built against equalled its checked count exactly, and so did the totals, 13,768
+against 13,768. DaveSMetroid had 87 rows for 87 checks with its 13 unchecked locations absent
+entirely. It is a record of what has been found, sphere by sphere, so asking it what to do next
+can only ever answer "nothing". The code does not use it, and this paragraph is here so nobody
+re-derives that.
+
+So the sphere data comes from the seed's own spoiler log, dropped at
+`data/archipelago/spoilers/<seed_name>.txt`. `!ap next` names that exact path when the file is
+missing. `RoomInfo.seed_name` is the filename, which is the same identity the goal tally and the
+hint store key on. The Playthrough section lists only the placements a seed's completion depends
+on, so suggestions are few and all load-bearing.
+
+**Checked locations come from the tracker's JSON API, not its HTML.** The per-slot page carries a
+plain `Location | Checked` table and was the first thing tried. It is not usable: a game with a
+custom tracker in the web host renders something else entirely, and Super Metroid's page had no
+such table at all, which is why one slot silently reported nothing checked. `/api/tracker/<id>`
+answers identically for every game, in location ids, which the client's data package turns back
+into the names the spoiler uses.
+
+Spoilers are gitignored with the rest of `data/archipelago/`, and parsed so the item and receiver
+columns are dropped where they are read rather than carried around and filtered later.
+
 ### Data package caching
 
 `RoomInfo` carries a checksum per game. Each is looked up in `data/archipelago/datapackage/<game>-<checksum>.json` first, and `GetDataPackage` is sent only for the games that missed. Some games ship id tables in the megabytes, and without the cache every reconnect would re-download all of them. Cache files are disposable; delete any and the next connect refetches it.

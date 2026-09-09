@@ -320,6 +320,22 @@ class ArchipelagoClient extends EventEmitter {
         return null;
     }
 
+    /**
+     * The slot number behind a slot name, matched case-insensitively on this team.
+     * The mirror of slotNameFor, needed wherever a name has to be lined up against data keyed by
+     * number, such as the tracker's per-slot check lists.
+     * @returns {number|null}
+     */
+    slotIdFor(input, team = this.team) {
+        const wanted = String(input || '').trim().toLowerCase();
+        if (!wanted) return null;
+        const prefix = `${team}:`;
+        for (const [key, name] of this.slotNames) {
+            if (key.startsWith(prefix) && name.toLowerCase() === wanted) return Number(key.slice(prefix.length));
+        }
+        return null;
+    }
+
     hasGoaled(slot, team = this.team) {
         return this.goaled.has(`${team}:${slot}`);
     }
