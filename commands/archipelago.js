@@ -649,10 +649,12 @@ module.exports = {
                             'no-watch': `No watch with ID ${id}.`,
                             'not-a-room': 'Sphere data comes from the room\'s tracker, so this only works for a watch made from a room URL.',
                             'no-tracker': 'That room does not link a tracker, so there is no sphere data to read.',
-                            'need-spoiler': `I have no sphere data for this multiworld.\n` +
-                                `The room's own sphere tracker only lists locations that have **already** been checked, ` +
-                                `so it can never say what is next. Drop the seed's spoiler log at:\n` +
-                                `\`${outcome.want || 'data/archipelago/spoilers/<seed>.txt'}\``
+                            'need-spheres': `I have no sphere data for this multiworld.\n` +
+                                `**Best source** — if you generated this seed, run:\n` +
+                                `\`python scripts/extract-spheres.py <Archipelago>/output/AP_<seed>.zip\`\n` +
+                                `That covers every location in the multiworld.\n` +
+                                `**Fallback** — drop the seed's spoiler log at \`${outcome.fallback || 'data/archipelago/spoilers/<seed>.txt'}\`, ` +
+                                `which only covers the placements the seed's completion depends on, about a tenth of them.`
                         }[outcome.reason] || `I could not work that out${outcome.detail ? ` (${outcome.detail})` : ''}.`;
                         return reply(`🧭 ${why}`);
                     }

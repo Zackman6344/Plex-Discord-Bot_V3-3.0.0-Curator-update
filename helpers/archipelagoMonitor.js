@@ -1130,10 +1130,16 @@ async function prepareSuggest(id) {
         const client = state.client;
         const seed = client.seedName || describeTarget(target);
         const spoilerDir = path.join(__dirname, '..', 'data', 'archipelago', 'spoilers');
+        const sphereDir = path.join(__dirname, '..', 'data', 'archipelago', 'spheres');
         if (!state.spheres || state.spheres.seed !== seed) {
-            const loaded = await spheres.loadSpheres({ seed, spoilerDir });
+            const loaded = await spheres.loadSpheres({ seed, spoilerDir, sphereDir });
             if (!loaded) {
-                return { ok: false, reason: 'need-spoiler', want: spheres.spoilerPath(spoilerDir, seed) };
+                return {
+                    ok: false,
+                    reason: 'need-spheres',
+                    want: spheres.spherePath(sphereDir, seed),
+                    fallback: spheres.spoilerPath(spoilerDir, seed)
+                };
             }
             state.spheres = { seed, ...loaded };
             logger.info(`[AP:${state.watch.label}] sphere data loaded from ${loaded.path} (${loaded.rows.length} rows)`);
@@ -1173,12 +1179,24 @@ function suggestFor(prep, slotName) {
     }
 
     const ids = checkedIds.get(`${client.team}:${slotId}`) || [];
-    // Location ids come back from the tracker; the spoiler talks in names, and the game's data
-    // package is what joins the two.
-    const table = client.locationNames.get(client.slotGames.get(slotId));
-    const checked = new Set(ids.map(i => table && table.get(i)).filter(Boolean));
+    const names = client.locationNames.get(client.slotGames.get(slotId));
 
-    const next = spheres.soonestInLogic(state.spheres.rows, checked, slot);
+    let next;
+    if (state.spheres.source === 'multidata') {
+        // Both sides already speak location ids, so nothing is matched by name and a slot whose
+        // data package has not loaded yet still gets a correct answer.
+        next = spheres.soonestFromTable(state.spheres.slots[String(slotId)], new Set(ids));
+        if (next) {
+            // Resolved only for the handful about to be shown. An id with no name is kept as an
+            // id rather than dropped: the location is real and worth naming badly.
+            next = { ...next, locations: next.locations.map(id => (names && names.get(id)) || `Location#${id}`) };
+        }
+    } else {
+        // The spoiler talks in names, and the game's data package is what joins the two.
+        const checked = new Set(ids.map(i => names && names.get(i)).filter(Boolean));
+        next = spheres.soonestInLogic(state.spheres.rows, checked, slot);
+    }
+
     if (!next) return { ok: false, reason: 'nothing-left', slot };
     return { ok: true, slot, source: state.spheres.source, ...next };
 }

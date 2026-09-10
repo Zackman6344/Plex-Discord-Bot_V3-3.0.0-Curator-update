@@ -219,3 +219,91 @@ test('a client with no finished-state predicates still answers', () => {
     delete p.client.hasFinished;
     assert.strictEqual(monitor.suggestFor(p, 'DaveSMetroid').ok, true);
 });
+
+// --- the multidata sphere table ----------------------------------------------------------------
+//
+// The preferred source, and a simpler join than the spoiler's: it is keyed by location id, which
+// is exactly what the tracker reports, so ids never have to become names to be compared. The data
+// package is consulted only for the handful of locations about to be shown.
+
+function multidataPrep(checked, over) {
+    const p = prep(checked, over);
+    p.state.spheres = {
+        seed: 'SEED',
+        source: 'multidata',
+        slots: {
+            4: { 1: [82000, 82001], 2: [82002], 3: [82003] },
+            28: { 1: [91000], 2: [91001] }
+        }
+    };
+    return p;
+}
+
+test('a multidata answer joins ids to names only for what it shows', () => {
+    const out = monitor.suggestFor(multidataPrep({ '0:4': [82000] }), 'DaveSMetroid');
+    assert.strictEqual(out.ok, true);
+    assert.strictEqual(out.source, 'multidata');
+    assert.strictEqual(out.sphere, 1);
+    assert.deepStrictEqual(out.locations, ['X-Ray Scope'], 'rendered as a name, not an id');
+    assert.strictEqual(out.reach, 1);
+});
+
+test('the multidata path covers locations no spoiler row mentions', () => {
+    // The whole reason for this source. "Morphing Ball" (82003) is in the table at sphere 3 and
+    // in no playthrough row for this slot, so the spoiler path could never suggest it.
+    const out = monitor.suggestFor(multidataPrep({ '0:4': [82000, 82001, 82002] }), 'DaveSMetroid');
+    assert.strictEqual(out.reach, 2);
+    assert.strictEqual(out.beyond, 1, 'sphere 3 is still past the proven reach');
+
+    const deeper = monitor.suggestFor(multidataPrep({ '0:4': [82000, 82001, 82003] }), 'DaveSMetroid');
+    assert.strictEqual(deeper.reach, 3);
+    assert.deepStrictEqual(deeper.locations, ['Ridley'], 'the sphere 2 location is now offered');
+});
+
+test('an id with no name in the data package is shown as an id, not dropped', () => {
+    // The location is real and worth naming badly; dropping it would silently shrink the answer.
+    const p = multidataPrep({});
+    p.state.spheres.slots[4] = { 1: [82000, 999999] };
+    const out = monitor.suggestFor(p, 'DaveSMetroid');
+    assert.deepStrictEqual(out.locations, ['Power Bomb (Crateria surface)', 'Location#999999']);
+});
+
+test('a multidata answer works before the data package has loaded', () => {
+    // Names are needed only to render. A slot whose package is still downloading must still get
+    // the right locations rather than an empty or wrong answer.
+    const p = multidataPrep({ '0:4': [82000] });
+    p.client.locationNames = new Map();
+    const out = monitor.suggestFor(p, 'DaveSMetroid');
+    assert.strictEqual(out.ok, true);
+    assert.deepStrictEqual(out.locations, ['Location#82001']);
+});
+
+test('each slot reads its own row of the table', () => {
+    const p = multidataPrep({ '0:4': [82000], '0:28': [91000] });
+    assert.deepStrictEqual(monitor.suggestFor(p, 'DaveSMetroid').locations, ['X-Ray Scope']);
+    const word = monitor.suggestFor(p, 'ZackWord');
+    assert.strictEqual(word.sphere, null, 'sphere 1 cleared, sphere 2 not proven');
+    assert.strictEqual(word.beyond, 1);
+});
+
+test('a slot missing from the table answers nothing-left rather than throwing', () => {
+    const p = multidataPrep({});
+    delete p.state.spheres.slots[4];
+    const out = monitor.suggestFor(p, 'DaveSMetroid');
+    assert.strictEqual(out.ok, false);
+    assert.strictEqual(out.reason, 'nothing-left');
+});
+
+test('a finished slot is skipped on the multidata path too', () => {
+    const out = monitor.suggestFor(multidataPrep({}, { finished: { 28: 'goaled' } }), 'ZackWord');
+    assert.strictEqual(out.reason, 'finished');
+    assert.strictEqual(out.how, 'goaled');
+});
+
+test('no multidata answer carries an item either', () => {
+    const p = multidataPrep({ '0:4': [82000] });
+    const serialised = JSON.stringify(monitor.suggestFor(p, 'DaveSMetroid'));
+    for (const item of ['Progressive Sword', 'Money', 'Ice Trap', 'Grapple Beam']) {
+        assert.ok(!serialised.includes(item), `${item} leaked`);
+    }
+});

@@ -834,11 +834,36 @@ entirely. It is a record of what has been found, sphere by sphere, so asking it 
 can only ever answer "nothing". The code does not use it, and this paragraph is here so nobody
 re-derives that.
 
-So the sphere data comes from the seed's own spoiler log, dropped at
-`data/archipelago/spoilers/<seed_name>.txt`. `!ap next` names that exact path when the file is
-missing. `RoomInfo.seed_name` is the filename, which is the same identity the goal tally and the
-hint store key on. The Playthrough section lists only the placements a seed's completion depends
-on, so suggestions are few and all load-bearing.
+#### Where the spheres come from
+
+Two sources, and they are not close in quality. `RoomInfo.seed_name` names the file either way,
+which is the same identity the goal tally and the hint store key on.
+
+**The multidata's own sphere table, which is the good one.** Generation already answered this and
+wrote it down: the `.archipelago` multidata carries a top-level `spheres` field, a list of spheres
+each mapping player to the location ids reachable in it, covering **every** location rather than
+only the progression ones. `scripts/extract-spheres.py` lifts it into
+`data/archipelago/spheres/<seed_name>.json`. Nothing re-derives logic — this is what the generator
+decided, read back. It is keyed by location id, which is also what the tracker reports, so the two
+sides compare directly and the data package is consulted only to name the handful about to be
+shown. A slot whose package has not finished downloading still gets a correct answer.
+
+It needs the multidata, so it is available only for a multiworld generated on this machine
+(`<Archipelago>/output/AP_<seed>.zip`).
+
+**The seed's spoiler log, which is the fallback**, at `data/archipelago/spoilers/<seed_name>.txt`.
+Its Playthrough section lists placements whether or not anyone has reached them, but only the ones
+the seed's completion depends on. **Measured: 1,728 rows against 14,783 locations — 11.7%.** For
+one slot it was 43 of 529, and after checking 42 of those the command reported "nothing reachable
+yet" while **41 locations sat open and every one of them in logic**. That is what motivated the
+multidata path: the spoiler had run out of things it could see, and said so in a way that read
+like a logic wall rather than a data wall. The same slot against the multidata table answers 41
+reachable, 0 beyond.
+
+The preference is not a tie-break. A spoiler left in place beside an extracted table is ignored.
+A table that parses but holds no slots falls through to the spoiler rather than being trusted,
+because a slotless table answers "nothing left" for every slot in the room, which reads as
+everybody being finished.
 
 **Checked locations come from the tracker's JSON API, not its HTML.** The per-slot page carries a
 plain `Location | Checked` table and was the first thing tried. It is not usable: a game with a

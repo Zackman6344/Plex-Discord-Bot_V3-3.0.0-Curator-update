@@ -185,3 +185,112 @@ test('loadSpheres answers null when there is no spoiler to read', async () => {
         fs.rmSync(dir, { recursive: true, force: true });
     }
 });
+
+// --- the multidata sphere table ----------------------------------------------------------------
+//
+// The good source. Generation writes a `spheres` field into the .archipelago multidata covering
+// EVERY location, and scripts/extract-spheres.py reshapes it to {slot: {sphere: [location ids]}}.
+// It is keyed by location id, which is what the room's tracker reports, so no name matching is
+// involved at all.
+//
+// The numbers in these tests are the shape of the real thing: on the room this was built against
+// the table held 14,783 locations against the spoiler Playthrough's 1,728.
+
+const TABLE = { 1: [100, 101, 102], 2: [200, 201], 3: [300] };
+
+test('the soonest reachable sphere is found by location id', () => {
+    const next = spheres.soonestFromTable(TABLE, new Set([100]));
+    assert.strictEqual(next.sphere, 1);
+    assert.deepStrictEqual(next.locations, [101, 102]);
+    assert.strictEqual(next.reach, 1);
+    assert.strictEqual(next.beyond, 3, 'spheres 2 and 3 are held back');
+});
+
+test('a sphere the slot has proven it can enter opens what was skipped', () => {
+    const next = spheres.soonestFromTable(TABLE, new Set([100, 200]));
+    assert.strictEqual(next.reach, 2);
+    assert.strictEqual(next.sphere, 1);
+    assert.deepStrictEqual(next.locations, [101, 102]);
+    assert.strictEqual(next.remaining, 3, '101, 102 and 201');
+    assert.strictEqual(next.beyond, 1);
+});
+
+test('ids are returned in numeric order, not as strings', () => {
+    // "1000" sorts before "99" as a string, which would put the list in a nonsense order.
+    const next = spheres.soonestFromTable({ 1: [99, 1000, 300] }, new Set());
+    assert.deepStrictEqual(next.locations, [99, 300, 1000]);
+});
+
+test('a slot with every location checked answers null', () => {
+    assert.strictEqual(spheres.soonestFromTable(TABLE, new Set([100, 101, 102, 200, 201, 300])), null);
+});
+
+test('a missing or empty table answers null rather than throwing', () => {
+    assert.strictEqual(spheres.soonestFromTable(null, new Set()), null);
+    assert.strictEqual(spheres.soonestFromTable(undefined, new Set([1])), null);
+    assert.strictEqual(spheres.soonestFromTable({}, new Set()), null);
+});
+
+test('checked ids match whether they arrive as numbers or strings', () => {
+    // The tracker answers in numbers and a hand-edited file could hold either.
+    const next = spheres.soonestFromTable(TABLE, new Set(['100']));
+    assert.deepStrictEqual(next.locations, [101, 102]);
+});
+
+test('the table is read from a filename-safe form of the seed', () => {
+    assert.strictEqual(pathMod.basename(spheres.spherePath('/spheres', 'SEED123')), 'SEED123.json');
+    assert.strictEqual(pathMod.basename(spheres.spherePath('/spheres', '../../etc/passwd')), '.._.._etc_passwd.json');
+});
+
+test('the multidata table is preferred over a spoiler sitting beside it', async () => {
+    // Not a tie-break: one covers every location and the other covers about a tenth. A spoiler
+    // left in place after extracting the table must not quietly win.
+    const dir = fs.mkdtempSync(pathMod.join(os.tmpdir(), 'plexbot-both-'));
+    try {
+        fs.writeFileSync(pathMod.join(dir, 'SEED.txt'), SPOILER, 'utf8');
+        fs.writeFileSync(pathMod.join(dir, 'SEED.json'),
+            JSON.stringify({ seed: 'SEED', slots: { 4: TABLE } }), 'utf8');
+
+        const loaded = await spheres.loadSpheres({ seed: 'SEED', spoilerDir: dir, sphereDir: dir });
+        assert.strictEqual(loaded.source, 'multidata');
+        assert.ok(loaded.slots['4'], 'the table came through keyed by slot');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('a spoiler is still used when no table has been extracted', async () => {
+    const dir = fs.mkdtempSync(pathMod.join(os.tmpdir(), 'plexbot-fallback-'));
+    try {
+        fs.writeFileSync(pathMod.join(dir, 'SEED.txt'), SPOILER, 'utf8');
+        const loaded = await spheres.loadSpheres({ seed: 'SEED', spoilerDir: dir, sphereDir: dir });
+        assert.strictEqual(loaded.source, 'spoiler');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('a table written wrong falls through to the spoiler rather than emptying the room', async () => {
+    // A slotless table would otherwise answer "nothing left" for every slot in the multiworld,
+    // which reads as everybody being finished.
+    const dir = fs.mkdtempSync(pathMod.join(os.tmpdir(), 'plexbot-broken-'));
+    try {
+        fs.writeFileSync(pathMod.join(dir, 'SEED.txt'), SPOILER, 'utf8');
+        fs.writeFileSync(pathMod.join(dir, 'SEED.json'), JSON.stringify({ seed: 'SEED', slots: {} }), 'utf8');
+        assert.strictEqual((await spheres.loadSpheres({ seed: 'SEED', spoilerDir: dir, sphereDir: dir })).source, 'spoiler');
+
+        fs.writeFileSync(pathMod.join(dir, 'SEED.json'), 'not json at all', 'utf8');
+        assert.strictEqual((await spheres.loadSpheres({ seed: 'SEED', spoilerDir: dir, sphereDir: dir })).source, 'spoiler');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('neither source present is still null, not a throw', async () => {
+    const dir = fs.mkdtempSync(pathMod.join(os.tmpdir(), 'plexbot-neither-'));
+    try {
+        assert.strictEqual(await spheres.loadSpheres({ seed: 'MISSING', spoilerDir: dir, sphereDir: dir }), null);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
