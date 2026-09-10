@@ -307,3 +307,41 @@ test('no multidata answer carries an item either', () => {
         assert.ok(!serialised.includes(item), `${item} leaked`);
     }
 });
+
+// --- reporting what loaded -------------------------------------------------------------------
+//
+// The first multidata-backed `!ap next` answered "I could not work that out (Cannot read
+// properties of undefined (reading 'length'))". The suggestion was correct; a log line reaching
+// for `loaded.rows.length` threw inside prepareSuggest's try, and the catch turned a working
+// answer into a failure. Two sources with two shapes means anything touching a loaded object has
+// to ask which one it got.
+
+test('each source is described by the field it actually has', () => {
+    assert.strictEqual(
+        monitor.describeSpheres({ source: 'multidata', slots: { 4: {}, 28: {} } }), 'multidata, 2 slots');
+    assert.strictEqual(
+        monitor.describeSpheres({ source: 'spoiler', rows: [{}, {}, {}] }), 'spoiler, 3 rows');
+});
+
+test('describing a multidata load never reaches for rows', () => {
+    // The exact shape that threw: a multidata load has no `rows` at all.
+    const loaded = { source: 'multidata', slots: { 4: { 1: [1, 2] } }, path: '/x.json' };
+    assert.ok(!('rows' in loaded));
+    assert.doesNotThrow(() => monitor.describeSpheres(loaded));
+    assert.match(monitor.describeSpheres(loaded), /^multidata, 1 slot$/);
+});
+
+test('a malformed or absent load is described, not thrown over', () => {
+    // This runs inside prepareSuggest's try block, so anything it throws is reported to the user
+    // as a failed suggestion. It must never be the thing that fails.
+    assert.strictEqual(monitor.describeSpheres({ source: 'multidata' }), 'multidata, 0 slots');
+    assert.strictEqual(monitor.describeSpheres({ source: 'spoiler' }), 'spoiler, 0 rows');
+    assert.strictEqual(monitor.describeSpheres({}), 'unknown, 0 rows');
+    assert.strictEqual(monitor.describeSpheres(null), 'nothing');
+    assert.strictEqual(monitor.describeSpheres(undefined), 'nothing');
+});
+
+test('singulars read properly, since this goes in the log', () => {
+    assert.strictEqual(monitor.describeSpheres({ source: 'multidata', slots: { 4: {} } }), 'multidata, 1 slot');
+    assert.strictEqual(monitor.describeSpheres({ source: 'spoiler', rows: [{}] }), 'spoiler, 1 row');
+});

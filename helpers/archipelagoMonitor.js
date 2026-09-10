@@ -1104,6 +1104,25 @@ function setClaimHintPings(id, slot, mode) {
 }
 
 /**
+ * How much sphere data arrived, for the log.
+ *
+ * The two sources carry different shapes -- the multidata a `slots` object keyed by slot, the
+ * spoiler a flat `rows` array -- and this reaches only for the one that is actually there.
+ * Assuming `rows` here is what turned the first multidata-backed `!ap next` into
+ * "I could not work that out (Cannot read properties of undefined (reading 'length'))": the
+ * suggestion itself was fine and a log line took the command down with it.
+ */
+function describeSpheres(loaded) {
+    if (!loaded) return 'nothing';
+    if (loaded.source === 'multidata') {
+        const slots = loaded.slots ? Object.keys(loaded.slots).length : 0;
+        return `multidata, ${slots} slot${slots === 1 ? '' : 's'}`;
+    }
+    const rows = Array.isArray(loaded.rows) ? loaded.rows.length : 0;
+    return `${loaded.source || 'unknown'}, ${rows} row${rows === 1 ? '' : 's'}`;
+}
+
+/**
  * The one-off work behind a suggestion: the tracker's address, the seed's spheres, and every
  * slot's checked locations.
  *
@@ -1142,7 +1161,7 @@ async function prepareSuggest(id) {
                 };
             }
             state.spheres = { seed, ...loaded };
-            logger.info(`[AP:${state.watch.label}] sphere data loaded from ${loaded.path} (${loaded.rows.length} rows)`);
+            logger.info(`[AP:${state.watch.label}] sphere data loaded from ${loaded.path} (${describeSpheres(loaded)})`);
         }
 
         return { ok: true, state, client, checkedIds: await tracker.readCheckedIds(trackerId) };
@@ -1311,6 +1330,7 @@ module.exports = {
     // wrong without anything throwing, and reaching it through suggestNextAll would mean
     // faking a room page, a tracker endpoint and a data package to test arithmetic.
     suggestFor,
+    describeSpheres,
     setClaimHintPings,
     releaseSlot,
     setClaimPings,
