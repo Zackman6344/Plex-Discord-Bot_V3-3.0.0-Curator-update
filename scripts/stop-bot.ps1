@@ -33,22 +33,43 @@ foreach ($p in $procs) {
     }
 }
 
-# The launcher wraps node in `cmd /c` to capture early crash output. That shell exits on its
-# own once node is gone, but a stray one left behind would hold the log file open.
+# Close the launcher window too, matched on the launcher script rather than on index.js.
+#
+# start-bot.cmd runs node itself, so the shell's own command line names the .cmd and never
+# index.js - which the old filter here looked for, and so never matched. Windows piled up parked
+# at the script's closing `pause`, one per stop, and a parked one is not harmless:
+#
+#   cmd.exe reads a batch file as it goes, by byte offset. Rewriting start-bot.cmd while a window
+#   sits parked in it - a deploy, a git merge, an edit - moves the offsets under it, and cmd
+#   resumes wherever that lands. Observed: a window parked at `pause` re-ran the node line after
+#   the file grew, giving a SECOND bot alongside the one just started. Two instances double every
+#   relayed line and answer every command twice.
+$launcher = Join-Path $PSScriptRoot 'start-bot.cmd'
 $shells = @(Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" |
-    Where-Object { $_.CommandLine -and $_.CommandLine.Contains($entry) })
+    Where-Object { $_.CommandLine -and ($_.CommandLine.Contains($entry) -or $_.CommandLine.Contains($launcher)) })
 foreach ($s in $shells) {
+    Write-Host ("Closing launcher window PID {0}" -f $s.ProcessId)
     try { Stop-Process -Id $s.ProcessId -Force -ErrorAction Stop } catch { }
 }
 
-Start-Sleep -Milliseconds 400
-$left = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
-    Where-Object { $_.CommandLine -and $_.CommandLine.Contains($entry) })
+# Re-checked and retried rather than reported once. A process that appears after the first scan
+# is a second instance, and leaving one running is worse than taking a moment longer here.
+$left = @()
+for ($attempt = 1; $attempt -le 3; $attempt++) {
+    Start-Sleep -Milliseconds 500
+    $left = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+        Where-Object { $_.CommandLine -and $_.CommandLine.Contains($entry) })
+    if ($left.Count -eq 0) { break }
+    Write-Host ("Still {0} running after attempt {1} - stopping again" -f $left.Count, $attempt) -ForegroundColor Yellow
+    foreach ($p in $left) {
+        try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop } catch { }
+    }
+}
 
 if ($left.Count -eq 0) {
     Write-Host "Bot stopped." -ForegroundColor Green
 } else {
-    Write-Host ("Still running: {0} process(es). Try again, or end node.exe in Task Manager." -f $left.Count) -ForegroundColor Red
+    Write-Host ("Still running: {0} process(es). End node.exe in Task Manager." -f $left.Count) -ForegroundColor Red
 }
 
 Start-Sleep -Seconds 2
