@@ -63,6 +63,16 @@ async function tick(client) {
             logger.warn('Edit config/config.js to fix, then restart.');
         }
     } else {
+        // One compact line per check, even when nothing changed. Without it a healthy bot writes
+        // nothing for hours, so a log whose last line is two hours old says nothing about whether
+        // the bot died then or is still running — which is exactly the position a silent death
+        // left us in. This bounds it to the check interval.
+        const counts = Object.values(statusMap(results)).reduce((acc, status) => {
+            acc[status] = (acc[status] || 0) + 1;
+            return acc;
+        }, {});
+        logger.info('Health check: ' + Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', '));
+
         const changes = diffStatuses(previousStatuses, statusMap(results));
         if (changes.length > 0) {
             const summary = changes.map(c => `${c.key}: ${c.from} → ${c.to}`).join(', ');

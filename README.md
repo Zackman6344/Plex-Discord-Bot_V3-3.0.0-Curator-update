@@ -250,6 +250,13 @@ window stops the bot.** You also get three desktop shortcuts:
 If the bot exits on its own, the window stays open with the exit code so you can read what
 happened instead of watching it vanish.
 
+**The window shows no log, on purpose.** A Windows console that enters selection mode — one click
+or drag inside it is enough — blocks whatever process owns it on its next write, until the
+selection is cleared. With the log mirrored there, a stray click froze the entire bot: it stopped
+relaying, stopped answering commands, and the log file stopped dead at that moment with nothing in
+it to say why. Read the log with **Plex Bot Status** or `scripts/status-bot.ps1` instead. Running
+`node index.js` by hand still prints everything.
+
 Prefer no window at all? Run the installer with `-Hidden` and it wires up `scripts/start-bot.vbs`
 instead; stopping is then the **Stop Plex Bot** shortcut. Either way, stopping matches on the
 full path to this install's `index.js` in the running process, so it cannot take down an
@@ -325,7 +332,10 @@ the bot.
 
 The bot keeps two logs under `data/logs/`, both plain text, and **both kept indefinitely**:
 
-- `bot-YYYY-MM-DD.log` — everything the console prints, minus the colours.
+- `bot-YYYY-MM-DD.log` — every line the logger produces, minus the colours. Written **before**
+  anything reaches the console, so a stuck console costs the console line and nothing else. A
+  health-check line lands every 15 minutes even when nothing is wrong, so a log that stops tells
+  you roughly when the bot stopped rather than leaving it open-ended.
 - `commands-YYYY-MM-DD.jsonl` — one line per event: a command being invoked (who, where, which
   arguments, prefix or slash or button), its outcome (ok / failed, how long it took, the stack if
   it threw), and every message the bot posted in response.

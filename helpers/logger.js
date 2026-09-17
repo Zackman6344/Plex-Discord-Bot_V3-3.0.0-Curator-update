@@ -31,6 +31,10 @@ const DIR = process.env.PLEXBOT_LOG_DIR || path.join(__dirname, '..', 'data', 'l
 // Off under the test runner: a `npm test` run exercises error paths deliberately, and those
 // lines landing in the real log would be noise pretending to be incidents.
 const toFile = process.env.PLEXBOT_LOG_TO_FILE !== '0' && !process.env.NODE_TEST_CONTEXT;
+// Set PLEXBOT_LOG_TO_CONSOLE=0 to stop mirroring to stdout. scripts/start-bot.cmd sets it, so
+// its window cannot freeze the bot by being clicked in; the file sink is the real log either way,
+// and scripts/status-bot.ps1 reads that. Left on by default, so `node index.js` still shows work.
+const toConsole = process.env.PLEXBOT_LOG_TO_CONSOLE !== '0';
 // Logs are kept indefinitely. A day of bot log is small next to what it is worth having when
 // something went wrong a month ago and nobody noticed at the time.
 // Set PLEXBOT_LOG_RETENTION_DAYS to a positive number to delete anything older than that many
@@ -57,16 +61,25 @@ function appendToFile(line) {
 function log(level, args) {
     if (LEVELS[level] < minLevel) return;
     const stamp = new Date().toISOString();
+
+    // **The file is written first, and the order is the point.**
+    //
+    // A Windows console entering selection mode — someone clicks or drags inside the window —
+    // blocks whatever process owns it on its next write, indefinitely, until the selection is
+    // cleared. With the console written first, that blocked the logger before it reached the
+    // file: the bot froze and the log simply stopped mid-run with nothing to say why. Writing
+    // the file first means a stuck console costs the console line and nothing else.
+    const plain = args
+        .map((a) => (typeof a === 'string' ? a : util.inspect(a, { depth: 4, breakLength: Infinity })))
+        .join(' ');
+    appendToFile(`[${stamp}] ${level.toUpperCase()} ${plain}`);
+
+    if (!toConsole) return;
     const tag = `${COLORS[level]}[${stamp}] ${level.toUpperCase()}${RESET}`;
     const sink = level === 'error' ? console.error
               : level === 'warn'  ? console.warn
               : console.log;
     sink(tag, ...args);
-
-    const plain = args
-        .map((a) => (typeof a === 'string' ? a : util.inspect(a, { depth: 4, breakLength: Infinity })))
-        .join(' ');
-    appendToFile(`[${stamp}] ${level.toUpperCase()} ${plain}`);
 }
 
 module.exports = {
