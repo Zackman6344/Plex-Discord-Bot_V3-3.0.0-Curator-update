@@ -113,7 +113,11 @@ module.exports = {
                 });
             } catch (err) {
                 logger.error(`plex-list (account=${targetUser.username}) failed:`, err);
-                return message.channel.send(`❌ Could not list playlists for ${targetUser.username}: ${err.message || err}`);
+                // A token can expire inside the cache window; dropping the entry means the next
+                // run switches again rather than answering from a dead one for the rest of it.
+                plexHome.forgetClient(message.author.id, targetUser.username);
+                return message.channel.send(
+                    `❌ Could not list playlists for ${targetUser.username}: ${plexHome.explainError(err)}`);
             }
         }
     }

@@ -127,7 +127,14 @@ module.exports = {
                     const res = await plex.query('/playlists?playlistType=audio&X-Plex-Container-Start=0&X-Plex-Container-Size=100');
                     playlists = (res.MediaContainer && res.MediaContainer.Metadata) || [];
                 } catch (err) {
-                    return dmChannel.send(`❌ Could not list playlists for ${targetUser.username}: ${err.message || err}`);
+                    // A token can expire inside the cache window. Dropping the entry means the
+                    // next run switches again and asks for the PIN, rather than answering from
+                    // the dead entry for the rest of the window and failing identically.
+                    plexHome.forgetClient(message.author.id, targetUser.username);
+                    return dmChannel.send(
+                        `❌ Could not list playlists for ${targetUser.username}: ${plexHome.explainError(err)}.\n` +
+                        'Run the command again to sign in to that account fresh.'
+                    );
                 }
                 if (!playlists.length) {
                     return dmChannel.send(`📋 ${targetUser.username} has no audio playlists.`);
@@ -151,7 +158,8 @@ module.exports = {
                     const res = await plex.query(chosen.key);
                     tracks = (res.MediaContainer && res.MediaContainer.Metadata) || [];
                 } catch (err) {
-                    return dmChannel.send(`❌ Could not read tracks from "${chosen.title}": ${err.message || err}`);
+                    plexHome.forgetClient(message.author.id, targetUser.username);
+                    return dmChannel.send(`❌ Could not read tracks from "${chosen.title}": ${plexHome.explainError(err)}`);
                 }
                 if (!tracks.length) {
                     return dmChannel.send(`📋 "${chosen.title}" is empty — nothing to copy.`);

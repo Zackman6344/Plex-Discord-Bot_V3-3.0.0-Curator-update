@@ -9,13 +9,34 @@
 //
 // Flow when switching to a managed user "X":
 //   1. List home users via plex.tv (owner token) to find X's id
-//   2. POST /api/v2/home/users/<id>/switch?pin=<pin> with owner token
-//   3. Plex returns a temp authToken scoped to X
-//   4. Build a PlexAPI client pointed at the LOCAL server using that token
-//   5. Cache the client in memory by (discordUserId, plexUsername) for 30 minutes
+//   2. POST /api/home/users/<id>/switch?pin=<pin> with owner token
+//   3. Plex returns a temp account authToken scoped to X
+//   4. Exchange that for THIS server's access token (see below)
+//   5. Build a PlexAPI client pointed at the LOCAL server using the access token
+//   6. Prove the client works, and only then cache it by (discordUserId, plexUsername)
 //
 // PINs are never persisted. Tokens live in process memory only and expire after
 // 30 minutes of idle time.
+//
+// **The account authToken from the switch does NOT work against the server, and that cost a
+// working feature for a while.** It is a real token — plex.tv answers `/api/v2/user` with it and
+// names the managed user — but every library call to the local server came back 401, which
+// plex-api reports as "you must provide a way to authenticate", reading like the bot had no
+// token at all. Measured for a managed user with no PIN and full access to the server:
+//
+//   plex.tv /api/v2/user      with the switch authToken -> 200 ("Bard Account", restricted)
+//   plex.tv /api/v2/resources with the switch authToken -> 200, and lists this very server
+//   server  /library/sections with the switch authToken -> 401
+//   server  /playlists        with the switch authToken -> 401
+//
+// Plex issues a **separate per-server access token** for anyone who is not the owner, and that is
+// the one a server accepts. It comes off `/api/v2/resources`, on the entry whose
+// `clientIdentifier` matches the server's own `machineIdentifier`. Same user, same moment:
+//
+//   server  /playlists        with that resource accessToken -> 200
+//
+// So the switch is step one of two. Skipping the exchange fails identically for every managed
+// user, PIN or no PIN, which is why the first report of this looked like a rejected PIN.
 
 const PlexAPI = require('plex-api');
 const plexConfig = require('../config/plex.js');
@@ -100,6 +121,56 @@ async function findUserByName(name) {
     ) || null;
 }
 
+/**
+ * This server's own machine identifier, which is what picks its entry out of plex.tv's resource
+ * list. `/identity` needs no auth and the value is fixed for the life of the install, so it is
+ * read once.
+ */
+let _machineId = null;
+
+async function getMachineIdentifier() {
+    if (_machineId) return _machineId;
+
+    const base = `${plexConfig.https ? 'https' : 'http'}://${plexConfig.hostname}:${plexConfig.port}`;
+    const res = await fetch(`${base}/identity`, { headers: { Accept: 'application/json' } });
+    if (!res.ok) throw new Error(`Could not read the Plex server's identity: ${res.status} ${res.statusText}`);
+
+    const data = await res.json();
+    const id = data && data.MediaContainer && data.MediaContainer.machineIdentifier;
+    if (!id) throw new Error("The Plex server did not report a machineIdentifier, so the managed user's access token cannot be matched to it.");
+
+    _machineId = id;
+    return id;
+}
+
+/**
+ * Exchange a managed user's account token for the token this server will actually accept.
+ *
+ * The owner's token works against the server directly; nobody else's does. Plex mints a
+ * per-server access token instead, handed out on the resource list, and that is the only one a
+ * library call gets past. See the note at the top of this file for the measurements.
+ *
+ * @param {string} accountToken  the authToken the switch returned
+ * @returns {Promise<string>} the token to talk to the local server with
+ */
+async function accessTokenForServer(accountToken) {
+    const machineId = await getMachineIdentifier();
+
+    const res = await fetch(`${PLEX_TV_API_V2}/resources?includeHttps=1`, { headers: plexTvHeaders(accountToken) });
+    if (!res.ok) throw new Error(`Plex resource list failed: ${res.status} ${res.statusText}`);
+
+    const list = await res.json();
+    const mine = (Array.isArray(list) ? list : []).find(r => r && r.clientIdentifier === machineId);
+    if (!mine) {
+        // The user exists and the switch worked, but this server is not shared with them. Worth
+        // saying plainly: it is fixed in Plex's own sharing settings, not here.
+        throw new Error('That Plex Home user has no access to this Plex server. Share the libraries with them in Plex first.');
+    }
+    // The owner's own resource entry can come back without an accessToken, because their account
+    // token already is the server token.
+    return mine.accessToken || accountToken;
+}
+
 function getCachedClient(discordUserId, plexUsername) {
     const bucket = _userCache.get(discordUserId);
     if (!bucket) return null;
@@ -153,6 +224,9 @@ async function switchAs(plexUsername, pin, discordUserId) {
     const res = await fetch(url, { method: 'POST', headers: plexTvHeaders(ownerToken) });
 
     if (res.status === 401 || res.status === 403) {
+        // Logged, because a rejected PIN used to leave no trace at all: the first report of this
+        // feature failing looked like a PIN problem and the log had nothing either way.
+        logger.warn(`plexHome: switch to ${plexUsername} refused (${res.status}) for Discord user ${discordUserId}`);
         throw new Error('Plex rejected that PIN.');
     }
     if (!res.ok) {
@@ -183,23 +257,69 @@ async function switchAs(plexUsername, pin, discordUserId) {
         throw new Error('Plex Home switch succeeded but returned no authToken.');
     }
 
+    // The switch token talks to plex.tv; this is the one the server accepts.
+    const serverToken = await accessTokenForServer(switchedToken);
+
     const switched = new PlexAPI({
         hostname: plexConfig.hostname,
         port: plexConfig.port,
         https: plexConfig.https,
-        token: switchedToken,
+        token: serverToken,
         options: plexConfig.options
     });
 
-    setCachedClient(discordUserId, plexUsername, switchedToken, switched);
+    // Proven before it is cached, and this is not belt-and-braces. The cache previously held
+    // whatever the switch produced for thirty minutes, so the first run failed on the server call
+    // and every run after it hit the cache, skipped the PIN prompt entirely and failed the same
+    // way in seconds. One bad token became a half-hour dead end with no way to retry.
+    try {
+        await switched.query('/library/sections');
+    } catch (err) {
+        logger.error(`plexHome: ${plexUsername}'s token was refused by the server: ${err.message || err}`);
+        throw new Error(`Plex accepted the switch to ${plexUsername} but the server refused the token. ` +
+            'Check that the libraries are shared with that user.');
+    }
+
+    setCachedClient(discordUserId, plexUsername, serverToken, switched);
     logger.info(`plexHome: switched to ${plexUsername} for Discord user ${discordUserId}`);
     return switched;
+}
+
+/**
+ * Drop a cached client, so the next attempt switches again rather than reusing a dead token.
+ *
+ * A token can expire inside the cache window, and without this the rest of that window answers
+ * from the dead entry: no PIN prompt, no switch, the same failure every time.
+ */
+function forgetClient(discordUserId, plexUsername) {
+    const bucket = _userCache.get(discordUserId);
+    if (!bucket) return false;
+    return bucket.delete(String(plexUsername || '').toLowerCase());
+}
+
+/**
+ * Turn a plex-api failure into something that says what actually went wrong.
+ *
+ * plex-api reports a 401 from the server as "you must provide a way to authenticate", which
+ * describes its own missing authenticator rather than the response, and reads like the bot was
+ * never configured. What it means here is that the token was refused.
+ */
+function explainError(err) {
+    const message = (err && err.message) || String(err || 'unknown error');
+    if (/must provide a way to authenticate/i.test(message)) {
+        return 'the Plex server refused that account\'s token (HTTP 401)';
+    }
+    if (/lack of managed user permissions/i.test(message)) {
+        return 'that account does not have permission for this on the Plex server (HTTP 403)';
+    }
+    return message;
 }
 
 // Exposed for tests.
 function _resetCaches() {
     _userCache.clear();
     _homeUsersCache = null;
+    _machineId = null;
 }
 
 module.exports = {
@@ -207,5 +327,8 @@ module.exports = {
     findUserByName,
     switchAs,
     getCachedClient,
+    forgetClient,
+    accessTokenForServer,
+    explainError,
     _resetCaches
 };

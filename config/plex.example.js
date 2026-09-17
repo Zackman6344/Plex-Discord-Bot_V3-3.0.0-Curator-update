@@ -13,9 +13,20 @@
 //
 //   2. `homeOwnerToken` — your Plex Home OWNER token. Only used by !playlist
 //      plex-copy / plex-list / plex-play when reaching into another managed user's
-//      account (the bot calls /api/v2/home/users/<id>/switch with this token and
+//      account (the bot calls /api/home/users/<id>/switch with this token and
 //      a PIN supplied via DM). Leave empty if you don't need cross-account features
 //      — the bot will still work perfectly as the default user without it.
+//
+//      The switch returns that user's ACCOUNT token, which plex.tv accepts and your
+//      server does not: every library call comes back 401. Your server only accepts
+//      the per-server access token Plex mints for anyone who is not the owner, so the
+//      bot exchanges one for the other via /api/v2/resources. Nothing to configure —
+//      it matters only if you are reading helpers/plexHome.js and wondering why the
+//      switch is two steps.
+//
+//      The managed user also has to have the libraries shared with them, which is set
+//      in Plex, not here. Without that the exchange has nothing to hand back and the
+//      bot says so.
 //
 // Both tokens come from the same place:
 // https://support.plex.tv/hc/en-us/articles/204059436-Finding-an-authentication-token-X-Plex-Token
