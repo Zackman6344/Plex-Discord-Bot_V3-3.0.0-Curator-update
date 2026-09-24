@@ -761,3 +761,55 @@ test('the stale warning is logged once per state of the disk, not on every comma
         s.done();
     }
 });
+
+// --- ordering slots by the earliest sphere still within reach ----------------------------------
+
+const answer = (slot, sphere) => ({ ok: true, slot, sphere, reach: 5, remaining: 1, beyond: 0, locations: ['x'] });
+
+test('slots are ordered by the earliest sphere still within reach', () => {
+    const out = monitor.orderBySoonest([answer('C', 4), answer('A', 1), answer('B', 2)]);
+    assert.deepStrictEqual(out.map(r => r.slot), ['A', 'B', 'C']);
+});
+
+test('a slot with nothing reachable yet comes after every slot with something to do', () => {
+    // Even one whose only open sphere is 17: sphere 17 in reach is still somewhere to go.
+    const stuck = { ok: true, slot: 'Aardvark', sphere: null, reach: 2, remaining: 0, beyond: 9, locations: [] };
+    const out = monitor.orderBySoonest([stuck, answer('Zebra', 17)]);
+    assert.deepStrictEqual(out.map(r => r.slot), ['Zebra', 'Aardvark']);
+});
+
+test('slots with no answer at all come last', () => {
+    const out = monitor.orderBySoonest([
+        { ok: false, slot: 'A', reason: 'nothing-left' },
+        { ok: false, slot: 'B', reason: 'unknown-slot' },
+        { ok: true, slot: 'C', sphere: null, reach: 1, remaining: 0, beyond: 1, locations: [] },
+        answer('D', 9)
+    ]);
+    assert.deepStrictEqual(out.map(r => r.slot), ['D', 'C', 'A', 'B']);
+});
+
+test('a tie goes by slot name, ignoring case, so the same room always lists the same way', () => {
+    const out = monitor.orderBySoonest([answer('zackWord', 2), answer('ZackBanner', 2), answer('pkOoT', 2)]);
+    assert.deepStrictEqual(out.map(r => r.slot), ['pkOoT', 'ZackBanner', 'zackWord']);
+});
+
+test('the list passed in is not reordered', () => {
+    const input = [answer('B', 2), answer('A', 1)];
+    monitor.orderBySoonest(input);
+    assert.deepStrictEqual(input.map(r => r.slot), ['B', 'A']);
+});
+
+test('nothing to order is an empty list, not a throw', () => {
+    assert.deepStrictEqual(monitor.orderBySoonest([]), []);
+    assert.deepStrictEqual(monitor.orderBySoonest(null), []);
+    assert.deepStrictEqual(monitor.orderBySoonest(undefined), []);
+});
+
+test('real suggestFor answers come out in sphere order', () => {
+    // DaveSMetroid has checked into sphere 3 with a sphere-2 location still open; ZackWord has
+    // checked nothing, so its soonest is sphere 1. Asked Dave first, ZackWord comes out first.
+    const p = multidataPrep({ '0:4': [82000, 82001, 82003] });
+    const results = ['DaveSMetroid', 'ZackWord'].map(s => monitor.suggestFor(p, s));
+    assert.deepStrictEqual(results.map(r => r.sphere), [2, 1]);
+    assert.deepStrictEqual(monitor.orderBySoonest(results).map(r => r.slot), ['ZackWord', 'DaveSMetroid']);
+});

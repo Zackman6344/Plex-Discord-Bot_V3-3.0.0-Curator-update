@@ -1238,6 +1238,29 @@ async function prepareSuggest(id) {
     }
 }
 
+/**
+ * Slot answers in the order worth visiting: the earliest sphere still within reach first.
+ *
+ * Three bands, so a slot with something to do is never listed under one without:
+ *   1. an answer with a sphere, lowest sphere first
+ *   2. nothing reachable yet — every open location sits past what the slot has proven it can enter
+ *   3. no answer at all: nothing left, not a slot in this multiworld, no sphere data
+ * Ties go by slot name, ignoring case, so the same state of the room always lists the same way.
+ *
+ * This also decides what survives Discord's message limit. A player holding twenty slots sees
+ * only as many as fit, and in this order the ones cut are the ones furthest from reach.
+ *
+ * @returns {Array} a new array; the one passed in is left in its original order
+ */
+function orderBySoonest(results) {
+    const band = (r) => (r && r.ok ? (r.sphere === null || r.sphere === undefined ? 1 : 0) : 2);
+    const name = (r) => String((r && r.slot) || '');
+    return [...(results || [])].sort((a, b) =>
+        band(a) - band(b)
+        || (band(a) === 0 ? a.sphere - b.sphere : 0)
+        || name(a).localeCompare(name(b), undefined, { sensitivity: 'base' }));
+}
+
 /** One slot's answer, off an already-prepared read. No I/O. */
 function suggestFor(prep, slotName) {
     const { state, client, checkedIds } = prep;
@@ -1403,6 +1426,7 @@ module.exports = {
     // wrong without anything throwing, and reaching it through suggestNextAll would mean
     // faking a room page, a tracker endpoint and a data package to test arithmetic.
     suggestFor,
+    orderBySoonest,
     describeSpheres,
     ensureSpheres,
     setClaimHintPings,

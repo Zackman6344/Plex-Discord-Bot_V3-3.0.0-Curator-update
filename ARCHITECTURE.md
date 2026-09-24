@@ -783,6 +783,13 @@ A reply holding several slots gives each fewer locations (four rather than fifte
 1,900-character budget, counting off any slots it could not fit rather than being cut in half by
 Discord at 2,000.
 
+**Slots are listed earliest reachable sphere first** (`orderBySoonest`), in three bands: slots
+with a sphere in reach, lowest first; then slots with nothing reachable yet; then slots with no
+answer at all. Ties go by slot name, ignoring case, so the same room always lists the same way.
+Claim order said nothing about where to go, and it decided which slots the budget cut. Now the
+first block is the nearest thing to do, and anything cut is furthest away. On the room this
+shipped against, one player held 21 slots and about half fit.
+
 **Finished slots are skipped, and that check comes before the sphere arithmetic.** A finished slot
 does eventually reach "nothing left" on its own, but only once every one of its playthrough rows
 happens to be checked, and a release ends a slot without the spoiler's view of it changing at all.

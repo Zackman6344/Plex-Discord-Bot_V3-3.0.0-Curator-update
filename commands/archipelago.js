@@ -680,10 +680,11 @@ module.exports = {
                     }
 
                     // One slot gets the full list; several get a few each, so a player holding
-                    // eight of them still gets an answer inside one message.
+                    // eight of them still gets an answer inside one message. Earliest reachable
+                    // sphere first, so the ones the message limit cuts are the furthest away.
                     const many = live.length > 1;
                     const perSlot = many ? 4 : 15;
-                    const blocks = live.map((r) => {
+                    const blocks = monitor.orderBySoonest(live).map((r) => {
                         const head = `**${r.slot}**`;
                         if (!r.ok) {
                             if (r.reason === 'nothing-left') return `${head} — nothing left to check.`;

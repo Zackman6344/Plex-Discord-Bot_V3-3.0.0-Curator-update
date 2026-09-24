@@ -312,3 +312,50 @@ test('clearing a password still works when asked for in words', async () => {
     assert.match(said(msg), /password cleared/);
     assert.strictEqual(monitor.getWatch(watch.id).password, null);
 });
+
+// --- !ap next lists slots by the earliest sphere still within reach ---------------------------
+//
+// The reply for someone holding many slots used to follow claim order, which says nothing about
+// where to go first, and the message limit then cut whichever slots happened to be claimed last.
+// Sorted, the first block is the nearest thing to do and the ones cut are the furthest away.
+//
+// suggestNextAll is stubbed: this is about the order the command renders in, and the sphere
+// arithmetic behind each answer is covered in archipelagoSuggest.test.js.
+
+test('!ap next lists claimed slots earliest reachable sphere first', async (t) => {
+    const slots = ['ZackWord', 'ZackStuck', 'ZackEarly', 'ZackDone', 'ZackBanner'];
+    await addWatch(slots);
+    for (const slot of slots) await run('claim', slot);
+
+    const canned = {
+        ZackWord:   { ok: true, slot: 'ZackWord', sphere: 3, reach: 3, remaining: 2, beyond: 0, locations: ['Word Loc'] },
+        ZackStuck:  { ok: true, slot: 'ZackStuck', sphere: null, reach: 2, remaining: 0, beyond: 5, locations: [] },
+        ZackEarly:  { ok: true, slot: 'ZackEarly', sphere: 1, reach: 4, remaining: 9, beyond: 0, locations: ['Early Loc'] },
+        ZackDone:   { ok: false, slot: 'ZackDone', reason: 'nothing-left' },
+        ZackBanner: { ok: true, slot: 'ZackBanner', sphere: 3, reach: 3, remaining: 1, beyond: 0, locations: ['Banner Loc'] }
+    };
+    const real = monitor.suggestNextAll;
+    let asked = null;
+    monitor.suggestNextAll = async (id, wanted) => {
+        asked = wanted;
+        return { ok: true, results: wanted.map(name => canned[name]) };
+    };
+    t.after(() => { monitor.suggestNextAll = real; });
+
+    // The status message is edited into the answer, so the edit is what has to be captured.
+    const edits = [];
+    const msg = fakeMessage();
+    msg.channel.send = async (payload) => { msg.sent.push(payload); return { edit: async (text) => { edits.push(text); } }; };
+    await ap.command.process(msg, 'next');
+
+    assert.deepStrictEqual(asked, slots, 'every claimed slot was asked about, in claim order');
+    const answer = edits.join('\n') || said(msg);
+    const at = (name) => answer.indexOf(`**${name}**`);
+    for (const name of slots) assert.ok(at(name) >= 0, `${name} is in the reply`);
+
+    // Sphere 1, then the two sphere-3 slots by name, then nothing reachable, then nothing left.
+    assert.ok(at('ZackEarly') < at('ZackBanner'), 'sphere 1 before sphere 3');
+    assert.ok(at('ZackBanner') < at('ZackWord'), 'a tie in sphere goes by name');
+    assert.ok(at('ZackWord') < at('ZackStuck'), 'something to do before nothing reachable yet');
+    assert.ok(at('ZackStuck') < at('ZackDone'), 'nothing reachable yet before nothing left');
+});
