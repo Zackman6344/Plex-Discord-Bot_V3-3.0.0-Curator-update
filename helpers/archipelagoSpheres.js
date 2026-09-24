@@ -189,6 +189,58 @@ function spherePath(sphereDir, seed) {
     return path.join(sphereDir, `${String(seed || '').replace(/[^A-Za-z0-9._-]+/g, '_')}.json`);
 }
 
+/** The fingerprint of a seed with no sphere source on disk at all. */
+const NO_SOURCES = 'table:-|spoiler:-';
+
+/**
+ * Which source outranks which, the same order loadSpheres prefers them in. The multidata table
+ * covers every location and the spoiler about a tenth, so a load that comes back with a lower
+ * rank than the record already held has fallen back, not improved.
+ */
+function sourceRank(source) {
+    return source === 'multidata' ? 2 : source === 'spoiler' ? 1 : 0;
+}
+
+/**
+ * Whether a fingerprint shows the file behind one particular source on disk.
+ *
+ * What decides between "a file is mid-copy, keep what is held" and "the file was deleted, stop
+ * answering from it" is the held record's OWN file, not whether anything at all is present: a
+ * deleted table sitting beside an unusable spoiler is still a deleted table.
+ */
+function sourcePresent(fingerprint, source) {
+    const half = source === 'multidata' ? 'table' : 'spoiler';
+    const match = new RegExp(`(?:^|\|)${half}:([^|]*)`).exec(String(fingerprint || ''));
+    return Boolean(match && match[1] && match[1] !== '-');
+}
+
+/**
+ * What the sphere sources for a seed look like on disk right now, as one comparable string.
+ *
+ * A caller holding loaded sphere data compares this against the value it had when it loaded, and
+ * reloads only when it moved: a better source arriving, a re-extracted table, a file removed. Two
+ * stats rather than two reads, so it costs nothing to ask on every command.
+ *
+ * Size and modification time together. Either alone misses a case: a re-extraction of an edited
+ * seed can land on the same size, and a copy tool can preserve the original modification time.
+ * A file that cannot be statted reads as absent, which is also what loading it would conclude.
+ *
+ * @returns {Promise<string>} never throws
+ */
+async function sourceFingerprint({ seed, sphereDir, spoilerDir }) {
+    const one = async (dir, pathFor) => {
+        if (!dir || !seed) return '-';
+        try {
+            const stat = await fs.stat(pathFor(dir, seed));
+            return `${stat.size}@${stat.mtimeMs}`;
+        } catch (_) {
+            return '-';
+        }
+    };
+    const [table, spoiler] = await Promise.all([one(sphereDir, spherePath), one(spoilerDir, spoilerPath)]);
+    return `table:${table}|spoiler:${spoiler}`;
+}
+
 /**
  * The multidata sphere table, if one has been extracted for this seed.
  * @returns {Promise<{slots: Object, source: 'multidata', path: string}|null>}
@@ -246,6 +298,10 @@ module.exports = {
     soonestFromTable,
     spoilerPath,
     spherePath,
+    sourceFingerprint,
+    sourceRank,
+    sourcePresent,
+    NO_SOURCES,
     loadSphereTable,
     loadSpheres
 };

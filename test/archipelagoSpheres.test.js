@@ -294,3 +294,140 @@ test('neither source present is still null, not a throw', async () => {
         fs.rmSync(dir, { recursive: true, force: true });
     }
 });
+
+// --- noticing that the files on disk changed --------------------------------------------------
+//
+// Sphere data used to be loaded once per seed and held for the life of the watch, so the order
+// files arrived in mattered: a spoiler loaded first kept answering after a far better table was
+// extracted beside it, until a restart. The fingerprint is what a holder compares to notice.
+
+function fingerprintDir() {
+    return fs.mkdtempSync(pathMod.join(os.tmpdir(), 'plexbot-fingerprint-'));
+}
+
+test('a fingerprint is stable while nothing on disk changes', async () => {
+    const dir = fingerprintDir();
+    try {
+        fs.writeFileSync(pathMod.join(dir, 'SEED.txt'), SPOILER, 'utf8');
+        const dirs = { seed: 'SEED', sphereDir: dir, spoilerDir: dir };
+        assert.strictEqual(await spheres.sourceFingerprint(dirs), await spheres.sourceFingerprint(dirs));
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('a table appearing beside a spoiler changes the fingerprint', async () => {
+    // The case that needed a restart before.
+    const dir = fingerprintDir();
+    try {
+        const dirs = { seed: 'SEED', sphereDir: dir, spoilerDir: dir };
+        fs.writeFileSync(pathMod.join(dir, 'SEED.txt'), SPOILER, 'utf8');
+        const before = await spheres.sourceFingerprint(dirs);
+        fs.writeFileSync(pathMod.join(dir, 'SEED.json'), JSON.stringify({ seed: 'SEED', slots: { 4: TABLE } }), 'utf8');
+        assert.notStrictEqual(await spheres.sourceFingerprint(dirs), before);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('a table rewritten at the same size still changes the fingerprint', async () => {
+    // A re-extraction of an edited seed can land on exactly the same byte count, so size alone
+    // would miss it.
+    const dir = fingerprintDir();
+    try {
+        const file = pathMod.join(dir, 'SEED.json');
+        const dirs = { seed: 'SEED', sphereDir: dir };
+        fs.writeFileSync(file, '{"slots":{"1":{"1":[1]}}}', 'utf8');
+        fs.utimesSync(file, new Date('2026-01-01T00:00:00Z'), new Date('2026-01-01T00:00:00Z'));
+        const before = await spheres.sourceFingerprint(dirs);
+
+        fs.writeFileSync(file, '{"slots":{"1":{"1":[2]}}}', 'utf8');
+        fs.utimesSync(file, new Date('2026-01-02T00:00:00Z'), new Date('2026-01-02T00:00:00Z'));
+        assert.notStrictEqual(await spheres.sourceFingerprint(dirs), before);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('a copy that keeps the old modification time still changes the fingerprint by size', async () => {
+    // The other half: some copy tools preserve the source's timestamp, so time alone would miss it.
+    const dir = fingerprintDir();
+    try {
+        const file = pathMod.join(dir, 'SEED.json');
+        const when = new Date('2026-01-01T00:00:00Z');
+        const dirs = { seed: 'SEED', sphereDir: dir };
+        fs.writeFileSync(file, '{"slots":{"1":{"1":[1]}}}', 'utf8');
+        fs.utimesSync(file, when, when);
+        const before = await spheres.sourceFingerprint(dirs);
+
+        fs.writeFileSync(file, '{"slots":{"1":{"1":[1,2,3]}}}', 'utf8');
+        fs.utimesSync(file, when, when);
+        assert.notStrictEqual(await spheres.sourceFingerprint(dirs), before);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('a removed file changes the fingerprint', async () => {
+    const dir = fingerprintDir();
+    try {
+        const file = pathMod.join(dir, 'SEED.json');
+        const dirs = { seed: 'SEED', sphereDir: dir };
+        fs.writeFileSync(file, '{"slots":{}}', 'utf8');
+        const before = await spheres.sourceFingerprint(dirs);
+        fs.rmSync(file);
+        assert.notStrictEqual(await spheres.sourceFingerprint(dirs), before);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('another seed\'s files do not move this seed\'s fingerprint', async () => {
+    // A new multiworld's table landing in the same folder must not reload an unrelated watch.
+    const dir = fingerprintDir();
+    try {
+        const dirs = { seed: 'SEED', sphereDir: dir, spoilerDir: dir };
+        fs.writeFileSync(pathMod.join(dir, 'SEED.json'), '{"slots":{"1":{"1":[1]}}}', 'utf8');
+        const before = await spheres.sourceFingerprint(dirs);
+        fs.writeFileSync(pathMod.join(dir, 'OTHER.json'), '{"slots":{"1":{"1":[9]}}}', 'utf8');
+        assert.strictEqual(await spheres.sourceFingerprint(dirs), before);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('missing folders or seed fingerprint as absent rather than throwing', async () => {
+    const empty = await spheres.sourceFingerprint({ seed: 'SEED' });
+    assert.strictEqual(empty, 'table:-|spoiler:-');
+    assert.strictEqual(await spheres.sourceFingerprint({ seed: '', sphereDir: os.tmpdir() }), 'table:-|spoiler:-');
+    assert.strictEqual(
+        await spheres.sourceFingerprint({ seed: 'SEED', sphereDir: pathMod.join(os.tmpdir(), 'no-such-dir-plexbot') }),
+        'table:-|spoiler:-');
+});
+
+// --- which source a fingerprint shows, and which source outranks which -------------------------
+
+test('sourcePresent reads the half of the fingerprint belonging to that source', () => {
+    // Real shape, decimal mtime and all, from the live multiworld.
+    const fp = 'table:289458@1790223513858.9192|spoiler:-';
+    assert.strictEqual(spheres.sourcePresent(fp, 'multidata'), true);
+    assert.strictEqual(spheres.sourcePresent(fp, 'spoiler'), false);
+    assert.strictEqual(spheres.sourcePresent('table:-|spoiler:12@3.5', 'spoiler'), true);
+    assert.strictEqual(spheres.sourcePresent('table:-|spoiler:12@3.5', 'multidata'), false);
+});
+
+test('sourcePresent treats a missing or empty fingerprint as nothing present', () => {
+    assert.strictEqual(spheres.sourcePresent(spheres.NO_SOURCES, 'multidata'), false);
+    assert.strictEqual(spheres.sourcePresent(spheres.NO_SOURCES, 'spoiler'), false);
+    assert.strictEqual(spheres.sourcePresent('', 'multidata'), false);
+    assert.strictEqual(spheres.sourcePresent(null, 'spoiler'), false);
+});
+
+test('NO_SOURCES is exactly what sourceFingerprint answers with nothing on disk', async () => {
+    assert.strictEqual(await spheres.sourceFingerprint({ seed: 'SEED' }), spheres.NO_SOURCES);
+});
+
+test('the multidata table outranks the spoiler, and both outrank nothing', () => {
+    assert.ok(spheres.sourceRank('multidata') > spheres.sourceRank('spoiler'));
+    assert.ok(spheres.sourceRank('spoiler') > spheres.sourceRank(undefined));
+});

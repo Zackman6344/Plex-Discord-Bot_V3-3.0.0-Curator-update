@@ -865,6 +865,39 @@ A table that parses but holds no slots falls through to the spoiler rather than 
 because a slotless table answers "nothing left" for every slot in the room, which reads as
 everybody being finished.
 
+**The files are rechecked on every `!ap next`, so the order they arrive in does not matter.**
+Sphere data was first loaded once per seed and held for the life of the watch. That made the
+priority above only true at load time: drop a spoiler, let somebody run the command, then extract
+the table, and the watch went on answering from the spoiler's tenth of the locations until a
+restart, with nothing to say a far better source was sitting beside it. `ensureSpheres` now
+compares a fingerprint of both candidate files — size and modification time, two stats and no
+reads — and reloads only when it moved. Either half alone misses a case: a re-extraction can land
+on the same size, and a copy tool can keep the old timestamp. The fingerprint is taken before the
+load, so a file changing mid-load leaves one that is already stale and the next call catches it,
+rather than one matching content that was never read.
+
+Two rules keep a reload from breaking a call already under way, both found by review and
+reproduced before they were fixed:
+
+- **Each call answers from the record it chose.** `prepareSuggest` picks the sphere data and then
+  awaits a multi-second tracker fetch; `ensureSpheres` returns the record, and `suggestFor` reads
+  that snapshot rather than `state.spheres`. Reading the live field let a second `!ap next` in the
+  gap drop it, and the first call threw `Cannot read properties of null`.
+- **While the held record's own file is still on disk, a failed or downgraded load does not cost
+  it.** Windows copy tools hold the destination open exclusively, so every read during a copy
+  fails with `EBUSY`. That went wrong two ways, both reproduced with real `copy`, `robocopy` and
+  `Copy-Item` runs: with nothing else to load, dropping the record told the user there was no
+  sphere data with the file sitting right there; and with a spoiler beside the table,
+  `loadSpheres` quietly fell back to it, so a copy over the table switched every answer to a
+  tenth of the locations for its duration — a location was seen vanishing from a reply mid-copy.
+  Now, if the held record's own file is present (`sourcePresent`) and the load came back empty or
+  lower-ranked (`sourceRank`), the held record keeps answering and its fingerprint is left alone
+  so the next call tries again. The warning is logged once per state of the disk.
+- **Once the held record's own file is gone, it is not answered from memory**, even if some other
+  file is present. The first version of this rule asked whether *anything* was on disk, so deleting
+  a wrong table while a spoiler with no Playthrough sat beside it changed nothing, indefinitely.
+  An upgrade — a table appearing beside a held spoiler — always goes through.
+
 **Checked locations come from the tracker's JSON API, not its HTML.** The per-slot page carries a
 plain `Location | Checked` table and was the first thing tried. It is not usable: a game with a
 custom tracker in the web host renders something else entirely, and Super Metroid's page had no

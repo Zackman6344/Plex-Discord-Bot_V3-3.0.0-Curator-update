@@ -1122,6 +1122,85 @@ function describeSpheres(loaded) {
     return `${loaded.source || 'unknown'}, ${rows} row${rows === 1 ? '' : 's'}`;
 }
 
+const SPHERE_DIRS = {
+    sphereDir: path.join(__dirname, '..', 'data', 'archipelago', 'spheres'),
+    spoilerDir: path.join(__dirname, '..', 'data', 'archipelago', 'spoilers')
+};
+
+/**
+ * Make sure a watch holds the best sphere data on disk for its seed, reloading when that changed.
+ *
+ * It used to load once per seed and keep the result for the life of the watch, which made the
+ * order files arrived in matter. Drop a spoiler, let somebody run `!ap next`, then extract the
+ * multidata table, and the watch went on answering from the spoiler's tenth of the locations until
+ * a restart, with nothing to say a far better source was sitting right beside it. Re-extracting a
+ * table had the same problem, and so did deleting a bad one.
+ *
+ * Each call now compares a fingerprint of both candidate files — two stats, no reads — and reloads
+ * only when it moved, so the priority between sources (see loadSpheres) holds whatever order the
+ * files turned up in. The fingerprint is taken BEFORE the load: a file that changes mid-load then
+ * leaves a fingerprint already out of date, and the next call catches it, rather than one that
+ * matches content that was never read.
+ *
+ * @returns {Promise<{ok: true, reloaded: boolean, stale?: boolean, spheres: Object}|
+ *   {ok: false, reason: 'need-spheres', want: string, fallback: string}>} `spheres` is the record
+ *   to answer from; a caller that awaits anything afterwards must use it, not state.spheres
+ */
+async function ensureSpheres(state, seed, { sphereDir, spoilerDir }) {
+    const fingerprint = await spheres.sourceFingerprint({ seed, sphereDir, spoilerDir });
+    const held = state.spheres;
+    const sameSeed = Boolean(held && held.seed === seed);
+    if (sameSeed && held.fingerprint === fingerprint) return { ok: true, reloaded: false, spheres: held };
+
+    const loaded = await spheres.loadSpheres({ seed, spoilerDir, sphereDir });
+    const label = (state.watch && state.watch.label) || '?';
+
+    // **The held record's own file is still there but did not come back.** The ordinary cause is
+    // a copy in progress: Windows copy tools hold the destination open exclusively, so every read
+    // fails with EBUSY until the copy ends. Two ways that showed up, both reproduced in review:
+    //   - nothing loaded, and dropping the record told the user there was no sphere data while
+    //     the file sat right there;
+    //   - the table failed and loadSpheres fell back to a spoiler beside it, so a copy over the
+    //     table silently swapped every answer to a tenth of the locations for its duration.
+    // Either way the record already held is still this seed's and still good. It keeps answering,
+    // and its fingerprint is left as it was so the next call tries the load again.
+    //
+    // It turns on the held record's OWN file, not on whether anything is present. A table deleted
+    // on purpose beside an unusable spoiler is still deleted, and is not answered from memory.
+    const ownStillThere = sameSeed && spheres.sourcePresent(fingerprint, held.source);
+    const fellBack = !loaded || spheres.sourceRank(loaded.source) < spheres.sourceRank(held && held.source);
+    if (ownStillThere && fellBack) {
+        // Once per distinct state of the disk, so a file left broken does not repeat this on
+        // every command.
+        if (state.sphereStaleWarned !== fingerprint) {
+            state.sphereStaleWarned = fingerprint;
+            logger.warn(`[AP:${label}] ${held.path} changed but would not load; still answering from what was held`);
+        }
+        return { ok: true, reloaded: false, stale: true, spheres: held };
+    }
+
+    if (!loaded) {
+        // Every usable source is gone. Dropped rather than kept, so a deleted file is not quietly
+        // answered from memory. A call already under way is unaffected: it carries the record it
+        // chose (see prepareSuggest).
+        state.spheres = null;
+        return {
+            ok: false,
+            reason: 'need-spheres',
+            want: spheres.spherePath(sphereDir, seed),
+            fallback: spheres.spoilerPath(spoilerDir, seed)
+        };
+    }
+
+    // Seed and fingerprint go last, so nothing a loader returns can overwrite them.
+    const record = { ...loaded, seed, fingerprint };
+    state.spheres = record;
+    state.sphereStaleWarned = null;
+    const verb = sameSeed ? `reloaded (was ${held.source})` : 'loaded';
+    logger.info(`[AP:${label}] sphere data ${verb} from ${loaded.path} (${describeSpheres(loaded)})`);
+    return { ok: true, reloaded: true, spheres: record };
+}
+
 /**
  * The one-off work behind a suggestion: the tracker's address, the seed's spheres, and every
  * slot's checked locations.
@@ -1145,26 +1224,14 @@ async function prepareSuggest(id) {
         }
         const trackerId = state.trackerUrl.split('/').pop();
 
-        // Read once per multiworld and kept for as long as the watch points at that one.
         const client = state.client;
         const seed = client.seedName || describeTarget(target);
-        const spoilerDir = path.join(__dirname, '..', 'data', 'archipelago', 'spoilers');
-        const sphereDir = path.join(__dirname, '..', 'data', 'archipelago', 'spheres');
-        if (!state.spheres || state.spheres.seed !== seed) {
-            const loaded = await spheres.loadSpheres({ seed, spoilerDir, sphereDir });
-            if (!loaded) {
-                return {
-                    ok: false,
-                    reason: 'need-spheres',
-                    want: spheres.spherePath(sphereDir, seed),
-                    fallback: spheres.spoilerPath(spoilerDir, seed)
-                };
-            }
-            state.spheres = { seed, ...loaded };
-            logger.info(`[AP:${state.watch.label}] sphere data loaded from ${loaded.path} (${describeSpheres(loaded)})`);
-        }
+        const held = await ensureSpheres(state, seed, SPHERE_DIRS);
+        if (!held.ok) return held;
 
-        return { ok: true, state, client, checkedIds: await tracker.readCheckedIds(trackerId) };
+        // held.spheres, not state.spheres: the record is fixed here, before the await below gives
+        // any other call a chance to replace it.
+        return { ok: true, state, client, spheres: held.spheres, checkedIds: await tracker.readCheckedIds(trackerId) };
     } catch (err) {
         logger.warn(`[AP:${state.watch.label}] could not read what is next:`, err.message || err);
         return { ok: false, reason: 'failed', detail: err.message };
@@ -1174,6 +1241,12 @@ async function prepareSuggest(id) {
 /** One slot's answer, off an already-prepared read. No I/O. */
 function suggestFor(prep, slotName) {
     const { state, client, checkedIds } = prep;
+    // The snapshot this call's prepareSuggest took, not the live field. prepareSuggest awaits a
+    // multi-second tracker fetch after choosing the data, and another `!ap next` on the same watch
+    // can reload or drop state.spheres in that gap; reading the live field then threw on null.
+    // The fallback serves callers that build a prep by hand.
+    const data = prep.spheres || (state && state.spheres);
+    if (!data) return { ok: false, reason: 'no-spheres', slot: slotName };
 
     const slot = client.canonicalSlotName ? client.canonicalSlotName(slotName) : slotName;
     if (!slot) return { ok: false, reason: 'unknown-slot', slot: slotName };
@@ -1201,10 +1274,10 @@ function suggestFor(prep, slotName) {
     const names = client.locationNames.get(client.slotGames.get(slotId));
 
     let next;
-    if (state.spheres.source === 'multidata') {
+    if (data.source === 'multidata') {
         // Both sides already speak location ids, so nothing is matched by name and a slot whose
         // data package has not loaded yet still gets a correct answer.
-        next = spheres.soonestFromTable(state.spheres.slots[String(slotId)], new Set(ids));
+        next = spheres.soonestFromTable(data.slots[String(slotId)], new Set(ids));
         if (next) {
             // Resolved only for the handful about to be shown. An id with no name is kept as an
             // id rather than dropped: the location is real and worth naming badly.
@@ -1213,11 +1286,11 @@ function suggestFor(prep, slotName) {
     } else {
         // The spoiler talks in names, and the game's data package is what joins the two.
         const checked = new Set(ids.map(i => names && names.get(i)).filter(Boolean));
-        next = spheres.soonestInLogic(state.spheres.rows, checked, slot);
+        next = spheres.soonestInLogic(data.rows, checked, slot);
     }
 
     if (!next) return { ok: false, reason: 'nothing-left', slot };
-    return { ok: true, slot, source: state.spheres.source, ...next };
+    return { ok: true, slot, source: data.source, ...next };
 }
 
 /**
@@ -1331,6 +1404,7 @@ module.exports = {
     // faking a room page, a tracker endpoint and a data package to test arithmetic.
     suggestFor,
     describeSpheres,
+    ensureSpheres,
     setClaimHintPings,
     releaseSlot,
     setClaimPings,

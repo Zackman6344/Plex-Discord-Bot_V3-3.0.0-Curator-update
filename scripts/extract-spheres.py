@@ -54,7 +54,18 @@ DEFAULT_OUT = os.path.join(REPO_ROOT, "data", "archipelago", "spheres")
 
 
 class _Stand_in:
-    """Accepts whatever the pickle throws at it and holds nothing."""
+    """Accepts whatever the pickle throws at it, and keeps the constructor arguments.
+
+    Archipelago's NamedTuples (NetworkSlot among them) are pickled by NEWOBJ, which calls
+    __new__ with the fields and never calls __init__. A stand-in that only overrode __init__
+    therefore received nothing, and every slot name came out empty -- which is how the first
+    tables were written with slotNames: {}.
+    """
+
+    def __new__(cls, *args, **kwargs):
+        made = super().__new__(cls)
+        made.args = args
+        return made
 
     def __init__(self, *args, **kwargs):
         pass
@@ -128,15 +139,20 @@ def build(data):
 
     names = {}
     for slot, info in (data.get("slot_info") or {}).items():
+        # A real NetworkSlot has .name; the stand-in carries the same fields positionally, and
+        # name is the first of them.
         name = getattr(info, "name", None)
+        if not isinstance(name, str):
+            fields = getattr(info, "args", None) or ()
+            name = fields[0] if fields else None
         if isinstance(name, str) and name:
             names[str(int(slot))] = name
 
     return {
         "seed": str(data.get("seed_name") or ""),
         "version": list(data.get("version") or []),
-        # Names are a convenience for reading the file by hand and for a sanity check at load
-        # time; the bot resolves slot names from the live connection, not from here.
+        # Names are for reading the file by hand. The bot never uses them: it resolves slot names
+        # from the live connection and matches this table by slot number.
         "slotNames": names,
         "slots": slots,
     }, total
