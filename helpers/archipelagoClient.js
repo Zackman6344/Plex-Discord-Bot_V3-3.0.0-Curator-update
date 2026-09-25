@@ -270,6 +270,10 @@ class ArchipelagoClient extends EventEmitter {
         // anyone who set one.
         this.slotNames = new Map();
         this.slotGames = new Map();
+        // Item-link groups, group slot -> member slots, from Connected.slot_info. A link item is one
+        // ItemSend addressed to the group live, but the tracker lists it under every member, and
+        // this is what lets a rebuilt line name the group the way live did.
+        this.slotGroups = new Map();
         this.itemNames = new Map();
         this.locationNames = new Map();
         this.pendingChecksums = {};
@@ -289,6 +293,11 @@ class ArchipelagoClient extends EventEmitter {
         // monitor fills this from the room's tracker page. See helpers/archipelagoTracker.js.
         this.fullyChecked = new Set();
         this.team = 0;
+        // When this connection's goal and hint read was answered. Connected empties both sets and
+        // the answer lands in a later frame, so anything diffing against them has to wait for it:
+        // a catch-up that ran in between would take every hint in the room for news.
+        this.roomStateReadAt = null;
+        this._roomStateKeys = new Set();
         // Flipped per watch by the monitor; read at render time so a colour toggle costs no
         // reconnect.
         this.colorize = !!options.colorize;
@@ -346,6 +355,21 @@ class ArchipelagoClient extends EventEmitter {
 
     hasFullyChecked(slot, team = this.team) {
         return this.fullyChecked.has(`${team}:${slot}`);
+    }
+
+    /** Is this slot an item-link group rather than a player? */
+    isGroup(slot) {
+        return this.slotGroups.has(Number(slot));
+    }
+
+    /**
+     * The player slots a slot stands for: a group's members, or the slot itself. Mirrors the
+     * server's slot_set, which decides who is sent a group's items and hints.
+     * @returns {Set<number>}
+     */
+    slotSet(slot) {
+        const members = this.slotGroups.get(Number(slot));
+        return members ? new Set(members) : new Set([Number(slot)]);
     }
 
     /**
@@ -628,6 +652,9 @@ class ArchipelagoClient extends EventEmitter {
                 break;
             }
             case 'Retrieved':
+                if (Object.keys(packet.keys || {}).some(key => this._roomStateKeys.has(key))) {
+                    this.roomStateReadAt = Date.now();
+                }
                 this._absorbStatuses(packet.keys || {});
                 this._absorbHints(packet.keys || {});
                 break;
@@ -718,7 +745,12 @@ class ArchipelagoClient extends EventEmitter {
             if (player.name) this.slotNames.set(`${player.team || 0}:${player.slot}`, player.name);
         }
         for (const [slot, info] of Object.entries(packet.slot_info || {})) {
+            if (!info) continue;
             this.slotGames.set(Number(slot), info.game);
+            // NetworkSlot.type is a flag set; 0b10 marks a group.
+            if ((Number(info.type) & 2) && Array.isArray(info.group_members)) {
+                this.slotGroups.set(Number(slot), new Set(info.group_members.map(Number)));
+            }
         }
     }
 
@@ -819,6 +851,7 @@ class ArchipelagoClient extends EventEmitter {
         this.players.clear();
         this.slotNames.clear();
         this.slotGames.clear();
+        this.slotGroups.clear();
         this._absorbPlayers(packet);
         // Numeric slot, as opposed to this.slot which is the name given in config. Needed to
         // recognise the room's join broadcast for this very connection.
@@ -831,9 +864,13 @@ class ArchipelagoClient extends EventEmitter {
         // multiworld, and holding another room's hints would report them as this one's.
         this.hints.clear();
         const keys = [...this._statusKeys(), ...this._hintKeys()];
+        this._roomStateKeys = new Set(keys);
+        this.roomStateReadAt = null;
         if (keys.length > 0) {
             this._send({ cmd: 'Get', keys });
             this._send({ cmd: 'SetNotify', keys });
+        } else {
+            this.roomStateReadAt = Date.now();
         }
 
         this.emit('status', { state: 'connected', detail: this.address, slots: this.slotsOnTeam().length });

@@ -56,6 +56,102 @@ function isOwner(msg) {
     return msg.author && msg.author.id === config.ownerId;
 }
 
+const epochSeconds = (value) => {
+    const ms = typeof value === 'number' ? value : Date.parse(value);
+    return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+};
+
+const hiddenNote = (hidden, joiner) => (hidden ? `${joiner} ${hidden} hidden by this watch's filters` : '');
+
+/**
+ * The `**Catch-up:**` line of `!ap list` / `!ap status`.
+ * @param {Object} catchup listWatches()'s `catchup` entry
+ * @returns {string}
+ */
+function describeCatchupStatus(catchup) {
+    if (!catchup || !catchup.available) return 'not available (host:port has no tracker)';
+    const off = config.archipelagoCatchup === false ? ' · automatic runs record without posting' : '';
+    if (catchup.failingSince) {
+        // Server and network error text, which can run to a whole HTML page, inside an embed
+        // field that is capped at 1,024 characters for all eight lines together.
+        const error = String(catchup.lastError || 'unknown error').slice(0, 100);
+        return `failing since <t:${epochSeconds(catchup.failingSince)}:R> (${escapeMarkdown(error)})${off}`;
+    }
+    if (catchup.lastRunAt) {
+        return `last run <t:${epochSeconds(catchup.lastRunAt)}:R>, ${catchup.lastPosted || 0} posted${off}`;
+    }
+    return `waiting for its first run${off}`;
+}
+
+/**
+ * The reply to `!ap catchup` once monitor.catchUp has settled.
+ * @param {Object} result what monitor.catchUp resolved with
+ * @param {number} id the watch id asked about
+ * @returns {string}
+ */
+function describeCatchupResult(result, id) {
+    const prefix = config.commandPrefix;
+    if (!result) return '❌ The catch-up stopped without an answer; the bot log has the error.';
+
+    if (result.ok) {
+        if (result.baseline) {
+            return '📜 First look at this room: recorded where it stands. Anything missed from now on will be posted.';
+        }
+        if (result.silent) {
+            return `📜 Automatic catch-up is switched off (\`archipelagoCatchup\`), so ${result.missed} missed line(s) ` +
+                'were recorded without being posted.';
+        }
+        // Read inside the settle window after a reconnect, so the answer may not be complete yet.
+        const settling = result.settlingUntil
+            ? ` The tracker can run about two minutes behind the room; another check runs at <t:${Math.ceil(result.settlingUntil / 1000)}:T>.`
+            : '';
+        const skipped = result.skipped
+            ? ` ${result.skipped} line(s) Discord refused three times were skipped; the bot log lists them.`
+            : '';
+        if (!result.missed) {
+            const since = epochSeconds(result.gapSince);
+            return `✅ Nothing missed${since !== null && result.gapSince ? ` since <t:${since}:f>` : ''}` +
+                `${hiddenNote(result.hidden, ';')}.${skipped}${settling}`;
+        }
+        if (result.posted >= result.missed) {
+            return `📜 Posted ${result.posted} missed line(s) to <#${result.channelId}>${hiddenNote(result.hidden, ',')}.` +
+                `${skipped}${settling}`;
+        }
+        return `📜 Posted ${result.posted} of ${result.missed} missed line(s) to <#${result.channelId}>` +
+            `${hiddenNote(result.hidden, ',')}. The rest did not go through, and an automatic catch-up retries them, ` +
+            `first in ${Math.round(monitor.catchupTiming.retryMs / 1000)} seconds and less often while the channel ` +
+            `keeps refusing.${skipped}${settling}`;
+    }
+
+    switch (result.reason) {
+        case 'no-watch':
+            return `No watch with ID ${id}.`;
+        case 'not-a-room':
+            return '📜 Catch-up reads the room\'s web tracker, which only a watch made from a room URL has; ' +
+                'a host:port watch cannot catch up.';
+        case 'not-connected':
+            return `📜 Watch #${id} is not connected; a catch-up runs by itself about two minutes after it reconnects ` +
+                `(\`${prefix}ap retry ${id}\` reconnects a paused one).`;
+        case 'no-seed':
+            return '📜 The room has not sent its seed name yet, so there is no record to compare with. Try again in a few seconds.';
+        case 'loading':
+            return '📜 The room is still sending its goals and hints after connecting. Try again in a few seconds.';
+        case 'settling':
+            return `⏳ This watch connected moments ago; its first catch-up waits until <t:${Math.ceil(result.at / 1000)}:T> ` +
+                'so the tracker has caught up.';
+        case 'restarted':
+            return monitor.getWatch(id)
+                ? `🔄 Watch #${id} restarted partway through, after ${result.posted || 0} line(s) posted. ` +
+                  'The catch-up that follows its reconnect posts the rest.'
+                : `🗑️ Watch #${id} was removed partway through, after ${result.posted || 0} line(s) posted.`;
+        case 'failed':
+            return `❌ The catch-up could not finish: ` +
+                `${escapeMarkdown(String(result.detail || 'unknown error').replace(/[.\s]+$/, ''))}.`;
+        default:
+            return `❌ The catch-up could not finish (${escapeMarkdown(String(result.reason))}).`;
+    }
+}
+
 function buildListEmbed(entries) {
     const embed = new EmbedBuilder()
         .setColor('#2F3136')
@@ -87,7 +183,8 @@ function buildListEmbed(entries) {
                 `**Address:** ${entry.address || '—'}`,
                 `**Channel:** <#${watch.channelId}>`,
                 `**State:** ${entry.status}${entry.detail ? ` (${entry.detail})` : ''}`,
-                `**Relayed:** ${entry.lineCount} line(s)${entry.droppedLines ? `, ${entry.droppedLines} dropped` : ''}`,
+                `**Relayed:** ${entry.lineCount} line(s)`,
+                `**Catch-up:** ${describeCatchupStatus(entry.catchup)}`,
                 `**Showing:** ${filters}${watch.progressionOnly ? ' · progression items only' : ''}`,
                 `**Extras:** ${watch.color !== false ? 'colour' : 'no colour'} · ${watch.markers !== false ? 'markers' : 'no markers'} · ` +
                     (watch.skipGoaled !== false
@@ -104,7 +201,7 @@ module.exports = {
     name: 'ap',
     aliases: ['archipelago'],
     command: {
-        usage: '!ap [watch/list/status/unwatch/filter/progression/password/retry]',
+        usage: '!ap [watch/list/status/unwatch/filter/progression/password/retry/catchup]',
         description: 'Watch an Archipelago multiworld and relay its log into this channel.',
         // The command log records every invocation's arguments before dispatch, and commandLog's
         // own redaction only knows the static secrets in config/. A room password is typed at
@@ -223,6 +320,9 @@ module.exports = {
                 ] },
                 { name: 'retry', description: 'Reconnect a paused watch', options: [
                     { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
+                ] },
+                { name: 'catchup', description: 'Post what the room log missed while the bot was down, from the room tracker', options: [
+                    { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
                 ] }
             ]
         },
@@ -296,7 +396,7 @@ module.exports = {
             }
 
             if (!action || action === 'help' || action === 'menu' || action === '?') {
-                return say([
+                const helpLines = [
                     '🧩 **Archipelago room monitor**',
                     '*Relays a multiworld\'s server log into the channel you set it up in.*',
                     '',
@@ -322,15 +422,32 @@ module.exports = {
                     `\`${prefix}ap goals [@user]\` — multiworlds goaled. Releases don't count.`,
                     `\`${prefix}ap leaderboard\` — who has goaled the most.`,
                     `\`${prefix}ap password <id> [password]\` — set or clear the room password (the command message is deleted).`,
-                    `\`${prefix}ap retry <id>\` — reconnect a watch the server refused.`
-                ].join('\n'));
+                    `\`${prefix}ap retry <id>\` — reconnect a watch the server refused.`,
+                    `\`${prefix}ap catchup [id]\` — post the item sends, goals and hints missed while the bot was down, rebuilt from the room tracker. Chat, joins and deaths cannot be rebuilt. Runs by itself after every reconnect; room URL watches only.`
+                ];
+                // The list reached 1,927 characters before catchup joined it, and a send over
+                // Discord's 2,000 is rejected outright, so the reply is split on line boundaries.
+                const helpChunks = [];
+                for (const line of helpLines) {
+                    const last = helpChunks[helpChunks.length - 1];
+                    if (last !== undefined && last.length + 1 + line.length <= 1900) {
+                        helpChunks[helpChunks.length - 1] = `${last}\n${line}`;
+                    } else {
+                        helpChunks.push(line);
+                    }
+                }
+                let sentHelp = null;
+                for (const chunk of helpChunks) sentHelp = await say(chunk);
+                return sentHelp;
             }
 
-            const readOnly = ['list', 'status', 'claims', 'goals', 'leaderboard'].includes(action);
-            // Claiming is the one thing players do for themselves — gating it behind the owner
-            // would mean the owner hand-registering everyone in a 29-slot async. Acting on
-            // someone else's behalf is still owner-only, checked per action below.
-            const selfService = ['claim', 'unclaim', 'pings'].includes(action);
+            // `next` answers only for the caller's own claims, so opening it shows nobody anything
+            // about a world that is not theirs.
+            const readOnly = ['list', 'status', 'claims', 'goals', 'leaderboard', 'next', 'hints'].includes(action);
+            // Claims and their ping settings are what players manage for themselves. Gating them
+            // behind the owner would mean the owner hand-registering everyone in a 29-slot async.
+            // Acting on someone else's claim is still owner-only, checked per action below.
+            const selfService = ['claim', 'unclaim', 'pings', 'hintpings'].includes(action);
             if (!readOnly && !selfService && !isOwner(msg)) {
                 return say('🔒 Only the bot owner can change Archipelago watches.');
             }
@@ -442,6 +559,35 @@ module.exports = {
                     const state = monitor.restartWatch(id);
                     if (!state) return say(`No watch with ID ${id}.`);
                     return say(`🔄 Reconnecting **${state.watch.label}** (#${id})…`);
+                }
+
+                if (action === 'catchup') {
+                    const id = idFrom();
+                    if (id === null) return badId();
+                    const watch = monitor.getWatch(id);
+                    if (!watch) return say(`No watch with ID ${id}.`);
+
+                    let status = await say('📜 Checking the room tracker…');
+                    // A 1,000-location release is about 50 messages and a minute of sending, so
+                    // the reply says what is coming as soon as the diff is known rather than
+                    // sitting on "Checking" until the last chunk lands.
+                    let planEdit = null;
+                    const result = await monitor.catchUp(id, {
+                        manual: true,
+                        onPlan: ({ missed, hidden }) => {
+                            if (!missed) return;
+                            planEdit = editQuietly(status,
+                                `📜 Posting ${missed} missed line(s) to <#${watch.channelId}>${hiddenNote(hidden, ',')}.`);
+                        }
+                    });
+                    // Awaited before the final edit so the two cannot land out of order. When the
+                    // first reply failed, editQuietly sent a fresh message, and that becomes the
+                    // one to edit rather than sending a third.
+                    if (planEdit) {
+                        const edited = await planEdit;
+                        if (!status && edited) status = edited;
+                    }
+                    return editQuietly(status, describeCatchupResult(result, id));
                 }
 
                 if (action === 'filter') {

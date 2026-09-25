@@ -359,3 +359,259 @@ test('!ap next lists claimed slots earliest reachable sphere first', async (t) =
     assert.ok(at('ZackWord') < at('ZackStuck'), 'something to do before nothing reachable yet');
     assert.ok(at('ZackStuck') < at('ZackDone'), 'nothing reachable yet before nothing left');
 });
+
+// --- who may run what ---------------------------------------------------------------------------
+//
+// With ownerId blank isOwner() answers true for everybody, so each of these sets one.
+
+const OWNER = '999999999999999999';
+const PLAYER = '333333333333333333';
+const OTHER = '444444444444444444';
+
+function asOwnedBot(t) {
+    const saved = config.ownerId;
+    config.ownerId = OWNER;
+    t.after(() => { config.ownerId = saved; });
+}
+
+const gated = (msg) => /Only the bot owner can change Archipelago watches/.test(said(msg));
+
+test('a player who is not the owner can ask !ap next about their own slot', async (t) => {
+    asOwnedBot(t);
+    await addWatch(['ZackWord']);
+    await runAs(PLAYER, 'claim', 'ZackWord');
+
+    const real = monitor.suggestNextAll;
+    let asked = null;
+    monitor.suggestNextAll = async (id, wanted) => {
+        asked = wanted;
+        return { ok: true, results: wanted.map(slot => ({ ok: false, slot, reason: 'nothing-left' })) };
+    };
+    t.after(() => { monitor.suggestNextAll = real; });
+
+    const msg = await runAs(PLAYER, 'next');
+    assert.ok(!gated(msg), said(msg));
+    assert.deepStrictEqual(asked, ['ZackWord']);
+});
+
+test('a player who is not the owner can read !ap hints', async (t) => {
+    asOwnedBot(t);
+    await addWatch(['ZackWord']);
+    const msg = await runAs(PLAYER, 'hints');
+    assert.ok(!gated(msg), said(msg));
+    assert.match(said(msg), /No outstanding hints on watch/);
+});
+
+test('a player can set hint pings on their own claim, and not on somebody else\'s', async (t) => {
+    asOwnedBot(t);
+    const watch = await addWatch(['ZackWord', 'ZackOther']);
+    await runAs(PLAYER, 'claim', 'ZackWord');
+    await runAs(OTHER, 'claim', 'ZackOther');
+
+    const mine = await runAs(PLAYER, 'hintpings', 'ZackWord', 'channel');
+    assert.ok(!gated(mine), said(mine));
+    assert.strictEqual(claims.hintPingMode(claims.find(watch.id, 'ZackWord')), 'channel');
+
+    const theirs = await runAs(PLAYER, 'hintpings', 'ZackOther', 'dm');
+    assert.match(said(theirs), /claimed by <@444444444444444444> — only they or the bot owner can change it/);
+    assert.strictEqual(claims.hintPingMode(claims.find(watch.id, 'ZackOther')), 'off');
+});
+
+test('watch, unwatch and catchup stay owner-only', async (t) => {
+    asOwnedBot(t);
+    const watch = await addWatch(['ZackWord']);
+
+    const real = monitor.catchUp;
+    let caughtUp = false;
+    monitor.catchUp = async () => { caughtUp = true; return { ok: true, baseline: true }; };
+    t.after(() => { monitor.catchUp = real; });
+
+    for (const args of [['watch', 'localhost:38281', 'ZackWord'], ['unwatch', String(watch.id)], ['catchup']]) {
+        const msg = await runAs(PLAYER, ...args);
+        assert.ok(gated(msg), `${args[0]} answered a non-owner with: ${said(msg)}`);
+    }
+    assert.ok(monitor.getWatch(watch.id), 'the watch survived the unwatch attempt');
+    assert.strictEqual(monitor.listWatches().length, 1, 'no watch was added');
+    assert.strictEqual(caughtUp, false, 'no catch-up ran');
+
+    const owner = await runAs(OWNER, 'catchup');
+    assert.ok(!gated(owner), said(owner));
+    assert.strictEqual(caughtUp, true, 'the owner still can');
+});
+
+// --- !ap catchup --------------------------------------------------------------------------------
+//
+// monitor.catchUp is stubbed for every reply path but one: what a catch-up finds and posts is
+// covered in archipelagoCatchupRelay.test.js, and this is about the wording the command answers
+// with. The status message is edited in place, so the edits are what has to be captured.
+
+// Held once, so a test that asks for two replies restores the real one and not the first stub.
+const realCatchUp = monitor.catchUp;
+
+async function catchupReply(t, result, { plan = null, args = ['catchup'] } = {}) {
+    const calls = [];
+    monitor.catchUp = async (id, options) => {
+        calls.push({ id, options });
+        if (plan && options && typeof options.onPlan === 'function') options.onPlan(plan);
+        return result;
+    };
+    t.after(() => { monitor.catchUp = realCatchUp; });
+
+    const edits = [];
+    const msg = fakeMessage();
+    msg.channel.send = async (payload) => {
+        msg.sent.push(payload);
+        return { edit: async (edit) => { edits.push(edit); return {}; } };
+    };
+    await ap.command.process(msg, ...args);
+    const final = edits.length ? edits[edits.length - 1].content : null;
+    return { msg, edits, calls, final };
+}
+
+function assertQuiet(reply) {
+    for (const payload of [...reply.msg.sent, ...reply.edits]) {
+        assert.deepStrictEqual(payload.allowedMentions, { parse: [] },
+            `a catch-up reply went out without mention suppression: ${JSON.stringify(payload).slice(0, 120)}`);
+    }
+}
+
+test('!ap catchup says what it is posting as soon as the plan is known, then what posted', async (t) => {
+    const watch = await addWatch(['ZackWord']);
+    const reply = await catchupReply(t,
+        { ok: true, missed: 3, posted: 3, hidden: 2, channelId: 'chan-1', gapSince: null, seededAt: null },
+        { plan: { missed: 3, hidden: 2 } });
+
+    assert.match(said(reply.msg), /Checking the room tracker/);
+    assert.strictEqual(reply.calls.length, 1);
+    assert.strictEqual(reply.calls[0].id, watch.id, 'the only watch is assumed');
+    assert.strictEqual(reply.calls[0].options.manual, true, 'the command posts whatever the setting says');
+    assert.strictEqual(reply.edits.length, 2, 'the plan edit and the final edit');
+    assert.match(reply.edits[0].content, /Posting 3 missed line\(s\) to <#chan-1>, 2 hidden by this watch's filters\./);
+    assert.match(reply.final, /Posted 3 missed line\(s\) to <#chan-1>, 2 hidden by this watch's filters\./);
+    assertQuiet(reply);
+});
+
+test('!ap catchup names the part that did not post', async (t) => {
+    await addWatch(['ZackWord']);
+    const reply = await catchupReply(t,
+        { ok: true, missed: 5, posted: 3, hidden: 0, channelId: 'chan-1', gapSince: null, seededAt: null },
+        { plan: { missed: 5, hidden: 0 } });
+
+    assert.match(reply.edits[0].content, /Posting 5 missed line\(s\) to <#chan-1>\.$/, 'no hidden clause when nothing was hidden');
+    assert.match(reply.final, /Posted 3 of 5 missed line\(s\)/);
+    assert.match(reply.final, /retries them/);
+});
+
+test('!ap catchup with nothing missed says since when', async (t) => {
+    await addWatch(['ZackWord']);
+    const gapSince = '2026-09-20T12:00:00.000Z';
+    const reply = await catchupReply(t,
+        { ok: true, missed: 0, posted: 0, hidden: 4, channelId: 'chan-1', gapSince, seededAt: null },
+        { plan: { missed: 0, hidden: 4 } });
+
+    assert.strictEqual(reply.edits.length, 1, 'no "Posting 0" edit before the answer');
+    assert.strictEqual(reply.final,
+        `✅ Nothing missed since <t:${Math.floor(Date.parse(gapSince) / 1000)}:f>; 4 hidden by this watch's filters.`);
+    assertQuiet(reply);
+});
+
+test('!ap catchup with nothing missed and no gap time leaves the time out', async (t) => {
+    await addWatch(['ZackWord']);
+    const reply = await catchupReply(t,
+        { ok: true, missed: 0, posted: 0, hidden: 0, channelId: 'chan-1', gapSince: null, seededAt: null });
+    assert.strictEqual(reply.final, '✅ Nothing missed.');
+});
+
+test('!ap catchup inside the settle window says when the next check runs, found or not', async (t) => {
+    await addWatch(['ZackWord']);
+    const settlingUntil = Date.now() + 90000;
+    const note = ` The tracker can run about two minutes behind the room; another check runs at <t:${Math.ceil(settlingUntil / 1000)}:T>.`;
+
+    const nothing = await catchupReply(t,
+        { ok: true, missed: 0, posted: 0, hidden: 0, channelId: 'chan-1', gapSince: null, seededAt: null, settlingUntil });
+    assert.strictEqual(nothing.final, `✅ Nothing missed.${note}`);
+
+    const posted = await catchupReply(t,
+        { ok: true, missed: 2, posted: 2, hidden: 0, channelId: 'chan-1', gapSince: null, seededAt: null, settlingUntil },
+        { plan: { missed: 2, hidden: 0 } });
+    assert.strictEqual(posted.final, `📜 Posted 2 missed line(s) to <#chan-1>.${note}`);
+    assertQuiet(posted);
+});
+
+test('!ap catchup on first sight explains the baseline', async (t) => {
+    await addWatch(['ZackWord']);
+    const reply = await catchupReply(t, { ok: true, baseline: true });
+    assert.match(reply.final,
+        /First look at this room: recorded where it stands\. Anything missed from now on will be posted\./);
+});
+
+test('!ap catchup while the tracker settles says when it can run', async (t) => {
+    await addWatch(['ZackWord']);
+    const at = Date.now() + 90000;
+    const reply = await catchupReply(t, { ok: false, reason: 'settling', at });
+    assert.match(reply.final, /connected moments ago/);
+    assert.ok(reply.final.includes(`<t:${Math.ceil(at / 1000)}:T>`), reply.final);
+});
+
+// Not stubbed: the real monitor refuses a host:port watch before anything is fetched.
+test('!ap catchup on a host:port watch says it needs a room URL', async () => {
+    await addWatch(['ZackWord']);
+    const edits = [];
+    const msg = fakeMessage();
+    msg.channel.send = async (payload) => {
+        msg.sent.push(payload);
+        return { edit: async (edit) => { edits.push(edit); return {}; } };
+    };
+    await ap.command.process(msg, 'catchup');
+    assert.strictEqual(edits.length, 1);
+    assert.match(edits[0].content, /only a watch made from a room URL has/);
+});
+
+test('!ap catchup with a stale id does not fall back to the only watch', async (t) => {
+    await addWatch(['ZackWord']);
+    const reply = await catchupReply(t, { ok: true, baseline: true }, { args: ['catchup', '999'] });
+    assert.match(said(reply.msg), /No watch with ID 999/);
+    assert.strictEqual(reply.calls.length, 0);
+});
+
+test('!ap catchup is owner-gated', async (t) => {
+    const saved = config.ownerId;
+    config.ownerId = '999999999999999999';
+    t.after(() => { config.ownerId = saved; });
+
+    await addWatch(['ZackWord']);
+    const reply = await catchupReply(t, { ok: true, baseline: true });
+    assert.match(said(reply.msg), /Only the bot owner/);
+    assert.strictEqual(reply.calls.length, 0, 'nothing was run for a non-owner');
+});
+
+test('!ap catchup escapes the failure text and explains a restart', async (t) => {
+    const watch = await addWatch(['ZackWord']);
+    const failed = await catchupReply(t, { ok: false, reason: 'failed', detail: 'HTTP 502 from **tracker**' });
+    assert.ok(failed.final.includes('could not finish: HTTP 502 from \\*\\*tracker\\*\\*.'), failed.final);
+
+    const restarted = await catchupReply(t, { ok: false, reason: 'restarted', posted: 20 });
+    assert.ok(restarted.final.includes(`Watch #${watch.id} restarted partway through, after 20 line(s) posted`),
+        restarted.final);
+});
+
+test('!ap list shows the catch-up state and no dropped count', async () => {
+    await addWatch(['ZackWord']);
+    const msg = await run('list');
+    const value = msg.sent[0].embeds[0].data.fields[0].value;
+    assert.match(value, /\*\*Catch-up:\*\* not available \(host:port has no tracker\)/);
+    assert.match(value, /\*\*Relayed:\*\* 0 line\(s\)$/m);
+    assert.ok(!/dropped/.test(value), value);
+});
+
+// The list sat at 1,927 characters before catchup joined it, and Discord rejects a send over
+// 2,000 outright rather than truncating it.
+test('!ap help lists catchup and every message fits Discord\'s limit', async () => {
+    const msg = await run('help');
+    assert.ok(msg.sent.length >= 1);
+    for (const payload of msg.sent) {
+        assert.ok(payload.content.length <= 2000, `a help message is ${payload.content.length} characters`);
+        assert.deepStrictEqual(payload.allowedMentions, { parse: [] });
+    }
+    assert.match(said(msg), /ap catchup \[id\]/);
+});

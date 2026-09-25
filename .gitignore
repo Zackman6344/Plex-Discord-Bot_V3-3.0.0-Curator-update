@@ -14,6 +14,7 @@
 # archipelago_claims.json maps Discord user IDs to the slots they play.
 # archipelago_goals.json is the per-user goal tally, keyed by Discord user ID.
 # archipelago_roles.json holds the IDs of roles the bot created, per guild.
+# archipelago_catchup.json records which room log lines each watch has already posted.
 /data/config.overrides.json
 /data/logs/
 /data/archipelago_watches.json
@@ -21,6 +22,7 @@
 /data/archipelago_goals.json
 /data/archipelago_roles.json
 /data/archipelago_hints.json
+/data/archipelago_catchup.json
 /data/archipelago/
 /data/inferred_tags.json
 /data/recent_picks.json

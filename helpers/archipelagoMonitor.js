@@ -23,6 +23,7 @@ const HINT_PRIORITY = 30;
 const claims = require('./archipelagoClaims.js');
 const goals = require('./archipelagoGoals.js');
 const roles = require('./archipelagoRoles.js');
+const catchup = require('./archipelagoCatchup.js');
 const { ArchipelagoClient, parseTarget, stripAnsi, ITEM_FLAG_PROGRESSION, CATEGORY_GROUPS, DEFAULT_PORT } = require('./archipelagoClient.js');
 
 // Overridable so a test run can point at its own file, and so the store can be relocated.
@@ -31,20 +32,19 @@ const WATCH_FILE = process.env.PLEXBOT_AP_WATCHES_FILE || path.join(__dirname, '
 // commandLog.js and tagSidecar.js use. The real file holds a room password, and a test run has
 // no business reading or rewriting it.
 const usable = !process.env.NODE_TEST_CONTEXT || !!process.env.PLEXBOT_AP_WATCHES_FILE;
+// Overridable so the tests can use a flush window shorter than the one second a user can set.
+const relayTiming = { minFlushMs: 1000 };
 // Read per flush rather than captured at load, so the /config wizard's change to
 // archipelagoBatchSeconds applies to the next batch instead of the next boot.
 function flushDelayMs() {
-    return Math.max(1, Number(config.archipelagoBatchSeconds) || 5) * 1000;
+    return Math.max(relayTiming.minFlushMs, (Number(config.archipelagoBatchSeconds) || 5) * 1000);
 }
 // 1900 leaves room for the ``` fences inside Discord's 2000-character message limit.
 const MAX_CHUNK = 1900;
-const MAX_MESSAGES_PER_FLUSH = 3;
-const MAX_BUFFER_LINES = 500;
 // Pings are chunked to the message limit, like the log relay. 1900 leaves room for nothing in
 // particular here, but keeps the two paths using the same budget.
 const MAX_PING_CHARS = 1900;
 const MAX_PING_MESSAGES = 2;
-const MAX_PENDING_PINGS = 100;
 // A ping quotes a line the room composed, outside a code fence, so a player free to name
 // themselves `**` can otherwise reformat the message. discord.js owns the escaping rules and
 // covers cases a local regex did not, notably code blocks and headers.
@@ -55,6 +55,18 @@ const FILTER_GROUPS = Object.keys(CATEGORY_GROUPS);
 // The room described by config/config.js gets a reserved id. It is rebuilt from config rather
 // than stored in the watch file, so `!ap watch` rooms number from 1 and never collide with it.
 const CONFIG_WATCH_ID = 0;
+
+// Overridable so the tests can run a catch-up without waiting minutes. settleMs is the room
+// tracker's worst-case lag behind the socket: the room saves at most once a minute and the API
+// caches each answer for another minute, plus 10 s of margin.
+const catchupTiming = { settleMs: 130000, retryMs: 30000, loadingRetryMs: 10000 };
+// Six tries ten seconds apart give a slow room a minute to answer the goal and hint read that
+// follows each connect. Past that the periodic run picks it up.
+const MAX_LOADING_RETRIES = 6;
+// discord.js already retries rate limits and server errors itself, so a send that still fails is
+// a refusal, and one that repeats for the same line (AutoMod matching an item name) repeats
+// forever. Past this many, the line is recorded as reported and the log says it was skipped.
+const MAX_REFUSALS = 3;
 
 let discord = null;
 let savedWatchesLoaded = false;
@@ -139,22 +151,56 @@ function formatLine(text, date = new Date()) {
     return `[${hh}:${mm}] ${String(text).replace(/```/g, "'''")}`;
 }
 
-function chunkLines(lines, max = MAX_CHUNK) {
+/**
+ * Pack entries into messages of at most `max` characters, keeping each message's entries with it
+ * so a successful send can record exactly the lines it carried.
+ * @param {Array<{text: string}>} entries
+ * @returns {Array<{text: string, entries: Array}>}
+ */
+function chunkEntries(entries, max = MAX_CHUNK) {
     const chunks = [];
-    let current = '';
-    for (const raw of lines) {
+    let current = null;
+    for (const entry of entries) {
+        const raw = String(entry.text);
         const line = raw.length > max ? `${raw.substring(0, max - 1)}…` : raw;
-        if (!current) {
-            current = line;
-        } else if (current.length + 1 + line.length > max) {
+        if (!current || !current.text) {
+            current = { text: line, entries: current ? [...current.entries, entry] : [entry] };
+        } else if (current.text.length + 1 + line.length > max) {
             chunks.push(current);
-            current = line;
+            current = { text: line, entries: [entry] };
         } else {
-            current += `\n${line}`;
+            current.text += `\n${line}`;
+            current.entries.push(entry);
         }
     }
-    if (current) chunks.push(current);
+    if (current && current.text) chunks.push(current);
     return chunks;
+}
+
+/**
+ * chunkEntries, except that an entry Discord has refused before goes in a message of its own.
+ * A refusal aimed at one line (AutoMod matching an item name) takes down every line packed with
+ * it, and a retry that packed them the same way would fail them all again.
+ * @param {Array<{text: string, key?: string, seed?: string}>} entries
+ * @param {Map<string, number>} refusals keyed by owedTag
+ */
+function chunkForRetry(entries, refusals, max = MAX_CHUNK) {
+    const chunks = [];
+    let run = [];
+    for (const entry of entries) {
+        if (entry.key && refusals.has(owedTag(entry.seed, entry.key))) {
+            chunks.push(...chunkEntries(run, max), ...chunkEntries([entry], max));
+            run = [];
+        } else {
+            run.push(entry);
+        }
+    }
+    chunks.push(...chunkEntries(run, max));
+    return chunks;
+}
+
+function chunkLines(lines, max = MAX_CHUNK) {
+    return chunkEntries(lines.map(text => ({ text })), max).map(chunk => chunk.text);
 }
 
 function shouldRelay(watch, line) {
@@ -204,121 +250,261 @@ async function resolveChannel(state) {
 }
 
 /**
+ * Send one message to the watch's channel.
+ * Only ever called from inside a serial task (see runSerial), so nothing a watch posts can land
+ * between the blocks of another burst.
  * @param {string[]} [mentionUsers] user ids allowed to be pinged by this message. Everything
  *   else stays suppressed: `parse: []` blocks every category, and an explicit users list is the
  *   only thing that gets through it.
+ * @returns {Promise<boolean>} whether Discord accepted it. Lines are recorded as reported only
+ *   on true, which is what lets a catch-up repost whatever a failed send lost.
  */
-async function post(state, content, mentionUsers = null) {
+async function send(state, content, mentionUsers = null) {
     const channel = await resolveChannel(state);
-    if (!channel || typeof channel.send !== 'function') return;
+    if (!channel || typeof channel.send !== 'function') return false;
     try {
         const allowedMentions = mentionUsers && mentionUsers.length
             ? { parse: [], users: mentionUsers }
             : { parse: [] };
         await channel.send({ content, allowedMentions });
+        return true;
     } catch (err) {
         logger.warn(`[AP:${state.watch.label}] post failed:`, err.message);
         state.channel = null;
+        return false;
     }
 }
 
-// One message per flush, mentions deduped. Posted after the log block rather than inside it:
-// a mention inside a code fence renders as literal text and notifies nobody.
+// --- the per-watch pipeline ---------------------------------------------------------------
 //
-// Grouped by claimant rather than by item. The cap used to be applied to events, so a flush
-// carrying items for more than MAX_PING_LINES slots rendered only the first few and silently
-// dropped the rest — their ids were still in the mention whitelist, but with no `<@id>` in the
-// content Discord notified nobody, which is the one thing a claim exists to do. Whoever is past
-// the detail cap now still gets a mention on the trailing line.
-async function flushPings(state) {
-    const pending = state.pings.splice(0, state.pings.length);
-    if (pending.length === 0) return;
+// One promise chain per watch id, and every post for that watch runs on it as a task: a flush,
+// a catch-up, the connection and refusal notices, hint pings. Two flushes used to interleave
+// (reproduced: a second burst's block landed between the first burst's blocks once one flush
+// took longer than the batch window), and a relay with no message cap makes long flushes routine.
+//
+// Keyed by watch id rather than held on the state, because restartWatch replaces the state. Old
+// and new states each had their own chain, so a flush still sending on the old one ran alongside
+// the new state's catch-up and both posted the same lines. The buffer lives here for the same
+// reason, which also stops a restart throwing away chat and joins that were waiting to post.
+const pipelines = new Map();
 
-    // One line per item, so somebody holding several slots still sees which of them moved.
-    // Grouping by claimant instead showed only their first item and dropped the rest silently.
-    const lines = pending.map(p => `<@${p.userId}> \`${p.slot.replace(/`/g, "'")}\` — ${p.text}`);
+function pipelineFor(id) {
+    let pipeline = pipelines.get(id);
+    if (!pipeline) {
+        pipeline = { chain: Promise.resolve(), buffer: [], timer: null, flight: null, refusals: new Map(), owed: new Set() };
+        pipelines.set(id, pipeline);
+    }
+    return pipeline;
+}
 
-    // Packed to the message limit and sent as however many messages that takes, using the same
-    // chunker the log relay uses. A single message assembled without a length bound is rejected
-    // outright once it passes 2000 characters, and post() swallows that, so on a busy flush
-    // NOBODY was notified — worse than the partial drop this code replaced.
-    const chunks = chunkLines(lines, MAX_PING_CHARS);
-    const send = chunks.slice(0, MAX_PING_MESSAGES);
+// Only when the user asked for the watch to stop. Every task compares its pipeline with the map
+// before each send, so a flood already under way ends at its next message.
+function dropPipeline(id) {
+    const pipeline = pipelines.get(id);
+    if (!pipeline) return;
+    if (pipeline.timer) clearTimeout(pipeline.timer);
+    pipeline.timer = null;
+    pipeline.buffer.length = 0;
+    pipelines.delete(id);
+}
 
-    for (const chunk of send) {
-        const ids = [...new Set(pending.map(p => p.userId))].filter(id => chunk.includes(`<@${id}>`));
-        await post(state, chunk, ids);
+/**
+ * Queue a task behind everything already on this watch's chain.
+ * @returns {Promise<*>} the task's result, or undefined if it threw (the error is logged)
+ */
+function runSerial(pipeline, fn, label = '?', what = 'task') {
+    pipeline.chain = pipeline.chain.then(fn).catch((err) => {
+        logger.error(`[AP:${label}] ${what} threw:`, (err && err.message) || err);
+        return undefined;
+    });
+    return pipeline.chain;
+}
+
+function isCurrent(state) {
+    const id = state.watch.id;
+    return pipelines.get(id) === state.pipeline && states.get(id) === state;
+}
+
+/** A send for a task tied to one state: a notice or a hint ping from a replaced state is stale. */
+async function sendIfCurrent(state, content, mentionUsers = null) {
+    if (!isCurrent(state)) return false;
+    return send(state, content, mentionUsers);
+}
+
+/** Slots finished on this connection's team, for the record's skip-goaled snapshot. */
+function finishedSlots(client) {
+    const prefix = `${client.team}:`;
+    const out = new Set();
+    for (const id of [...client.goaled, ...client.released, ...client.fullyChecked]) {
+        if (String(id).startsWith(prefix)) out.add(Number(String(id).slice(prefix.length)));
+    }
+    return out;
+}
+
+/**
+ * Add whatever has finished since to the record's skip-goaled snapshot. Committed only: the next
+ * persist or the exit hook writes it, so a goal or a status read costs no write of its own.
+ */
+function noteFinished(state) {
+    const seed = state.client.seedName;
+    // Only while connected. A tracker poll during a socket outage would otherwise add a slot that
+    // finished inside the outage, and that outage's catch-up would then hide the items it was sent
+    // before it finished.
+    if (!seed || state.status !== 'connected' || !isCurrent(state)) return;
+    catchup.commit(state.watch.id, seed, [], { finished: finishedSlots(state.client) });
+}
+
+/**
+ * The catch-up identity of a live line, or null for a line the tracker cannot rebuild (chat,
+ * joins, deaths, cheats, the bot's own presence).
+ */
+function lineKey(client, line) {
+    const packet = line && line.packet;
+    if (!packet || line.self) return null;
+    if (line.type === 'ItemSend' && packet.item) {
+        const location = Number(packet.item.location);
+        return location > 0 ? catchup.itemKey(packet.item.player, location) : null;
+    }
+    if (line.type === 'Goal' && typeof packet.slot === 'number') {
+        return (packet.team || 0) === client.team ? catchup.goalKey(packet.slot) : null;
+    }
+    if (line.type === 'Hint' && packet.item && typeof packet.item.location === 'number') {
+        return catchup.hintKey(packet.item.player, packet.item.location);
+    }
+    return null;
+}
+
+/** Record the keys of entries Discord accepted, each against the room it arrived from. */
+function commitPosted(id, client, entries) {
+    const postedAt = new Date().toISOString();
+    const bySeed = new Map();
+    for (const entry of entries) {
+        if (!entry.seed) continue;
+        if (!bySeed.has(entry.seed)) bySeed.set(entry.seed, []);
+        if (entry.key) bySeed.get(entry.seed).push(entry.key);
+    }
+    for (const [seed, keys] of bySeed) {
+        catchup.commit(id, seed, keys, {
+            postedAt,
+            finished: seed === client.seedName ? finishedSlots(client) : undefined
+        });
+    }
+}
+
+// Mentions deduped and posted after the log block rather than inside it: a mention inside a code
+// fence renders as literal text and notifies nobody.
+//
+// Packed to the message limit and sent as however many messages that takes, using the same
+// chunker the log relay uses. A single message assembled without a length bound is rejected
+// outright once it passes 2000 characters, and on a busy flush NOBODY was notified.
+async function sendPingLines(state, pipeline, pings) {
+    if (pings.length === 0) return;
+    const id = state.watch.id;
+    const chunks = chunkLines(pings.map(p => p.line), MAX_PING_CHARS);
+    const sendNow = chunks.slice(0, MAX_PING_MESSAGES);
+    const everyone = [...new Set(pings.map(p => p.userId))];
+
+    for (const chunk of sendNow) {
+        if (pipelines.get(id) !== pipeline) return;
+        await send(state, chunk, everyone.filter(uid => chunk.includes(`<@${uid}>`)));
     }
 
     // Anyone whose line did not make the cut still needs a mention, or their claim did nothing
     // at all. Their ids being in allowedMentions is not enough: with no `<@id>` in the content
     // Discord notifies nobody.
-    const missed = [...new Set(pending.map(p => p.userId))]
-        .filter(id => !send.some(chunk => chunk.includes(`<@${id}>`)));
-    if (missed.length > 0) {
-        await post(state, `…and more items for ${missed.map(id => `<@${id}>`).join(' ')}`, missed);
+    const missed = everyone.filter(uid => !sendNow.some(chunk => chunk.includes(`<@${uid}>`)));
+    if (missed.length > 0 && pipelines.get(id) === pipeline) {
+        await send(state, `…and more items for ${missed.map(uid => `<@${uid}>`).join(' ')}`, missed);
     }
 }
 
-async function flush(state) {
-    state.timer = null;
-    if (state.buffer.length === 0) {
-        await flushPings(state);
-        return;
-    }
+/**
+ * Post everything buffered for a watch, as one task.
+ *
+ * The buffer is taken when the task STARTS, not when its timer fired, so lines that arrived while
+ * an earlier task was sending go out in this one instead of in a task of their own. There is no
+ * message cap: the user wants every line, and discord.js paces the sends to the channel limit.
+ */
+async function flushTask(id, pipeline) {
+    if (pipelines.get(id) !== pipeline) return;
+    const state = states.get(id);
+    if (!state || pipeline.buffer.length === 0) return;
 
-    const lines = state.buffer.splice(0, state.buffer.length);
-    let chunks = chunkLines(lines);
-    let trimmed = 0;
-    if (chunks.length > MAX_MESSAGES_PER_FLUSH) {
-        trimmed = chunks.length - MAX_MESSAGES_PER_FLUSH;
-        chunks = chunks.slice(0, MAX_MESSAGES_PER_FLUSH);
+    // Checked again here as well as on arrival: a catch-up that ran while these waited may have
+    // posted the same send from the tracker.
+    const entries = pipeline.buffer.splice(0, pipeline.buffer.length)
+        .filter(e => !(e.dedupe && e.key && e.seed && catchup.has(id, e.seed, e.key)));
+    if (entries.length === 0) return;
+
+    if (!(await resolveChannel(state))) {
+        noteOwed(pipeline, entries);
+        noteCatchupFailure(state, 'could not post to the channel');
+        retryRefusedPost(id);
+        return;
     }
 
     // An ```ansi fence is what makes Discord honour the colour codes; a plain fence would show
     // them as literal escape text.
     const fence = state.watch.color ? 'ansi' : '';
-    for (const chunk of chunks) {
-        await post(state, `\`\`\`${fence}\n${chunk}\n\`\`\``);
+    const sent = [];
+    let failed = false;
+    for (const chunk of chunkEntries(entries)) {
+        if (pipelines.get(id) !== pipeline) return;
+        const ok = await send(state, `\`\`\`${fence}\n${chunk.text}\n\`\`\``);
+        // Removed while that send was in flight. Its records are already forgotten, and writing
+        // this chunk's keys would bring them back under a watch id that can be handed out again.
+        if (pipelines.get(id) !== pipeline) return;
+        if (!ok) {
+            // Carry on with the rest: the chat and joins in later chunks cannot be rebuilt by a
+            // catch-up, and the keyed lines in this one can.
+            failed = true;
+            noteRefused(pipeline, chunk.entries);
+            continue;
+        }
+        const owner = states.get(id) || state;
+        owner.lineCount += chunk.entries.length;
+        commitPosted(id, owner.client, chunk.entries);
+        catchup.persist();
+        noteAccepted(pipeline, chunk.entries);
+        sent.push(...chunk.entries);
     }
-    if (trimmed > 0) {
-        await post(state, `…${trimmed} further block(s) of log trimmed to keep the channel readable.`);
+    const current = states.get(id) || state;
+    if (failed) {
+        noteCatchupFailure(current, 'could not post to the channel');
+        retryRefusedPost(id);
+    } else if (pipeline.owed.size === 0) {
+        current.postFailures = 0;
     }
 
-    await flushPings(state);
+    // Only for lines that actually posted, so a ping never arrives before its own line.
+    await sendPingLines(state, pipeline, sent.filter(e => e.ping).map(e => e.ping));
+    catchup.persist();
 }
 
 /**
- * Queue a ping for whoever claimed the slot this line is addressed to.
- * Called after enqueue(), so the flush timer it relies on is already running.
+ * The ping this line earns its slot's claimant, or null.
+ * One line per item, so somebody holding several slots still sees which of them moved.
  */
-function notePing(state, line) {
-    if (typeof line.receiving !== 'number') return;
+function pingFor(state, line) {
+    if (typeof line.receiving !== 'number') return null;
     const slot = state.client.slotNameFor(line.receiving);
-    if (!slot) return;
+    if (!slot) return null;
 
     const claim = claims.find(state.watch.id, slot);
-    if (!shouldPing(claim, line)) return;
-
-    if (state.pings.length >= MAX_PENDING_PINGS) return;
-    state.pings.push({
-        userId: claim.userId,
-        slot,
-        text: escapeMarkdown(stripAnsi(line.text)).substring(0, 200)
-    });
+    if (!shouldPing(claim, line)) return null;
+    const text = escapeMarkdown(stripAnsi(line.text)).substring(0, 200);
+    return { userId: claim.userId, line: `<@${claim.userId}> \`${slot.replace(/`/g, "'")}\` — ${text}` };
 }
 
-function enqueue(state, text) {
-    state.buffer.push(formatLine(text));
-    state.lineCount++;
-    if (state.buffer.length > MAX_BUFFER_LINES) {
-        const overflow = state.buffer.length - MAX_BUFFER_LINES;
-        state.buffer.splice(0, overflow);
-        state.droppedLines += overflow;
-    }
-    if (!state.timer) {
-        state.timer = setTimeout(() => {
-            flush(state).catch(err => logger.error(`[AP:${state.watch.label}] flush threw:`, err.message || err));
+function enqueue(state, entry) {
+    const pipeline = state.pipeline;
+    const id = state.watch.id;
+    const label = state.watch.label;
+    pipeline.buffer.push(entry);
+    if (!pipeline.timer) {
+        pipeline.timer = setTimeout(() => {
+            pipeline.timer = null;
+            runSerial(pipeline, () => flushTask(id, pipeline), label, 'flush');
         }, flushDelayMs());
     }
 }
@@ -347,6 +533,9 @@ function connectionNotice(state, phase, detail) {
  * Off for everyone until they say otherwise. Opting in is per claim, `off`/`dm`/`channel`.
  */
 async function announceHints(state) {
+    // Queued behind whatever was sending, so a restart can land first. Recording the hint now would
+    // leave the replacement state, whose own 'hints' event replays it, nothing fresh to announce.
+    if (!isCurrent(state)) return;
     const client = state.client;
     const seed = client.seedName || describeTarget(state.watch.target);
     const outstanding = client.outstandingHints();
@@ -389,7 +578,7 @@ async function announceHints(state) {
             `— it is at ${escapeMarkdown(where)}${priority}.`;
 
         if (mode === 'dm') await dmClaimant(state, claim.userId, body);
-        else await post(state, `<@${claim.userId}> ${body}`, [claim.userId]);
+        else await sendIfCurrent(state, `<@${claim.userId}> ${body}`, [claim.userId]);
     }
 }
 
@@ -415,28 +604,51 @@ function attach(state) {
         // Ahead of the relay filter on purpose: a goal still counts towards the tally when the
         // goals category is switched off for this channel.
         if (line.type === 'Goal') syncGoalsAndRoles(state);
-        if (!shouldRelay(watch, line)) return;
-        enqueue(state, line.text);
-        notePing(state, line);
+        if (line.type === 'Goal' || line.type === 'Release') noteFinished(state);
+
+        const seed = client.seedName || null;
+        const key = seed ? lineKey(client, line) : null;
+        // A send or goal a catch-up already posted from the tracker. Hint lines are exempt: the
+        // server re-sends a hint whenever somebody asks for it again, and live relays each one.
+        const dedupe = line.type === 'ItemSend' || line.type === 'Goal';
+        if (key && dedupe && catchup.has(watch.id, seed, key)) return;
+
+        if (!shouldRelay(watch, line)) {
+            // Recorded now, so switching the filter off later does not make a catch-up dump every
+            // line it hid.
+            if (key) {
+                catchup.commit(watch.id, seed, [key]);
+                noteFinished(state);
+            }
+            return;
+        }
+        enqueue(state, { text: formatLine(line.text), key, seed, dedupe, ping: pingFor(state, line) });
     });
 
     // Goals that happened before the bot connected arrive here, not on 'connected' — the goal
     // set is empty until the server answers the status Get.
-    client.on('statuses', () => syncGoalsAndRoles(state));
+    client.on('statuses', () => {
+        syncGoalsAndRoles(state);
+        noteFinished(state);
+    });
 
     client.on('hints', () => {
-        announceHints(state).catch(err =>
-            logger.error(`[AP:${watch.label}] hint announce threw:`, err.message || err));
+        runSerial(state.pipeline, () => announceHints(state), watch.label, 'hint announce');
     });
 
     client.on('status', ({ state: phase, detail, expected }) => {
         state.status = phase;
         state.detail = detail;
-        if (phase === 'connected') state.connectedAt = Date.now();
+        if (phase === 'connected') {
+            state.connectedAt = Date.now();
+            snapshotGap(state);
+            state.loadingRetries = 0;
+            scheduleSettledCatchUp(state, catchupTiming.settleMs);
+        }
 
         const notice = connectionNotice(state, phase, detail);
         if (phase === 'connected') state.announcedConnected = true;
-        if (notice) post(state, notice);
+        if (notice) runSerial(state.pipeline, () => sendIfCurrent(state, notice), watch.label, 'notice');
 
         if (phase === 'connected') {
             logger.info(`[AP:${watch.label}] connected to ${detail} as ${watch.slot}`);
@@ -458,10 +670,14 @@ function attach(state) {
         // the room page each time, which is the request that wakes a sleeping hosted room.
         if (state.pollTimer) clearInterval(state.pollTimer);
         state.pollTimer = null;
+        // The catch-up poll has the same failure mode: it re-reads the room page until trackerUrl
+        // is known.
+        clearCatchupTimers(state);
         persist();
         logger.error(`[AP:${watch.label}] connection refused: ${reason}`);
-        post(state, `🔴 **${watch.label}** — the server refused the connection (\`${reason}\`). ` +
-            `Watch paused; fix it and run \`${config.commandPrefix}ap retry ${watch.id}\`.`);
+        const notice = `🔴 **${watch.label}** — the server refused the connection (\`${reason}\`). ` +
+            `Watch paused; fix it and run \`${config.commandPrefix}ap retry ${watch.id}\`.`;
+        runSerial(state.pipeline, () => sendIfCurrent(state, notice), watch.label, 'refusal notice');
     });
 }
 
@@ -479,17 +695,29 @@ function makeState(watch) {
         watch,
         client,
         channel: null,
-        buffer: [],
-        pings: [],
-        timer: null,
+        pipeline: pipelineFor(watch.id),
         pollTimer: null,
         trackerUrl: null,
         status: 'idle',
         detail: null,
         connectedAt: null,
+        // Lines Discord accepted, live and caught up.
         lineCount: 0,
-        droppedLines: 0,
-        announcedConnected: false
+        announcedConnected: false,
+        connectTimer: null,
+        retryTimer: null,
+        catchupPoll: null,
+        loadingRetries: 0,
+        gapSince: null,
+        gapFinished: new Set(),
+        gapHeaderUsed: false,
+        // Refused posts since the last one Discord accepted, for the retry's backoff.
+        postFailures: 0,
+        // The next automatic run posts even with archipelagoCatchup off: it is retrying lines a
+        // refused send already tried to post.
+        forceNext: false,
+        // Epoch ms throughout, for `!ap list`.
+        catchupStatus: { lastRunAt: null, lastPosted: 0, lastError: null, failingSince: null }
     };
     attach(state);
     return state;
@@ -515,6 +743,7 @@ async function pollCompletion(state) {
         // The tracker id is stable for the life of the room, so it is resolved once.
         state.trackerUrl = result.trackerUrl;
         state.client.fullyChecked = result.fullyChecked;
+        noteFinished(state);
         logger.debug(`[AP:${watch.label}] tracker: ${result.fullyChecked.size}/${result.rows.length} slots fully checked`);
     } catch (err) {
         // Never fatal: the relay keeps working, the filter just falls back to goals and releases.
@@ -530,23 +759,576 @@ function startCompletionPoll(state) {
     state.pollTimer = setInterval(() => pollCompletion(state), trackerPollMs());
 }
 
+// --- room log catch-up --------------------------------------------------------------------
+//
+// After a reconnect, a restart, or a failed send, the lines the channel missed are rebuilt from
+// the room's tracker and posted (see helpers/archipelagoCatchup.js for what can be rebuilt).
+
+// Unref'd so a watch left running by a test, or by a shutdown that skips stopWatch, cannot hold
+// the process open for the two minutes a settle timer waits.
+function later(fn, ms) {
+    const timer = setTimeout(fn, Math.max(0, ms));
+    if (timer.unref) timer.unref();
+    return timer;
+}
+
+function isRoomWatch(watch) {
+    return !!(watch && watch.target && watch.target.kind === 'room');
+}
+
+function clearCatchupTimers(state) {
+    if (state.connectTimer) clearTimeout(state.connectTimer);
+    if (state.retryTimer) clearTimeout(state.retryTimer);
+    if (state.catchupPoll) clearInterval(state.catchupPoll);
+    state.connectTimer = null;
+    state.retryTimer = null;
+    state.catchupPoll = null;
+}
+
+/**
+ * Run an automatic catch-up for this state, if it is still the watch's current one, and act on a
+ * "not yet" answer.
+ */
+function autoCatchUp(state, { settled = false } = {}) {
+    const id = state.watch.id;
+    if (states.get(id) !== state) return;
+    // A tracker read this soon after connecting can predate lines the room already has, and the
+    // run scheduled for the end of the settle window follows anyway.
+    if (!settled && state.connectedAt && Date.now() < state.connectedAt + catchupTiming.settleMs) return;
+    const force = state.forceNext;
+    state.forceNext = false;
+    catchUp(id, { force }).then((result) => {
+        if (force && !(result && result.ok)) {
+            const current = states.get(id);
+            if (current) current.forceNext = true;
+        }
+        if (states.get(id) !== state || !result) return;
+        if (result.ok) {
+            // A timer can fire a millisecond early, and this run was the settled one.
+            if (result.settlingUntil) scheduleSettledCatchUp(state, result.settlingUntil - Date.now());
+            return;
+        }
+        if (result.reason === 'loading' && state.loadingRetries < MAX_LOADING_RETRIES) {
+            state.loadingRetries++;
+            scheduleCatchupRetry(id, catchupTiming.loadingRetryMs, { force });
+        } else if (result.reason === 'settling') {
+            scheduleSettledCatchUp(state, result.at - Date.now());
+        }
+    }).catch(err => logger.error(`[AP:${state.watch.label}] catch-up threw:`, err.message || err));
+}
+
+function scheduleSettledCatchUp(state, delayMs) {
+    if (state.connectTimer) clearTimeout(state.connectTimer);
+    state.connectTimer = null;
+    if (!isRoomWatch(state.watch)) return;
+    state.connectTimer = later(() => {
+        state.connectTimer = null;
+        autoCatchUp(state, { settled: true });
+    }, delayMs);
+}
+
+/**
+ * One catch-up soon, coalesced with any already pending. For failed sends and slow room reads.
+ * @param {Object} [options]
+ * @param {boolean} [options.force] post even with archipelagoCatchup off; also upgrades a retry
+ *   that is already pending
+ */
+function scheduleCatchupRetry(id, delayMs = catchupTiming.retryMs, { force = false } = {}) {
+    const state = states.get(id);
+    if (!state || state.watch.paused || !isRoomWatch(state.watch)) return;
+    if (force) state.forceNext = true;
+    if (state.retryTimer) return;
+    state.retryTimer = later(() => {
+        state.retryTimer = null;
+        autoCatchUp(state);
+    }, delayMs);
+}
+
+// Keys carry no seed, and a pipeline outlives a /config re-point, so the room is part of the tag:
+// another seed of the same game reuses the same location ids.
+function owedTag(seed, key) {
+    return `${seed}\u0000${key}`;
+}
+
+// Lines that were due in the channel and did not get there. The tracker can take two minutes to
+// show one, so a retry 30 seconds after the refusal can find nothing; the line stays owed and is
+// retried again rather than waiting for the poll, and with archipelagoCatchup off an unforced run
+// posts it instead of recording it silently.
+function noteOwed(pipeline, entries) {
+    for (const entry of entries) {
+        if (entry.key && entry.seed) pipeline.owed.add(owedTag(entry.seed, entry.key));
+    }
+}
+
+// Counted per line rather than per message, because a retry repacks the lines into new messages.
+function noteRefused(pipeline, entries) {
+    noteOwed(pipeline, entries);
+    for (const entry of entries) {
+        if (!entry.key || !entry.seed) continue;
+        const tag = owedTag(entry.seed, entry.key);
+        pipeline.refusals.set(tag, (pipeline.refusals.get(tag) || 0) + 1);
+    }
+}
+
+function noteAccepted(pipeline, entries) {
+    for (const entry of entries) {
+        if (!entry.key || !entry.seed) continue;
+        const tag = owedTag(entry.seed, entry.key);
+        pipeline.refusals.delete(tag);
+        pipeline.owed.delete(tag);
+    }
+}
+
+/**
+ * Drop owed lines that have since been recorded, however that happened, and retry if any of this
+ * room's are still outstanding.
+ * @returns {boolean} whether a retry was scheduled
+ */
+function settleOwed(id, pipeline, seed) {
+    let outstanding = false;
+    const prefix = `${seed}\u0000`;
+    for (const tag of pipeline.owed) {
+        // Owed to a room this watch no longer follows. Its tracker is not the one being read.
+        if (!tag.startsWith(prefix)) pipeline.owed.delete(tag);
+        else if (catchup.has(id, seed, tag.slice(prefix.length))) pipeline.owed.delete(tag);
+        else outstanding = true;
+    }
+    if (outstanding) retryRefusedPost(id);
+    return outstanding;
+}
+
+// Doubles with each attempt that ends with something refused, up to the tracker poll interval.
+// A channel the bot has lost refuses every retry, and each retry downloads the whole tracker; at a
+// flat 30 seconds that was about 2,880 downloads a day per watch. Only an attempt that posts
+// everything resets it: a channel that accepts the header but refuses one block (AutoMod matching
+// an item name) otherwise stayed at 30 seconds and posted a fresh header every time.
+function retryRefusedPost(id) {
+    const state = states.get(id);
+    if (!state) return;
+    const arming = !state.retryTimer;
+    const delay = Math.min(catchupTiming.retryMs * 2 ** state.postFailures, trackerPollMs());
+    scheduleCatchupRetry(id, delay, { force: true });
+    if (arming && state.retryTimer) state.postFailures++;
+}
+
+// The safety net for anything the post-connect run could not see yet: the tracker's snapshot can
+// lag the room by up to two minutes, and a send can fail with nobody reconnecting afterwards.
+function startCatchupPoll(state) {
+    if (state.catchupPoll || state.watch.paused || !isRoomWatch(state.watch)) return;
+    state.catchupPoll = setInterval(() => autoCatchUp(state), trackerPollMs());
+    if (state.catchupPoll.unref) state.catchupPoll.unref();
+}
+
+// Taken before anything of the new connection posts. A live flush a few seconds after connecting
+// moves lastPostedAt to "now", and the header would then say the room was missed since a moment
+// ago on nearly every restart of an active room.
+function snapshotGap(state) {
+    const seed = state.client.seedName;
+    const rec = seed ? catchup.record(state.watch.id, seed) : null;
+    state.gapSince = rec ? rec.lastPostedAt : null;
+    state.gapFinished = rec ? new Set(rec.finished) : new Set();
+    state.gapHeaderUsed = false;
+}
+
+function noteCatchupSuccess(state, posted) {
+    const status = state.catchupStatus;
+    if (status.failingSince) {
+        logger.info(`[AP:${state.watch.label}] catch-up is working again`);
+    }
+    status.lastRunAt = Date.now();
+    status.lastPosted = posted;
+    status.lastError = null;
+    status.failingSince = null;
+}
+
+// Warn once when it starts failing and say so when it recovers. The periodic run would otherwise
+// repeat the same warning every poll for as long as a room stays expired.
+function noteCatchupFailure(state, detail) {
+    const status = state.catchupStatus;
+    if (!status.failingSince) {
+        status.failingSince = Date.now();
+        logger.warn(`[AP:${state.watch.label}] catch-up failing: ${detail}`);
+    }
+    status.lastError = detail;
+}
+
+/** Why a catch-up cannot run right now, without fetching anything. */
+function catchupGate(id) {
+    const state = states.get(id);
+    if (!state) return { ok: false, reason: 'no-watch' };
+    if (!isRoomWatch(state.watch)) return { ok: false, reason: 'not-a-room' };
+    if (state.watch.paused || state.status !== 'connected') return { ok: false, reason: 'not-connected' };
+    if (!state.client.seedName) return { ok: false, reason: 'no-seed' };
+    if (!state.client.roomStateReadAt) return { ok: false, reason: 'loading' };
+    return { ok: true, state };
+}
+
+function newRun(manual, force) {
+    const run = { manual: !!manual, force: !!force, onPlans: [], plan: null, fetchStartedAt: null };
+    run.promise = new Promise((resolve) => { run.resolve = resolve; });
+    return run;
+}
+
+function joinRun(run, manual, force, onPlan) {
+    if (manual) run.manual = true;
+    if (force) run.force = true;
+    if (typeof onPlan !== 'function') return;
+    if (run.plan) callPlan(onPlan, run.plan);
+    else run.onPlans.push(onPlan);
+}
+
+function callPlan(onPlan, plan) {
+    try {
+        onPlan(plan);
+    } catch (err) {
+        logger.warn('[AP] catch-up plan callback threw:', err.message || err);
+    }
+}
+
+function startRun(id, pipeline, flight, run) {
+    flight.running = run;
+    executeRun(id, pipeline, run)
+        .catch(err => ({ ok: false, reason: 'failed', detail: (err && err.message) || String(err) }))
+        .then((result) => {
+            // Somebody asked for these lines to be posted, so the replacement state's first run
+            // posts the rest even with archipelagoCatchup off.
+            if (result && result.reason === 'restarted' && (run.manual || run.force) && pipelines.get(id) === pipeline) {
+                const current = states.get(id);
+                if (current) current.forceNext = true;
+            }
+            run.resolve(result);
+            if (flight.running === run) flight.running = null;
+            const next = flight.rerun;
+            flight.rerun = null;
+            if (!next) return;
+            if (pipelines.get(id) === pipeline) startRun(id, pipeline, flight, next);
+            else next.resolve({ ok: false, reason: 'no-watch' });
+        });
+}
+
+/**
+ * Post the lines this watch's channel missed, rebuilt from the room tracker.
+ *
+ * One run per watch at a time. A request made while a run is going joins it only if that run's
+ * tracker read started after the request; otherwise one more run follows the current one, since
+ * a read taken earlier cannot contain what the caller is asking about.
+ *
+ * Automatic runs (manual false) post nothing when config.archipelagoCatchup is false: they
+ * record what they find as reported instead, so turning it back on does not dump a backlog. A
+ * run that retries a refused send is the exception, since those lines were already being posted.
+ *
+ * @param {number} id
+ * @param {Object} [options]
+ * @param {boolean} [options.manual] the `!ap catchup` command; posts whatever the setting says
+ * @param {boolean} [options.force] an automatic run that posts whatever the setting says
+ * @param {(plan: {missed: number, hidden: number}) => void} [options.onPlan] called once the diff
+ *   is known and before anything is posted, so a command can reply while a long catch-up is still
+ *   sending. Not called for a baseline, a silent run or any not-ok result.
+ * @returns {Promise<Object>} one of:
+ *   {ok: false, reason: 'no-watch'|'not-a-room'|'not-connected'|'no-seed'|'loading'}
+ *   {ok: false, reason: 'settling', at}   first sight, room read too soon after connecting; `at`
+ *     is epoch ms when a baseline becomes possible
+ *   {ok: false, reason: 'failed', detail}
+ *   {ok: false, reason: 'restarted', posted}   the watch was restarted or removed mid-run
+ *   {ok: true, baseline: true}   first sight: recorded silently, nothing posted
+ *   {ok: true, silent: true, missed, posted: 0, hidden, channelId}
+ *   {ok: true, missed, posted, hidden, channelId, gapSince, seededAt, settlingUntil?}   hidden is a
+ *     count; gapSince is the ISO time of the last post before this connection, only on the first
+ *     run of a connection (null after that or when nothing had ever posted); settlingUntil, epoch
+ *     ms, is set when the tracker was read inside the settle window and may not show everything
+ *     yet, with another run due then
+ */
+function catchUp(id, { manual = false, force = false, onPlan = null } = {}) {
+    const requestedAt = Date.now();
+    const gate = catchupGate(id);
+    if (!gate.ok) return Promise.resolve(gate);
+
+    const pipeline = gate.state.pipeline;
+    const flight = pipeline.flight || (pipeline.flight = { running: null, rerun: null });
+    const running = flight.running;
+    if (running && (running.fetchStartedAt === null || running.fetchStartedAt >= requestedAt)) {
+        joinRun(running, manual, force, onPlan);
+        return running.promise;
+    }
+    if (running) {
+        if (!flight.rerun) flight.rerun = newRun(false, false);
+        joinRun(flight.rerun, manual, force, onPlan);
+        return flight.rerun.promise;
+    }
+    const run = newRun(manual, force);
+    joinRun(run, false, false, onPlan);
+    startRun(id, pipeline, flight, run);
+    return run.promise;
+}
+
+async function executeRun(id, pipeline, run) {
+    const gate = catchupGate(id);
+    if (!gate.ok) return gate;
+    const state = gate.state;
+    if (state.pipeline !== pipeline) return { ok: false, reason: 'no-watch' };
+
+    // Read outside the chain: a tracker that takes its full 30 s timeout must not hold up the
+    // live feed behind it.
+    let data;
+    try {
+        const trackerId = await resolveTrackerId(state);
+        if (!trackerId) throw new Error('no tracker linked from the room page');
+        run.fetchStartedAt = Date.now();
+        data = await tracker.readTrackerData(trackerId, { origin: new URL(state.watch.target.roomUrl).origin });
+    } catch (err) {
+        const detail = (err && err.message) || String(err);
+        noteCatchupFailure(state, detail);
+        return { ok: false, reason: 'failed', detail };
+    }
+
+    const result = await runSerial(pipeline, () => catchUpTask(id, pipeline, state, run, data),
+        state.watch.label, 'catch-up');
+    return result || { ok: false, reason: 'failed', detail: 'the catch-up threw; see the bot log' };
+}
+
+function stillCurrent(id, pipeline, state) {
+    return pipelines.get(id) === pipeline && states.get(id) === state;
+}
+
+async function catchUpTask(id, pipeline, state, run, data) {
+    if (!stillCurrent(id, pipeline, state)) return { ok: false, reason: 'restarted', posted: 0 };
+    let gate = catchupGate(id);
+    if (!gate.ok) return gate;
+
+    // Every frame the socket has already delivered is relayed, buffered or filtered once this
+    // settles, so nothing the live feed holds can also be counted as missed. Read fresh: the
+    // chain it names moves on with every packet.
+    await state.client.queue;
+    if (!stillCurrent(id, pipeline, state)) return { ok: false, reason: 'restarted', posted: 0 };
+    gate = catchupGate(id);
+    if (!gate.ok) return gate;
+
+    const client = state.client;
+    const seed = client.seedName;
+    const label = state.watch.label;
+
+    // The tracker lags the room by up to 60 s of save interval plus 60 s of cache, so a read taken
+    // sooner than this after connecting can be missing what happened just before the connect.
+    const settledAt = (state.connectedAt || 0) + catchupTiming.settleMs;
+    const early = run.fetchStartedAt < settledAt;
+    const inflight = new Set(pipeline.buffer.map(e => e.key).filter(Boolean));
+
+    if (!catchup.isSeeded(id, seed)) {
+        // The next run would post whatever an early baseline missed as missed.
+        if (early) return { ok: false, reason: 'settling', at: settledAt };
+
+        // A line still in the buffer is left for its flush to post and record. Recorded here, the
+        // flush would drop it as already posted.
+        const keys = catchup.collectKeys({ tracker: data, client });
+        const unsent = keys.all.filter(k => !inflight.has(k));
+        if (!catchup.baseline(id, seed, unsent, { team: client.team, finished: finishedSlots(client) })) {
+            const detail = 'the catch-up file could not be written';
+            logger.warn(`[AP:${label}] catch-up baseline not saved (${detail}); nothing is posted until it can be`);
+            return { ok: false, reason: 'failed', detail };
+        }
+        logger.info(`[AP:${label}] catch-up baseline recorded (${keys.counts.items} items, ` +
+            `${keys.counts.goals} goals, ${keys.counts.hints} hints); missed lines are posted from here on`);
+        noteCatchupSuccess(state, 0);
+        return { ok: true, baseline: true };
+    }
+
+    const plan = catchup.buildCatchup({
+        tracker: data,
+        client,
+        watch: state.watch,
+        reportedHas: key => catchup.has(id, seed, key),
+        inflight,
+        finishedBefore: state.gapFinished || new Set(),
+        shouldRelay
+    });
+    if (plan.hidden.length > 0) catchup.commit(id, seed, plan.hidden);
+
+    const refusedOut = plan.lines.filter(l => (pipeline.refusals.get(owedTag(seed, l.key)) || 0) >= MAX_REFUSALS);
+    if (refusedOut.length > 0) {
+        catchup.commit(id, seed, refusedOut.map(l => l.key));
+        for (const l of refusedOut) {
+            pipeline.refusals.delete(owedTag(seed, l.key));
+            pipeline.owed.delete(owedTag(seed, l.key));
+        }
+        logger.warn(`[AP:${label}] skipped ${refusedOut.length} line(s) Discord refused ${MAX_REFUSALS} times: ` +
+            refusedOut.slice(0, 3).map(l => stripAnsi(l.text)).join(' | '));
+    }
+    let lines = refusedOut.length > 0 ? plan.lines.filter(l => !refusedOut.includes(l)) : plan.lines;
+    const skipped = refusedOut.length > 0 ? { skipped: refusedOut.length } : {};
+
+    const channelId = state.watch.channelId;
+    const hidden = plan.hidden.length;
+
+    // Taken over by the run rather than just cleared, so the hand-offs below (an early read, a
+    // restart cutting the run short) still know this run was owed a post.
+    if (!run.manual && !run.force && state.forceNext) {
+        run.force = true;
+        state.forceNext = false;
+    }
+    if (!run.manual && !run.force && config.archipelagoCatchup === false) {
+        // Lines that were already due in the channel and were refused still post: recording them
+        // here would lose them for good.
+        const owed = (l) => pipeline.owed.has(owedTag(seed, l.key));
+        const quiet = lines.filter(l => !owed(l));
+        catchup.commit(id, seed, quiet.map(l => l.key));
+        catchup.persist();
+        if (quiet.length > 0) {
+            logger.info(`[AP:${label}] catch-up is off: recorded ${quiet.length} missed line(s) without posting them`);
+        }
+        lines = lines.filter(owed);
+        if (lines.length === 0) {
+            settleOwed(id, pipeline, seed);
+            noteCatchupSuccess(state, 0);
+            return { ok: true, silent: true, missed: quiet.length, posted: 0, hidden, channelId, ...skipped };
+        }
+    }
+    const missed = lines.length;
+
+    const gapSince = state.gapHeaderUsed ? null : state.gapSince;
+    const rec = catchup.record(id, seed);
+    const seededAt = rec ? rec.seededAt : null;
+    run.plan = { missed, hidden };
+    for (const onPlan of run.onPlans.splice(0)) callPlan(onPlan, run.plan);
+    // An early read leaves the dated header for the settled run, which can still find more.
+    const settling = early ? { settlingUntil: settledAt } : {};
+    // Somebody asked for these lines, and with archipelagoCatchup off the settled run would
+    // otherwise record whatever it finds without posting it.
+    if (early && (run.manual || run.force)) state.forceNext = true;
+
+    if (missed === 0) {
+        // A later run of this connection can only be recovering what the live feed dropped, so
+        // "missed since" would date it wrongly.
+        if (!early) state.gapHeaderUsed = true;
+        catchup.persist();
+        settleOwed(id, pipeline, seed);
+        noteCatchupSuccess(state, 0);
+        return { ok: true, missed: 0, posted: 0, hidden, channelId, gapSince, seededAt, ...settling, ...skipped };
+    }
+
+    if (!stillCurrent(id, pipeline, state)) {
+        catchup.persist();
+        return { ok: false, reason: 'restarted', posted: 0 };
+    }
+    if (!(await send(state, catchupHeader(state, missed, gapSince, seededAt)))) {
+        catchup.persist();
+        const detail = 'could not post to the channel';
+        noteCatchupFailure(state, detail);
+        retryRefusedPost(id);
+        return { ok: false, reason: 'failed', detail };
+    }
+    if (!early) state.gapHeaderUsed = true;
+
+    const fence = state.watch.color ? 'ansi' : '';
+    const entries = lines.map(l => ({
+        text: `[missed] ${String(l.text).replace(/```/g, "'''")}`,
+        key: l.key,
+        seed,
+        planned: l
+    }));
+    let posted = 0;
+    let failed = 0;
+    const postedLines = [];
+    for (const chunk of chunkForRetry(entries, pipeline.refusals)) {
+        if (!stillCurrent(id, pipeline, state)) {
+            catchup.persist();
+            // Restarted rather than removed: the replacement's run skips these committed lines, so
+            // their claimants hear about them here or not at all.
+            if (pipelines.get(id) === pipeline) await sendPingLines(state, pipeline, catchupPings(state, postedLines));
+            return { ok: false, reason: 'restarted', posted };
+        }
+        const ok = await send(state, `\`\`\`${fence}\n${chunk.text}\n\`\`\``);
+        // A restart mid-send still records what posted; a removal has already forgotten the watch.
+        if (pipelines.get(id) !== pipeline) return { ok: false, reason: 'restarted', posted };
+        if (!ok) {
+            failed += chunk.entries.length;
+            noteRefused(pipeline, chunk.entries);
+            continue;
+        }
+        noteAccepted(pipeline, chunk.entries);
+        catchup.commit(id, seed, chunk.entries.map(e => e.key), {
+            postedAt: new Date().toISOString(),
+            finished: seed === client.seedName ? finishedSlots(client) : undefined
+        });
+        // Every chunk, not once per run: stopping the bot is the natural reaction to a long
+        // catch-up, and a run saved only at its end would repost everything on the next boot.
+        catchup.persist();
+        posted += chunk.entries.length;
+        state.lineCount += chunk.entries.length;
+        postedLines.push(...chunk.entries.map(e => e.planned));
+    }
+    // A failed chunk leaves its lines owed, so this schedules the retry for them too.
+    const outstanding = settleOwed(id, pipeline, seed);
+
+    await sendPingLines(state, pipeline, catchupPings(state, postedLines));
+    catchup.persist();
+    logger.info(`[AP:${label}] catch-up posted ${posted} of ${missed} missed line(s)` +
+        (hidden ? `, ${hidden} hidden by filters` : '') + (failed ? `, ${failed} failed and will be retried` : ''));
+    if (failed > 0) {
+        noteCatchupFailure(state, 'could not post to the channel');
+    } else {
+        // Not while a line is still owed: one the tracker never shows would otherwise be retried
+        // every 30 seconds for good.
+        if (!outstanding) state.postFailures = 0;
+        noteCatchupSuccess(state, posted);
+    }
+    return { ok: true, missed, posted, hidden, channelId, gapSince, seededAt, ...settling, ...skipped };
+}
+
+function catchupHeader(state, count, gapSince, seededAt) {
+    const label = escapeMarkdown(String(state.watch.label));
+    const tail = 'rebuilt from the room tracker (order approximate).';
+    const epoch = (iso) => Math.floor(Date.parse(iso) / 1000);
+    if (gapSince && Number.isFinite(epoch(gapSince))) {
+        return `📜 **${label}** — ${count} line(s) missed since <t:${epoch(gapSince)}:f>, ${tail}`;
+    }
+    if (!state.gapHeaderUsed && seededAt && Number.isFinite(epoch(seededAt))) {
+        return `📜 **${label}** — ${count} line(s) missed since tracking began <t:${epoch(seededAt)}:f>, ${tail}`;
+    }
+    return `📜 **${label}** — ${count} line(s) the live feed missed, ${tail}`;
+}
+
+// One line per claimant and slot rather than one per item. These items arrived hours ago in
+// game, and a line each would push the live pings past the two-message cap.
+function catchupPings(state, lines) {
+    const counts = new Map();
+    for (const planned of lines) {
+        if (!planned || planned.line.type !== 'ItemSend' || typeof planned.receiving !== 'number') continue;
+        const slot = state.client.slotNameFor(planned.receiving);
+        if (!slot) continue;
+        const claim = claims.find(state.watch.id, slot);
+        if (!shouldPing(claim, planned.line)) continue;
+        const key = `${claim.userId}\u0000${slot}`;
+        if (!counts.has(key)) counts.set(key, { userId: claim.userId, slot, total: 0, progression: 0 });
+        const entry = counts.get(key);
+        entry.total++;
+        if (planned.line.flags & ITEM_FLAG_PROGRESSION) entry.progression++;
+    }
+    return [...counts.values()].map(c => ({
+        userId: c.userId,
+        line: `<@${c.userId}> \`${c.slot.replace(/`/g, "'")}\` — ${c.total} missed item(s)` +
+            (c.progression ? `, ${c.progression} progression` : '') + ', see the catch-up above.'
+    }));
+}
+
 function startWatch(watch) {
     const state = makeState(watch);
     states.set(watch.id, state);
     if (!watch.paused) {
         state.client.start();
         startCompletionPoll(state);
+        startCatchupPoll(state);
     }
     return state;
 }
 
+// Leaves the watch's pipeline alone: a restart wants its buffered lines and any flush under way to
+// carry on. The callers that end a watch drop the pipeline themselves.
 function stopWatch(id) {
     const state = states.get(id);
     if (!state) return;
-    if (state.timer) clearTimeout(state.timer);
     if (state.pollTimer) clearInterval(state.pollTimer);
-    state.timer = null;
     state.pollTimer = null;
+    clearCatchupTimers(state);
     state.client.stop();
 }
 
@@ -579,15 +1361,19 @@ function restartWatch(id, { sameRoom = true } = {}) {
         // gates: until the fresh handshake lands, `!ap claim ZackWordd` would be stored as typed.
         // A restart is exactly when the room may be unreachable, so that window is not short.
         state.client.slotNames = existing.client.slotNames;
+        state.client.slotGroups = existing.client.slotGroups;
         state.client.seedName = existing.client.seedName;
         // And the team those names are keyed under. Without it a fresh client defaults to team 0
         // while holding a team-1 map, so knowsRoom() is true and every lookup misses.
         state.client.team = existing.client.team;
+        state.catchupStatus = existing.catchupStatus;
+        state.forceNext = existing.forceNext;
     }
     states.set(id, state);
     existing.watch.paused = false;
     state.client.start();
     startCompletionPoll(state);
+    startCatchupPoll(state);
     persist();
     return state;
 }
@@ -630,6 +1416,8 @@ function syncConfigWatch() {
         if (existing) {
             stopWatch(CONFIG_WATCH_ID);
             states.delete(CONFIG_WATCH_ID);
+            dropPipeline(CONFIG_WATCH_ID);
+            catchup.forgetWatch(CONFIG_WATCH_ID);
             // With no state for id 0, listClaims(0) answers null and `!ap claims` / `!ap unclaim`
             // report "No watch with ID 0", so claims left here would be unreachable from the
             // command surface and would attach to whatever room /config names next.
@@ -715,7 +1503,10 @@ function syncConfigWatch() {
 function applyConfig({ boot = false } = {}) {
     if (!config.archipelagoEnabled) {
         if (states.size > 0) {
-            for (const id of [...states.keys()]) stopWatch(id);
+            for (const id of [...states.keys()]) {
+                stopWatch(id);
+                dropPipeline(id);
+            }
             states.clear();
             savedWatchesLoaded = false;
             logger.info('Archipelago monitor stopped — archipelagoEnabled is off');
@@ -751,6 +1542,13 @@ function applyConfig({ boot = false } = {}) {
 
 function startArchipelagoMonitor(client) {
     discord = client;
+    // `!restart` runs stop and start in the same process, so the sockets survive and no
+    // 'connected' fires to schedule a catch-up. The cached channels belong to the Discord client
+    // that was just destroyed, and whatever failed to post while it logged back in needs a run.
+    for (const state of states.values()) {
+        state.channel = null;
+        if (state.status === 'connected') scheduleCatchupRetry(state.watch.id);
+    }
     configStore.onChange((key) => {
         if (typeof key !== 'string' || !key.startsWith('archipelago')) return;
         try {
@@ -827,6 +1625,8 @@ function removeWatch(id) {
     refuseIfManaged(state, 'the room URL or host');
     stopWatch(id);
     states.delete(id);
+    dropPipeline(id);
+    catchup.forgetWatch(id);
     // Claims are keyed by watch id, and ids are handed out from a counter that can reach this
     // one again. Dropping them here stops a future watch inheriting the last one's pings. The
     // state is already gone, so the role sync borrows this one purely for its channel and guild.
@@ -1202,6 +2002,21 @@ async function ensureSpheres(state, seed, { sphereDir, spoilerDir }) {
 }
 
 /**
+ * The room's tracker id, read off its room page the first time and kept on the state after that.
+ * @returns {Promise<string|null>} null when the room page links no tracker
+ */
+async function resolveTrackerId(state) {
+    const roomUrl = state.watch.target.roomUrl;
+    if (!state.trackerUrl) {
+        const html = await (await fetch(roomUrl, { signal: AbortSignal.timeout(30000) })).text();
+        const trackerId = tracker.extractTrackerId(html);
+        if (!trackerId) return null;
+        state.trackerUrl = `${new URL(roomUrl).origin}/tracker/${trackerId}`;
+    }
+    return state.trackerUrl.split('/').pop();
+}
+
+/**
  * The one-off work behind a suggestion: the tracker's address, the seed's spheres, and every
  * slot's checked locations.
  *
@@ -1216,13 +2031,8 @@ async function prepareSuggest(id) {
     if (!target || target.kind !== 'room') return { ok: false, reason: 'not-a-room' };
 
     try {
-        if (!state.trackerUrl) {
-            const html = await (await fetch(target.roomUrl, { signal: AbortSignal.timeout(30000) })).text();
-            const trackerId = tracker.extractTrackerId(html);
-            if (!trackerId) return { ok: false, reason: 'no-tracker' };
-            state.trackerUrl = `${new URL(target.roomUrl).origin}/tracker/${trackerId}`;
-        }
-        const trackerId = state.trackerUrl.split('/').pop();
+        const trackerId = await resolveTrackerId(state);
+        if (!trackerId) return { ok: false, reason: 'no-tracker' };
 
         const client = state.client;
         const seed = client.seedName || describeTarget(target);
@@ -1374,8 +2184,9 @@ function listWatches() {
         detail: state.detail,
         address: state.client.address,
         lineCount: state.lineCount,
-        droppedLines: state.droppedLines,
         connectedAt: state.connectedAt,
+        // available is false for a host:port watch, which has no web tracker to rebuild from.
+        catchup: { available: isRoomWatch(state.watch), ...state.catchupStatus },
         players: state.client.slotsOnTeam().length,
         finished: state.client.finishedCount
     }));
@@ -1444,8 +2255,12 @@ module.exports = {
     describeTarget,
     chunkLines,
     formatLine,
+    chunkEntries,
     shouldRelay,
     shouldPing,
+    catchUp,
+    catchupTiming,
+    relayTiming,
     connectionNotice,
     DEFAULT_FILTERS,
     FILTER_GROUPS,

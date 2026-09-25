@@ -92,7 +92,8 @@ module.exports = {
                     (config.archipelagoEnabled
                         ? '**🧩 ARCHIPELAGO**\n' +
                           `> \`${prefix}ap watch [room url] [slot]\` — Relay a multiworld's server log into this channel.\n` +
-                          `> \`${prefix}ap list\` / \`${prefix}ap filter\` — Review watches and pick which log lines get posted.\n\n`
+                          `> \`${prefix}ap list\` / \`${prefix}ap filter\` — Review watches and pick which log lines get posted.\n` +
+                          `> \`${prefix}ap catchup\` — Post the item sends, goals and hints missed while the bot was down.\n\n`
                         : '') +
 
                     '**📊 ADMIN / DIAGNOSTIC**\n' +
