@@ -139,7 +139,7 @@ Two signature styles coexist in the codebase:
 | `broadcast.js`            | Builds + sends the broadcast embeds. Pure builders `buildKometaEmbed` / `buildKometaChangesEmbed` / `buildGameLaunchEmbed` / `buildGamePresenceEmbed` / `buildStartupEmbed` + `pickChannelId(type)` / `startupChannelId()` / `isNoteworthyChange(payload)` (all unit-tested); senders route Kometa → `kometaChannelId` and game launches → `gameLaunchChannelId` (each falling back to `broadcastChannelId`), gate `changes` events through the noteworthy filter, attach Playnite cover art, and swallow send failures. `broadcastStartup(client)` posts a boot confirmation to a single channel. |
 | `gamePresence.js`         | Launcher-agnostic game-launch detection via Discord activity. `startGamePresence(client)` watches `presenceUpdate` for the owner and broadcasts newly-started `Playing` games (pure `startedGames(prev, activities)` diff, unit-tested). No-op unless `config.gamePresenceEnabled` (which also gates the privileged `GuildPresences` intent in `app/utils.js`). |
 | `kometaTheater.js`        | "Silly mode" that narrates a Kometa run in-character. Tails `meta.log` for per-collection coverage, the owning library, and missing counts, plus `changes` webhooks (fed via `onChanges`) for detail; a paced worker posts per-collection persona dialogue (fast Gemini, persisted per library+name) or garbled `buildStaticText` for unseen+unadded collections. Errors arrive via `onError` and are batched into the sign-off. Pure `parseFinishedCollection`/`parseProcessed`/`parseMissing`/`parseLibraryHeader`/`collectionKey`/`describeCompleteness`/`extractJsonObject`/`normalizeName`/`classifyKind`/`buildStaticText` unit-tested. No-op unless `config.kometaTheaterEnabled`. See "Kometa Theater" below. |
-| `configStore.js`          | Backing store + schema for the `/config` wizard. Holds the editable `SETTINGS` list, pure `formatValue`/`validate` helpers (unit-tested), and `readOverrides`/`writeOverride`/`removeOverride`. Writes `data/config.overrides.json` and mutates the live config object so most changes apply without a restart. No discord.js. See "In-Discord config wizard" below. |
+| `configStore.js`          | Backing store + schema for the `/config` wizard. Holds the editable `SETTINGS` list, pure `formatValue`/`validate`/`panelFields` helpers (unit-tested), and `readOverrides`/`writeOverride`/`removeOverride`. Writes `data/config.overrides.json` and mutates the live config object so most changes apply without a restart. No discord.js. See "In-Discord config wizard" below. |
 | `archipelagoClient.js`     | One read-only WebSocket connection to an Archipelago multiworld. Runs the `RoomInfo` → `GetDataPackage` → `Connect` handshake, resolves item/location/player ids to names, renders `PrintJSON` packets into log lines, reconnects with backoff. Also exports the pure `parseTarget()`, `extractConnectAddress()` and `renderPrintJSON()`. |
 | `archipelagoData.js`       | Disk cache for AP data packages under `data/archipelago/datapackage/`, keyed by the per-game checksum the server publishes in `RoomInfo`. A reconnect re-downloads only the games whose checksum moved. |
 | `archipelagoMonitor.js`    | Holds one client per watched room, batches its log lines, posts them to the channel the watch was created in. Watches persist to `data/archipelago_watches.json` and reopen on boot. Disabled unless `config.archipelagoEnabled`. See "Archipelago room monitor" below. |
@@ -363,9 +363,16 @@ no file editing or restart needed for most settings.
   carrying more than 5 action rows, by refusing the whole payload rather than trimming it. Two
   earlier shapes both hit a ceiling: one flat menu died at 26 settings, and a menu per group
   died at the fifth group. The section-then-setting split has no such number, since only one
-  group's settings are on screen at a time. `configStore.groupNames()` and `selectPages(group)`
-  do the division; `test/configStore.test.js` asserts both limits and that every setting stays
-  reachable.
+  group's menu is on screen at a time. `configStore.groupNames()` and `selectPages(group)` do
+  the division. The embed above the menus lists every group at once, and discord.js throws on
+  an embed field value over 1,024 characters: a 60-character room URL, host and role name took
+  the 23-setting Archipelago field to 1,050 and `/config` threw. `configStore.panelFields()`
+  carries a group that outgrows one field on into a `<Group> (continued)` field, breaking
+  between settings. `test/configStore.test.js` asserts all three limits with every setting at
+  its longest rendering (Archipelago measures 1,337 characters unsplit, 991 + 345 split), runs
+  the fields through discord.js's own `EmbedBuilder`, and checks that every setting stays
+  reachable. Nothing checks Discord's 6,000-character total per embed, which discord.js leaves
+  to the API; the worst case measures 3,473.
 - **Change hook.** `configStore.onChange(fn)` fires after a save is written and applied to the
   live config object. The Archipelago monitor subscribes so a new room, channel or filter takes
   effect on the next batch instead of the next boot.

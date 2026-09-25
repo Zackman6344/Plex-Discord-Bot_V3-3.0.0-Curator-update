@@ -33,15 +33,7 @@ function panelEmbed(statusLine, bootstrapMode) {
     desc += 'Pick a setting from the menu below to change it.';
     embed.setDescription(desc);
 
-    for (const group of store.GROUPS) {
-        const lines = store.SETTINGS
-            .filter((s) => s.group === group)
-            .map((s) => {
-                const restart = s.restartRequired ? ' *(restart)*' : '';
-                return `**${s.label}:** ${store.formatValue(s, config[s.key])}${restart}`;
-            });
-        if (lines.length) embed.addFields({ name: group, value: lines.join('\n') });
-    }
+    embed.addFields(store.panelFields(config));
 
     embed.setFooter({ text: 'Changes save instantly and persist across restarts. Items marked (restart) apply on next boot.' });
     return embed;

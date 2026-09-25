@@ -136,10 +136,49 @@ function formatValue(setting, value) {
     if (setting.secret) return value ? '••• set' : '— not set';
     if (setting.type === 'choice') {
         const match = (setting.choices || []).find((c) => c.value === value);
-        return match ? match.label : String(value);
+        return match ? match.label : truncate(String(value), 60);
     }
     if (value === '' || value === undefined || value === null) return '— (empty)';
     return truncate(String(value), 60);
+}
+
+// Discord caps an embed field value at 1,024 characters, and discord.js throws on a longer one
+// instead of trimming it, the same way it treats the select limits above. Three 60-character
+// values took the 23-setting Archipelago group to 1,050, so a group that outgrows one field
+// carries on in a "(continued)" field, breaking between settings. Only a single line longer
+// than a whole field gets cut, and no current label comes near that.
+const FIELD_VALUE_LIMIT = 1024;
+
+function settingLine(setting, value) {
+    const restart = setting.restartRequired ? ' *(restart)*' : '';
+    return `**${setting.label}:** ${formatValue(setting, value)}${restart}`;
+}
+
+function packLines(lines, limit) {
+    const parts = [];
+    let current = '';
+    for (const raw of lines) {
+        const line = truncate(raw, limit);
+        if (current && current.length + 1 + line.length > limit) {
+            parts.push(current);
+            current = line;
+        } else {
+            current = current ? `${current}\n${line}` : line;
+        }
+    }
+    if (current) parts.push(current);
+    return parts;
+}
+
+/** The panel's embed fields, one or more per group, each within Discord's field limit. */
+function panelFields(values, settings = SETTINGS) {
+    return groupNames(settings).flatMap((group) => {
+        const lines = settingsInGroup(group, settings).map((s) => settingLine(s, values[s.key]));
+        return packLines(lines, FIELD_VALUE_LIMIT).map((value, index) => ({
+            name: index === 0 ? group : `${group} (continued)`,
+            value,
+        }));
+    });
 }
 
 // --- validation ----------------------------------------------------------------------------
@@ -252,12 +291,14 @@ module.exports = {
     SETTINGS,
     SELECT_OPTION_LIMIT,
     SETTING_ROW_LIMIT,
+    FIELD_VALUE_LIMIT,
     groupNames,
     settingsInGroup,
     selectPages,
     onChange,
     getSetting,
     formatValue,
+    panelFields,
     validate,
     readOverrides,
     writeOverride,
