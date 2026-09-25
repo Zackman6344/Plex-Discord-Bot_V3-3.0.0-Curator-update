@@ -360,6 +360,85 @@ test('!ap next lists claimed slots earliest reachable sphere first', async (t) =
     assert.ok(at('ZackStuck') < at('ZackDone'), 'nothing reachable yet before nothing left');
 });
 
+// --- who may run what ---------------------------------------------------------------------------
+//
+// With ownerId blank isOwner() answers true for everybody, so each of these sets one.
+
+const OWNER = '999999999999999999';
+const PLAYER = '333333333333333333';
+const OTHER = '444444444444444444';
+
+function asOwnedBot(t) {
+    const saved = config.ownerId;
+    config.ownerId = OWNER;
+    t.after(() => { config.ownerId = saved; });
+}
+
+const gated = (msg) => /Only the bot owner can change Archipelago watches/.test(said(msg));
+
+test('a player who is not the owner can ask !ap next about their own slot', async (t) => {
+    asOwnedBot(t);
+    await addWatch(['ZackWord']);
+    await runAs(PLAYER, 'claim', 'ZackWord');
+
+    const real = monitor.suggestNextAll;
+    let asked = null;
+    monitor.suggestNextAll = async (id, wanted) => {
+        asked = wanted;
+        return { ok: true, results: wanted.map(slot => ({ ok: false, slot, reason: 'nothing-left' })) };
+    };
+    t.after(() => { monitor.suggestNextAll = real; });
+
+    const msg = await runAs(PLAYER, 'next');
+    assert.ok(!gated(msg), said(msg));
+    assert.deepStrictEqual(asked, ['ZackWord']);
+});
+
+test('a player who is not the owner can read !ap hints', async (t) => {
+    asOwnedBot(t);
+    await addWatch(['ZackWord']);
+    const msg = await runAs(PLAYER, 'hints');
+    assert.ok(!gated(msg), said(msg));
+    assert.match(said(msg), /No outstanding hints on watch/);
+});
+
+test('a player can set hint pings on their own claim, and not on somebody else\'s', async (t) => {
+    asOwnedBot(t);
+    const watch = await addWatch(['ZackWord', 'ZackOther']);
+    await runAs(PLAYER, 'claim', 'ZackWord');
+    await runAs(OTHER, 'claim', 'ZackOther');
+
+    const mine = await runAs(PLAYER, 'hintpings', 'ZackWord', 'channel');
+    assert.ok(!gated(mine), said(mine));
+    assert.strictEqual(claims.hintPingMode(claims.find(watch.id, 'ZackWord')), 'channel');
+
+    const theirs = await runAs(PLAYER, 'hintpings', 'ZackOther', 'dm');
+    assert.match(said(theirs), /claimed by <@444444444444444444> — only they or the bot owner can change it/);
+    assert.strictEqual(claims.hintPingMode(claims.find(watch.id, 'ZackOther')), 'off');
+});
+
+test('watch, unwatch and catchup stay owner-only', async (t) => {
+    asOwnedBot(t);
+    const watch = await addWatch(['ZackWord']);
+
+    const real = monitor.catchUp;
+    let caughtUp = false;
+    monitor.catchUp = async () => { caughtUp = true; return { ok: true, baseline: true }; };
+    t.after(() => { monitor.catchUp = real; });
+
+    for (const args of [['watch', 'localhost:38281', 'ZackWord'], ['unwatch', String(watch.id)], ['catchup']]) {
+        const msg = await runAs(PLAYER, ...args);
+        assert.ok(gated(msg), `${args[0]} answered a non-owner with: ${said(msg)}`);
+    }
+    assert.ok(monitor.getWatch(watch.id), 'the watch survived the unwatch attempt');
+    assert.strictEqual(monitor.listWatches().length, 1, 'no watch was added');
+    assert.strictEqual(caughtUp, false, 'no catch-up ran');
+
+    const owner = await runAs(OWNER, 'catchup');
+    assert.ok(!gated(owner), said(owner));
+    assert.strictEqual(caughtUp, true, 'the owner still can');
+});
+
 // --- !ap catchup --------------------------------------------------------------------------------
 //
 // monitor.catchUp is stubbed for every reply path but one: what a catch-up finds and posts is

@@ -475,7 +475,7 @@ Setting `archipelagoCatchup: false` in `config/config.js` stops the automatic ru
 
 **Slot claims** tell the bot which slot belongs to which Discord user, so a long async can ping the right person instead of everyone reading the whole log:
 
-- `!ap claim [id] [slot name]`: Take a slot. **Anyone can claim their own**, which is the one part of `!ap` that is not owner-gated; hand-registering 29 players otherwise falls to the owner. One person can hold as many slots as they play. A slot somebody else already holds is refused, naming them; only they or the owner can move it. Owners can claim on someone's behalf by adding a mention.
+- `!ap claim [id] [slot name]`: Take a slot. **Anyone can claim their own**; hand-registering 29 players otherwise falls to the owner. Claiming, `unclaim`, `pings` and `hintpings` on your own slot, and the read-only `list`, `status`, `claims`, `goals`, `leaderboard`, `next` and `hints`, are open to everyone. Everything else in `!ap` is owner-only once `ownerId` is set. One person can hold as many slots as they play. A slot somebody else already holds is refused, naming them; only they or the owner can move it. Owners can claim on someone's behalf by adding a mention.
 - `!ap unclaim [id] [slot name]` / `!ap claims [id]`: Give a slot back, or list who holds what. A claim can only be changed by the person holding it or by the owner.
 - `!ap pings [id] [slot name] [all|progression|off]`: How much a claimed slot notifies you. `progression` by default, since filler is most of what arrives and pinging on it trains people to mute the channel. `off` keeps the claim and stops the notifications.
 

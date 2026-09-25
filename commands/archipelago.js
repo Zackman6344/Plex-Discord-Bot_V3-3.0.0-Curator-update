@@ -441,11 +441,13 @@ module.exports = {
                 return sentHelp;
             }
 
-            const readOnly = ['list', 'status', 'claims', 'goals', 'leaderboard'].includes(action);
-            // Claiming is the one thing players do for themselves — gating it behind the owner
-            // would mean the owner hand-registering everyone in a 29-slot async. Acting on
-            // someone else's behalf is still owner-only, checked per action below.
-            const selfService = ['claim', 'unclaim', 'pings'].includes(action);
+            // `next` answers only for the caller's own claims, so opening it shows nobody anything
+            // about a world that is not theirs.
+            const readOnly = ['list', 'status', 'claims', 'goals', 'leaderboard', 'next', 'hints'].includes(action);
+            // Claims and their ping settings are what players manage for themselves. Gating them
+            // behind the owner would mean the owner hand-registering everyone in a 29-slot async.
+            // Acting on someone else's claim is still owner-only, checked per action below.
+            const selfService = ['claim', 'unclaim', 'pings', 'hintpings'].includes(action);
             if (!readOnly && !selfService && !isOwner(msg)) {
                 return say('🔒 Only the bot owner can change Archipelago watches.');
             }

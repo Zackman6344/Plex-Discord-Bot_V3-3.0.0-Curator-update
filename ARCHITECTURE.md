@@ -969,7 +969,7 @@ columns are dropped where they are read rather than carried around and filtered 
 
 | File | Role |
 | ---- | ---- |
-| `commands/archipelago.js` | `!ap` / `/ap` (alias `!archipelago`). Subcommands: `watch`, `list`, `status`, `unwatch`, `filter`, `progression`, `skipgoaled`, `infer`, `color`, `markers`, `claim`, `unclaim`, `claims`, `pings`, `goals`, `leaderboard`, `password`, `retry`, `catchup`. Mutating subcommands are owner-only when `config.ownerId` is set, except `claim`, `unclaim` and `pings` acting on the caller's own slot. |
+| `commands/archipelago.js` | `!ap` / `/ap` (alias `!archipelago`). Subcommands: `watch`, `list`, `status`, `unwatch`, `filter`, `progression`, `skipgoaled`, `infer`, `color`, `markers`, `claim`, `unclaim`, `claims`, `pings`, `hintpings`, `next`, `hints`, `goals`, `leaderboard`, `password`, `retry`, `catchup`. Open to everyone: the read-only `list`, `status`, `claims`, `goals`, `leaderboard`, `next` (it answers only for the caller's own claims) and `hints`, and `claim`, `unclaim`, `pings` and `hintpings` acting on the caller's own slot. Everything else is owner-only when `config.ownerId` is set. |
 | `helpers/archipelagoClient.js` | Socket, handshake, reconnect, `PrintJSON` rendering, slot name lookups. |
 | `helpers/archipelagoMonitor.js` | Watch store, batching, the per-watch serial pipeline, Discord relay, catch-up runs and their scheduling, status notices, ping policy. |
 | `helpers/archipelagoCatchup.js` | What each watch has posted, per watch and seed, and the pure diff and render that rebuilds missed lines from a tracker read. |
