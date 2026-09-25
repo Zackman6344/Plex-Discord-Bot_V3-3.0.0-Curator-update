@@ -141,15 +141,22 @@ The console needs to stay open for the bot to keep running. The Docker setup in 
 ### Editing settings from Discord
 
 Once the bot is running and you've set `ownerId`, you (the owner) can change most `config.js`
-settings without touching files: run **`/config`** (or `!config`). It opens a private panel —
-pick a setting from the dropdown, then a pop-up modal (for text/numbers) or Enable/Disable
-buttons (for toggles). Changes save instantly and **persist across restarts**.
+settings without touching files: run **`/config`** (or `!config`). It opens a panel listing the
+current values by section. `/config` shows it only to you; `!config` posts it in the channel,
+where anyone can read it but only you can use it. Pick a section from the first menu, then a
+setting from the menu below it. Text and numbers open a pop-up modal, toggles get
+Enable/Disable buttons, and a setting with fixed options (YouTube audio quality) gets a menu of
+its own. Changes save instantly and **persist across restarts**.
 
 - Saves are written to `data/config.overrides.json`, which is layered over the defaults in
   `config/config.js` on every boot. Delete that file to reset everything back to the file
   defaults.
-- Most settings take effect immediately. Two are marked **(restart)** in the panel —
-  `eventServerEnabled` and `eventServerPort` — because the event listener is bound once at boot.
+- Most settings take effect immediately. Four are marked **(restart)** in the panel, because
+  each starts or skips something at boot: `eventServerEnabled` and `eventServerPort` bind the
+  event listener, `gamePresenceEnabled` decides whether the bot asks Discord for the presence
+  intent, and `kometaTheaterEnabled` decides whether the Kometa log is tailed. **Turning
+  `kometaTheaterEnabled` on silences the Kometa cards until that restart**, since webhooks go to
+  the theater as soon as it is saved and the theater has not started.
 - Discord/Gemini/Plex tokens (in `config/keys.js` and `config/plex.js`) are **not** editable
   from Discord by design; edit those files directly.
 - If `ownerId` is still blank, `/config` runs in a one-time bootstrap mode so you can set the
@@ -492,7 +499,7 @@ Two things worth knowing before switching it on: the room sees a client join on 
 
 ### 🛠️ Owner / Admin commands
 
-- `!config` *(best as `/config`)* — Owner-only settings wizard. Opens a private panel to view and change most `config.js` settings from inside Discord (prefix, server name, integration toggles, broadcast settings, etc.). See **Editing settings from Discord** below.
+- `!config` *(best as `/config`)* — Owner-only settings wizard. Opens a panel (private under `/config`) to view and change most `config.js` settings from inside Discord (prefix, server name, integration toggles, broadcast settings, etc.). See **Editing settings from Discord** below.
 - `!diag` *(alias: `!plextest`)* — Full diagnostic: Plex, Gemini, Tautulli, Playnite, event server. Bot also runs this every 15 minutes in the background and DMs the owner (if `ownerId` is set) on any status transition.
 - `!stats` — Combined Plex (via Tautulli) + Playnite statistics.
 - `!profile` — AI-generated D&D character sheet based on your gaming history.
