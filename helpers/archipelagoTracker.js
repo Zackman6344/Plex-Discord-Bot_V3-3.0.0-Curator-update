@@ -140,10 +140,33 @@ async function readCheckedIds(trackerId, options = {}) {
     return out;
 }
 
+/**
+ * The tracker API's whole answer, for the room log catch-up: every item each slot has received
+ * (`player_items_received`), `activity_timers` and `player_status`.
+ *
+ * `origin` is the room's own web host. The default belongs to readCheckedIds; a self-hosted room
+ * asked on archipelago.gg would answer 404 or, worse, with a different room's tracker.
+ *
+ * @param {string} trackerId
+ * @param {{origin: string, timeoutMs?: number}} options
+ * @returns {Promise<Object>} the parsed JSON
+ * @throws when the response is not a tracker. An empty answer read as "no items" would let a
+ *   baseline record nothing, and the next good read would then post the room's entire history.
+ */
+async function readTrackerData(trackerId, options = {}) {
+    if (!options.origin) throw new Error('readTrackerData needs the room origin');
+    const json = JSON.parse(await fetchText(`${options.origin}/api/tracker/${trackerId}`, options.timeoutMs || 30000));
+    if (!json || typeof json !== 'object' || !Array.isArray(json.player_items_received)) {
+        throw new Error('the tracker answer has no player_items_received list');
+    }
+    return json;
+}
+
 module.exports = {
     extractTrackerId,
     parseTrackerRows,
     fullyCheckedSlots,
     readCheckedIds,
+    readTrackerData,
     readCompletion
 };

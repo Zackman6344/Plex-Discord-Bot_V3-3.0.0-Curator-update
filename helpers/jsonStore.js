@@ -36,9 +36,11 @@ const logger = require('./logger.js');
  * @param {(raw: any) => any} [options.migrate] shape fix applied on read; must be idempotent
  * @param {boolean} [options.nullPrototype] build objects with no prototype, for stores keyed by
  *   user-supplied ids, so a key like `__proto__` cannot reach the prototype chain
+ * @param {boolean} [options.pretty] false writes compact JSON, for a store large and busy enough
+ *   that indentation costs real time on every write. Indented otherwise.
  */
 function createStore(options) {
-    const { envVar, defaultPath, key, shape, label, migrate, nullPrototype } = options;
+    const { envVar, defaultPath, key, shape, label, migrate, nullPrototype, pretty = true } = options;
 
     const file = process.env[envVar] || defaultPath;
     // Under the test runner the override is required rather than optional: these files hold real
@@ -133,7 +135,7 @@ function createStore(options) {
         try {
             fs.mkdirSync(path.dirname(file), { recursive: true });
             const tmp = `${file}.tmp`;
-            fs.writeFileSync(tmp, JSON.stringify({ [key]: data }, null, 4));
+            fs.writeFileSync(tmp, JSON.stringify({ [key]: data }, null, pretty ? 4 : undefined));
             fs.renameSync(tmp, file);
             writeFailed = false;
             return true;

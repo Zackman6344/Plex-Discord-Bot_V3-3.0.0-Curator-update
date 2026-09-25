@@ -118,6 +118,12 @@ const defaults = {
   // How often to re-read the tracker page. Completion moves over hours and the page is large,
   // so this is deliberately slow.
   'archipelagoTrackerPollMinutes' : 15,
+  // Post the item sends, goals and hints the relay missed while the bot was down, rebuilt from the
+  // room's tracker about two minutes after each reconnect and again every poll above. Room-URL
+  // watches only. Off still records what was missed without posting it, so switching it back on
+  // later never dumps an old backlog into the channel; `!ap catchup` posts either way, and so does
+  // the retry after a post Discord refused.
+  'archipelagoCatchup' : true,
   // Colour item names by class in the relayed log: progression magenta, useful blue, trap red,
   // filler cyan. Matches Archipelago's own clients. Discord renders ANSI code blocks on desktop
   // and web only, so this does nothing in the mobile apps. Turn it off if a client of yours

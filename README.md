@@ -118,6 +118,7 @@ module.exports = {
   'archipelagoSkipGoaled'      : true,     // hide items sent to slots that already finished
   'archipelagoInferFinished'   : true,     // also count a 100%-checked slot as finished
   'archipelagoTrackerPollMinutes' : 15,    // how often to re-read the room tracker for that
+  'archipelagoCatchup'         : true,     // post what the relay missed while down (config.js only)
   'archipelagoColorLines'      : true,     // colour items by class (desktop and web only)
   'archipelagoItemMarkers'     : true,     // mark items by class; plain text, works on mobile
   'archipelagoShowItems'  : true,          // which categories of log line get relayed
@@ -447,7 +448,7 @@ Off unless `archipelagoEnabled` is set. The bot joins a multiworld as a read-onl
 A leading number is **always** read as the ID, including one no watch holds: `!ap unwatch 999` answers "No watch with ID 999" rather than acting on whatever room happens to be the only one. The cost is that a slot literally named `12345` needs the explicit form, `!ap claim <id> 12345`. In the slash form `id` trails the required options, because Discord rejects a command where a required option follows an optional one.
 
 - `!ap watch [room url or host:port] [slot name]`: Start relaying a room's log here. The slot name has to match a real slot in that multiworld; the bot attaches to it as an observer, receives no items, and cannot affect the person playing it.
-- `!ap list` / `!ap status [id]`: Watches, their connection state and how many lines each has relayed.
+- `!ap list` / `!ap status [id]`: Watches, their connection state, how many lines each has posted (live and caught up), and when its last catch-up ran.
 - `!ap filter [id] [items|hints|chat|joins|goals|deaths|misc] [on|off]`: Pick which lines get posted.
 - `!ap progression [id] on`: Item sends only when they are progression. The usual fix for a noisy async.
 - `!ap skipgoaled [id] [on|off]`: Hide items sent to slots that already finished, meaning goaled, released, or with every location checked. On by default. Goal status is read from the server, so players who goaled before the bot connected count too; a release is only seen if the bot was connected when it was announced, because nothing stores it.
@@ -459,6 +460,18 @@ A leading number is **always** read as the ID, including one no watch holds: `!a
 - `!ap markers [id] [on|off]`: Prefix 🟪 progression, 🟦 useful, 🟥 trap to item names. Plain text, so unlike the colours it shows on every client including mobile. On by default, and it works alongside colour rather than replacing it. Filler is left unmarked because most sends are filler.
 - `!ap password [id] [password]`: Set a room password. The prefix form deletes your message afterwards. Clearing has to be asked for in words, `!ap password [id] clear`, because a leading number is read as the watch ID: `!ap password 0` meaning "set it to 0" would otherwise have left nothing after the ID and silently cleared it, after deleting the only other copy.
 - `!ap unwatch [id]` / `!ap retry [id]`: Stop a watch, or reconnect one the server refused. Unwatching also drops every slot claim on that watch.
+- `!ap catchup [id]`: Post what the channel missed while the bot was down, rebuilt from the room tracker. It also runs by itself; the command runs one now. The reply says how many lines it is posting and how many the watch's filters hide, or that nothing was missed. Run in the first two minutes after a reconnect, it posts what the tracker already shows and says when the automatic check that picks up the rest is due.
+
+**Catching up after downtime.** The live relay only sees what happens while the bot is connected, and the server replays no history to a client that joins late. So after every reconnect and restart, about two minutes in, the bot reads the room's tracker and posts whatever the channel has not seen yet, under a `📜` header naming how many lines were missed and since when. It checks again every `archipelagoTrackerPollMinutes` (15 by default) and 30 seconds after a post Discord refused. While the channel keeps refusing, that wait doubles each time up to the poll interval, and `!ap list` shows the catch-up as failing. A line refused before is retried in a message of its own, and a line Discord refuses three times is skipped and named in the bot log. The two-minute wait is how long the web host can take to publish a change: it saves the room every 60 seconds and caches the tracker for another 60.
+
+- **Recovered:** item sends (Release and Collect bursts included, as ordinary sends), goals, and hints that involve the watched slot. They post in the watch's usual format with a `[missed]` prefix and honour its filters, so a catch-up shows what the live feed would have shown. Hints show their status at the time of the catch-up. Claimants get one summary ping per slot, such as "12 missed item(s), 3 progression", in place of one ping per item.
+- **Gone for good:** chat, joins and parts, DeathLink, countdowns, the Release and Collect notices themselves, "Team #1 has completed all of their games!", cheated items, start inventory, hints for items already found, and `!hint` replays of an existing hint.
+- **Order is approximate.** The tracker keeps each slot's items in order but no timestamps, so sends to different slots are interleaved by best guess.
+- **The first look at a room posts nothing.** It records everything already there, and only what happens after that counts as missed.
+- **Room URL watches only.** A watch made from `host:port` has no web tracker, so it cannot catch up, and `!ap list` says so.
+- **Nothing is capped.** A 1,000-location release missed while the bot was down posts as about 50 messages of 20 lines each, over about a minute. The live relay no longer trims a burst either: every line posts, in order, one message after another.
+
+Setting `archipelagoCatchup: false` in `config/config.js` stops the automatic runs from posting. They still record what they find, so switching it back on later does not dump the backlog into the channel, and `!ap catchup` still posts when asked. Two automatic runs post anyway: the retry after a post Discord refused, since those lines were already on their way, and the run after a restart cut a `!ap catchup` short, which posts the rest of what was asked for. What has been posted is recorded per watch and per seed in `data/archipelago_catchup.json`.
 
 **Slot claims** tell the bot which slot belongs to which Discord user, so a long async can ping the right person instead of everyone reading the whole log:
 
@@ -481,7 +494,7 @@ The tally is lifetime and spans rooms. It keys on the multiworld's seed name and
 
 **A goal belongs to whoever earned it.** The record is keyed by the game rather than by the person, so a slot changing hands later does not re-credit a game the previous holder already finished.
 
-All three files the feature writes (`archipelago_claims.json`, `archipelago_goals.json`, `archipelago_roles.json`) are written to a temporary file and renamed over the target, so a crash mid-write cannot truncate one. If one is found unreadable at startup the bot logs an error naming it and leaves that store read-only for the run rather than overwriting what may still be salvageable by hand.
+The claim, goal, role and catch-up files (`archipelago_claims.json`, `archipelago_goals.json`, `archipelago_roles.json`, `archipelago_catchup.json`) are written to a temporary file and renamed over the target, so a crash mid-write cannot truncate one. If one is found unreadable at startup the bot logs an error naming it and leaves that store read-only for the run rather than overwriting what may still be salvageable by hand.
 
 - `!ap goals [@user]`: How many multiworlds someone has goaled, and which slots.
 - `!ap leaderboard`: Ranked by count.
