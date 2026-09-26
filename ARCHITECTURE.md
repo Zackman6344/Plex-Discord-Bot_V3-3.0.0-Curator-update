@@ -1032,6 +1032,71 @@ Plex title rarely agree byte for byte.
 complaints would be worse than the silence they replaced. The first three are named, the rest are
 counted, and one summary at the end says how many and that a re-scan is probably what is needed.
 
+## Seeking within a track
+
+`!seek` flags the playing entry with `isSeeking` and `seekOffset`, then force-stops the player.
+Idle is also how a track ends normally, and until September 2026 nothing read either flag, so the
+Idle handler shifted the queue and every seek advanced to the next track, like `!skip`.
+
+`helpers/seek.js` holds the three decisions, covered by `test/seek.test.js`:
+
+- `afterTrack(queue)` chooses between replaying the head, advancing and finishing. A pending seek
+  replays the entry the way `!loop` does. It is keyed on `isSeeking`, so `!seek 0` restarts the
+  track instead of skipping it.
+- `takeSeek(track)` returns the offset once and clears both flags. `runPlayback` calls it on the
+  entry it fetched, once the Plex fetch resolves, so a seek that lands while the next track is
+  loading applies to that track instead of lingering on the entry until it ends and then replaying
+  it.
+- `seekArgs(ms)` builds the ffmpeg arguments.
+
+`!seek` refuses an offset past `Number.MAX_SAFE_INTEGER` milliseconds. ffmpeg rejects a `-ss` that
+large, and the player's error and Idle handlers then both advanced the queue, skipping a track
+nobody asked to skip.
+
+**The offset is applied by an ffmpeg the bot starts itself.** `createAudioResource` runs its own
+ffmpeg for a plain stream and takes no extra arguments. `Bot.seekResource()` pipes the Plex download
+into a prism-media `FFmpeg` that encodes Ogg/Opus with libopus, the route voice also takes for a
+normal track with ffmpeg-static, and hands it over as `StreamType.OggOpus` so voice only demuxes
+it. A track with no seek still goes through `createAudioResource(readstream)`, unchanged.
+
+Measured with ffmpeg-static 4.4.1 on generated clips, served over HTTP and read the way the bot
+reads Plex:
+
+- **`-ss` goes after `-i -`.** The input is a pipe, which ffmpeg cannot seek. As an input option,
+  `-ss` started Ogg Opus 0.5 s late at 10.5 s and 1 s late at 25 s, and Ogg Vorbis ignored a
+  25-second seek and started 1 s in. As an output option ffmpeg decodes and discards up to the
+  offset, and the start landed exactly in FLAC, MP3 (CBR and VBR), M4A (AAC and ALAC), WAV, Ogg
+  Vorbis and Ogg Opus.
+- **`readstream` stays the download.** ffmpeg's `'finish'` fires once the download has been written
+  into it, 16 seconds before the end of a 19.5-second seeked clip in one run, and `runPlayback`
+  hangs `dispatcherFunc` on `readstream`'s `'finish'`.
+- **The download is joined to ffmpeg with `stream.pipeline`.** On Idle the player destroys ffmpeg
+  either way. The difference is a download that fails mid-track: with `pipeline` the error reaches
+  the player at once, as it does for a normal track. With `.pipe` the player played out ffmpeg's
+  buffer and then 5 s of silence before going Idle and advancing as if the track had finished.
+- **ffmpeg is killed when voice closes the stream.** prism kills its ffmpeg only while stdin is
+  open. A `!skip` after the whole download had gone in, but before the audio had played out, left
+  ffmpeg blocked writing to a stdout nobody reads, still running 45 s later. A normal track leaks
+  voice's own ffmpeg the same way; that path is untouched by this change.
+
+A seek while paused resumes playback at the new position. A plain `stop()` on a paused player does
+not reach Idle until the player is unpaused, so `!seek` forces it.
+
+Known costs:
+
+- **A seek downloads the file again from byte 0** and decodes up to the offset. Over loopback, a
+  seek 540 seconds into a 10-minute FLAC started in 0.8 s. At about 2.3 MB/s the same seek took
+  13.3 s.
+- Until ffmpeg reaches the offset the player is Buffering, and a `!skip` or `!stop` sent then waits
+  for it. A `!pause` sent then replies that playback is paused, but it starts unpaused.
+- Seeking past the end produces no audio, and the queue advances as if the track had finished.
+- An M4A with its index at the end of the file plays neither normally nor seeked, because ffmpeg
+  cannot reach the index through a pipe.
+
+Handing ffmpeg the Plex URL (`-ss N -i <url>`) would seek with range requests, taking 0.2–0.34 s at
+60, 300 and 540 s into the same FLAC, and would read a trailing M4A index. It was left out because
+it bypasses `openPlexStream()`'s dead-key repair and puts the Plex token on ffmpeg's command line.
+
 ## Logging
 
 Every log line goes through `helpers/logger.js`. Format:
