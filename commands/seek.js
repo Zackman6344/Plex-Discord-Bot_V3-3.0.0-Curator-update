@@ -73,7 +73,9 @@ module.exports = {
 
             const ms = parseToMilliseconds(query.trim().toLowerCase());
 
-            if (ms === null || isNaN(ms)) {
+            // Past a safe integer, ffmpeg refuses the -ss value and the player errors instead of
+            // simply running out of track.
+            if (ms === null || !Number.isSafeInteger(ms) || ms < 0) {
                 return message.reply("Invalid time format. Try `1:30`, `90`, or `1m30s`.");
             }
 
@@ -83,10 +85,13 @@ module.exports = {
 
             message.channel.send(`⏩ Seeking to **${query.trim()}**...`);
 
-            // Stopping the dispatcher manually triggers the AudioPlayerStatus.Idle event,
-            // which executes dispatcherFunc() in app/bot.js, cleanly applying the seek.
+            // The Idle this causes runs dispatcherFunc() in app/bot.js, which replays the entry from
+            // seekOffset instead of advancing. Forced, because a paused player never reaches Idle
+            // on a plain stop and the seek would wait for !resume. The replay is a new, unpaused
+            // player.
+            bot.isPaused = false;
             if (bot.dispatcher) {
-                bot.dispatcher.stop();
+                bot.dispatcher.stop(true);
             }
         }
     }

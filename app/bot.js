@@ -9,7 +9,9 @@ const commandLog = require('../helpers/commandLog.js');
 const { getPlex } = require('../helpers/plexClient.js');
 const playbackButtons = require('../helpers/playbackButtons.js');
 const plexResolve = require('../helpers/plexResolve.js');
-const { Readable } = require('stream');
+const seek = require('../helpers/seek.js');
+const { FFmpeg } = require('prism-media');
+const { Readable, pipeline } = require('stream');
 const {
 	NoSubscriberBehavior,
 	StreamType,
@@ -625,6 +627,32 @@ class Bot extends EventEmitter{
 			try { this.dispatcher.stop(); } catch (_) {}
 		}
 	}
+
+	/**
+	 * The audio for a Plex track started `ms` in.
+	 *
+	 * createAudioResource spawns its own ffmpeg for a plain stream and takes no extra arguments,
+	 * so a seek brings an ffmpeg that already outputs Ogg/Opus and voice only demuxes it. With
+	 * ffmpeg-static, which has libopus, that is also how normal tracks are encoded.
+	 *
+	 * `readstream` stays the download: ffmpeg's 'finish' fires once the download has been written
+	 * into it, well before the audio ends, and runPlayback hangs dispatcherFunc on readstream's
+	 * 'finish'. `pipeline` so a download failing mid-track ends the track at once, as voice's own
+	 * pipeline does for a normal track. Its callback is empty because every stop ends it with a
+	 * premature close, and readstream's own listener already logs a failed download.
+	 *
+	 * prism kills ffmpeg only while its stdin is open, so a stop after the whole download has gone
+	 * in would leave it blocked writing to a stdout nobody reads.
+	 */
+	seekResource(readstream, ms) {
+		const seeker = new FFmpeg({ args: seek.seekArgs(ms) });
+		pipeline(readstream, seeker, () => {});
+		const resource = createAudioResource(seeker, { inputType: StreamType.OggOpus });
+		resource.playStream.once('close', () => {
+			if (seeker.process) seeker.process.kill('SIGKILL');
+		});
+		return resource;
+	}
 	/**
 	 *
 	 */
@@ -676,8 +704,12 @@ class Bot extends EventEmitter{
 
 				
 				let readstream;
+				let seekMs = 0;
 				if(this.songQueue[0].key) {
-					const response = await this.openPlexStream(this.songQueue[0], message);
+					// Held across the fetch so the seek is taken from the entry whose bytes these
+					// are, even if something unshifts onto the queue meanwhile.
+					const track = this.songQueue[0];
+					const response = await this.openPlexStream(track, message);
 					// Nothing playable, and the user has already been told why. Move on rather
 					// than handing 85 bytes of HTML to the audio player, which is what used to
 					// drain a whole playlist in ten seconds without a word in the log.
@@ -686,6 +718,7 @@ class Bot extends EventEmitter{
 						return;
 					}
 					readstream = Readable.from(response.body, {highWaterMark: 20971520});
+					seekMs = seek.takeSeek(track);
 				} else {
 					readstream = ytdl(this.songQueue[0].url, { format: 'audioonly', quality: config.youtube_quality || 'highestaudio' });
 				}
@@ -694,34 +727,31 @@ class Bot extends EventEmitter{
 					title: this.songQueue[0] && this.songQueue[0].title,
 					artist: this.songQueue[0] && this.songQueue[0].artist,
 					queueDepth: this.songQueue.length,
-					channel: this.voiceChannel && this.voiceChannel.name
+					channel: this.voiceChannel && this.voiceChannel.name,
+					seekMs: seekMs || null
 				});
 
+				let announced = false;
 				// Arrow fuction to be played after a song is finished.
 				let dispatcherFunc = () => {
-					if (this.songQueue.length > 0) {
-						if(this.songQueue[0].replay) {
-							this.songQueue[0].played = true;
-							this.playSong(message);
-						} else {
-							this.songQueue.shift();
-							if (this.songQueue.length > 0) {
-								this.playSong(message);
-							}
-							// no songs left in queue, continue with playback completion events
-							else {
-								this.isPlaying = false;
-								this.reportUnplayable(message);
-								this.emit('finish', message);
-								this.playbackCompletion(message);
-							}
-						}
-					} else {
-						this.isPlaying = false;
-						this.reportUnplayable(message);
-						this.emit('finish', message);
-						this.playbackCompletion(message);
+					const next = seek.afterTrack(this.songQueue);
+					if (next === 'replay') {
+						// A seek before the track first reached Playing replays a track nobody has
+						// been told about yet, so only a loop or an announced track skips the post.
+						if (this.songQueue[0].replay || announced) this.songQueue[0].played = true;
+						this.playSong(message);
+						return;
 					}
+					this.songQueue.shift();
+					if (next === 'next') {
+						this.playSong(message);
+						return;
+					}
+					// no songs left in queue, continue with playback completion events
+					this.isPlaying = false;
+					this.reportUnplayable(message);
+					this.emit('finish', message);
+					this.playbackCompletion(message);
 				};
 				// 20 971 520 bits = 20Mb
 
@@ -749,6 +779,7 @@ class Bot extends EventEmitter{
 					dispatcherFunc()
 				})
 				this.dispatcher.on(AudioPlayerStatus.Playing, () => {
+					announced = true;
 					if(!this.songQueue[0].played) {
 						let embedObj = this.songToEmbedObject(this.songQueue[0]);
 						message.channel.send({
@@ -778,7 +809,10 @@ class Bot extends EventEmitter{
 						}
 					})
 				*/
-				this.dispatcher.play(createAudioResource(readstream), {
+				const resource = seekMs > 0
+					? this.seekResource(readstream, seekMs)
+					: createAudioResource(readstream);
+				this.dispatcher.play(resource, {
 					inputType: StreamType.OggOpus,
 				})
 				this.conn.subscribe(this.dispatcher);
