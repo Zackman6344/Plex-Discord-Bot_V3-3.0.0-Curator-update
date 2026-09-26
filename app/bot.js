@@ -67,6 +67,9 @@ class Bot extends EventEmitter{
 				this.workingTask = 0;
 				this.waitForStart = false;
 				this.waitForStartMessage = null;
+				this.playRun = 0;
+				this.stopGeneration = 0;
+				this.stoppedEntry = null;
 		}
 	/**
 	 * Work like a simple semaphore to avoid conflict while playing song.
@@ -614,6 +617,10 @@ class Bot extends EventEmitter{
 	}
 
 	stop() {
+		// A runPlayback still waiting on the join or the download has no player yet for this to
+		// stop, so it checks these once the wait is over.
+		this.stopGeneration++;
+		this.stoppedEntry = this.songQueue[0];
 		// destroy() (not disconnect()) so discord.js drops the connection from its
 		// per-guild registry. A disconnect()-ed connection lingers in a half-dead
 		// state; the next joinVoiceChannel returns that corpse, entersState(Ready)
@@ -699,17 +706,70 @@ class Bot extends EventEmitter{
 				this.waitForStart = true;
 				this.waitForStartMessage = message;
 			} else {
+				// Read again after each await below. A skip or stop landing in one has no player of
+				// this run's to stop, and the queue or a newer run may have moved on meanwhile.
+				const run = ++this.playRun;
+				const generation = this.stopGeneration;
+				const track = this.songQueue[0];
+
+				let announced = false;
+				// Arrow fuction to be played after a song is finished.
+				let dispatcherFunc = () => {
+					const next = seek.afterTrack(this.songQueue);
+					if (next === 'replay') {
+						// Only a track that reached Playing has been announced. One replayed before
+						// that, by a seek or by a skip on a loop that never started, still needs it.
+						if (announced) this.songQueue[0].played = true;
+						this.playSong(message);
+						return;
+					}
+					this.songQueue.shift();
+					if (next === 'next') {
+						this.playSong(message);
+						return;
+					}
+					// no songs left in queue, continue with playback completion events
+					this.isPlaying = false;
+					this.reportUnplayable(message);
+					this.emit('finish', message);
+					this.playbackCompletion(message);
+				};
+				const superseded = () => {
+					// A second !play before anything played, or a Hitster clip, started a run of
+					// its own. Only the newest acts, or one skip would advance the queue twice.
+					if (this.playRun !== run) return true;
+					// A Hitster clip loads while the music plays on. The stop also stopped that
+					// player, and its own Idle moves the queue on.
+					if (this.stopGeneration !== generation && this.dispatcher
+						&& this.dispatcher.state.status !== AudioPlayerStatus.Idle) return true;
+					const head = this.songQueue[0];
+					if (this.stopGeneration !== generation && head === this.stoppedEntry) {
+						// The stop was meant for this entry, so the queue moves on as it would have
+						// when its player went Idle. A seek still waiting on this download would
+						// turn that into a replay and swallow a skip.
+						seek.takeSeek(track);
+						dispatcherFunc();
+						return true;
+					}
+					if (head === track) return false;
+					// The queue changed under this run: cleared or its head removed before anything
+					// played, or refilled after a !stop. Carry on from what is there now.
+					if (head) this.playSong(message);
+					else dispatcherFunc();
+					return true;
+				};
+
 				this.conn = await this.openConnection();
+				if (superseded()) return;
 
-
-				
 				let readstream;
 				let seekMs = 0;
 				if(this.songQueue[0].key) {
-					// Held across the fetch so the seek is taken from the entry whose bytes these
-					// are, even if something unshifts onto the queue meanwhile.
-					const track = this.songQueue[0];
 					const response = await this.openPlexStream(track, message);
+					if (superseded()) {
+						if (response && response.body) response.body.cancel().catch(() => {});
+						return;
+					}
 					// Nothing playable, and the user has already been told why. Move on rather
 					// than handing 85 bytes of HTML to the audio player, which is what used to
 					// drain a whole playlist in ten seconds without a word in the log.
@@ -730,29 +790,6 @@ class Bot extends EventEmitter{
 					channel: this.voiceChannel && this.voiceChannel.name,
 					seekMs: seekMs || null
 				});
-
-				let announced = false;
-				// Arrow fuction to be played after a song is finished.
-				let dispatcherFunc = () => {
-					const next = seek.afterTrack(this.songQueue);
-					if (next === 'replay') {
-						// A seek before the track first reached Playing replays a track nobody has
-						// been told about yet, so only a loop or an announced track skips the post.
-						if (this.songQueue[0].replay || announced) this.songQueue[0].played = true;
-						this.playSong(message);
-						return;
-					}
-					this.songQueue.shift();
-					if (next === 'next') {
-						this.playSong(message);
-						return;
-					}
-					// no songs left in queue, continue with playback completion events
-					this.isPlaying = false;
-					this.reportUnplayable(message);
-					this.emit('finish', message);
-					this.playbackCompletion(message);
-				};
 				// 20 971 520 bits = 20Mb
 
 				// Tear down any prior AudioPlayer + readstream before replacing them.
@@ -780,8 +817,11 @@ class Bot extends EventEmitter{
 				})
 				this.dispatcher.on(AudioPlayerStatus.Playing, () => {
 					announced = true;
-					if(!this.songQueue[0].played) {
-						let embedObj = this.songToEmbedObject(this.songQueue[0]);
+					// A !stop while the player is still buffering has emptied the queue by the time
+					// the audio starts.
+					const head = this.songQueue[0];
+					if(head && !head.played) {
+						let embedObj = this.songToEmbedObject(head);
 						message.channel.send({
 							content: language.BOT_PLAYSONG_SUCCES,
 							embeds: [embedObj],
