@@ -4,6 +4,7 @@
 // tracker client and relays the server log into the channel the watch was created in.
 
 const { EmbedBuilder, escapeMarkdown } = require('discord.js');
+
 const config = require('../config/config.js');
 const logger = require('../helpers/logger.js');
 const monitor = require('../helpers/archipelagoMonitor.js');
@@ -16,6 +17,19 @@ const WATCH_ID_HELP = 'Watch ID — leave empty if there is only one room';
 // Owned by archipelagoClaims, so the modes, their descriptions and the slash choices below are
 // all one list.
 const PING_HELP = claims.PING_HELP;
+
+// Why a slot's `!ap next` fell back to sphere 1, in words for the channel. The detail behind each
+// (paths on the host, the worker's own error) goes to the bot log instead of a public reply.
+const LOGIC_UNAVAILABLE = {
+    disabled: 'it is switched off',
+    'no-seed': 'the room has not said which seed it is yet',
+    'no-install': 'there is no Archipelago install here',
+    'not-generated-here': 'this seed was not generated here',
+    'no-python': 'the Python it needs is not installed',
+    failed: 'it could not be loaded; the bot log says why',
+    stopped: 'it was stopped while loading; ask again',
+    unverified: 'the rebuild did not match this slot'
+};
 
 // Slot names come from players' own YAML, so they reach a reply as text nobody here wrote.
 //
@@ -290,8 +304,8 @@ module.exports = {
                 { name: 'claims', description: 'Show who has claimed which slots', options: [
                     { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
                 ] },
-                { name: 'next', description: 'Unchecked locations that opened up earliest for a slot', options: [
-                    { name: 'slot', type: 'STRING', required: false, description: 'One of your claimed slots (defaults to it)' },
+                { name: 'next', description: 'Unchecked locations in logic for your claimed slots', options: [
+                    { name: 'slot', type: 'STRING', required: false, description: 'One of your claimed slots (defaults to all of them)' },
                     { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
                 ] },
                 { name: 'hints', description: 'Outstanding hints nobody has collected yet', options: [
@@ -416,7 +430,7 @@ module.exports = {
                     `\`${prefix}ap unclaim [id] <slot name>\` — give the slot back.`,
                     `\`${prefix}ap claims [id]\` — who has claimed what.`,
                     `\`${prefix}ap pings [id] <slot name> <${claims.PING_MODES.join('|')}>\` — how much a claimed slot pings you.`,
-                    `\`${prefix}ap next [id] [slot]\` — the soonest locations you can actually reach on a slot you have claimed.`,
+                    `\`${prefix}ap next [id] [slot]\` — the unchecked locations in logic for your claimed slots, all of them unless you name one.`,
                     `\`${prefix}ap hints [id] [slot]\` — hints nobody has collected yet, priority ones first.`,
                     `\`${prefix}ap hintpings [id] <slot name> <${claims.HINT_PING_MODES.join('|')}>\` — be told when someone wants an item out of your world. Starts off.`,
                     `\`${prefix}ap goals [@user]\` — multiworlds goaled. Releases don't count.`,
@@ -787,15 +801,24 @@ module.exports = {
                     const status = await say(named
                         ? `🧭 Working out what is open for ${slotLabel(named)}…`
                         : `🧭 Working out what is open across your ${wanted.length} slot(s)…`);
-                    const outcome = await monitor.suggestNextAll(id, wanted);
+                    // The first `!ap next` for a seed starts the logic worker, which takes about a
+                    // minute; saying so beats a status line that looks stuck.
+                    const onWait = () => (status && status.edit
+                        ? status.edit('🧭 Loading this seed\'s logic from the Archipelago install. About a minute the first time…').catch(() => {})
+                        : null);
+                    const outcome = await monitor.suggestNextAll(id, wanted, { onWait });
                     const reply = (text) => (status && status.edit ? status.edit(text).catch(() => say(text)) : say(text));
 
                     if (!outcome.ok) {
+                        const noLogic = outcome.logic && LOGIC_UNAVAILABLE[outcome.logic.reason]
+                            ? `I cannot use this seed's own logic (${LOGIC_UNAVAILABLE[outcome.logic.reason]}), and I have no sphere data for it either.\n`
+                            : 'I have no sphere data for this multiworld.\n';
                         const why = {
                             'no-watch': `No watch with ID ${id}.`,
-                            'not-a-room': 'Sphere data comes from the room\'s tracker, so this only works for a watch made from a room URL.',
-                            'no-tracker': 'That room does not link a tracker, so there is no sphere data to read.',
-                            'need-spheres': `I have no sphere data for this multiworld.\n` +
+                            'not-a-room': 'This reads the room\'s tracker, so it only works for a watch made from a room URL.',
+                            'no-tracker': 'That room does not link a tracker, so there is nothing to read checks from.',
+                            'need-spheres': noLogic +
+                                `Without the logic I can still list sphere 1, which needs nothing, given sphere data:\n` +
                                 `**Best source** — if you generated this seed, run:\n` +
                                 `\`python scripts/extract-spheres.py <Archipelago>/output/AP_<seed>.zip\`\n` +
                                 `That covers every location in the multiworld.\n` +
@@ -826,8 +849,8 @@ module.exports = {
                     }
 
                     // One slot gets the full list; several get a few each, so a player holding
-                    // eight of them still gets an answer inside one message. Earliest reachable
-                    // sphere first, so the ones the message limit cuts are the furthest away.
+                    // eight of them still gets an answer inside one message. Earliest sphere
+                    // first, so the ones the message limit cuts are the ones with nothing to do.
                     const many = live.length > 1;
                     const perSlot = many ? 4 : 15;
                     const blocks = monitor.orderBySoonest(live).map((r) => {
@@ -837,28 +860,43 @@ module.exports = {
                             if (r.reason === 'unknown-slot') return `${head} — not a slot in this multiworld.`;
                             return `${head} — could not work that out.`;
                         }
-                        if (r.sphere === null) {
-                            return `${head} — nothing reachable yet; ${r.beyond} open past sphere ${r.reach}.`;
+                        // A spoiler-sourced answer has no `open`: the spoiler knows only the
+                        // placements the seed needs, so its count would be the wrong number and a
+                        // hint besides.
+                        const rest = Number.isFinite(r.open) ? r.open - r.total : 0;
+                        if (r.total === 0) {
+                            if (r.mode === 'logic') return `${head} — nothing in logic yet; ${r.open} still locked.`;
+                            return Number.isFinite(r.open)
+                                ? `${head} — nothing open in sphere 1; ${r.open} further in.`
+                                : `${head} — nothing open in sphere 1 that the spoiler lists.`;
                         }
                         const shown = r.locations.slice(0, perSlot).map(l => `• ${escapeMarkdown(l)}`);
-                        if (r.locations.length > perSlot) {
-                            shown.push(`• …${r.locations.length - perSlot} more in sphere ${r.sphere}`);
-                        }
-                        const tail = r.beyond ? `, ${r.beyond} past sphere ${r.reach}` : '';
-                        return `${head} — sphere ${r.sphere} (${r.remaining} reachable${tail})\n${shown.join('\n')}`;
+                        if (r.locations.length > perSlot) shown.push(`• …${r.locations.length - perSlot} more`);
+                        const summary = r.mode === 'sphere1'
+                            ? `sphere 1 only: ${r.total} open${rest ? `, ${rest} further in` : ''}`
+                            : `${r.total} in logic${rest ? `, ${rest} still locked` : ''}`;
+                        return `${head} — ${summary}\n${shown.join('\n')}`;
                     });
 
                     const header = many
-                        ? `🧭 **Soonest reachable across ${live.length} of your slots**`
-                        : '🧭 **Soonest reachable**';
+                        ? `🧭 **What is in logic across ${live.length} of your slots**`
+                        : '🧭 **What is in logic**';
                     const doneNames = done.length <= 4
                         ? ` (${done.map(r => slotLabel(r.slot)).join(', ')})`
                         : '';
                     const skipped = done.length > 0
-                        ? ` ${done.length} finished slot${done.length === 1 ? '' : 's'} skipped${doneNames}._`
-                        : '_';
-                    const footer = '_Ordered by sphere, held to what each slot has shown it can reach. '
-                        + `Nothing here says what is in them.${skipped}`;
+                        ? ` ${done.length} finished slot${done.length === 1 ? '' : 's'} skipped${doneNames}.`
+                        : '';
+                    // Sphere 1 alone is only ever a fallback, and the reply says why, since "sphere
+                    // 1 only" for a slot with plenty open reads as a bug otherwise.
+                    const fallbacks = live.filter(r => r.ok && r.mode === 'sphere1');
+                    const fallbackWhy = fallbacks.map(r => LOGIC_UNAVAILABLE[r.why]).find(Boolean);
+                    const fallbackNote = fallbacks.length === 0 ? ''
+                        : ` Sphere 1 only where the seed's own logic is unavailable${fallbackWhy ? ` (${fallbackWhy})` : ''}: it needs nothing, so it is always in logic.`;
+                    const lead = live.some(r => r.ok && r.mode === 'logic')
+                        ? 'In logic with the items each slot has received, by the seed\'s own rules; earliest sphere first. '
+                        : '';
+                    const footer = `_${lead}Nothing here says what is in them.${fallbackNote}${skipped}_`;
 
                     // 2000 characters is a hard limit and an oversized send is rejected outright.
                     const budget = 1900 - header.length - footer.length;

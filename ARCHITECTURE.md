@@ -143,7 +143,9 @@ Two signature styles coexist in the codebase:
 | `archipelagoClient.js`     | One read-only WebSocket connection to an Archipelago multiworld. Runs the `RoomInfo` → `GetDataPackage` → `Connect` handshake, resolves item/location/player ids to names, renders `PrintJSON` packets into log lines, reconnects with backoff. Also exports the pure `parseTarget()`, `extractConnectAddress()` and `renderPrintJSON()`. |
 | `archipelagoData.js`       | Disk cache for AP data packages under `data/archipelago/datapackage/`, keyed by the per-game checksum the server publishes in `RoomInfo`. A reconnect re-downloads only the games whose checksum moved. |
 | `archipelagoMonitor.js`    | Holds one client per watched room, batches its log lines, posts them to the channel the watch was created in. Watches persist to `data/archipelago_watches.json` and reopen on boot. Disabled unless `config.archipelagoEnabled`. See "Archipelago room monitor" below. |
-| `archipelagoTracker.js`    | Reads per-slot completion (`124/124`) off a room's multiworld tracker page, which is the only place a slot's total location count exists. Pure `extractTrackerId` / `parseTrackerRows` / `fullyCheckedSlots` plus one `readCompletion` fetch. Degrades to no information rather than throwing. |
+| `archipelagoTracker.js`    | Reads per-slot completion (`124/124`) off a room's multiworld tracker page, which is the only place a slot's total location count exists. Pure `extractTrackerId` / `parseTrackerRows` / `fullyCheckedSlots` plus one `readCompletion` fetch. Degrades to no information rather than throwing. `readProgress` takes every slot's checked locations and received items from one `/api/tracker` read, for `!ap next`. |
+| `archipelagoLogic.js`      | Finds what `scripts/ap-logic-worker.py` needs for a seed (the install, its Python version, the output zip, and the seed number from Archipelago's Generate log as a spare), keeps one worker running at a time, and talks JSON lines to it. `acquire()` starts it lazily and remembers a failed start for ten minutes; `configChanged()` forgets that when the install or Python setting changes, and `release()` stops a seed's worker when its last watch ends. See "Suggesting what to check next" below. |
+| `archipelagoSpheres.js`    | Sphere data for a seed, from the extracted multidata table or a spoiler log, and the sphere 1 fallback `!ap next` answers with when the seed's own logic is unavailable. |
 | `archipelagoClaims.js`     | Which Discord user holds which slot in which watch, persisted to `data/archipelago_claims.json`. Storage and lookup only; whether a line is worth a ping is decided by `archipelagoMonitor.shouldPing`. See "Slot claims" below. |
 | `archipelagoCatchup.js`    | Which lines each watch has already posted, per watch and seed, persisted to `data/archipelago_catchup.json`, plus the pure `buildCatchup` that diffs a tracker read against that record and renders the missed lines exactly as the live relay would. See "Catching up after downtime" below. |
 | `jsonStore.js`             | One small JSON file holding one collection: env-overridable path, test gate, lazy cache, atomic write, and a corrupt file moved aside to `<file>.corrupt-<timestamp>` rather than overwritten. The claims, goals, roles and catch-up stores are built on it. |
@@ -164,7 +166,7 @@ Three files in `config/`. The two with secrets are **gitignored**; templates are
 
 | File                   | Tracked? | What it holds                                                              |
 | ---------------------- | -------- | -------------------------------------------------------------------------- |
-| `config/config.js`     | yes      | Feature flags + display strings: `commandPrefix`, `listenChannel`, `playlistsDir`, `serverName`, `ownerId`, `launchRoleId`, `playniteEnabled`, `tautulliEnabled` + `tautulliApiKey` + `tautulliUrl`, `language`, `youtube_quality`, the broadcast block (`broadcastChannelId`, `eventServerEnabled`, `eventServerPort`, `eventServerToken`, `broadcastKometa`, `broadcastGameLaunch`), and `archipelagoEnabled` + `archipelagoBatchSeconds`. |
+| `config/config.js`     | yes      | Feature flags + display strings: `commandPrefix`, `listenChannel`, `playlistsDir`, `serverName`, `ownerId`, `launchRoleId`, `playniteEnabled`, `tautulliEnabled` + `tautulliApiKey` + `tautulliUrl`, `language`, `youtube_quality`, the broadcast block (`broadcastChannelId`, `eventServerEnabled`, `eventServerPort`, `eventServerToken`, `broadcastKometa`, `broadcastGameLaunch`), `archipelagoEnabled` + `archipelagoBatchSeconds`, and `archipelagoInstallDir` + `archipelagoPython` for `!ap next`. |
 | `config/keys.js`       | **no**   | `botToken` (Discord) + `geminiApiKey` (Gemini). Copy from `keys.example.js`. |
 | `config/plex.js`       | **no**   | Plex `hostname`, `port`, `https`, `token` (the bot's default user), `homeOwnerToken` (optional, only for cross-account playlist features), `managedUser`, `options`. Copy from `plex.example.js`. |
 
@@ -516,7 +518,7 @@ separator that `parseLibraryHeader` must reject, so re-check these after a Komet
 
 There are two ways to point the bot at a multiworld, and they run side by side.
 
-**From `/config` → Archipelago.** Twenty-three settings live there. Eighteen describe one room: where it is (`archipelagoRoomUrl`, or `archipelagoHost` + `archipelagoPort`), which slot to observe from, its password, which channel the log goes to, the seven category filters, and five display toggles (progression sends only, hiding sends to finished slots, counting fully-checked slots as finished, colour, markers). Four of those toggles also set the starting value for a room added with `!ap watch`. The other five are shared by every watch: `archipelagoEnabled`, the batch window, the tracker poll interval, and the two role settings. While `archipelagoEnabled` is on, saving any Archipelago setting re-applies the configured room with no restart, and `syncConfigWatch()` below decides whether that costs a reconnect. The tracker poll interval is the exception: a watch reads it once, when its poll starts, so a saved value reaches a running watch only after that watch is restarted (a changed room, slot, password or DeathLink setting), its inference is toggled, or the bot restarts.
+**From `/config` → Archipelago.** Twenty-five settings live there. Eighteen describe one room: where it is (`archipelagoRoomUrl`, or `archipelagoHost` + `archipelagoPort`), which slot to observe from, its password, which channel the log goes to, the seven category filters, and five display toggles (progression sends only, hiding sends to finished slots, counting fully-checked slots as finished, colour, markers). Four of those toggles also set the starting value for a room added with `!ap watch`. The other seven are shared by every watch: `archipelagoEnabled`, the batch window, the tracker poll interval, the two role settings, and the two that let `!ap next` rebuild a seed's logic (`archipelagoInstallDir`, `archipelagoPython`; see "Suggesting what to check next"). While `archipelagoEnabled` is on, saving any Archipelago setting re-applies the configured room with no restart, and `syncConfigWatch()` below decides whether that costs a reconnect. The tracker poll interval is the exception: a watch reads it once, when its poll starts, so a saved value reaches a running watch only after that watch is restarted (a changed room, slot, password or DeathLink setting), its inference is toggled, or the bot restarts.
 
 **From `!ap watch <room url|host:port> <slot name>`,** which binds a room to the channel the command was run in and persists it to the watch file.
 
@@ -813,9 +815,13 @@ Every role id the bot creates is recorded per guild in `data/archipelago_roles.j
 
 ### Suggesting what to check next
 
-`!ap next [id] [slot]` answers with the unchecked locations in the soonest sphere a slot can
-**actually reach**. A sphere is a generation-time idea: sphere 1 is reachable with nothing,
-sphere 2 needs sphere 1's items, and so on.
+`!ap next [id] [slot]` answers with the unchecked locations a slot can reach **in logic right
+now**: the seed's own access rules, evaluated against the items that slot has received. The rules
+live in each game's Python world, so the answer comes from a Python process loaded from the
+Archipelago install that generated the seed (`scripts/ap-logic-worker.py`, managed by
+`helpers/archipelagoLogic.js`). When that cannot be had, the answer is the slot's sphere 1, and the
+reply says why. A sphere is a generation-time idea: sphere 1 is reachable with nothing, sphere 2
+needs sphere 1's items, and so on.
 
 **Only for slots the caller has claimed**, the bot owner included. A suggestion is a nudge about
 what is in somebody's world, so it goes to the person playing it and to nobody else.
@@ -826,115 +832,358 @@ remember and type four slot names to be told the same four things, and the answe
 always the union. A named slot still narrows it, and a slot the caller has not claimed is refused
 whether or not they hold others.
 
-The read behind an answer is split in two for that reason. `prepareSuggest(id)` does the I/O once
-per command — resolving the room page to a tracker id, loading the spoiler, and pulling every
-slot's checked locations — and `suggestFor(prep, slot)` is arithmetic on that with no I/O at all.
-Answering eight claimed slots through the old single-slot path would have re-fetched the tracker's
-400 KB of check data eight times to answer one command.
+The read behind an answer is split in two for that reason. `prepareSuggest(id, { onWait,
+slotNames })` does the I/O once per command: resolving the room page to a tracker id, getting a
+ready logic worker for the seed (or, when there is none, loading sphere data), and one tracker read
+for every slot's checks and received items. `answerAll(prep, names)` then asks the worker about
+every slot in a single `inLogic` request, or, with no worker, runs `suggestFor(prep, slot)` per
+slot, which is arithmetic with no I/O at all. Answering eight claimed slots through a single-slot
+path would have re-fetched the tracker's 400 KB of check data eight times to answer one command.
 
 A reply holding several slots gives each fewer locations (four rather than fifteen) and stops at a
 1,900-character budget, counting off any slots it could not fit rather than being cut in half by
-Discord at 2,000.
+Discord at 2,000. Each block leads with its counts, `N in logic, M still locked` from the logic or
+`sphere 1 only: N open, M further in` from the fallback, where M is the rest of the slot's
+unchecked locations. An answer from a spoiler has no M (see "The sphere 1 fallback").
 
-**Slots are listed earliest reachable sphere first** (`orderBySoonest`), in three bands: slots
-with a sphere in reach, lowest first; then slots with nothing reachable yet; then slots with no
-answer at all. Ties go by slot name, ignoring case, so the same room always lists the same way.
-Claim order said nothing about where to go, and it decided which slots the budget cut. Now the
-first block is the nearest thing to do, and anything cut is furthest away. On the room this
-shipped against, one player held 21 slots and about half fit.
+**Slots are listed earliest sphere first** (`orderBySoonest`), in three bands: slots with locations
+listed, by the lowest sphere among them; then slots with nothing listed; then slots with no answer
+at all. Ties go by slot name, ignoring case, so the same room always lists the same way. Claim
+order said nothing about where to go, and it decided which slots the budget cut. Now the first
+block is the nearest thing to do, and the budget cuts from the far end. On the room this shipped
+against, one player held 21 slots and about half fit.
 
-**Finished slots are skipped, and that check comes before the sphere arithmetic.** A finished slot
-does eventually reach "nothing left" on its own, but only once every one of its playthrough rows
-happens to be checked, and a release ends a slot without the spoiler's view of it changing at all.
-They are counted off in the footer rather than given a block each: anyone deep into a big async has
-more slots done than running, and a reply that is mostly "nothing left to check" buries the ones
-they can act on. Naming a finished slot explicitly still answers about that slot.
+**Within a slot, locations go earliest sphere first and then by name in natural order**, so
+`Chest 2` comes before `Chest 10`, whichever source answered. The worker's own list comes back in
+location id order within a sphere, and `answerFromLogic` re-sorts it by name. `suggestFor` sorts
+the table fallback's names once it has resolved their ids, and `sphereOneFromRows` sorts the
+spoiler's the same way.
+Locations left in an unreachable remainder (see "The self-check") carry no sphere and go last.
+
+**Finished slots are skipped, and that is settled first** (`resolveSlot`), before any logic, sphere
+or tracker work. A goaled slot can still have locations open, and the logic would list them. A
+finished slot never goes into the worker's request, and `suggestFor` resolves the slot before it
+looks for sphere data, so a finished slot is never told there is no sphere data. When `slotNames`
+holds no slot that resolves (every one finished, or not in this room), `prepareSuggest` returns a
+`settled` prep without touching the worker, the sphere files or the tracker, and `answerAll`
+answers from `resolveSlot` alone. A player whose slots have all goaled is told so at once, rather
+than after a minute-long rebuild that nothing in the reply would use. Finished slots are counted
+off in the footer rather than given a block each: anyone deep into a big async has more slots done
+than running, and a reply that is mostly "nothing left to check" buries the ones they can act on.
+Naming a finished slot explicitly still answers about that slot.
 
 **How a slot finished is often unknowable, and the reply does not guess.** Goal status is read back
 from data storage at every connect, so it survives a restart. A release is not: it arrives once as
 a live `PrintJSON`, there is no key to re-read it from, and `client.released` starts empty on every
 boot. A slot released while the bot was down is therefore indistinguishable from one that goaled
-without its client ever reporting it — both are simply at 100% checked. That third state is carried
+without its client ever reporting it; both are simply at 100% checked. That third state is carried
 as `how: 'complete'` and rendered as "finished".
 
 This is not hypothetical. On the room this was built against, six slots were done: three carried
 `client_status` 30 and three carried 0 while sitting at 100% checked, and all three of the latter
 were releases. Calling 100%-checked "goaled" would have been wrong every time it mattered.
 
-The relay filter is unaffected by any of this — a release checks every remaining location, so
+The relay filter is unaffected by any of this. A release checks every remaining location, so
 `inferFinished` already catches released slots through the tracker's 100% column.
 
-**Ordered by the sphere number and nothing else.** The item at a location is never read, and no
-location is preferred over another for what it holds. The reply says where to go, never what is
-there, because the second sentence is the spoiler.
+**The item at a location is never read for an answer, and never shown.** Locations are ordered by
+sphere and name and nothing else, and no location is preferred over another for what it holds. The
+reply says where to go, never what is there, because the second sentence is the spoiler. The
+worker's input is the items a slot has *received*, which that player already knows. The one place
+placements are read is the self-check below, which replays what each sphere handed out, and nothing
+from it reaches a reply beyond whether the slot passed.
 
-**Earliest unchecked is the wrong answer on its own.** Spheres describe the whole multiworld, not
-one player's progress, so a slot's lowest unchecked sphere is frequently one it has no way into
-yet: the items that open it are still in somebody else's world. Pointing at a location nobody can
-see is worse than saying nothing.
+#### Why spheres cannot say what is in logic
 
-Without the seed's logic rules, what is knowable is how far a slot has demonstrably got. **If a
-location in sphere N has been checked, sphere N was reachable**, and spheres are ordered by what
-they require, so everything at or below N is reachable too. That highest checked sphere is the
-`reach`, and only unchecked locations at or below it are offered. A slot that has checked nothing
-has a reach of 1, which needs nothing by definition.
+`!ap next` used to answer from sphere numbers alone. **If a location in sphere N had been checked,
+every unchecked location of that slot in spheres up to N was offered**, on the reading that sphere
+N had been reachable and spheres are ordered by what they require. That reading is unsound. A
+sphere is what became reachable once every item from the spheres before it had been collected,
+across the whole multiworld, so a slot's sphere 3 location can hang on an item still sitting in an
+idle player's sphere 1, and a different sphere 3 check proves nothing about it. Measured on the
+live 79-slot room: the rule listed 13,155 locations, and 11,409 of them could not be proven in
+logic. The seed's own rules list 6,174 for the same room, and a rule that stays sound on spheres
+alone would list 1,778. The rule is gone, and `soonestInLogic`, `soonestFromTable` and `reachOver`
+with it.
 
-It is a floor rather than the true frontier: a slot that has just received the item opening its
-next sphere is held back until it checks something there. That direction is deliberate, since a
-suggestion you cannot act on is the failure worth avoiding. When everything within reach is done,
-the reply says so and counts what is waiting beyond it, which reads differently from "nothing
-left".
-
-**The web sphere tracker cannot do this, which was measured rather than assumed.**
+**The web sphere tracker cannot help either, which was measured rather than assumed.**
 `/sphere_tracker/<id>` is linked from every room page and looks like exactly the right source. It
-is not: it lists only locations that have **already been checked**. Every slot's row count on the
-room this was built against equalled its checked count exactly, and so did the totals, 13,768
-against 13,768. DaveSMetroid had 87 rows for 87 checks with its 13 unchecked locations absent
-entirely. It is a record of what has been found, sphere by sphere, so asking it what to do next
-can only ever answer "nothing". The code does not use it, and this paragraph is here so nobody
-re-derives that.
+lists only locations that have **already been checked**. Every slot's row count on the room this
+was built against equalled its checked count exactly, and so did the totals, 13,768 against 13,768.
+DaveSMetroid had 87 rows for 87 checks with its 13 unchecked locations absent entirely. It is a
+record of what has been found, sphere by sphere, so asking it what to do next can only ever answer
+"nothing". The code does not use it, and this paragraph is here so nobody re-derives that.
+
+#### The logic worker (`scripts/ap-logic-worker.py`)
+
+It imports the Archipelago install as a library, rebuilds the seed's multiworld with every rule in
+place and nothing filled, checks that rebuild against the seed's multidata, and then answers
+queries until stdin closes. Its module docstring holds the protocol.
+
+**The install is a cx_Freeze build, and the worker loads it the way `ArchipelagoGenerate.exe`
+does.** Its compiled modules load into the Python minor version it was frozen with and no other,
+3.13 for Archipelago 0.6.7. The worker reads that version off the `python3XX.dll` shipped beside
+it and stops at once on any other. `bootstrap()` repeats the parts of cx_Freeze's own startup that
+matter: an import finder for the extension modules cx_Freeze keeps flat in `lib/` (as
+`lib/bsdiff4.core.cp313-win_amd64.pyd`), without which every world that imports one fails to load;
+`sys.frozen` and `SKIP_REQUIREMENTS_UPDATE`, since `ModuleUpdate` otherwise pip-installs whatever it
+thinks is missing into this Python at import; and `argv[0]` pointed at `ArchipelagoGenerate.exe`,
+since a frozen process's `Utils.local_path` is the folder of `argv[0]`. The interpreter runs with
+`-O -s -S -B`: `-O` because the frozen build was compiled with `optimize=1`, and an assert that
+fires here but was stripped there would make the rebuild differ; `-s -S` so nothing installed into
+this Python can shadow what `library.zip` ships; `-B` so nothing is compiled into the install's
+folders.
+
+**Nothing is written into the install.** An audit hook refuses any file opened for writing, and any
+rename, removal, link, permission or timestamp change or new folder, under the install's path. A
+rename, replace or move is checked at both ends, so moving a file out of the install is refused as
+well as moving one in. `host.yaml`'s save-on-exit, the file dialog a world opens when it wants a
+ROM (which would wait for a click nobody makes), and pip auto-updates are all switched off before
+generation runs. Generation's own output goes to a temporary folder.
+
+**The seed number comes from the spoiler inside the output zip, with the Generate log as a
+spare.** A rebuild needs the Players yamls, the apworlds and the seed number. The multidata has
+only the seed name, which is derived from the number. Archipelago writes the number in two places:
+the first line of the spoiler it packs into `output/AP_<seed name>.zip`
+(`Archipelago Version 0.6.7  -  Seed: <number>`), and `<install>/logs/Generate_*.txt`, on a line
+like `Generating for 79 players, <seed name> Seed <number> with plando: ...`. **Archipelago deletes
+its logs after a week**, and the first version read only the log, so every seed stopped being
+rebuildable seven days after it was generated. The worker now reads the spoiler first
+(`seed_from_spoiler`) and uses `--seed` only for a seed generated without one. With neither, it
+stops, and the seed gets sphere 1 only.
+
+`--seed` comes from `findSeedNumber` on the Node side, which reads the first 128 KB of each log,
+newest first, and matches on the seed name, because a run that failed and was retried leaves a log
+per attempt under a different seed. A seed that is not found is only searched for again once the
+logs folder's modification time moves. A miss is not a failure: the worker is started without
+`--seed`.
+
+**Generation runs unchanged up to the fill, and stops there.** `Generate.main` re-rolls the yamls
+with the real seed number before anything imports worlds: options are rolled from the global
+`random` right after it is seeded, and a world that draws from it at import has to draw at the same
+point it did in the real run. A re-roll that names a different seed means the number belongs to
+some other seed, and the worker stops.
+
+**The Players folder is then compared with the multidata, slot by slot, before anything is
+built.** The seed name comes from the number alone, so the check above cannot notice a Players
+folder that has moved on to the next async. Players are numbered in file name order, so one yaml
+added or removed renumbers every slot after it. Every rolled slot's name and game has to match the
+multidata's `slot_info` (item-link groups left out), and a mismatch stops the worker with how many
+slots differ and the first of them, which the bot log records. The whole seed then gets sphere 1
+only. The check runs before the half-minute build, so a stale folder fails fast.
+
+`Main.main` then runs as it is, with `distribute_items_restrictive` and `flood_items` swapped for a
+function that raises with the multiworld in hand. Everything that decides logic (options, regions, rules, entrances, events,
+locked items) is settled by then; the fill only places items, and it is where the nine minutes of a
+full run go. `--skip_output` matters only for what it skips before that point, the
+`assert_generate` stage, where worlds go looking for ROMs. Worlds' `stage_post_fill` hooks are run
+afterwards, because some set logic state there from the item pool and the rules alone (Super
+Metroid's `onlyBossLeft`, which every `CollectionState` copies). One that needs placements fails
+and is skipped, and the self-check catches what that costs. A seed generated in race mode is
+refused, since it cannot be reproduced.
+
+**Evaluation is Universal Tracker's, strict tier only** (`TrackerCore.updateTracker`). Each query
+builds a fresh `CollectionState`, because some worlds keep logic caches on the state and a reused
+one would carry one slot's items into the next answer. Received items arrive as
+`[item, location, flags]` and are recreated with the classification set from the flags exactly:
+generation can end with a classification `create_item` would not give (surplus copies of a counted
+item are made useful or filler, and some worlds upgrade classifications after the fill), and
+matching it is what reproduces the seed's spheres. **An item nobody found is the exception.**
+`/send`, `/send_multiple` and `!getitem` hand one out from location -1 with flags 0, whatever it
+is, and forcing those flags would turn a key given out that way into filler that opens nothing. An
+item with a location below 0 keeps `create_item`'s own classification, OR'd with the flags. The
+flags also pick between two names sharing one id, which Kingdom Two Crowns does with 755177. Start
+inventory is not in the tracker's received list, and `CollectionState` collects the multiworld's
+precollected items itself. Events are then swept, and the answer is every unchecked location of the
+slot that the state can reach.
+
+**Worlds print freely while they import**, so the worker points file descriptor 1 at stderr before
+importing anything and keeps a duplicate of the real stdout for the protocol alone: JSON lines,
+`progress`, `ready` and `fatal` events, and replies matched to requests by id.
+
+#### The self-check
+
+**Every slot is checked against the multidata before any answer from the rebuild is trusted.** Its
+location ids have to match, and then generation's own spheres are replayed through the same
+`reachable()` the queries use. Sphere k is exactly what became reachable once every item from the
+spheres before it was collected, so for each slot, given the items it received from spheres before
+k, `reachable()` has to return precisely that slot's locations in spheres 1 to k. Anything missing
+means the rebuild is stricter than the real seed and anything extra means it is looser; either way
+that slot is answered with sphere 1 only. Because the replay runs the query path itself, it also
+catches a slot whose rules read another slot's items, which a query collecting only the asking
+slot's items would get wrong. Items received by an item-link group are credited to every member.
+An exception during a slot's replay fails that slot's check with the error as its reason.
+
+**The last sphere in the multidata may not be a sphere.** When generation leaves locations
+unreachable it yields an empty sphere and then all of them, and `Main.py` drops the empty one, so
+the multidata's last entry is either a real sphere or that unreachable remainder, with nothing in
+the file to tell them apart. The rebuild tells them apart: with every earlier item, the remainder's
+locations are reachable or they are not. That is one fact about the whole multiworld, so every slot
+with locations in that entry votes on it. **When the votes disagree, every slot that voted either
+way falls back to sphere 1**, whichever side had more votes: two readings of one fact cannot both
+be right, and nothing says which is. `lastSphereUnreachable` in the `ready` event is then `null`, rather than
+`true` or `false`. A slot with no locations in the last entry has no vote and keeps its verdict.
+When the slots agree it is unreachable, its locations carry no sphere number in an answer and sort
+after every numbered one.
+
+The worker then announces `ready` with a verdict per slot, and the bot log records how many passed
+and names each one that did not, with the reason. Verified live on the 79-slot room: 79 of 79 slots
+passed, the worker was ready about 38 s after starting, and one request covering all 79 slots took
+303 ms. Those numbers were measured before the spoiler seed number, the Players comparison and the
+`/send` classification rule were added.
+
+#### The Node side (`helpers/archipelagoLogic.js`)
+
+`locateSeed` finds what the worker needs, or says which piece is missing: the install
+(`archipelagoInstallDir`, `C:\ProgramData\Archipelago` by default, blank for off), its Python
+version from the `python3XX.dll`, and the output zip at `<install>/output/AP_<seed name>.zip`.
+**The zip is what says the seed was generated here**, and a missing one is `not-generated-here`. The
+seed number is looked up in the Generate logs as a spare and is `null` when no log names it;
+`--seed` goes on the worker's command line, after `--multidata`, only when it is known.
+
+Each miss carries a reason code and a `detail`. **The reply shows only a short phrase for the
+code** (`LOGIC_UNAVAILABLE` in `commands/archipelago.js`: "this seed was not generated here", "the
+Python it needs is not installed", and so on) and never the detail, which holds paths on the host
+and the worker's own error text. That covers the footer note on a sphere 1 answer and the lead of
+the reply that asks for sphere data. For `failed` the phrase points at the bot log, which has the
+detail, and for a start that failed the last five lines of the worker's stderr too. A slot that
+failed its self-check reads as `unverified`, "the rebuild did not match this slot".
+
+`resolvePython` uses `archipelagoPython` when it is set, and otherwise asks the Windows launcher
+(`py -3.13`) for its `sys.executable`. **The worker runs on that `python.exe` directly, never
+through `py`**: the launcher starts Python as a child and waits on it, so killing the launcher
+would orphan the half-gigabyte process under it. A launcher that finds nothing is asked again next
+time, so installing Python is picked up without a restart.
+
+**One worker, started by the first `!ap next` that needs it, then kept while its seed is
+watched.** Loading every world and rebuilding a big seed takes most of a minute and about 0.5 GB,
+so it is neither done per command nor at startup for a command that may never run.
+`acquire(seedName, { onWait })` starts it, and calls `onWait` once before waiting on a worker that
+is still starting, which the command uses to edit its status message to say the seed's logic is
+loading. Callers that arrive during a startup share it. The worker is keyed
+`<install>|<seed name>`, and a different seed, or a different install, replaces the running worker
+rather than adding a second, since each holds a whole multiworld. It is stopped:
+
+- **When the last watch on its seed ends**: `!ap unwatch`, or the configured room removed in
+  `/config`. The monitor's `releaseLogicFor` calls `release(seedName)`, and leaves the worker alone
+  while another watch is on the same multiworld. A watch restart is not an end, since the next
+  `!ap next` would pay for the rebuild again.
+- **When the configured room is pointed at a different room**, through the same `releaseLogicFor`.
+- **When `archipelagoEnabled` is switched off, or `archipelagoInstallDir` is blanked**, as the
+  setting is saved. `applyConfig` calls `configChanged()` first on every `archipelago*` save,
+  whether or not the monitor is on, and it stops the worker when the install is blank; switching the
+  monitor off calls `stopAll()`. Before this, both only stopped new rebuilds and left a running
+  worker holding its memory until the bot exited.
+- **When a query gets no answer in 60 s.** The worker answers one request at a time, so a stalled
+  one holds up every question behind it. The timeout logs, marks the worker as stopping and kills
+  it, and the next `!ap next` starts a fresh one.
+- **When the bot exits.**
+
+A worker gets five minutes to become ready (38 s measured idle; the same machine has taken four
+times as long for a generation with other work running beside it) and 60 s per query. It keeps the
+last 40 lines of its stderr, and the last five go into the bot log when it fails. **A spawn that
+throws** instead of reporting an `error` event (a `.cmd` given as `archipelagoPython` is one) is
+caught in `LogicWorker.start()` and leaves the worker exited, so the start fails at once rather than
+leaving every later `!ap next` waiting five minutes on a process that never existed. Anything else
+that throws while `acquire()` chooses a worker comes back as `failed`.
+
+**A failed start is remembered for ten minutes** (`FAILURE_RETRY_MS`), under the same
+`<install>|<seed name>` key. The cause is on disk and usually stays there, so this stops every
+`!ap next` from paying another minute for the same failure. **Saving a different
+`archipelagoInstallDir` or `archipelagoPython` forgets every remembered failure** and the cached
+Python lookup, so a fix is tried by the next `!ap next` rather than ten minutes later.
+`configChanged()` compares against the settings it saw last, and its first call, at boot, only
+records them. **A worker stopped on purpose is not remembered as failed** (`worker.stopping`): one
+replaced by another seed, or released because its watch went, while it was still starting would
+otherwise hold its seed on sphere 1 for ten minutes. A worker that dies or stalls mid-question is
+not remembered either; `answerAll` answers that command from sphere 1 (see below), and the next
+`!ap next` starts a fresh worker.
+
+#### The sphere 1 fallback
+
+**Sphere 1 is the one sphere every slot can always enter.** Generation found it reachable with
+nothing but the starting inventory, so it is in logic at every point in the game. `!ap next`
+answers with it whenever exact logic is unavailable, in three cases:
+
+- **For the whole seed**, when there is no worker: `archipelagoInstallDir` is blank or holds no
+  install, the room has not named its seed yet, the seed was not generated with that install (no
+  output zip), no matching Python is found, or the rebuild failed, which includes a Players folder that no longer matches and a seed number found in neither
+  the spoiler nor the logs. `prepareSuggest` then loads sphere data (`ensureSpheres`) and
+  `suggestFor` answers each slot from it, through `sphereOneFromTable` for the multidata table and
+  `sphereOneFromRows` for a spoiler. The footer carries the reason as its short phrase.
+- **For the rest of one command**, when the worker dies or stalls mid-question. That happens after
+  `prepareSuggest` has handed over a worker, so it is `answerAll` that catches it: it logs the
+  error, loads sphere data itself and answers every slot through `suggestFor`, with the reason
+  `failed`.
+- **For one slot**, when the worker is running but that slot failed its self-check, including every
+  slot that voted in a disagreement over the final sphere, or when evaluating that slot's query
+  throws. The worker answers it with its unchecked sphere 1 locations, built from the multidata's
+  own location ids for the slot rather than the rebuild's, so a slot the rebuild got wrong is still
+  answered about its real world. No sphere files are involved, and the footer gives the phrase
+  for `unverified`, "the rebuild did not match this slot". `answerAll` logs a warning for each
+  slot whose answer is missing or carries an error.
+
+From the worker or the multidata table, the answer also counts every unchecked location of the
+slot (`open`), so a block reads `sphere 1 only: N open, M further in`, or
+`nothing open in sphere 1; M further in` once sphere 1 is done.
+
+**An answer from a spoiler carries no count and never says a slot has nothing left.** Its
+Playthrough lists only the placements the seed's completion needs, so running out of its rows says
+nothing about the slot being done, and the number of rows still unchecked is a count of required
+items still out there, which is a hint. `suggestFor` sets `open` to `null` on that path, and a
+block reads `sphere 1 only: N open` with no "further in", or
+`nothing open in sphere 1 that the spoiler lists.` A slot the spoiler has no rows for at all reads
+the same way. The Playthrough also lists events (boss kills, goals), which no tracker ever reports
+checked; once the game's data package has loaded it tells the two apart, and until then events are
+left in.
+
+With neither logic nor sphere data, the reply leads with the short phrase for why the logic was
+unavailable and then says how to get sphere data.
 
 #### Where the spheres come from
 
-Two sources, and they are not close in quality. `RoomInfo.seed_name` names the file either way,
-which is the same identity the goal tally and the hint store key on.
+Two sources, and they are not close in quality. **Both now serve only the sphere 1 fallback.**
+`RoomInfo.seed_name` names the file either way, which is the same identity the goal tally and the
+hint store key on.
 
-**The multidata's own sphere table, which is the good one.** Generation already answered this and
+**The multidata's own sphere table, which is the good one.** Generation already worked this out and
 wrote it down: the `.archipelago` multidata carries a top-level `spheres` field, a list of spheres
 each mapping player to the location ids reachable in it, covering **every** location rather than
 only the progression ones. `scripts/extract-spheres.py` lifts it into
-`data/archipelago/spheres/<seed_name>.json`. Nothing re-derives logic — this is what the generator
-decided, read back. It is keyed by location id, which is also what the tracker reports, so the two
-sides compare directly and the data package is consulted only to name the handful about to be
-shown. A slot whose package has not finished downloading still gets a correct answer.
+`data/archipelago/spheres/<seed_name>.json`. It is keyed by location id, which is also what the
+tracker reports, so the two sides compare directly and the data package is consulted only to name
+the handful about to be shown. A slot whose package has not finished downloading still gets a
+correct answer.
 
 It needs the multidata, so it is available only for a multiworld generated on this machine
-(`<Archipelago>/output/AP_<seed>.zip`).
+(`<Archipelago>/output/AP_<seed>.zip`). Such a seed normally gets exact logic, so the table is for
+one whose logic worker cannot start, such as a machine without Python 3.13 or a Players folder that
+has moved on to the next async.
 
-**The seed's spoiler log, which is the fallback**, at `data/archipelago/spoilers/<seed_name>.txt`.
+**The seed's spoiler log, which is the last resort**, at `data/archipelago/spoilers/<seed_name>.txt`.
 Its Playthrough section lists placements whether or not anyone has reached them, but only the ones
-the seed's completion depends on. **Measured: 1,728 rows against 14,783 locations — 11.7%.** For
-one slot it was 43 of 529, and after checking 42 of those the command reported "nothing reachable
-yet" while **41 locations sat open and every one of them in logic**. That is what motivated the
-multidata path: the spoiler had run out of things it could see, and said so in a way that read
-like a logic wall rather than a data wall. The same slot against the multidata table answers 41
-reachable, 0 beyond.
+the seed's completion depends on. **Measured: 1,728 rows against 14,783 locations, 11.7%.** For one
+slot it was 43 of 529. Under the old reach rule, after checking 42 of those the command reported
+"nothing reachable yet" while **41 locations sat open and every one of them in logic**. That is what
+motivated the multidata path: the spoiler had run out of things it could see, and said so in a way
+that read like a logic wall rather than a data wall. The same slot against the multidata table
+answered 41 reachable, 0 beyond.
 
 The preference is not a tie-break. A spoiler left in place beside an extracted table is ignored.
 A table that parses but holds no slots falls through to the spoiler rather than being trusted,
 because a slotless table answers "nothing left" for every slot in the room, which reads as
 everybody being finished.
 
-**The files are rechecked on every `!ap next`, so the order they arrive in does not matter.**
-Sphere data was first loaded once per seed and held for the life of the watch. That made the
-priority above only true at load time: drop a spoiler, let somebody run the command, then extract
-the table, and the watch went on answering from the spoiler's tenth of the locations until a
-restart, with nothing to say a far better source was sitting beside it. `ensureSpheres` now
-compares a fingerprint of both candidate files — size and modification time, two stats and no
-reads — and reloads only when it moved. Either half alone misses a case: a re-extraction can land
-on the same size, and a copy tool can keep the old timestamp. The fingerprint is taken before the
-load, so a file changing mid-load leaves one that is already stale and the next call catches it,
-rather than one matching content that was never read.
+**The files are rechecked on every `!ap next` that falls back to them, so the order they arrive in
+does not matter.** Sphere data was first loaded once per seed and held for the life of the watch.
+That made the priority above only true at load time: drop a spoiler, let somebody run the command,
+then extract the table, and the watch went on answering from the spoiler's tenth of the locations
+until a restart, with nothing to say a far better source was sitting beside it. `ensureSpheres` now
+compares a fingerprint of both candidate files (size and modification time, two stats and no reads)
+and reloads only when it moved. Either half alone misses a case: a re-extraction can land on the
+same size, and a copy tool can keep the old timestamp. The fingerprint is taken before the load, so
+a file changing mid-load leaves one that is already stale and the next call catches it, rather than
+one matching content that was never read.
 
 Two rules keep a reload from breaking a call already under way, both found by review and
 reproduced before they were fixed:
@@ -949,21 +1198,26 @@ reproduced before they were fixed:
   `Copy-Item` runs: with nothing else to load, dropping the record told the user there was no
   sphere data with the file sitting right there; and with a spoiler beside the table,
   `loadSpheres` quietly fell back to it, so a copy over the table switched every answer to a
-  tenth of the locations for its duration — a location was seen vanishing from a reply mid-copy.
-  Now, if the held record's own file is present (`sourcePresent`) and the load came back empty or
-  lower-ranked (`sourceRank`), the held record keeps answering and its fingerprint is left alone
-  so the next call tries again. The warning is logged once per state of the disk.
+  tenth of the locations for its duration, and a location was seen vanishing from a reply
+  mid-copy. Now, if the held record's own file is present (`sourcePresent`) and the load came back
+  empty or lower-ranked (`sourceRank`), the held record keeps answering and its fingerprint is left
+  alone so the next call tries again. The warning is logged once per state of the disk.
 - **Once the held record's own file is gone, it is not answered from memory**, even if some other
   file is present. The first version of this rule asked whether *anything* was on disk, so deleting
   a wrong table while a spoiler with no Playthrough sat beside it changed nothing, indefinitely.
-  An upgrade — a table appearing beside a held spoiler — always goes through.
+  An upgrade, a table appearing beside a held spoiler, always goes through.
 
-**Checked locations come from the tracker's JSON API, not its HTML.** The per-slot page carries a
-plain `Location | Checked` table and was the first thing tried. It is not usable: a game with a
-custom tracker in the web host renders something else entirely, and Super Metroid's page had no
-such table at all, which is why one slot silently reported nothing checked. `/api/tracker/<id>`
-answers identically for every game, in location ids, which the client's data package turns back
-into the names the spoiler uses.
+**Checks and received items come from the tracker's JSON API, not its HTML.** The per-slot page
+carries a plain `Location | Checked` table and was the first thing tried. It is not usable: a game
+with a custom tracker in the web host renders something else entirely, and Super Metroid's page had
+no such table at all, which is why one slot silently reported nothing checked. `/api/tracker/<id>`
+answers identically for every game, in ids. `readProgress` takes both halves from one read:
+`player_checks_done` for the checked location ids, which the client's data package turns back into
+the names a spoiler uses, and `player_items_received` for what the logic worker evaluates, where the
+server has already copied an item-link group's items to every member. Each received item is a
+NetworkItem `[item, location, finder, flags]`, and `answerAll` sends the worker
+`[item, location, flags]`: the location is what tells an item handed out by `/send` or `!getitem`
+(location -1) from one somebody found (see "The logic worker").
 
 Spoilers are gitignored with the rest of `data/archipelago/`, and parsed so the item and receiver
 columns are dropped where they are read rather than carried around and filtered later.
@@ -984,6 +1238,10 @@ columns are dropped where they are read rather than carried around and filtered 
 | `helpers/archipelagoGoals.js` | Lifetime goal tally, keyed by seed and slot. |
 | `helpers/archipelagoRoles.js` | Participant and goal-count Discord roles. |
 | `helpers/archipelagoData.js` | Data package disk cache. |
+| `helpers/archipelagoLogic.js` | Locates, starts, talks to and stops the logic worker behind `!ap next`. |
+| `helpers/archipelagoSpheres.js` | Sphere data and the sphere 1 fallback. |
+| `scripts/ap-logic-worker.py` | Rebuilds a seed's logic from the Archipelago install that generated it and answers what is in logic. Started by the bot, on the install's own Python version; writes nothing into the install. |
+| `scripts/extract-spheres.py` | Run by hand: lifts a multidata's sphere table into `data/archipelago/spheres/<seed_name>.json` for the fallback. |
 | `data/archipelago_watches.json` | Watches added with `!ap watch`, never the configured room. Gitignored: it holds the room URL, the Discord channel and user ids, and a room password in plain text if one was set. Overridable with `PLEXBOT_AP_WATCHES_FILE`, which is required under the test runner so a test run cannot read or rewrite the real one. |
 | `data/archipelago_claims.json` | Slot claims, including the configured room's. Gitignored: it maps Discord user ids to slot names. Overridable with `PLEXBOT_AP_CLAIMS_FILE`, required under the test runner on the same terms as the watch file. |
 | `data/archipelago_goals.json` | Lifetime goal tally per Discord user id. Gitignored. Overridable with `PLEXBOT_AP_GOALS_FILE`. |

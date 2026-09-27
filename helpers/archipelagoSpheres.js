@@ -1,6 +1,7 @@
 // helpers/archipelagoSpheres.js
 //
-// Which of a slot's unchecked locations became reachable earliest.
+// Sphere data for a seed: where it comes from, and the sphere 1 fallback `!ap next` uses when the
+// seed's own logic is unavailable.
 //
 // A sphere is a generation-time idea: sphere 1 is reachable with nothing, sphere 2 needs sphere
 // 1's items, and so on. Nothing in the network protocol carries it.
@@ -33,8 +34,8 @@
 // and 8% for one slot, whose 43 known locations ran out while 41 sat open and reachable. It is
 // what there is for a room somebody else generated, and it is thin.
 //
-// Either way the answer is ordered by nothing but the sphere number, and held back to what the
-// slot has shown it can reach.
+// Neither says what is in logic past sphere 1; only the seed's rules can (archipelagoLogic.js).
+// These answer `!ap next` with sphere 1 alone when those rules cannot be had.
 
 const fs = require('fs').promises;
 const path = require('path');
@@ -81,102 +82,65 @@ function parsePlaythrough(text) {
 }
 
 /**
- * The soonest locations a slot can actually reach right now.
+ * Sphere 1 of one slot, for when the seed's own logic cannot be had (see archipelagoLogic.js).
  *
- * "Earliest unchecked sphere" is the wrong answer on its own. Spheres are a property of the
- * whole multiworld, not of one player's progress: a slot's lowest unchecked sphere can be one it
- * has no way into yet, because the items that open it are still sitting in somebody else's
- * world. Pointing someone at a location they cannot see is worse than saying nothing.
- *
- * What is knowable without the seed's logic rules is how far the slot has demonstrably got.
- * **If a location in sphere N has been checked, sphere N was reachable**, and spheres are ordered
- * by what they require, so everything at or below N is reachable too. That highest checked sphere
- * is the reach, and only unchecked locations at or below it are offered.
- *
- * It is a floor, not the true frontier. A slot may have just received the item opening the next
- * sphere and not checked anything there yet, in which case that sphere is held back until it
- * does. Erring that way is deliberate: a suggestion you cannot act on is the failure worth
- * avoiding.
- *
- * A slot that has checked nothing has a reach of sphere 1, which needs nothing by definition.
+ * Sphere 1 is what generation found reachable with nothing but the starting inventory, so it is
+ * the one sphere every slot can always enter. Nothing past it can be vouched for without the
+ * rules: spheres describe the whole multiworld, so a slot's sphere 2 waits on items that may sit
+ * in any world, and which of them each location needs is exactly what the rules say. The rule
+ * this replaced took "checked something in sphere N" to mean everything up to N was open. On the
+ * 79-slot room it was built against, that listed 11,409 locations whose items had not arrived.
  *
  * @param {Array} rows        sphere rows from the spoiler
  * @param {Set<string>} checked  location names already checked, compared case-insensitively
  * @param {string} finder     the slot to answer for
- * @returns {{sphere: number, locations: string[], remaining: number, reach: number,
- *   beyond: number}|null} `remaining` counts what is open within reach, `beyond` what is open
- *   past it, so a caller can say "nothing you can reach yet" rather than "nothing left"
+ * @param {Function} [isLocation]  whether a name is a real location in the finder's game. The
+ *   Playthrough also lists events (boss kills, goals), which no tracker ever reports checked;
+ *   without a data package to tell them apart they are left in.
+ * @returns {{locations: string[], open: number}|null} `open` counts every unchecked row for the
+ *   slot; null when the spoiler has no row for it at all
  */
-function soonestInLogic(rows, checked, finder) {
+function sphereOneFromRows(rows, checked, finder, isLocation) {
     const want = String(finder || '').trim().toLowerCase();
     if (!want) return null;
 
     const done = new Set([...(checked || [])].map(name => String(name).trim().toLowerCase()));
-    const mine = (rows || []).filter(r => String(r.finder || '').trim().toLowerCase() === want);
+    const mine = (rows || []).filter(r => String(r.finder || '').trim().toLowerCase() === want
+        && (!isLocation || isLocation(r.location)));
     if (mine.length === 0) return null;
 
-    return reachOver(
-        mine.map(r => ({ sphere: r.sphere, key: r.location })),
-        entry => done.has(String(entry.key).trim().toLowerCase())
-    );
+    const open = mine.filter(r => !done.has(String(r.location).trim().toLowerCase()));
+    return {
+        locations: open.filter(r => r.sphere === 1).map(r => r.location).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+        open: open.length
+    };
 }
 
 /**
- * The same question against the multidata's sphere table for one slot.
+ * The same, from the multidata's sphere table for one slot.
  *
  * @param {Object} table  `{ "<sphere>": [locationId, ...] }`, as extract-spheres.py writes it
  * @param {Set<number>} checkedIds  location ids the tracker reports checked for this slot
- * @returns {Object|null} the shape soonestInLogic returns, with `locations` holding ids
+ * @returns {{locations: number[], open: number}|null} ids in numeric order
  */
-function soonestFromTable(table, checkedIds) {
+function sphereOneFromTable(table, checkedIds) {
     if (!table) return null;
     const done = new Set([...(checkedIds || [])].map(Number));
 
-    const entries = [];
+    let any = false;
+    let open = 0;
+    const locations = [];
     for (const [sphere, ids] of Object.entries(table)) {
-        for (const id of ids || []) entries.push({ sphere: Number(sphere), key: Number(id) });
+        for (const raw of ids || []) {
+            any = true;
+            const id = Number(raw);
+            if (done.has(id)) continue;
+            open += 1;
+            if (Number(sphere) === 1) locations.push(id);
+        }
     }
-    if (entries.length === 0) return null;
-
-    return reachOver(entries, entry => done.has(entry.key));
-}
-
-/**
- * The reach rule, in whatever currency the caller's keys are.
- *
- * Spheres are a property of the whole multiworld, not of one player's progress, so a slot's
- * lowest unchecked sphere can be one it has no way into yet: the items that open it are still in
- * somebody else's world. What is knowable without re-running the seed's logic is how far the slot
- * has demonstrably got. **If a location in sphere N has been checked, sphere N was reachable**,
- * and spheres are ordered by what they require, so everything at or below N is too. That highest
- * checked sphere is the reach.
- *
- * It is a floor, not the true frontier: a slot that has just received the item opening its next
- * sphere is held back until it checks something there. Erring that way is deliberate, because a
- * suggestion you cannot act on is the failure worth avoiding. A slot that has checked nothing has
- * a reach of 1, which needs nothing by definition.
- */
-function reachOver(entries, isDone) {
-    const cleared = entries.filter(isDone).map(e => e.sphere);
-    const reach = cleared.length > 0 ? Math.max(...cleared) : 1;
-
-    const open = entries.filter(e => !isDone(e));
-    const reachable = open.filter(e => e.sphere <= reach);
-    if (reachable.length === 0) {
-        return open.length === 0 ? null
-            : { sphere: null, locations: [], remaining: 0, reach, beyond: open.length };
-    }
-
-    const sphere = Math.min(...reachable.map(e => e.sphere));
-    const locations = reachable.filter(e => e.sphere === sphere).map(e => e.key)
-        .sort((a, b) => (typeof a === 'number' && typeof b === 'number' ? a - b : String(a).localeCompare(String(b))));
-    return {
-        sphere,
-        locations,
-        remaining: reachable.length,
-        reach,
-        beyond: open.length - reachable.length
-    };
+    if (!any) return null;
+    return { locations: locations.sort((a, b) => a - b), open };
 }
 
 /** Where a hand-supplied spoiler for one multiworld is looked for. */
@@ -294,8 +258,8 @@ async function loadSpheres({ seed, spoilerDir, sphereDir }) {
 
 module.exports = {
     parsePlaythrough,
-    soonestInLogic,
-    soonestFromTable,
+    sphereOneFromRows,
+    sphereOneFromTable,
     spoilerPath,
     spherePath,
     sourceFingerprint,

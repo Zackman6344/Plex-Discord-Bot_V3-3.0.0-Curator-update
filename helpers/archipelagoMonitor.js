@@ -18,6 +18,7 @@ const configStore = require('./configStore.js');
 const tracker = require('./archipelagoTracker.js');
 const hintStore = require('./archipelagoHints.js');
 const spheres = require('./archipelagoSpheres.js');
+const logic = require('./archipelagoLogic.js');
 // HintStatus 30. Anything else is either unremarkable or already found.
 const HINT_PRIORITY = 30;
 const claims = require('./archipelagoClaims.js');
@@ -1321,6 +1322,16 @@ function startWatch(watch) {
     return state;
 }
 
+// A watch ending for good lets the logic worker for its seed go, and the half gigabyte it holds,
+// unless another watch is on the same multiworld. A restart is not an end: the next `!ap next`
+// would pay the minute-long rebuild again for nothing.
+function releaseLogicFor(state) {
+    const seed = state && state.client && state.client.seedName;
+    if (!seed) return;
+    if ([...states.values()].some(other => other !== state && other.client && other.client.seedName === seed)) return;
+    logic.release(seed);
+}
+
 // Leaves the watch's pipeline alone: a restart wants its buffered lines and any flush under way to
 // carry on. The callers that end a watch drop the pipeline themselves.
 function stopWatch(id) {
@@ -1416,6 +1427,7 @@ function syncConfigWatch() {
         if (existing) {
             stopWatch(CONFIG_WATCH_ID);
             states.delete(CONFIG_WATCH_ID);
+            releaseLogicFor(existing);
             dropPipeline(CONFIG_WATCH_ID);
             catchup.forgetWatch(CONFIG_WATCH_ID);
             // With no state for id 0, listClaims(0) answers null and `!ap claims` / `!ap unclaim`
@@ -1494,6 +1506,7 @@ function syncConfigWatch() {
     // Both are read at render time, so they apply to the next line without a new socket.
     existing.client.colorize = desired.color;
     existing.client.markers = desired.markers;
+    if (roomChanged) releaseLogicFor(existing);
     if (needsReconnect) restartWatch(CONFIG_WATCH_ID, { sameRoom: !roomChanged });
     return existing.watch;
 }
@@ -1501,6 +1514,7 @@ function syncConfigWatch() {
 // Runs at boot and again whenever an archipelago* setting is saved, so the wizard can point the
 // bot at a different room without a restart.
 function applyConfig({ boot = false } = {}) {
+    logic.configChanged();
     if (!config.archipelagoEnabled) {
         if (states.size > 0) {
             for (const id of [...states.keys()]) {
@@ -1508,6 +1522,7 @@ function applyConfig({ boot = false } = {}) {
                 dropPipeline(id);
             }
             states.clear();
+            logic.stopAll();
             savedWatchesLoaded = false;
             logger.info('Archipelago monitor stopped — archipelagoEnabled is off');
         } else if (boot) {
@@ -1625,6 +1640,7 @@ function removeWatch(id) {
     refuseIfManaged(state, 'the room URL or host');
     stopWatch(id);
     states.delete(id);
+    releaseLogicFor(state);
     dropPipeline(id);
     catchup.forgetWatch(id);
     // Claims are keyed by watch id, and ids are handed out from a counter that can reach this
@@ -2017,13 +2033,20 @@ async function resolveTrackerId(state) {
 }
 
 /**
- * The one-off work behind a suggestion: the tracker's address, the seed's spheres, and every
- * slot's checked locations.
+ * The one-off work behind a suggestion: the tracker's address, the seed's logic or its sphere data,
+ * and every slot's checks and received items.
  *
- * Separated from the per-slot arithmetic because somebody holding eight slots in a big async
- * would otherwise re-fetch the tracker's 400 KB of check data eight times to answer one command.
+ * Separated from the per-slot work because somebody holding eight slots in a big async would
+ * otherwise re-fetch the tracker's 400 KB of check data eight times to answer one command.
+ *
+ * The seed's own logic comes first (archipelagoLogic.js). Sphere data is loaded only when that is
+ * unavailable, since then it is all there is to answer from.
+ *
+ * @param {{onWait?: Function, slotNames?: string[]}} [options] onWait runs once if the answer has to
+ *   wait for the logic worker to start, which takes about a minute the first time. slotNames, when
+ *   given, lets a question about slots that are all finished skip the worker and the tracker.
  */
-async function prepareSuggest(id) {
+async function prepareSuggest(id, options = {}) {
     const state = states.get(id);
     if (!state) return { ok: false, reason: 'no-watch' };
 
@@ -2036,12 +2059,37 @@ async function prepareSuggest(id) {
 
         const client = state.client;
         const seed = client.seedName || describeTarget(target);
-        const held = await ensureSpheres(state, seed, SPHERE_DIRS);
-        if (!held.ok) return held;
+        // Finished and unknown slots are answered from the connection alone. A player whose
+        // slots have all goaled would otherwise wait a minute for a rebuild to be told so.
+        if (options.slotNames && !options.slotNames.some(name => resolveSlot(client, name).ok)) {
+            return { ok: true, state, client, seed, logic: null, worker: null, spheres: null,
+                checkedIds: new Map(), receivedItems: new Map(), settled: true };
+        }
+        const exact = client.seedName
+            ? await logic.acquire(client.seedName, { label: state.watch.label, onWait: options.onWait })
+            : { ok: false, reason: 'no-seed', detail: 'the room has not said which seed it is yet' };
 
-        // held.spheres, not state.spheres: the record is fixed here, before the await below gives
-        // any other call a chance to replace it.
-        return { ok: true, state, client, spheres: held.spheres, checkedIds: await tracker.readCheckedIds(trackerId) };
+        let sphereData = null;
+        if (!exact.ok) {
+            const held = await ensureSpheres(state, seed, SPHERE_DIRS);
+            if (!held.ok) return { ...held, logic: exact };
+            // held.spheres, not state.spheres: the record is fixed here, before the await below
+            // gives any other call a chance to replace it.
+            sphereData = held.spheres;
+        }
+
+        const progress = await tracker.readProgress(trackerId, { origin: new URL(target.roomUrl).origin });
+        return {
+            ok: true,
+            state,
+            client,
+            seed,
+            logic: exact,
+            worker: exact.ok ? exact.worker : null,
+            spheres: sphereData,
+            checkedIds: progress.checkedIds,
+            receivedItems: progress.receivedItems
+        };
     } catch (err) {
         logger.warn(`[AP:${state.watch.label}] could not read what is next:`, err.message || err);
         return { ok: false, reason: 'failed', detail: err.message };
@@ -2049,102 +2097,219 @@ async function prepareSuggest(id) {
 }
 
 /**
- * Slot answers in the order worth visiting: the earliest sphere still within reach first.
+ * Slot answers in the order worth visiting: the earliest sphere with something in logic first.
  *
  * Three bands, so a slot with something to do is never listed under one without:
- *   1. an answer with a sphere, lowest sphere first
- *   2. nothing reachable yet — every open location sits past what the slot has proven it can enter
+ *   1. an answer listing locations, by the earliest sphere among them
+ *   2. an answer with nothing in logic yet
  *   3. no answer at all: nothing left, not a slot in this multiworld, no sphere data
  * Ties go by slot name, ignoring case, so the same state of the room always lists the same way.
  *
  * This also decides what survives Discord's message limit. A player holding twenty slots sees
- * only as many as fit, and in this order the ones cut are the ones furthest from reach.
+ * only as many as fit, and in this order the ones cut are the ones with nothing to do.
  *
  * @returns {Array} a new array; the one passed in is left in its original order
  */
 function orderBySoonest(results) {
-    const band = (r) => (r && r.ok ? (r.sphere === null || r.sphere === undefined ? 1 : 0) : 2);
+    const band = (r) => (r && r.ok ? (r.locations && r.locations.length > 0 ? 0 : 1) : 2);
+    const sphere = (r) => (Number.isFinite(r.sphere) ? r.sphere : Infinity);
     const name = (r) => String((r && r.slot) || '');
     return [...(results || [])].sort((a, b) =>
         band(a) - band(b)
-        || (band(a) === 0 ? a.sphere - b.sphere : 0)
+        || (band(a) === 0 && sphere(a) !== sphere(b) ? sphere(a) - sphere(b) : 0)
         || name(a).localeCompare(name(b), undefined, { sensitivity: 'base' }));
 }
 
-/** One slot's answer, off an already-prepared read. No I/O. */
-function suggestFor(prep, slotName) {
-    const { state, client, checkedIds } = prep;
-    // The snapshot this call's prepareSuggest took, not the live field. prepareSuggest awaits a
-    // multi-second tracker fetch after choosing the data, and another `!ap next` on the same watch
-    // can reload or drop state.spheres in that gap; reading the live field then threw on null.
-    // The fallback serves callers that build a prep by hand.
-    const data = prep.spheres || (state && state.spheres);
-    if (!data) return { ok: false, reason: 'no-spheres', slot: slotName };
-
+/**
+ * A slot name as asked for, resolved to the room's own spelling and slot number, or why not.
+ *
+ * A slot that is done has nothing worth pointing at, and is settled here, before any sphere or
+ * logic work. `how` is what is actually known, which is not always the outcome. Goal status is
+ * read back from data storage, so it survives a restart. A release is only ever seen live, in a
+ * PrintJSON that arrives once, and there is no key to re-read it from, so a slot released while
+ * the bot was down is indistinguishable from one that goaled without its client ever saying so.
+ * Both land as 'complete', and the reply says finished rather than guessing.
+ */
+function resolveSlot(client, slotName) {
     const slot = client.canonicalSlotName ? client.canonicalSlotName(slotName) : slotName;
     if (!slot) return { ok: false, reason: 'unknown-slot', slot: slotName };
     const slotId = client.slotIdFor ? client.slotIdFor(slot) : null;
     if (slotId === null || slotId === undefined) return { ok: false, reason: 'unknown-slot', slot: slotName };
 
-    // A slot that is done has nothing worth pointing at. Checked before the sphere arithmetic
-    // rather than left to fall out of it: a finished slot does reach "nothing left", but only
-    // once every one of its playthrough rows is checked, and a release ends a slot without
-    // touching the spoiler's view of it at all.
-    //
-    // `how` is what is actually known, which is not always the outcome. Goal status is read
-    // back from data storage, so it survives a restart. A release is only ever seen live, in a
-    // PrintJSON that arrives once, and there is no key to re-read it from — so a slot released
-    // while the bot was down is indistinguishable from one that goaled without its client ever
-    // saying so. Both land as 'complete', and the reply says finished rather than guessing.
     if (client.hasFinished && client.hasFinished(slotId)) {
         const how = client.hasGoaled(slotId) ? 'goaled'
             : client.hasReleased(slotId) ? 'released'
             : 'complete';
         return { ok: false, reason: 'finished', slot, how };
     }
+    return { ok: true, slot, slotId };
+}
+
+/**
+ * One slot's answer from the logic worker's result.
+ *
+ * `total` is how many locations are listed and `open` how many are unchecked at all, so the reply
+ * can say how much is still locked. An id with no name in the data package is kept as an id rather
+ * than dropped: the location is real and worth naming badly.
+ */
+function answerFromLogic(client, resolved, result) {
+    const { slot, slotId } = resolved;
+    if (!result || result.error) {
+        return { ok: false, reason: result && /not a slot/.test(result.error) ? 'unknown-slot' : 'failed', slot };
+    }
+    if (!result.open) return { ok: false, reason: 'nothing-left', slot };
+
+    const names = client.locationNames.get(client.slotGames.get(slotId));
+    const listed = (result.locations || []).map(([id, sphere]) => ({
+        name: (names && names.get(id)) || `Location#${id}`,
+        sphere: Number.isFinite(sphere) ? sphere : Infinity
+    }));
+    listed.sort((a, b) => a.sphere - b.sphere || a.name.localeCompare(b.name, undefined, { numeric: true }));
+
+    return {
+        ok: true,
+        slot,
+        mode: result.verified ? 'logic' : 'sphere1',
+        locations: listed.map(l => l.name),
+        sphere: listed.length > 0 && Number.isFinite(listed[0].sphere) ? listed[0].sphere : null,
+        total: listed.length,
+        open: result.open,
+        ...(result.verified ? {} : { why: 'unverified' })
+    };
+}
+
+/**
+ * One slot's answer from sphere data alone, for when the seed's own logic is unavailable: its
+ * unchecked sphere 1 locations, which need nothing and so are always in logic. No I/O.
+ */
+function suggestFor(prep, slotName) {
+    const { client, checkedIds } = prep;
+    // The snapshot this call's prepareSuggest took, not the live field. prepareSuggest awaits a
+    // multi-second tracker fetch after choosing the data, and another `!ap next` on the same watch
+    // can reload or drop state.spheres in that gap; reading the live field then threw on null.
+    // The fallback serves callers that build a prep by hand.
+    const resolved = resolveSlot(client, slotName);
+    if (!resolved.ok) return resolved;
+    const { slot, slotId } = resolved;
+
+    const data = prep.spheres || (prep.state && prep.state.spheres);
+    if (!data) return { ok: false, reason: 'no-spheres', slot };
 
     const ids = checkedIds.get(`${client.team}:${slotId}`) || [];
     const names = client.locationNames.get(client.slotGames.get(slotId));
 
-    let next;
+    let found;
     if (data.source === 'multidata') {
         // Both sides already speak location ids, so nothing is matched by name and a slot whose
         // data package has not loaded yet still gets a correct answer.
-        next = spheres.soonestFromTable(data.slots[String(slotId)], new Set(ids));
-        if (next) {
-            // Resolved only for the handful about to be shown. An id with no name is kept as an
-            // id rather than dropped: the location is real and worth naming badly.
-            next = { ...next, locations: next.locations.map(id => (names && names.get(id)) || `Location#${id}`) };
+        found = spheres.sphereOneFromTable(data.slots[String(slotId)], new Set(ids));
+        if (found) {
+            const named = found.locations.map(id => (names && names.get(id)) || `Location#${id}`);
+            found = { ...found, locations: named.sort((a, b) => a.localeCompare(b, undefined, { numeric: true })) };
         }
     } else {
-        // The spoiler talks in names, and the game's data package is what joins the two.
+        // The spoiler talks in names, and the game's data package is what joins the two. It is
+        // also what tells a location from an event, once it has loaded.
         const checked = new Set(ids.map(i => names && names.get(i)).filter(Boolean));
-        next = spheres.soonestInLogic(data.rows, checked, slot);
+        const known = names && names.size > 0 ? new Set(names.values()) : null;
+        found = spheres.sphereOneFromRows(data.rows, checked, slot, known ? (n => known.has(n)) : null);
+        // The Playthrough lists only the placements the seed's completion needs, so running out
+        // of its rows says nothing about the slot being done, and how many are left is a count of
+        // required items still out there. Neither is said.
+        found = { locations: found ? found.locations : [], open: null };
     }
 
-    if (!next) return { ok: false, reason: 'nothing-left', slot };
-    return { ok: true, slot, source: data.source, ...next };
+    if (!found || found.open === 0) return { ok: false, reason: 'nothing-left', slot };
+    return {
+        ok: true,
+        slot,
+        mode: 'sphere1',
+        source: data.source,
+        locations: found.locations,
+        sphere: found.locations.length > 0 ? 1 : null,
+        total: found.locations.length,
+        open: found.open,
+        why: prep.logic && prep.logic.reason
+    };
 }
 
 /**
- * What is soonest reachable across every slot asked about.
+ * What is in logic across every slot asked about.
  *
- * Sphere only. Nothing here reads which item is at a location, or prefers one location over
- * another for any reason but the sphere number, because the moment it did the answer would be
- * telling somebody what is there.
+ * Nothing here reads which item is at a location, or prefers one location over another for any
+ * reason but its sphere, because the moment it did the answer would be telling somebody what is
+ * there. The logic worker reads the items a slot has RECEIVED, which that player already knows.
  *
- * @returns {Promise<{ok: boolean, reason?: string, want?: string, results?: Array}>} one entry
- *   per slot asked about, in the order asked, each carrying its own `ok`; a false `ok` on the
- *   outer object means the read itself failed and there are no entries at all
+ * @param {{onWait?: Function}} [options] passed to prepareSuggest
+ * @returns {Promise<{ok: boolean, reason?: string, want?: string, results?: Array, logic?: Object}>}
+ *   one entry per slot asked about, in the order asked, each carrying its own `ok`; a false `ok`
+ *   on the outer object means the read itself failed and there are no entries at all
  */
-async function suggestNextAll(id, slotNames) {
-    const prep = await prepareSuggest(id);
+async function suggestNextAll(id, slotNames, options = {}) {
+    const prep = await prepareSuggest(id, { ...options, slotNames: slotNames || [] });
     if (!prep.ok) return prep;
-    return { ok: true, results: (slotNames || []).map(name => suggestFor(prep, name)) };
+    return answerAll(prep, slotNames || []);
 }
 
-async function suggestNext(id, slotName) {
-    const all = await suggestNextAll(id, [slotName]);
+/**
+ * Every slot's answer off an already-prepared read: from the logic worker when prepareSuggest
+ * found one, and from sphere 1 otherwise.
+ *
+ * @param {Object} prep what prepareSuggest returned
+ * @param {string[]} names slot names, as asked for
+ * @param {{sphereDir: string, spoilerDir: string}} [dirs] where sphere data is looked for if the
+ *   worker fails mid-question
+ */
+async function answerAll(prep, names, dirs = SPHERE_DIRS) {
+    if (prep.settled) return { ok: true, logic: prep.logic, results: names.map(name => resolveSlot(prep.client, name)) };
+    if (!prep.worker) {
+        return { ok: true, logic: prep.logic, results: names.map(name => suggestFor(prep, name)) };
+    }
+
+    const { client } = prep;
+    const resolved = names.map(name => resolveSlot(client, name));
+    const asked = resolved.filter(r => r.ok);
+    // Every slot already settled (finished, or not in this room) needs nothing from the worker,
+    // and asking a worker that has died meanwhile would turn those answers into a failure.
+    if (asked.length === 0) return { ok: true, logic: prep.logic, results: resolved };
+    let answers;
+    try {
+        answers = await prep.worker.inLogic(asked.map(r => ({
+            slot: r.slotId,
+            // [item, location, flags]: the location is what tells an item handed out by /send
+            // or !getitem (location -1, flags 0) from one somebody found.
+            received: (prep.receivedItems.get(`${client.team}:${r.slotId}`) || []).map(item => [item[0], item[1], item[3]]),
+            checked: prep.checkedIds.get(`${client.team}:${r.slotId}`) || []
+        })));
+    } catch (err) {
+        // The worker died or stalled mid-question. Sphere 1 still answers, if there is sphere
+        // data to take it from.
+        const label = (prep.state && prep.state.watch && prep.state.watch.label) || '?';
+        logger.warn(`[AP:${label}] logic worker could not answer: ${err.message || err}`);
+        const failed = { ok: false, reason: 'failed', detail: err.message };
+        const held = await ensureSpheres(prep.state, prep.seed, dirs);
+        if (!held.ok) return { ...held, logic: failed };
+        const fallback = { ...prep, spheres: held.spheres, logic: failed };
+        return { ok: true, logic: failed, results: names.map(name => suggestFor(fallback, name)) };
+    }
+
+    const bySlot = new Map(asked.map((r, i) => [r.slotId, answers[i]]));
+    for (const r of asked) {
+        const answer = bySlot.get(r.slotId);
+        if (!answer || answer.error) {
+            const label = (prep.state && prep.state.watch && prep.state.watch.label) || '?';
+            logger.warn(`[AP:${label}] logic worker could not answer for ${r.slot}: ${(answer && answer.error) || 'no answer'}`);
+        }
+    }
+    return {
+        ok: true,
+        logic: prep.logic,
+        results: resolved.map(r => (r.ok ? answerFromLogic(client, r, bySlot.get(r.slotId)) : r))
+    };
+}
+
+async function suggestNext(id, slotName, options) {
+    const all = await suggestNextAll(id, [slotName], options);
     return all.ok ? all.results[0] : all;
 }
 
@@ -2237,6 +2402,9 @@ module.exports = {
     // wrong without anything throwing, and reaching it through suggestNextAll would mean
     // faking a room page, a tracker endpoint and a data package to test arithmetic.
     suggestFor,
+    answerFromLogic,
+    answerAll,
+    resolveSlot,
     orderBySoonest,
     describeSpheres,
     ensureSpheres,
