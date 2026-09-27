@@ -539,23 +539,28 @@ class Bot extends EventEmitter{
 	}
 
 	/**
-	 * Join `this.voiceChannel`, clearing any dead connection first.
+	 * Join `this.voiceChannel`, first destroying any connection for the guild that is not Ready,
+	 * an earlier run's unfinished join included.
 	 *
 	 * joinVoiceChannel hands back an existing connection for the guild as-is. If that one is
 	 * disconnected or destroyed it never reaches Ready, so entersState waits the full timeout and
 	 * then aborts — the AbortError that used to escape as an unhandled rejection.
+	 *
+	 * The channel is read once, up front: while the join waits, a newer run can replace
+	 * `this.voiceChannel`, and its failure can clear it.
 	 */
 	async openConnection() {
-		const guildId = this.voiceChannel.guild.id;
+		const channel = this.voiceChannel;
+		const guildId = channel.guild.id;
 		const existing = getVoiceConnection(guildId);
 		if (existing && existing.state && existing.state.status !== VoiceConnectionStatus.Ready) {
 			try { existing.destroy(); } catch (_) {}
 		}
 
 		const connection = joinVoiceChannel({
-			channelId: this.voiceChannel.id,
+			channelId: channel.id,
 			guildId,
-			adapterCreator: this.voiceChannel.guild.voiceAdapterCreator
+			adapterCreator: channel.guild.voiceAdapterCreator
 		});
 
 		const startedAt = Date.now();
@@ -563,8 +568,8 @@ class Bot extends EventEmitter{
 			await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
 		} catch (error) {
 			commandLog.recordEvent('voice-join-failed', {
-				channel: this.voiceChannel.name,
-				channelId: this.voiceChannel.id,
+				channel: channel.name,
+				channelId: channel.id,
 				replacedDeadConnection: !!existing,
 				waitedMs: Date.now() - startedAt,
 				error: (error && error.message) || String(error)
@@ -573,8 +578,8 @@ class Bot extends EventEmitter{
 			throw error;
 		}
 		commandLog.recordEvent('voice-joined', {
-			channel: this.voiceChannel.name,
-			channelId: this.voiceChannel.id,
+			channel: channel.name,
+			channelId: channel.id,
 			replacedDeadConnection: !!existing,
 			tookMs: Date.now() - startedAt
 		});
@@ -685,9 +690,9 @@ class Bot extends EventEmitter{
 			return;
 		}
 
-		this.voiceChannel = this.pickVoiceChannel(message);
+		const channel = this.pickVoiceChannel(message);
 
-		if (!this.voiceChannel) {
+		if (!channel) {
 			// Nothing is playing and the requester isn't in a channel: keep the queue, drop the
 			// belief that playback is under way, and say which of the two is missing.
 			this.isPlaying = false;
@@ -698,6 +703,9 @@ class Bot extends EventEmitter{
 			);
 			return;
 		}
+		// Set only once a channel is found: a run still joining relies on it to stay in its channel
+		// at the next track.
+		this.voiceChannel = channel;
 
 		if (this.voiceChannel) {
 			this.emit('will play', message);
@@ -759,7 +767,14 @@ class Bot extends EventEmitter{
 					return true;
 				};
 
-				this.conn = await this.openConnection();
+				try {
+					this.conn = await this.openConnection();
+				} catch (error) {
+					// A newer run's openConnection destroyed this run's unfinished join, which then
+					// only times out. Failing here would destroy that run's connection mid-track.
+					if (this.playRun !== run) return;
+					throw error;
+				}
 				if (superseded()) return;
 
 				let readstream;
