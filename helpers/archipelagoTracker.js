@@ -141,6 +141,34 @@ async function readCheckedIds(trackerId, options = {}) {
 }
 
 /**
+ * Every slot's checked location ids and received items, from one read of the tracker's JSON API.
+ *
+ * What `!ap next` works from. The received items are each a NetworkItem `[item, location, finder,
+ * flags]`, and the server has already copied an item-link group's items to every member here.
+ * Start inventory is not among them: the server sends that separately and the API leaves it out.
+ *
+ * `origin` is the room's own web host, as for readTrackerData.
+ *
+ * @returns {Promise<{checkedIds: Map<string, number[]>, receivedItems: Map<string, Array>}>} keyed "team:slot"
+ */
+async function readProgress(trackerId, options = {}) {
+    const origin = options.origin || 'https://archipelago.gg';
+    const json = JSON.parse(await fetchText(`${origin}/api/tracker/${trackerId}`, options.timeoutMs || 30000));
+
+    const checkedIds = new Map();
+    for (const entry of json.player_checks_done || []) {
+        if (!entry || !Array.isArray(entry.locations)) continue;
+        checkedIds.set(`${entry.team || 0}:${entry.player}`, entry.locations);
+    }
+    const receivedItems = new Map();
+    for (const entry of json.player_items_received || []) {
+        if (!entry || !Array.isArray(entry.items)) continue;
+        receivedItems.set(`${entry.team || 0}:${entry.player}`, entry.items);
+    }
+    return { checkedIds, receivedItems };
+}
+
+/**
  * The tracker API's whole answer, for the room log catch-up: every item each slot has received
  * (`player_items_received`), `activity_timers` and `player_status`.
  *
@@ -167,6 +195,7 @@ module.exports = {
     parseTrackerRows,
     fullyCheckedSlots,
     readCheckedIds,
+    readProgress,
     readTrackerData,
     readCompletion
 };

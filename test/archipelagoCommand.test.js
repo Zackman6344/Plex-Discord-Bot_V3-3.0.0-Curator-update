@@ -15,6 +15,7 @@ const stores = harness.useTempStores('cmd');   // must run before any helper is 
 const config = require('../config/config.js');
 const claims = require('../helpers/archipelagoClaims.js');
 const monitor = require('../helpers/archipelagoMonitor.js');
+const slashRegistry = require('../helpers/slashRegistry.js');
 const ap = require('../commands/archipelago.js');
 
 const ZACK = '111111111111111111';
@@ -313,51 +314,275 @@ test('clearing a password still works when asked for in words', async () => {
     assert.strictEqual(monitor.getWatch(watch.id).password, null);
 });
 
-// --- !ap next lists slots by the earliest sphere still within reach ---------------------------
+// --- !ap next -----------------------------------------------------------------------------------
 //
-// The reply for someone holding many slots used to follow claim order, which says nothing about
-// where to go first, and the message limit then cut whichever slots happened to be claimed last.
-// Sorted, the first block is the nearest thing to do and the ones cut are the furthest away.
+// What the reply says for each slot, and in what order. The reply for someone holding many slots
+// used to follow claim order, which says nothing about where to go first, and the message limit
+// then cut whichever slots happened to be claimed last. Sorted, the first block is the nearest
+// thing to do and the ones cut are the ones with nothing to do.
 //
-// suggestNextAll is stubbed: this is about the order the command renders in, and the sphere
-// arithmetic behind each answer is covered in archipelagoSuggest.test.js.
+// The wording carries which of two very different answers a slot got. One comes from the seed's
+// own logic, run against the items the slot has received. The other is sphere 1 alone, the
+// fallback when that logic is unavailable, and read as the logic answer it looks like a slot with
+// almost nothing to do. So each block says which it is, and the footer says why logic was missing.
+//
+// suggestNextAll is stubbed: this is about what the command renders, and how each slot's answer
+// is worked out is covered in archipelagoSuggest.test.js. The status message is edited into the
+// answer, and in this action `edit` gets a bare string, so the edits are what has to be captured.
 
-test('!ap next lists claimed slots earliest reachable sphere first', async (t) => {
-    const slots = ['ZackWord', 'ZackStuck', 'ZackEarly', 'ZackDone', 'ZackBanner'];
-    await addWatch(slots);
+// Held once, so a test that asks twice restores the real one and not the first stub.
+const realSuggestNextAll = monitor.suggestNextAll;
+
+async function claimAll(slots) {
+    const watch = await addWatch(slots);
     for (const slot of slots) await run('claim', slot);
+    return watch;
+}
 
-    const canned = {
-        ZackWord:   { ok: true, slot: 'ZackWord', sphere: 3, reach: 3, remaining: 2, beyond: 0, locations: ['Word Loc'] },
-        ZackStuck:  { ok: true, slot: 'ZackStuck', sphere: null, reach: 2, remaining: 0, beyond: 5, locations: [] },
-        ZackEarly:  { ok: true, slot: 'ZackEarly', sphere: 1, reach: 4, remaining: 9, beyond: 0, locations: ['Early Loc'] },
-        ZackDone:   { ok: false, slot: 'ZackDone', reason: 'nothing-left' },
-        ZackBanner: { ok: true, slot: 'ZackBanner', sphere: 3, reach: 3, remaining: 1, beyond: 0, locations: ['Banner Loc'] }
+// `wait` has the stub call onWait before answering, the way a worker that is still starting does.
+async function askNext(t, outcome, { wait = false, args = ['next'] } = {}) {
+    const calls = [];
+    monitor.suggestNextAll = async (id, wanted, options) => {
+        calls.push({ id, wanted, options });
+        if (wait) await options.onWait();
+        return outcome;
     };
-    const real = monitor.suggestNextAll;
-    let asked = null;
-    monitor.suggestNextAll = async (id, wanted) => {
-        asked = wanted;
-        return { ok: true, results: wanted.map(name => canned[name]) };
-    };
-    t.after(() => { monitor.suggestNextAll = real; });
+    t.after(() => { monitor.suggestNextAll = realSuggestNextAll; });
 
-    // The status message is edited into the answer, so the edit is what has to be captured.
     const edits = [];
     const msg = fakeMessage();
-    msg.channel.send = async (payload) => { msg.sent.push(payload); return { edit: async (text) => { edits.push(text); } }; };
-    await ap.command.process(msg, 'next');
+    msg.channel.send = async (payload) => {
+        msg.sent.push(payload);
+        return { edit: async (text) => { edits.push(text); return {}; } };
+    };
+    await ap.command.process(msg, ...args);
+    return { msg, edits, calls, final: edits.length ? edits[edits.length - 1] : null };
+}
 
-    assert.deepStrictEqual(asked, slots, 'every claimed slot was asked about, in claim order');
-    const answer = edits.join('\n') || said(msg);
+// One slot's answer in the shape suggestNextAll gives it: `locations` earliest sphere first,
+// `sphere` the lowest among them, `total` how many are listed and `open` how many are unchecked.
+const inLogic = (slot, locations, open, sphere = 1) => ({
+    ok: true, slot, mode: 'logic', locations, sphere: locations.length > 0 ? sphere : null, total: locations.length, open
+});
+const sphereOne = (slot, locations, open, why) => ({
+    ok: true, slot, mode: 'sphere1', source: 'multidata', locations,
+    sphere: locations.length > 0 ? 1 : null, total: locations.length, open, why
+});
+// A spoiler's Playthrough lists only the placements the seed's completion needs, so an answer
+// from one has no count of what is unchecked.
+const fromSpoiler = (slot, locations, why) => ({ ...sphereOne(slot, locations, null, why), source: 'spoiler' });
+const answered = (...results) => ({ ok: true, logic: { ok: true }, results });
+
+// The logic's own detail names places on the host, which a public reply has no business showing.
+// No markdown characters in it, so one check catches the raw text and an escaped copy alike.
+const INSTALL = 'D:/Games/AP-0.6.7';
+const NOT_HERE = { ok: false, reason: 'not-generated-here', detail: `no output/AP_Seed_CMD.zip in ${INSTALL}` };
+
+const LOADING = '🧭 Loading this seed\'s logic from the Archipelago install. About a minute the first time…';
+const LEAD = '_In logic with the items each slot has received, by the seed\'s own rules; earliest sphere first. ';
+
+test('!ap next lists claimed slots earliest sphere with something in logic first', async (t) => {
+    const slots = ['ZackWord', 'ZackStuck', 'ZackEarly', 'ZackDone', 'ZackBanner'];
+    await claimAll(slots);
+
+    const canned = {
+        ZackWord:   inLogic('ZackWord', ['Word Loc'], 3, 3),
+        ZackStuck:  inLogic('ZackStuck', [], 5),
+        ZackEarly:  inLogic('ZackEarly', ['Early Loc'], 10, 1),
+        ZackDone:   { ok: false, slot: 'ZackDone', reason: 'nothing-left' },
+        ZackBanner: inLogic('ZackBanner', ['Banner Loc'], 2, 3)
+    };
+    const reply = await askNext(t, answered(...slots.map(name => canned[name])));
+
+    assert.deepStrictEqual(reply.calls[0].wanted, slots, 'every claimed slot was asked about, in claim order');
+    const answer = reply.final;
+    assert.ok(answer, 'the status message was edited into the answer');
     const at = (name) => answer.indexOf(`**${name}**`);
     for (const name of slots) assert.ok(at(name) >= 0, `${name} is in the reply`);
 
-    // Sphere 1, then the two sphere-3 slots by name, then nothing reachable, then nothing left.
+    // Sphere 1, then the two sphere-3 slots by name, then nothing in logic, then nothing left.
     assert.ok(at('ZackEarly') < at('ZackBanner'), 'sphere 1 before sphere 3');
     assert.ok(at('ZackBanner') < at('ZackWord'), 'a tie in sphere goes by name');
-    assert.ok(at('ZackWord') < at('ZackStuck'), 'something to do before nothing reachable yet');
-    assert.ok(at('ZackStuck') < at('ZackDone'), 'nothing reachable yet before nothing left');
+    assert.ok(at('ZackWord') < at('ZackStuck'), 'something to do before nothing in logic yet');
+    assert.ok(at('ZackStuck') < at('ZackDone'), 'nothing in logic yet before nothing left');
+});
+
+test('a slot answered from the seed\'s logic says how many are in logic and how many are still locked', async (t) => {
+    await claimAll(['ZackWord']);
+    const reply = await askNext(t, answered(inLogic('ZackWord', ['Crate_1', 'Door B'], 7, 2)));
+
+    assert.strictEqual(reply.edits.length, 1, 'no loading line when the logic was already up');
+    assert.ok(reply.final.startsWith('🧭 **What is in logic**\n'), reply.final);
+    assert.ok(reply.final.includes('**ZackWord** — 2 in logic, 5 still locked\n• Crate\\_1\n• Door B\n'),
+        `the count and every location, markdown escaped: ${reply.final}`);
+    assert.ok(!reply.final.includes('Sphere 1 only'), reply.final);
+});
+
+test('a slot with everything unchecked in logic leaves the locked count out rather than saying 0', async (t) => {
+    await claimAll(['ZackWord']);
+    const reply = await askNext(t, answered(inLogic('ZackWord', ['Crate', 'Door'], 2)));
+
+    assert.ok(reply.final.includes('**ZackWord** — 2 in logic\n• Crate\n• Door'), reply.final);
+    assert.ok(!reply.final.includes('still locked'), reply.final);
+});
+
+test('a slot with nothing in logic yet says how much is still locked', async (t) => {
+    await claimAll(['ZackWord']);
+    const reply = await askNext(t, answered(inLogic('ZackWord', [], 4)));
+
+    assert.ok(reply.final.includes('**ZackWord** — nothing in logic yet; 4 still locked.'), reply.final);
+    // Still an answer from the seed's own rules, just an empty one, so the lead stays.
+    assert.ok(reply.final.includes(LEAD), reply.final);
+});
+
+test('a sphere 1 fallback says so on its block and the footer says why the logic was unavailable', async (t) => {
+    await claimAll(['ZackWord', 'ZackBanner']);
+    const reply = await askNext(t, {
+        ...answered(
+            sphereOne('ZackWord', ['Start Chest', 'Start Shop'], 6, NOT_HERE.reason),
+            sphereOne('ZackBanner', [], 3, NOT_HERE.reason)
+        ),
+        logic: NOT_HERE
+    });
+
+    assert.ok(reply.final.includes('**ZackWord** — sphere 1 only: 2 open, 4 further in\n• Start Chest\n• Start Shop'),
+        reply.final);
+    assert.ok(reply.final.includes('**ZackBanner** — nothing open in sphere 1; 3 further in.'), reply.final);
+    assert.ok(reply.final.includes(
+        ' Sphere 1 only where the seed\'s own logic is unavailable ' +
+        '(this seed was not generated here): it needs nothing, so it is always in logic._'), reply.final);
+    assert.ok(!reply.final.includes(INSTALL), `the logic's detail reached the reply: ${reply.final}`);
+});
+
+test('a sphere 1 answer from a spoiler lists what is open without a count of what is further in', async (t) => {
+    await claimAll(['ZackWord']);
+    const reply = await askNext(t, {
+        ...answered(fromSpoiler('ZackWord', ['Start Chest', 'Start Shop'], NOT_HERE.reason)),
+        logic: NOT_HERE
+    });
+
+    assert.ok(reply.final.includes('**ZackWord** — sphere 1 only: 2 open\n• Start Chest\n• Start Shop'), reply.final);
+    assert.ok(!reply.final.includes('further in'), reply.final);
+    assert.ok(!/\bnull\b|NaN|undefined/.test(reply.final), `a missing count was printed: ${reply.final}`);
+});
+
+// Running out of the Playthrough's rows says nothing about the slot, since the rows are only the
+// placements completion needs. So it is not "nothing left", and not a count of anything either.
+test('a spoiler with nothing in sphere 1 for a slot says only that the spoiler lists nothing', async (t) => {
+    await claimAll(['ZackWord']);
+    const reply = await askNext(t, { ...answered(fromSpoiler('ZackWord', [], NOT_HERE.reason)), logic: NOT_HERE });
+
+    assert.ok(reply.final.includes('**ZackWord** — nothing open in sphere 1 that the spoiler lists.'), reply.final);
+    assert.ok(!reply.final.includes('further in'), reply.final);
+    assert.ok(!reply.final.includes('nothing left'), reply.final);
+    assert.ok(!/\bnull\b|NaN|undefined/.test(reply.final), `a missing count was printed: ${reply.final}`);
+});
+
+test('the footer credits the seed\'s own rules only when some slot was answered from them', async (t) => {
+    await claimAll(['ZackWord', 'ZackBanner']);
+
+    // The worker answering for one slot and not vouching for another is the one way a reply
+    // mixes the two, and 'unverified' is the reason that comes with it.
+    const mixed = await askNext(t, answered(
+        inLogic('ZackWord', ['Crate'], 1),
+        sphereOne('ZackBanner', ['Start Chest'], 2, 'unverified')
+    ));
+    assert.ok(mixed.final.includes(`\n${LEAD}Nothing here says what is in them.`), mixed.final);
+    assert.ok(mixed.final.includes('unavailable (the rebuild did not match this slot)'), mixed.final);
+
+    // A reason the command has no words for is left out rather than echoed, since it could as
+    // easily be a detail naming a path on the host.
+    const fallbackOnly = await askNext(t, answered(
+        sphereOne('ZackWord', ['Start Chest'], 2),
+        sphereOne('ZackBanner', ['Start Shop'], 2, `${INSTALL} is not an install`)
+    ));
+    assert.ok(!fallbackOnly.final.includes('In logic with the items'), fallbackOnly.final);
+    assert.ok(fallbackOnly.final.includes(
+        '\n_Nothing here says what is in them. Sphere 1 only where the seed\'s own logic is unavailable: it needs nothing'),
+        `no reason it has words for, so no brackets: ${fallbackOnly.final}`);
+    assert.ok(!fallbackOnly.final.includes(INSTALL), fallbackOnly.final);
+
+    const nothingLeft = await askNext(t, answered(
+        { ok: false, slot: 'ZackWord', reason: 'nothing-left' },
+        { ok: false, slot: 'ZackBanner', reason: 'nothing-left' }
+    ));
+    assert.ok(nothingLeft.final.endsWith('\n_Nothing here says what is in them._'), nothingLeft.final);
+});
+
+test('a first !ap next that has to wait for the seed\'s logic says so on its status line', async (t) => {
+    await claimAll(['ZackWord']);
+    const reply = await askNext(t, answered(inLogic('ZackWord', ['Crate'], 1)), { wait: true });
+
+    assert.strictEqual(typeof reply.calls[0].options.onWait, 'function', 'the command hands suggestNextAll an onWait');
+    assert.match(said(reply.msg), /Working out what is open across your 1 slot\(s\)/);
+    assert.strictEqual(reply.edits.length, 2, 'the loading line, then the answer over it');
+    assert.strictEqual(reply.edits[0], LOADING);
+    assert.ok(reply.final.includes('**ZackWord** — 1 in logic\n• Crate'), reply.final);
+});
+
+test('with neither the seed\'s logic nor sphere data, the reply starts with why the logic was unavailable', async (t) => {
+    await claimAll(['ZackWord']);
+    const needSpheres = (logic) => ({
+        ok: false,
+        reason: 'need-spheres',
+        want: 'data/archipelago/spheres/Seed_CMD.json',
+        fallback: 'data/archipelago/spoilers/Seed_CMD.txt',
+        logic
+    });
+
+    const reply = await askNext(t, needSpheres(NOT_HERE));
+    assert.ok(reply.final.startsWith(
+        '🧭 I cannot use this seed\'s own logic (this seed was not generated here), ' +
+        'and I have no sphere data for it either.\n' +
+        'Without the logic I can still list sphere 1, which needs nothing, given sphere data:\n'), reply.final);
+    assert.ok(reply.final.includes('`data/archipelago/spoilers/Seed_CMD.txt`'), 'the spoiler path is still named');
+    assert.ok(!reply.final.includes(INSTALL), `the logic's detail reached the reply: ${reply.final}`);
+
+    // A worker's own error is where a traceback full of host paths would come from.
+    const failed = await askNext(t, needSpheres({
+        ok: false,
+        reason: 'failed',
+        detail: `logic worker stopped: File "${INSTALL}/worlds/generic/Rules.py", line 12`
+    }));
+    assert.ok(failed.final.startsWith(
+        '🧭 I cannot use this seed\'s own logic (it could not be loaded; the bot log says why), '), failed.final);
+    assert.ok(!failed.final.includes(INSTALL), `the worker's error reached the reply: ${failed.final}`);
+
+    // No reason to give, so it says only what it knows rather than "cannot use ... ()".
+    const bare = await askNext(t, needSpheres({ ok: false }));
+    assert.ok(bare.final.startsWith('🧭 I have no sphere data for this multiworld.\nWithout the logic'), bare.final);
+});
+
+// Every reason archipelagoLogic.acquire and prepareSuggest give for having no logic. One the
+// command has no words for would drop the reply to the bare "no sphere data", which reads as if
+// the logic was never tried.
+test('every reason the seed\'s logic can be unavailable is put into words, and its detail is not', async (t) => {
+    await claimAll(['ZackWord']);
+    for (const reason of ['disabled', 'no-seed', 'no-install', 'not-generated-here', 'no-python', 'failed']) {
+        const reply = await askNext(t, {
+            ok: false,
+            reason: 'need-spheres',
+            fallback: 'data/archipelago/spoilers/Seed_CMD.txt',
+            logic: { ok: false, reason, detail: `${reason} at ${INSTALL}` }
+        });
+        assert.match(reply.final, /^🧭 I cannot use this seed's own logic \([^)]+\), and I have no sphere data/,
+            `${reason}: ${reply.final}`);
+        assert.ok(!reply.final.includes(INSTALL), `${reason}: ${reply.final}`);
+    }
+});
+
+// The picker is where a slash user learns what the command does before running it, and the old
+// text promised one slot's earliest sphere when it now answers every claimed slot from the logic.
+// Read through buildSpec, since that is what Discord is sent and it cuts a subcommand's description
+// at 100 characters.
+test('the /ap next picker says it covers every claimed slot unless one is named', () => {
+    const spec = slashRegistry.buildSpec('ap', ap.command.slash);
+    const next = spec.options.find(o => o.name === 'next');
+    assert.ok(next, 'next is a subcommand');
+    assert.strictEqual(next.description, 'Unchecked locations in logic for your claimed slots');
+    const slot = next.options.find(o => o.name === 'slot');
+    assert.strictEqual(slot.required, false);
+    assert.strictEqual(slot.description, 'One of your claimed slots (defaults to all of them)');
 });
 
 // --- who may run what ---------------------------------------------------------------------------

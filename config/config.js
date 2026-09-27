@@ -133,6 +133,14 @@ const defaults = {
   // the colours above it survives every client including mobile. Filler is left unmarked
   // because most sends are filler.
   'archipelagoItemMarkers' : true,
+  // The Archipelago install `!ap next` rebuilds a seed's logic from, to list what each slot can
+  // actually reach with the items it has received. Only seeds generated with this install can be
+  // rebuilt; any other room gets sphere 1 only, which needs nothing. Blank turns it off. The first
+  // `!ap next` for a seed takes about a minute, and the helper process then holds about 0.5 GB.
+  'archipelagoInstallDir' : 'C:\\ProgramData\\Archipelago',
+  // The Python that helper runs on. It has to be the version the install was built with (3.13
+  // for Archipelago 0.6.7). Blank finds it with the Windows `py` launcher.
+  'archipelagoPython' : '',
 
   // Give players a Discord role for taking part, and one per goal count.
   // The bot creates "Archipelago" the first time somebody claims a slot with `!ap claim`, and a

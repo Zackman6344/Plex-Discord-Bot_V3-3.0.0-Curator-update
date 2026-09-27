@@ -55,6 +55,8 @@ const SETTINGS = [
     { key: 'archipelagoTrackerPollMinutes', label: 'Tracker re-read (minutes)', group: 'Archipelago', type: 'int', min: 1, max: 240 },
     { key: 'archipelagoColorLines', label: 'Colour items by class (desktop only)', group: 'Archipelago', type: 'bool' },
     { key: 'archipelagoItemMarkers', label: 'Mark items by class (works on mobile)', group: 'Archipelago', type: 'bool' },
+    { key: 'archipelagoInstallDir', label: 'Archipelago install (for !ap next logic)', group: 'Archipelago', type: 'string', placeholder: 'C:\\ProgramData\\Archipelago' },
+    { key: 'archipelagoPython', label: 'Python for !ap next logic (blank = py launcher)', group: 'Archipelago', type: 'string', placeholder: 'python.exe matching the install' },
     { key: 'archipelagoRolesEnabled', label: 'Create Archipelago roles', group: 'Archipelago', type: 'bool', warn: 'Creates and assigns roles. Needs Manage Roles, and the bot\'s role above the ones it makes.' },
     { key: 'archipelagoRoleName', label: 'Participant role name', group: 'Archipelago', type: 'string', placeholder: 'Archipelago' },
     { key: 'archipelagoShowItems', label: 'Show item sends', group: 'Archipelago', type: 'bool' },

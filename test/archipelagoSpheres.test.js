@@ -1,4 +1,10 @@
-// Reading spheres out of a spoiler log, and working out what a slot has open earliest.
+// Reading spheres out of a spoiler log or the multidata table, and the sphere 1 fallback `!ap next`
+// shows when the seed's own logic cannot be had.
+//
+// The fallback is what stands between a player and a list of places they cannot get into yet.
+// Spheres describe the whole multiworld, so the rule it replaced ("checked something in sphere N,
+// so everything up to N is open") listed 11,409 locations on the live 79-slot room that could not
+// be proven in logic. Sphere 1 needs nothing, so it is the one sphere that is always in logic.
 //
 // The fixture matches what Archipelago's Spoiler.to_file actually writes:
 //
@@ -85,71 +91,108 @@ test('lines outside a sphere block are ignored', () => {
     assert.strictEqual(rows[0].location, 'Real Location');
 });
 
-// --- choosing what to suggest ----------------------------------------------------------------
+// --- the sphere 1 fallback, from the spoiler ---------------------------------------------------
+//
+// What `!ap next` shows when the seed's own logic cannot be had. `locations` is what gets listed
+// and `open` is what the "M further in" count is worked out from, so both are pinned everywhere.
 
-test('the soonest reachable sphere is the answer, not the earliest unchecked one', () => {
-    const rows = spheres.parsePlaythrough(SPOILER);
-    // Checked the Morphing Ball in sphere 1, so sphere 1 is proven reachable and nothing beyond.
-    const next = spheres.soonestInLogic(rows, new Set(['Morphing Ball']), 'DaveSMetroid');
-    assert.strictEqual(next.sphere, 1);
-    assert.deepStrictEqual(next.locations, ['Energy Tank, Brinstar Ceiling']);
-    assert.strictEqual(next.reach, 1);
-    assert.strictEqual(next.remaining, 1, 'only what is within reach counts');
-    assert.strictEqual(next.beyond, 2, 'the sphere 2 and 3 locations are held back');
-});
+const DAVE_ALL = ['Morphing Ball', 'Energy Tank, Brinstar Ceiling', 'Varia Suit', 'Missile (Draygon)'];
 
-test('a sphere the slot has not proven it can enter is never suggested', () => {
+test('only sphere 1 is listed, however much else of the slot is unchecked', () => {
     const rows = spheres.parsePlaythrough(SPOILER);
-    // Everything in sphere 1 done, nothing in 2 or 3. Sphere 2 needs items from elsewhere, so
-    // pointing at it would be pointing at a door they cannot open.
-    const next = spheres.soonestInLogic(
-        rows, new Set(['Morphing Ball', 'Energy Tank, Brinstar Ceiling']), 'DaveSMetroid');
-    assert.strictEqual(next.sphere, null, 'nothing reachable is not the same as nothing left');
-    assert.strictEqual(next.beyond, 2);
-    assert.strictEqual(next.reach, 1);
-});
-
-test('checking something deeper raises the reach and opens what was skipped', () => {
-    const rows = spheres.parsePlaythrough(SPOILER);
-    // Varia Suit is sphere 2, so sphere 2 is proven; the sphere 1 Energy Tank is now offered.
-    const next = spheres.soonestInLogic(rows, new Set(['Morphing Ball', 'Varia Suit']), 'DaveSMetroid');
-    assert.strictEqual(next.reach, 2);
-    assert.strictEqual(next.sphere, 1);
-    assert.deepStrictEqual(next.locations, ['Energy Tank, Brinstar Ceiling']);
-    assert.strictEqual(next.beyond, 1, 'the sphere 3 Missile is still out of reach');
-});
-
-test('a slot that has checked nothing gets sphere 1, which needs nothing', () => {
-    const rows = spheres.parsePlaythrough(SPOILER);
-    const next = spheres.soonestInLogic(rows, new Set(), 'DaveSMetroid');
-    assert.strictEqual(next.reach, 1);
-    assert.strictEqual(next.sphere, 1);
+    const next = spheres.sphereOneFromRows(rows, new Set(), 'DaveSMetroid');
     assert.deepStrictEqual(next.locations, ['Energy Tank, Brinstar Ceiling', 'Morphing Ball']);
+    assert.strictEqual(next.open, 4, 'the sphere 2 and 3 locations are counted, never listed');
 });
 
-test('matching a checked location ignores case and stray spacing', () => {
+test('open counts every unchecked location of the slot, listed or not', () => {
     const rows = spheres.parsePlaythrough(SPOILER);
-    const next = spheres.soonestInLogic(rows, new Set(['  morphing BALL  ']), 'DaveSMetroid');
-    assert.ok(!next.locations.includes('Morphing Ball'));
+    const next = spheres.sphereOneFromRows(rows, new Set(['Morphing Ball']), 'DaveSMetroid');
+    assert.deepStrictEqual(next.locations, ['Energy Tank, Brinstar Ceiling']);
+    assert.strictEqual(next.open, 3);
 });
 
-test('a slot with everything checked answers null, not an empty sphere', () => {
+test('a slot with sphere 1 done lists nothing but still counts what is further in', () => {
+    // "Nothing open in sphere 1" and "finished" read very differently to the player, and `open`
+    // is the only thing that tells them apart.
     const rows = spheres.parsePlaythrough(SPOILER);
-    const done = new Set(['Morphing Ball', 'Energy Tank, Brinstar Ceiling', 'Varia Suit', 'Missile (Draygon)']);
-    assert.strictEqual(spheres.soonestInLogic(rows, done, 'DaveSMetroid'), null);
+    const next = spheres.sphereOneFromRows(
+        rows, new Set(['Morphing Ball', 'Energy Tank, Brinstar Ceiling']), 'DaveSMetroid');
+    assert.deepStrictEqual(next, { locations: [], open: 2 });
 });
 
-test('a slot nobody has heard of answers null', () => {
-    const rows = spheres.parsePlaythrough(SPOILER);
-    assert.strictEqual(spheres.soonestInLogic(rows, new Set(), 'NotARealSlot'), null);
-    assert.strictEqual(spheres.soonestInLogic(rows, new Set(), ''), null);
+test('checking deeper never opens a sphere 2 or 3 location (regression)', () => {
+    // The bug this replaced: a check in sphere N was read as "everything up to N is open". Spheres
+    // are multiworld-wide, so a slot reaching one sphere 3 location says nothing about the items
+    // its other sphere 2 and 3 locations wait on. Two locations per deep sphere, so a sibling of
+    // the checked one would show up here if the old rule crept back in.
+    const rows = [
+        { sphere: 1, finder: 'DaveSMetroid', location: 'Morphing Ball' },
+        { sphere: 2, finder: 'DaveSMetroid', location: 'Varia Suit' },
+        { sphere: 2, finder: 'DaveSMetroid', location: 'Missile (Crateria bottom)' },
+        { sphere: 3, finder: 'DaveSMetroid', location: 'Missile (Draygon)' },
+        { sphere: 3, finder: 'DaveSMetroid', location: 'Space Jump' }
+    ];
+    const answer = checked => spheres.sphereOneFromRows(rows, new Set(checked), 'DaveSMetroid');
+
+    assert.deepStrictEqual(answer(['Varia Suit']), { locations: ['Morphing Ball'], open: 4 });
+    assert.deepStrictEqual(answer(['Missile (Draygon)']), { locations: ['Morphing Ball'], open: 4 });
+    assert.deepStrictEqual(answer(['Varia Suit', 'Missile (Draygon)']), { locations: ['Morphing Ball'], open: 3 });
+    assert.deepStrictEqual(answer(['Morphing Ball', 'Missile (Draygon)']), { locations: [], open: 3 },
+        'sphere 1 done and a sphere 3 check still lists nothing from spheres 2 or 3');
 });
 
-test('one slot is never answered with another slot locations', () => {
+test('a checked name matches ignoring case and stray spacing', () => {
     const rows = spheres.parsePlaythrough(SPOILER);
-    const next = spheres.soonestInLogic(rows, new Set(), 'ZackWord');
-    assert.deepStrictEqual(next.locations, ['Used A']);
-    assert.strictEqual(next.sphere, 1);
+    const next = spheres.sphereOneFromRows(rows, new Set(['  morphing BALL  ']), 'DaveSMetroid');
+    assert.deepStrictEqual(next.locations, ['Energy Tank, Brinstar Ceiling']);
+    assert.strictEqual(next.open, 3, 'the matched name is out of the count too, not just the list');
+});
+
+test('a slot with everything checked answers open 0, not null', () => {
+    // Null means the spoiler has never heard of the slot; a finished slot is a different answer.
+    const rows = spheres.parsePlaythrough(SPOILER);
+    assert.deepStrictEqual(spheres.sphereOneFromRows(rows, new Set(DAVE_ALL), 'DaveSMetroid'),
+        { locations: [], open: 0 });
+});
+
+test('a slot the spoiler has no row for answers null', () => {
+    const rows = spheres.parsePlaythrough(SPOILER);
+    assert.strictEqual(spheres.sphereOneFromRows(rows, new Set(), 'NotARealSlot'), null);
+    assert.strictEqual(spheres.sphereOneFromRows(rows, new Set(), ''), null);
+    assert.strictEqual(spheres.sphereOneFromRows([], new Set(), 'DaveSMetroid'), null);
+    assert.strictEqual(spheres.sphereOneFromRows(null, null, 'DaveSMetroid'), null);
+});
+
+test('one slot is never answered with another slot\'s rows', () => {
+    // Two copies of the same game share every location name, so the finder is all that keeps
+    // one slot's list and count apart from the other's.
+    const rows = [...spheres.parsePlaythrough(SPOILER),
+        { sphere: 1, finder: 'ZackSMetroid', location: 'Morphing Ball' }];
+    assert.deepStrictEqual(spheres.sphereOneFromRows(rows, new Set(), 'ZackWord'),
+        { locations: ['Used A'], open: 2 });
+    assert.deepStrictEqual(spheres.sphereOneFromRows(rows, new Set(), 'ZackSMetroid'),
+        { locations: ['Morphing Ball'], open: 1 });
+});
+
+test('event rows are dropped from both the list and the open count', () => {
+    // The Playthrough lists events such as boss kills beside real locations. No tracker ever
+    // reports an event checked, so one left in would be suggested forever and keep a finished
+    // slot looking unfinished.
+    const rows = [...spheres.parsePlaythrough(SPOILER),
+        { sphere: 1, finder: 'DaveSMetroid', location: 'Ridley' }];
+    const real = new Set(DAVE_ALL);
+    const isLocation = name => real.has(name);
+
+    const next = spheres.sphereOneFromRows(rows, new Set(), 'DaveSMetroid', isLocation);
+    assert.deepStrictEqual(next.locations, ['Energy Tank, Brinstar Ceiling', 'Morphing Ball']);
+    assert.strictEqual(next.open, 4);
+
+    assert.deepStrictEqual(spheres.sphereOneFromRows(rows, real, 'DaveSMetroid', isLocation),
+        { locations: [], open: 0 }, 'a slot whose only unchecked row is an event is finished');
+
+    // Without a data package there is nothing to tell them apart, so the event stays in.
+    assert.ok(spheres.sphereOneFromRows(rows, new Set(), 'DaveSMetroid').locations.includes('Ridley'));
 });
 
 // --- finding the file ------------------------------------------------------------------------
@@ -198,43 +241,48 @@ test('loadSpheres answers null when there is no spoiler to read', async () => {
 
 const TABLE = { 1: [100, 101, 102], 2: [200, 201], 3: [300] };
 
-test('the soonest reachable sphere is found by location id', () => {
-    const next = spheres.soonestFromTable(TABLE, new Set([100]));
-    assert.strictEqual(next.sphere, 1);
-    assert.deepStrictEqual(next.locations, [101, 102]);
-    assert.strictEqual(next.reach, 1);
-    assert.strictEqual(next.beyond, 3, 'spheres 2 and 3 are held back');
+test('only sphere 1 ids are listed from the table, and open counts the rest', () => {
+    assert.deepStrictEqual(spheres.sphereOneFromTable(TABLE, new Set([100])),
+        { locations: [101, 102], open: 5 });
 });
 
-test('a sphere the slot has proven it can enter opens what was skipped', () => {
-    const next = spheres.soonestFromTable(TABLE, new Set([100, 200]));
-    assert.strictEqual(next.reach, 2);
-    assert.strictEqual(next.sphere, 1);
-    assert.deepStrictEqual(next.locations, [101, 102]);
-    assert.strictEqual(next.remaining, 3, '101, 102 and 201');
-    assert.strictEqual(next.beyond, 1);
+test('checking an id deeper never opens a sphere 2 or 3 id (regression)', () => {
+    // The same bug as the spoiler's: 200 checked used to list its sphere 2 sibling 201, and 300
+    // checked used to list the whole of sphere 2.
+    assert.deepStrictEqual(spheres.sphereOneFromTable(TABLE, new Set([200])),
+        { locations: [100, 101, 102], open: 5 });
+    assert.deepStrictEqual(spheres.sphereOneFromTable(TABLE, new Set([300])),
+        { locations: [100, 101, 102], open: 5 });
+    assert.deepStrictEqual(spheres.sphereOneFromTable(TABLE, new Set([100, 101, 102, 300])),
+        { locations: [], open: 2 }, 'sphere 1 done and a sphere 3 check still lists nothing deeper');
 });
 
-test('ids are returned in numeric order, not as strings', () => {
+test('ids come back in numeric order, not string order', () => {
     // "1000" sorts before "99" as a string, which would put the list in a nonsense order.
-    const next = spheres.soonestFromTable({ 1: [99, 1000, 300] }, new Set());
+    const next = spheres.sphereOneFromTable({ 1: [99, 1000, 300] }, new Set());
     assert.deepStrictEqual(next.locations, [99, 300, 1000]);
 });
 
-test('a slot with every location checked answers null', () => {
-    assert.strictEqual(spheres.soonestFromTable(TABLE, new Set([100, 101, 102, 200, 201, 300])), null);
+test('ids compare as numbers whether they arrive as numbers or strings', () => {
+    // The tracker answers in numbers and a hand-edited file could hold either, on either side.
+    assert.deepStrictEqual(spheres.sphereOneFromTable(TABLE, new Set(['100'])),
+        { locations: [101, 102], open: 5 });
+    const stringy = { '1': ['1000', '99', '300'], '2': ['200'] };
+    assert.deepStrictEqual(spheres.sphereOneFromTable(stringy, new Set([99])),
+        { locations: [300, 1000], open: 3 }, 'string ids come back as numbers, in numeric order');
+});
+
+test('a slot with every location checked answers open 0, not null', () => {
+    assert.deepStrictEqual(spheres.sphereOneFromTable(TABLE, new Set([100, 101, 102, 200, 201, 300])),
+        { locations: [], open: 0 });
 });
 
 test('a missing or empty table answers null rather than throwing', () => {
-    assert.strictEqual(spheres.soonestFromTable(null, new Set()), null);
-    assert.strictEqual(spheres.soonestFromTable(undefined, new Set([1])), null);
-    assert.strictEqual(spheres.soonestFromTable({}, new Set()), null);
-});
-
-test('checked ids match whether they arrive as numbers or strings', () => {
-    // The tracker answers in numbers and a hand-edited file could hold either.
-    const next = spheres.soonestFromTable(TABLE, new Set(['100']));
-    assert.deepStrictEqual(next.locations, [101, 102]);
+    assert.strictEqual(spheres.sphereOneFromTable(null, new Set()), null);
+    assert.strictEqual(spheres.sphereOneFromTable(undefined, new Set([1])), null);
+    assert.strictEqual(spheres.sphereOneFromTable({}, new Set()), null);
+    assert.strictEqual(spheres.sphereOneFromTable({ 1: [], 2: [] }, null), null,
+        'spheres with no ids in them are no table at all');
 });
 
 test('the table is read from a filename-safe form of the seed', () => {
