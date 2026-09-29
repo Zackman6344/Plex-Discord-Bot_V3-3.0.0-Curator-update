@@ -2173,6 +2173,8 @@ function answerFromLogic(client, resolved, result) {
         locations: listed.map(l => l.name),
         sphere: listed.length > 0 && Number.isFinite(listed[0].sphere) ? listed[0].sphere : null,
         total: listed.length,
+        // Beside `locations`, same order, so a one-slot reply can head each sphere's group.
+        spheres: listed.map(l => (Number.isFinite(l.sphere) ? l.sphere : null)),
         open: result.open,
         ...(result.verified ? {} : { why: 'unverified' })
     };

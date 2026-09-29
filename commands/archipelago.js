@@ -870,8 +870,23 @@ module.exports = {
                                 ? `${head} — nothing open in sphere 1; ${r.open} further in.`
                                 : `${head} — nothing open in sphere 1 that the spoiler lists.`;
                         }
-                        const shown = r.locations.slice(0, perSlot).map(l => `• ${escapeMarkdown(l)}`);
-                        if (r.locations.length > perSlot) shown.push(`• …${r.locations.length - perSlot} more`);
+                        const shown = [];
+                        let listed = 0;
+                        // One slot has room to head each sphere's group, which shows where sphere
+                        // 1 ends. The headings count against the same line cap, and one is never
+                        // left last with nothing under it.
+                        const grouped = !many && Array.isArray(r.spheres) && new Set(r.spheres).size > 1;
+                        let heading;
+                        for (let i = 0; i < r.locations.length && shown.length < perSlot; i++) {
+                            if (grouped && r.spheres[i] !== heading) {
+                                if (shown.length + 2 > perSlot) break;
+                                heading = r.spheres[i];
+                                shown.push(heading === null ? '_No sphere_' : `_Sphere ${heading}_`);
+                            }
+                            shown.push(`• ${escapeMarkdown(r.locations[i])}`);
+                            listed += 1;
+                        }
+                        if (r.locations.length > listed) shown.push(`• …${r.locations.length - listed} more`);
                         const summary = r.mode === 'sphere1'
                             ? `sphere 1 only: ${r.total} open${rest ? `, ${rest} further in` : ''}`
                             : `${r.total} in logic${rest ? `, ${rest} still locked` : ''}`;

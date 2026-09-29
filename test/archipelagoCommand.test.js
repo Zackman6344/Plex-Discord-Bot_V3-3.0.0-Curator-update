@@ -418,6 +418,46 @@ test('a slot answered from the seed\'s logic says how many are in logic and how 
     assert.ok(!reply.final.includes('Sphere 1 only'), reply.final);
 });
 
+// Past sphere 1 a flat list hides where one sphere ends. One slot has the room to head each group.
+const spread = (slot, groups, open) => {
+    const locations = groups.flatMap(([, names]) => names);
+    return { ...inLogic(slot, locations, open, groups[0][0]), spheres: groups.flatMap(([s, names]) => names.map(() => s)) };
+};
+
+test('one slot whose list runs past sphere 1 is grouped under a heading per sphere', async (t) => {
+    await claimAll(['ZackWord']);
+    const reply = await askNext(t, answered(spread('ZackWord', [[1, ['Crate']], [2, ['Door B', 'Door C']]], 9)));
+    assert.ok(reply.final.includes('**ZackWord** — 3 in logic, 6 still locked\n_Sphere 1_\n• Crate\n_Sphere 2_\n• Door B\n• Door C\n'),
+        reply.final);
+});
+
+test('one slot whose list is all one sphere gets no heading', async (t) => {
+    await claimAll(['ZackWord']);
+    const reply = await askNext(t, answered(spread('ZackWord', [[2, ['Door B', 'Door C']]], 4)));
+    assert.ok(reply.final.includes('still locked\n• Door B\n• Door C\n'), reply.final);
+    assert.ok(!reply.final.includes('_Sphere'), reply.final);
+});
+
+test('sphere headings count against the 15-line cap and never end the list with nothing under them', async (t) => {
+    await claimAll(['ZackWord']);
+    const first = Array.from({ length: 13 }, (_, i) => `One ${i + 1}`);
+    const reply = await askNext(t, answered(spread('ZackWord', [[1, first], [2, ['Two 1', 'Two 2']]], 40)));
+    const block = reply.final.split('\n\n')[0].split('\n').slice(2);
+    const lines = block.slice(0, block.findIndex(l => l.startsWith('• …')));
+    assert.strictEqual(lines.length, 14, `the heading and 13 locations, with no room for a second heading: ${reply.final}`);
+    assert.ok(!lines.includes('_Sphere 2_'), reply.final);
+    assert.ok(reply.final.includes('• …2 more'), reply.final);
+});
+
+test('several slots are never grouped, so each keeps its four lines', async (t) => {
+    await claimAll(['ZackWord', 'ZackBanner']);
+    const reply = await askNext(t, answered(
+        spread('ZackWord', [[1, ['Crate']], [2, ['Door B']]], 5),
+        spread('ZackBanner', [[1, ['Flag']], [3, ['Tower']]], 5)));
+    assert.ok(!reply.final.includes('_Sphere'), reply.final);
+    assert.ok(reply.final.includes('• Crate\n• Door B'), reply.final);
+});
+
 test('a slot with everything unchecked in logic leaves the locked count out rather than saying 0', async (t) => {
     await claimAll(['ZackWord']);
     const reply = await askNext(t, answered(inLogic('ZackWord', ['Crate', 'Door'], 2)));

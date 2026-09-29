@@ -934,6 +934,7 @@ test('locations are listed earliest sphere first, then by name, with no known sp
         open: 4
     });
     assert.deepStrictEqual(out.locations, ['Power Bomb (Crateria surface)', 'X-Ray Scope', 'Ridley', 'Morphing Ball']);
+    assert.deepStrictEqual(out.spheres, [1, 1, 2, null], 'each location\'s sphere, in the same order, for the headings');
     assert.strictEqual(out.sphere, 1);
 });
 
