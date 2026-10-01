@@ -2166,15 +2166,27 @@ function answerFromLogic(client, resolved, result) {
     }));
     listed.sort((a, b) => a.sphere - b.sphere || a.name.localeCompare(b.name, undefined, { numeric: true }));
 
+    // The soonest sphere with anything in logic is named and listed; the spheres after it are
+    // only counted. Listing them all together read as an arbitrary slice of hundreds of names
+    // with no sphere anywhere in the reply.
+    const soonest = listed.length > 0 ? listed[0].sphere : null;
+    const later = [];
+    for (const l of listed) {
+        if (l.sphere === soonest) continue;
+        const group = later[later.length - 1];
+        if (group && group.sphere === l.sphere) group.count += 1;
+        else later.push({ sphere: l.sphere, count: 1 });
+    }
+    const known = (sphere) => (Number.isFinite(sphere) ? sphere : null);
+
     return {
         ok: true,
         slot,
         mode: result.verified ? 'logic' : 'sphere1',
-        locations: listed.map(l => l.name),
-        sphere: listed.length > 0 && Number.isFinite(listed[0].sphere) ? listed[0].sphere : null,
+        locations: listed.filter(l => l.sphere === soonest).map(l => l.name),
+        sphere: known(soonest),
+        later: later.map(group => ({ sphere: known(group.sphere), count: group.count })),
         total: listed.length,
-        // Beside `locations`, same order, so a one-slot reply can head each sphere's group.
-        spheres: listed.map(l => (Number.isFinite(l.sphere) ? l.sphere : null)),
         open: result.open,
         ...(result.verified ? {} : { why: 'unverified' })
     };

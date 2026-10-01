@@ -848,12 +848,33 @@ module.exports = {
                             : `🧭 All ${done.length} of your slots are finished — nothing left to suggest.`);
                     }
 
-                    // One slot gets the full list; several get a few each, so a player holding
-                    // eight of them still gets an answer inside one message. Earliest sphere
-                    // first, so the ones the message limit cuts are the ones with nothing to do.
+                    // One slot gets its soonest sphere listed and every later sphere counted.
+                    // Several get a line each with a few names, so a player holding twenty still
+                    // gets an answer inside one message. Earliest sphere first, so the ones the
+                    // message limit cuts are the furthest along.
                     const many = live.length > 1;
-                    const perSlot = many ? 4 : 15;
-                    const blocks = monitor.orderBySoonest(live).map((r) => {
+                    const perSlot = many ? 3 : 15;
+                    const count = (n) => Number(n).toLocaleString('en-US');
+                    const sphereName = (s) => (s === null || s === undefined ? 'sphere unknown' : `sphere ${s}`);
+
+                    // Asked about several, a slot with nothing to do is named in the footer rather
+                    // than given a block; asked about one, its line is the whole answer.
+                    const idle = many ? live.filter(r => r.ok && r.total === 0) : [];
+                    const exhausted = many ? live.filter(r => !r.ok && r.reason === 'nothing-left') : [];
+                    const listedSlots = live.filter(r => !idle.includes(r) && !exhausted.includes(r));
+
+                    const names = (r, cap) => {
+                        // "…1 more" takes the line the one name would, so that name is shown.
+                        const shown = r.locations.length === cap + 1 ? cap + 1 : cap;
+                        const lines = r.locations.slice(0, shown).map(l => `• ${escapeMarkdown(l)}`);
+                        const more = r.locations.length - Math.min(shown, r.locations.length);
+                        if (more > 0) {
+                            lines.push(many || r.sphere === null ? `• …${count(more)} more` : `• …${count(more)} more in ${sphereName(r.sphere)}`);
+                        }
+                        return lines.length > 0 ? `\n${lines.join('\n')}` : '';
+                    };
+
+                    const blockFor = (r, cap) => {
                         const head = `**${r.slot}**`;
                         if (!r.ok) {
                             if (r.reason === 'nothing-left') return `${head} — nothing left to check.`;
@@ -864,44 +885,54 @@ module.exports = {
                         // placements the seed needs, so its count would be the wrong number and a
                         // hint besides.
                         const rest = Number.isFinite(r.open) ? r.open - r.total : 0;
-                        if (r.total === 0) {
-                            if (r.mode === 'logic') return `${head} — nothing in logic yet; ${r.open} still locked.`;
-                            return Number.isFinite(r.open)
-                                ? `${head} — nothing open in sphere 1; ${r.open} further in.`
-                                : `${head} — nothing open in sphere 1 that the spoiler lists.`;
-                        }
-                        const shown = [];
-                        let listed = 0;
-                        // One slot has room to head each sphere's group, which shows where sphere
-                        // 1 ends. The headings count against the same line cap, and one is never
-                        // left last with nothing under it.
-                        const grouped = !many && Array.isArray(r.spheres) && new Set(r.spheres).size > 1;
-                        let heading;
-                        for (let i = 0; i < r.locations.length && shown.length < perSlot; i++) {
-                            if (grouped && r.spheres[i] !== heading) {
-                                if (shown.length + 2 > perSlot) break;
-                                heading = r.spheres[i];
-                                shown.push(heading === null ? '_No sphere_' : `_Sphere ${heading}_`);
+                        if (r.mode === 'sphere1') {
+                            if (r.total === 0) {
+                                return Number.isFinite(r.open)
+                                    ? `${head} — nothing open in sphere 1; ${count(r.open)} further in.`
+                                    : `${head} — nothing open in sphere 1 that the spoiler lists.`;
                             }
-                            shown.push(`• ${escapeMarkdown(r.locations[i])}`);
-                            listed += 1;
+                            return `${head} — sphere 1 only: ${count(r.total)} open${rest ? ` · ${count(rest)} further in` : ''}${names(r, cap)}`;
                         }
-                        if (r.locations.length > listed) shown.push(`• …${r.locations.length - listed} more`);
-                        const summary = r.mode === 'sphere1'
-                            ? `sphere 1 only: ${r.total} open${rest ? `, ${rest} further in` : ''}`
-                            : `${r.total} in logic${rest ? `, ${rest} still locked` : ''}`;
-                        return `${head} — ${summary}\n${shown.join('\n')}`;
-                    });
+                        if (r.total === 0) return `${head} — nothing in logic yet; ${count(r.open)} still locked.`;
 
-                    const header = many
-                        ? `🧭 **What is in logic across ${live.length} of your slots**`
-                        : '🧭 **What is in logic**';
+                        const soonest = `${sphereName(r.sphere)}: ${count(r.locations.length)} in logic`;
+                        const later = r.later || [];
+                        if (many) {
+                            return `${head} — ${soonest} · +${count(r.total - r.locations.length)} later · ${count(rest)} locked${names(r, cap)}`;
+                        }
+                        const groups = later.slice(0, 6).map(g => `${sphereName(g.sphere)} (${count(g.count)})`).join(', ')
+                            + (later.length > 6 ? ` and ${later.length - 6} more spheres` : '');
+                        const tail = [
+                            later.length > 0 ? `Also in logic: ${groups}` : 'Nothing later in logic yet',
+                            ...(rest > 0 ? [`${count(rest)} still locked`] : [])
+                        ];
+                        const closing = later.length > 0 || rest > 0 ? `\n_${tail.join(' · ')}_` : '';
+                        return `${head} — ${soonest}${names(r, cap)}${closing}`;
+                    };
+
+                    // Counted from the slots actually answered; a slot that is not in the room is
+                    // listed, but is not one of "your slots" with anything in logic.
+                    const answered = listedSlots.filter(r => r.ok).length;
+                    const header = !many
+                        ? '🧭 **What is in logic**'
+                        : answered > 0
+                            ? `🧭 **What is in logic across ${answered} of your slots**`
+                            : idle.length === 0 && exhausted.length > 0
+                                ? `🧭 **Nothing left to check across your ${live.length} slots**`
+                                : `🧭 **Nothing in logic yet across your ${live.length} slots**`;
+                    const nameList = (rs) => rs.slice(0, 10).map(r => slotLabel(r.slot)).join(', ')
+                        + (rs.length > 10 ? ` and ${rs.length - 10} more` : '');
                     const doneNames = done.length <= 4
                         ? ` (${done.map(r => slotLabel(r.slot)).join(', ')})`
                         : '';
                     const skipped = done.length > 0
                         ? ` ${done.length} finished slot${done.length === 1 ? '' : 's'} skipped${doneNames}.`
                         : '';
+                    const idleLogic = idle.filter(r => r.mode === 'logic');
+                    const idleFallback = idle.filter(r => r.mode !== 'logic');
+                    const idleNote = (idleLogic.length > 0 ? ` ${idleLogic.length} with nothing in logic yet: ${nameList(idleLogic)}.` : '')
+                        + (idleFallback.length > 0 ? ` ${idleFallback.length} with nothing open in sphere 1: ${nameList(idleFallback)}.` : '')
+                        + (exhausted.length > 0 ? ` ${exhausted.length} with nothing left to check: ${nameList(exhausted)}.` : '');
                     // Sphere 1 alone is only ever a fallback, and the reply says why, since "sphere
                     // 1 only" for a slot with plenty open reads as a bug otherwise.
                     const fallbacks = live.filter(r => r.ok && r.mode === 'sphere1');
@@ -911,19 +942,30 @@ module.exports = {
                     const lead = live.some(r => r.ok && r.mode === 'logic')
                         ? 'In logic with the items each slot has received, by the seed\'s own rules; earliest sphere first. '
                         : '';
-                    const footer = `_${lead}Nothing here says what is in them.${fallbackNote}${skipped}_`;
+                    const footer = `_${lead}Nothing here says what is in them.${fallbackNote}${skipped}${idleNote}_`;
 
                     // 2000 characters is a hard limit and an oversized send is rejected outright.
                     const budget = 1900 - header.length - footer.length;
+                    const ordered = monitor.orderBySoonest(listedSlots);
                     const kept = [];
-                    let used = 0;
-                    for (const block of blocks) {
-                        if (used + block.length + 2 > budget) break;
+                    if (!many) {
+                        // The one block is the whole answer, so it gives up names to fit rather
+                        // than its place.
+                        let cap = perSlot;
+                        let block = blockFor(ordered[0], cap);
+                        while (block.length + 2 > budget && cap > 0) block = blockFor(ordered[0], --cap);
                         kept.push(block);
-                        used += block.length + 2;
+                    } else {
+                        let used = 0;
+                        for (const r of ordered) {
+                            const block = blockFor(r, perSlot);
+                            if (used + block.length + 2 > budget) break;
+                            kept.push(block);
+                            used += block.length + 2;
+                        }
+                        if (kept.length < ordered.length) kept.push(`…and ${ordered.length - kept.length} more slot(s).`);
                     }
-                    if (kept.length < blocks.length) kept.push(`…and ${blocks.length - kept.length} more slot(s).`);
-                    return reply(`${header}\n${kept.join('\n\n')}\n${footer}`);
+                    return reply([header, kept.join('\n\n'), footer].filter(Boolean).join('\n'));
                 }
 
                 if (action === 'hintpings') {
