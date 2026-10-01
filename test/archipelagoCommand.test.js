@@ -319,7 +319,13 @@ test('clearing a password still works when asked for in words', async () => {
 // What the reply says for each slot, and in what order. The reply for someone holding many slots
 // used to follow claim order, which says nothing about where to go first, and the message limit
 // then cut whichever slots happened to be claimed last. Sorted, the first block is the nearest
-// thing to do and the ones cut are the ones with nothing to do.
+// thing to do and the ones cut are the furthest along. A slot with nothing to do gets no block at
+// all when several are asked about, only its name in the footer, so it cannot crowd out one that
+// has something.
+//
+// Each slot lists only its soonest sphere with anything in logic and counts the spheres after it.
+// One list running across spheres read as an arbitrary slice of hundreds of names, with nothing
+// in the reply saying which sphere any of them was in.
 //
 // The wording carries which of two very different answers a slot got. One comes from the seed's
 // own logic, run against the items the slot has received. The other is sphere 1 alone, the
@@ -359,11 +365,19 @@ async function askNext(t, outcome, { wait = false, args = ['next'] } = {}) {
     return { msg, edits, calls, final: edits.length ? edits[edits.length - 1] : null };
 }
 
-// One slot's answer in the shape suggestNextAll gives it: `locations` earliest sphere first,
-// `sphere` the lowest among them, `total` how many are listed and `open` how many are unchecked.
-const inLogic = (slot, locations, open, sphere = 1) => ({
-    ok: true, slot, mode: 'logic', locations, sphere: locations.length > 0 ? sphere : null, total: locations.length, open
-});
+// One slot's answer in the shape suggestNextAll gives it: `locations` only the soonest sphere with
+// anything in logic, `later` a count for each sphere after it, `total` everything in logic and
+// `open` everything unchecked. `later` is written here as [sphere, count] pairs to keep tests short.
+const inLogic = (slot, locations, open, sphere = 1, later = []) => {
+    const groups = later.map(([s, count]) => ({ sphere: s, count }));
+    return {
+        ok: true, slot, mode: 'logic', locations, sphere: locations.length > 0 ? sphere : null,
+        later: groups, total: locations.length + groups.reduce((n, g) => n + g.count, 0), open
+    };
+};
+// Enough names to run past a block's cap, numbered so each line can be told apart.
+const numbered = (prefix, n) => Array.from({ length: n }, (_, i) => `${prefix} ${i + 1}`);
+const bullets = (names) => names.map(name => `• ${name}`).join('\n');
 const sphereOne = (slot, locations, open, why) => ({
     ok: true, slot, mode: 'sphere1', source: 'multidata', locations,
     sphere: locations.length > 0 ? 1 : null, total: locations.length, open, why
@@ -398,81 +412,231 @@ test('!ap next lists claimed slots earliest sphere with something in logic first
     const answer = reply.final;
     assert.ok(answer, 'the status message was edited into the answer');
     const at = (name) => answer.indexOf(`**${name}**`);
-    for (const name of slots) assert.ok(at(name) >= 0, `${name} is in the reply`);
 
-    // Sphere 1, then the two sphere-3 slots by name, then nothing in logic, then nothing left.
+    // Sphere 1, then the two sphere-3 slots by name.
+    assert.ok(at('ZackEarly') >= 0, answer);
     assert.ok(at('ZackEarly') < at('ZackBanner'), 'sphere 1 before sphere 3');
     assert.ok(at('ZackBanner') < at('ZackWord'), 'a tie in sphere goes by name');
-    assert.ok(at('ZackWord') < at('ZackStuck'), 'something to do before nothing in logic yet');
-    assert.ok(at('ZackStuck') < at('ZackDone'), 'nothing in logic yet before nothing left');
+
+    // Nothing in logic yet and nothing left are named after every block rather than given one.
+    const footer = answer.slice(answer.lastIndexOf('\n_'));
+    for (const name of ['ZackStuck', 'ZackDone']) {
+        assert.strictEqual(at(name), -1, `${name} has no block: ${answer}`);
+        assert.ok(footer.includes(`\`${name}\``), `${name} is named in the footer: ${answer}`);
+    }
 });
 
-test('a slot answered from the seed\'s logic says how many are in logic and how many are still locked', async (t) => {
+test('one slot answered from the seed\'s logic names its soonest sphere, lists it and says how much is still locked', async (t) => {
     await claimAll(['ZackWord']);
-    const reply = await askNext(t, answered(inLogic('ZackWord', ['Crate_1', 'Door B'], 7, 2)));
+    const reply = await askNext(t, answered(inLogic('ZackWord', ['Crate_1', 'Door B'], 9, 2, [[3, 1]])));
 
     assert.strictEqual(reply.edits.length, 1, 'no loading line when the logic was already up');
     assert.ok(reply.final.startsWith('🧭 **What is in logic**\n'), reply.final);
-    assert.ok(reply.final.includes('**ZackWord** — 2 in logic, 5 still locked\n• Crate\\_1\n• Door B\n'),
-        `the count and every location, markdown escaped: ${reply.final}`);
+    assert.ok(reply.final.includes(
+        '**ZackWord** — sphere 2: 2 in logic\n• Crate\\_1\n• Door B\n_Also in logic: sphere 3 (1) · 6 still locked_\n'),
+        `the sphere, its count and every location, markdown escaped: ${reply.final}`);
     assert.ok(!reply.final.includes('Sphere 1 only'), reply.final);
 });
 
-// Past sphere 1 a flat list hides where one sphere ends. One slot has the room to head each group.
-const spread = (slot, groups, open) => {
-    const locations = groups.flatMap(([, names]) => names);
-    return { ...inLogic(slot, locations, open, groups[0][0]), spheres: groups.flatMap(([s, names]) => names.map(() => s)) };
-};
-
-test('one slot whose list runs past sphere 1 is grouped under a heading per sphere', async (t) => {
-    await claimAll(['ZackWord']);
-    const reply = await askNext(t, answered(spread('ZackWord', [[1, ['Crate']], [2, ['Door B', 'Door C']]], 9)));
-    assert.ok(reply.final.includes('**ZackWord** — 3 in logic, 6 still locked\n_Sphere 1_\n• Crate\n_Sphere 2_\n• Door B\n• Door C\n'),
-        reply.final);
-});
-
-test('one slot whose list is all one sphere gets no heading', async (t) => {
-    await claimAll(['ZackWord']);
-    const reply = await askNext(t, answered(spread('ZackWord', [[2, ['Door B', 'Door C']]], 4)));
-    assert.ok(reply.final.includes('still locked\n• Door B\n• Door C\n'), reply.final);
-    assert.ok(!reply.final.includes('_Sphere'), reply.final);
-});
-
-test('sphere headings count against the 15-line cap and never end the list with nothing under them', async (t) => {
-    await claimAll(['ZackWord']);
-    const first = Array.from({ length: 13 }, (_, i) => `One ${i + 1}`);
-    const reply = await askNext(t, answered(spread('ZackWord', [[1, first], [2, ['Two 1', 'Two 2']]], 40)));
-    const block = reply.final.split('\n\n')[0].split('\n').slice(2);
-    const lines = block.slice(0, block.findIndex(l => l.startsWith('• …')));
-    assert.strictEqual(lines.length, 14, `the heading and 13 locations, with no room for a second heading: ${reply.final}`);
-    assert.ok(!lines.includes('_Sphere 2_'), reply.final);
-    assert.ok(reply.final.includes('• …2 more'), reply.final);
-});
-
-test('several slots are never grouped, so each keeps its four lines', async (t) => {
-    await claimAll(['ZackWord', 'ZackBanner']);
+test('one slot lists 15 names from its soonest sphere and counts each later sphere, with thousands separators', async (t) => {
+    await claimAll(['ZackWarhammer']);
     const reply = await askNext(t, answered(
-        spread('ZackWord', [[1, ['Crate']], [2, ['Door B']]], 5),
-        spread('ZackBanner', [[1, ['Flag']], [3, ['Tower']]], 5)));
-    assert.ok(!reply.final.includes('_Sphere'), reply.final);
-    assert.ok(reply.final.includes('• Crate\n• Door B'), reply.final);
+        inLogic('ZackWarhammer', numbered('Empire', 56), 2929, 1, [[2, 1175], [3, 2]])));
+
+    assert.ok(reply.final.includes(
+        '**ZackWarhammer** — sphere 1: 56 in logic\n' +
+        `${bullets(numbered('Empire', 15))}\n` +
+        '• …41 more in sphere 1\n' +
+        '_Also in logic: sphere 2 (1,175), sphere 3 (2) · 1,696 still locked_\n'), reply.final);
+    assert.ok(!reply.final.includes('Empire 16'), reply.final);
+});
+
+// A location the sphere data does not place is still in logic; there is just no sphere to name.
+test('a later group with no known sphere is counted last without printing null', async (t) => {
+    await claimAll(['ZackWord']);
+    const reply = await askNext(t, answered(inLogic('ZackWord', ['Crate'], 6, 1, [[2, 2], [null, 3]])));
+
+    assert.match(reply.final, /_Also in logic: sphere 2 \(2\), [^_(]+ \(3\)_\n/, reply.final);
+    assert.ok(!/\bnull\b|NaN|undefined/.test(reply.final), `a missing sphere was printed: ${reply.final}`);
+});
+
+test('one slot with nothing in logic past its soonest sphere says so beside what is still locked', async (t) => {
+    await claimAll(['ZackDig']);
+    const reply = await askNext(t, answered(inLogic('ZackDig', numbered('Chunk', 20), 3845, 2)));
+
+    assert.ok(reply.final.includes(
+        '**ZackDig** — sphere 2: 20 in logic\n' +
+        `${bullets(numbered('Chunk', 15))}\n` +
+        '• …5 more in sphere 2\n' +
+        '_Nothing later in logic yet · 3,825 still locked_\n'), reply.final);
 });
 
 test('a slot with everything unchecked in logic leaves the locked count out rather than saying 0', async (t) => {
     await claimAll(['ZackWord']);
+    const reply = await askNext(t, answered(inLogic('ZackWord', ['Crate'], 3, 1, [[2, 2]])));
+
+    assert.ok(reply.final.includes('**ZackWord** — sphere 1: 1 in logic\n• Crate\n_Also in logic: sphere 2 (2)_\n'), reply.final);
+    assert.ok(!reply.final.includes('locked'), reply.final);
+});
+
+test('one slot with nothing later and nothing locked ends at its last name', async (t) => {
+    await claimAll(['ZackWord']);
     const reply = await askNext(t, answered(inLogic('ZackWord', ['Crate', 'Door'], 2)));
 
-    assert.ok(reply.final.includes('**ZackWord** — 2 in logic\n• Crate\n• Door'), reply.final);
-    assert.ok(!reply.final.includes('still locked'), reply.final);
+    assert.ok(reply.final.includes(`**ZackWord** — sphere 1: 2 in logic\n• Crate\n• Door\n${LEAD}`), reply.final);
+    assert.ok(!reply.final.includes('Nothing later'), reply.final);
+    assert.ok(!reply.final.includes('locked'), reply.final);
+});
+
+// "…1 more" would take the line the one name does.
+test('one slot shows a 16th name rather than a line saying 1 more', async (t) => {
+    await claimAll(['ZackWord']);
+    const reply = await askNext(t, answered(inLogic('ZackWord', numbered('Crate', 16), 16)));
+
+    assert.ok(reply.final.includes(`**ZackWord** — sphere 1: 16 in logic\n${bullets(numbered('Crate', 16))}\n${LEAD}`),
+        reply.final);
+    assert.ok(!reply.final.includes('more in sphere'), reply.final);
 });
 
 test('a slot with nothing in logic yet says how much is still locked', async (t) => {
     await claimAll(['ZackWord']);
-    const reply = await askNext(t, answered(inLogic('ZackWord', [], 4)));
+    const reply = await askNext(t, answered(inLogic('ZackWord', [], 1234)));
 
-    assert.ok(reply.final.includes('**ZackWord** — nothing in logic yet; 4 still locked.'), reply.final);
+    assert.ok(reply.final.includes('**ZackWord** — nothing in logic yet; 1,234 still locked.'), reply.final);
     // Still an answer from the seed's own rules, just an empty one, so the lead stays.
     assert.ok(reply.final.includes(LEAD), reply.final);
+});
+
+test('several slots each get their soonest sphere, later and locked counts on one line, then three names', async (t) => {
+    await claimAll(['ZackWord', 'ZackWarhammer']);
+    const reply = await askNext(t, answered(
+        inLogic('ZackWord', numbered('Crate', 4), 326),
+        inLogic('ZackWarhammer', numbered('Empire', 56), 2929, 1, [[2, 1175], [3, 2]])));
+
+    assert.ok(reply.final.startsWith('🧭 **What is in logic across 2 of your slots**\n'), reply.final);
+    assert.ok(reply.final.includes(
+        '**ZackWarhammer** — sphere 1: 56 in logic · +1,177 later · 1,696 locked\n' +
+        '• Empire 1\n• Empire 2\n• Empire 3\n• …53 more\n\n'), reply.final);
+    // "…1 more" would take the line the fourth name does.
+    assert.ok(reply.final.includes(
+        '**ZackWord** — sphere 1: 4 in logic · +0 later · 322 locked\n' +
+        `${bullets(numbered('Crate', 4))}\n${LEAD}`), reply.final);
+    assert.ok(!reply.final.includes('Also in logic'), reply.final);
+});
+
+test('several slots leave out the ones with nothing in logic yet and name them in the footer', async (t) => {
+    await claimAll(['ZackWord', 'ZackRisk', 'ZackStuck']);
+    const reply = await askNext(t, answered(
+        inLogic('ZackWord', ['Crate'], 2),
+        inLogic('ZackRisk', [], 774),
+        inLogic('ZackStuck', [], 73)));
+
+    assert.ok(reply.final.startsWith('🧭 **What is in logic across 1 of your slots**\n'),
+        `only the slot listed is counted: ${reply.final}`);
+    for (const name of ['ZackRisk', 'ZackStuck']) assert.ok(!reply.final.includes(`**${name}**`), reply.final);
+    assert.ok(reply.final.endsWith(
+        `${LEAD}Nothing here says what is in them. 2 with nothing in logic yet: \`ZackRisk\`, \`ZackStuck\`._`), reply.final);
+});
+
+test('the footer names at most ten slots with nothing in logic yet and counts the rest', async (t) => {
+    const idle = Array.from({ length: 13 }, (_, i) => `ZackIdle${String(i + 1).padStart(2, '0')}`);
+    await claimAll(['ZackWord', ...idle]);
+    const reply = await askNext(t, answered(inLogic('ZackWord', ['Crate'], 2), ...idle.map(name => inLogic(name, [], 5))));
+
+    const named = idle.slice(0, 10).map(name => `\`${name}\``).join(', ');
+    assert.ok(reply.final.endsWith(` 13 with nothing in logic yet: ${named} and 3 more._`), reply.final);
+    assert.ok(!reply.final.includes('ZackIdle11'), reply.final);
+});
+
+test('several slots name the ones with nothing left to check in the footer, and one slot still says so on its line', async (t) => {
+    await claimAll(['ZackWord', 'ZackDone']);
+    const nothingLeft = { ok: false, slot: 'ZackDone', reason: 'nothing-left' };
+
+    const several = await askNext(t, answered(inLogic('ZackWord', ['Crate'], 2), nothingLeft));
+    assert.ok(several.final.startsWith('🧭 **What is in logic across 1 of your slots**\n'), several.final);
+    assert.ok(!several.final.includes('**ZackDone**'), several.final);
+    assert.ok(several.final.endsWith(' 1 with nothing left to check: `ZackDone`._'), several.final);
+
+    const one = await askNext(t, answered(nothingLeft), { args: ['next', 'ZackDone'] });
+    assert.ok(one.final.includes('**ZackDone** — nothing left to check.'), one.final);
+});
+
+test('when no slot asked about has anything in logic, the header says so rather than counting none', async (t) => {
+    await claimAll(['ZackBanner', 'ZackWord']);
+    const reply = await askNext(t, answered(inLogic('ZackBanner', [], 5), inLogic('ZackWord', [], 7)));
+
+    assert.ok(reply.final.startsWith('🧭 **Nothing in logic yet across your 2 slots**\n'), reply.final);
+    assert.ok(!reply.final.includes('**Zack'), `no slot has a block: ${reply.final}`);
+    assert.ok(!reply.final.includes('more slot(s)'), reply.final);
+    assert.ok(reply.final.endsWith(' 2 with nothing in logic yet: `ZackBanner`, `ZackWord`._'), reply.final);
+});
+
+// A name the room does not know is a mistake to fix, so it is not folded in with the idle slots.
+test('a slot that is not in the multiworld keeps its own line among several', async (t) => {
+    await claimAll(['ZackWord', 'ZackGone']);
+    const reply = await askNext(t, answered(
+        inLogic('ZackWord', ['Crate'], 2),
+        { ok: false, slot: 'ZackGone', reason: 'unknown-slot' }));
+
+    // Listed, but not counted as one of "your slots" with anything in logic.
+    assert.ok(reply.final.startsWith('🧭 **What is in logic across 1 of your slots**\n'), reply.final);
+    assert.ok(reply.final.includes('**ZackGone** — not a slot in this multiworld.'), reply.final);
+});
+
+test('one slot with names too long for the message gives up names, never its place in the reply', async (t) => {
+    await claimAll(['ZackLong']);
+    const long = numbered('A location name long enough that sixteen of them cannot share one Discord message', 16)
+        .map(name => `${name} ${'x'.repeat(30)}`);
+    const reply = await askNext(t, answered(inLogic('ZackLong', long, 40, 1, [[2, 3], [3, 1], [4, 2]])));
+
+    assert.ok(reply.final.length <= 2000, `${reply.final.length} characters`);
+    assert.ok(reply.final.includes('**ZackLong** — sphere 1: 16 in logic'), reply.final);
+    assert.match(reply.final, /• …\d+ more in sphere 1/);
+    assert.ok(reply.final.includes('_Also in logic: sphere 2 (3), sphere 3 (1), sphere 4 (2) · 18 still locked_'), reply.final);
+    assert.ok(reply.final.split('\n').filter(line => line.startsWith('• A location')).length < 16, 'some names were given up');
+    assert.ok(!reply.final.includes('more slot(s)'), reply.final);
+});
+
+test('the later-sphere line names six spheres and counts the rest', async (t) => {
+    await claimAll(['ZackWide']);
+    const later = Array.from({ length: 9 }, (_, i) => [i + 2, 1]);
+    const reply = await askNext(t, answered(inLogic('ZackWide', ['Crate'], 20, 1, later)));
+    assert.ok(reply.final.includes(
+        '_Also in logic: sphere 2 (1), sphere 3 (1), sphere 4 (1), sphere 5 (1), sphere 6 (1), sphere 7 (1) and 3 more spheres · 10 still locked_'),
+    reply.final);
+});
+
+test('a soonest sphere generation gave no number to reads as unknown, with no sphere on its "more" line', async (t) => {
+    await claimAll(['ZackNull']);
+    const reply = await askNext(t, answered(inLogic('ZackNull', numbered('Loc', 20), 30, null, [[null, 3]])));
+    assert.ok(reply.final.includes('**ZackNull** — sphere unknown: 20 in logic'), reply.final);
+    assert.ok(reply.final.includes('• …5 more\n'), reply.final);
+    assert.ok(reply.final.includes('_Also in logic: sphere unknown (3) · 7 still locked_'), reply.final);
+    assert.ok(!/no sphere|null/.test(reply.final), reply.final);
+});
+
+test('several slots that all have nothing left to check say so, with no empty line under the header', async (t) => {
+    await claimAll(['ZackWord', 'ZackBanner']);
+    const reply = await askNext(t, answered(
+        { ok: false, slot: 'ZackWord', reason: 'nothing-left' },
+        { ok: false, slot: 'ZackBanner', reason: 'nothing-left' }));
+    assert.ok(reply.final.startsWith('🧭 **Nothing left to check across your 2 slots**\n_'), reply.final);
+    assert.ok(!reply.final.includes('\n\n'), reply.final);
+});
+
+test('a reply too long for one message keeps the soonest slots and counts the ones it cut', async (t) => {
+    const slots = Array.from({ length: 25 }, (_, i) => `ZackSlot${String(i + 1).padStart(2, '0')}`);
+    await claimAll(slots);
+    // Spheres run against name and claim order, so keeping either of those would keep the wrong end.
+    const reply = await askNext(t, answered(...slots.map((name, i) => inLogic(name, numbered('Loc', 50), 60, 25 - i))));
+
+    assert.ok(reply.final.length <= 2000, `${reply.final.length} characters`);
+    const cut = reply.final.match(/\n…and (\d+) more slot\(s\)\.\n_/);
+    assert.ok(cut, reply.final);
+    const kept = (reply.final.match(/^\*\*ZackSlot/gm) || []).length;
+    assert.strictEqual(kept + Number(cut[1]), slots.length, reply.final);
+    assert.ok(reply.final.includes('**ZackSlot25**'), `sphere 1 is kept: ${reply.final}`);
+    assert.ok(!reply.final.includes('**ZackSlot01**'), `sphere 25 is cut: ${reply.final}`);
 });
 
 test('a sphere 1 fallback says so on its block and the footer says why the logic was unavailable', async (t) => {
@@ -485,13 +649,38 @@ test('a sphere 1 fallback says so on its block and the footer says why the logic
         logic: NOT_HERE
     });
 
-    assert.ok(reply.final.includes('**ZackWord** — sphere 1 only: 2 open, 4 further in\n• Start Chest\n• Start Shop'),
+    assert.ok(reply.final.includes('**ZackWord** — sphere 1 only: 2 open · 4 further in\n• Start Chest\n• Start Shop'),
         reply.final);
-    assert.ok(reply.final.includes('**ZackBanner** — nothing open in sphere 1; 3 further in.'), reply.final);
+    assert.ok(!reply.final.includes('**ZackBanner**'), reply.final);
     assert.ok(reply.final.includes(
         ' Sphere 1 only where the seed\'s own logic is unavailable ' +
-        '(this seed was not generated here): it needs nothing, so it is always in logic._'), reply.final);
+        '(this seed was not generated here): it needs nothing, so it is always in logic.' +
+        ' 1 with nothing open in sphere 1: `ZackBanner`._'), reply.final);
     assert.ok(!reply.final.includes(INSTALL), `the logic's detail reached the reply: ${reply.final}`);
+
+    // Asked about on its own, the empty fallback is the whole answer, so it keeps its line.
+    const one = await askNext(t, { ...answered(sphereOne('ZackBanner', [], 3, NOT_HERE.reason)), logic: NOT_HERE },
+        { args: ['next', 'ZackBanner'] });
+    assert.ok(one.final.includes('**ZackBanner** — nothing open in sphere 1; 3 further in.'), one.final);
+});
+
+test('a sphere 1 fallback block lists its names under the same caps as a logic block, for one slot or several', async (t) => {
+    await claimAll(['ZackWord', 'ZackBanner']);
+    const fallback = (...results) => ({ ...answered(...results), logic: NOT_HERE });
+
+    const one = await askNext(t, fallback(sphereOne('ZackWord', numbered('Start', 17), 57, NOT_HERE.reason)),
+        { args: ['next', 'ZackWord'] });
+    assert.ok(one.final.includes(
+        '**ZackWord** — sphere 1 only: 17 open · 40 further in\n' +
+        `${bullets(numbered('Start', 15))}\n` +
+        '• …2 more in sphere 1\n_'), one.final);
+
+    const several = await askNext(t, fallback(
+        sphereOne('ZackWord', numbered('Start', 5), 45, NOT_HERE.reason),
+        sphereOne('ZackBanner', ['Gate'], 1, NOT_HERE.reason)));
+    assert.ok(several.final.includes('**ZackBanner** — sphere 1 only: 1 open\n• Gate\n\n'), several.final);
+    assert.ok(several.final.includes(
+        '**ZackWord** — sphere 1 only: 5 open · 40 further in\n• Start 1\n• Start 2\n• Start 3\n• …2 more\n_'), several.final);
 });
 
 test('a sphere 1 answer from a spoiler lists what is open without a count of what is further in', async (t) => {
@@ -546,7 +735,8 @@ test('the footer credits the seed\'s own rules only when some slot was answered 
         { ok: false, slot: 'ZackWord', reason: 'nothing-left' },
         { ok: false, slot: 'ZackBanner', reason: 'nothing-left' }
     ));
-    assert.ok(nothingLeft.final.endsWith('\n_Nothing here says what is in them._'), nothingLeft.final);
+    assert.ok(!nothingLeft.final.includes('In logic with the items'), nothingLeft.final);
+    assert.ok(nothingLeft.final.includes('\n_Nothing here says what is in them. 2 with nothing left to check:'), nothingLeft.final);
 });
 
 test('a first !ap next that has to wait for the seed\'s logic says so on its status line', async (t) => {
@@ -557,7 +747,7 @@ test('a first !ap next that has to wait for the seed\'s logic says so on its sta
     assert.match(said(reply.msg), /Working out what is open across your 1 slot\(s\)/);
     assert.strictEqual(reply.edits.length, 2, 'the loading line, then the answer over it');
     assert.strictEqual(reply.edits[0], LOADING);
-    assert.ok(reply.final.includes('**ZackWord** — 1 in logic\n• Crate'), reply.final);
+    assert.ok(reply.final.includes('**ZackWord** — sphere 1: 1 in logic\n• Crate'), reply.final);
 });
 
 test('with neither the seed\'s logic nor sphere data, the reply starts with why the logic was unavailable', async (t) => {

@@ -892,8 +892,9 @@ test('a logic answer names its locations from the slot\'s own game data package'
     assert.strictEqual(out.ok, true);
     assert.strictEqual(out.slot, 'DaveSMetroid');
     assert.strictEqual(out.mode, 'logic');
-    assert.deepStrictEqual(out.locations, ['X-Ray Scope', 'Ridley']);
+    assert.deepStrictEqual(out.locations, ['X-Ray Scope']);
     assert.strictEqual(out.sphere, 1);
+    assert.deepStrictEqual(out.later, [{ sphere: 2, count: 1 }]);
     assert.strictEqual(out.total, 2);
     assert.strictEqual(out.open, 3);
     assert.strictEqual(out.why, undefined, 'nothing to explain when the logic answered');
@@ -924,18 +925,71 @@ test('a logic answer works before the data package has loaded', () => {
     assert.deepStrictEqual(out.locations, ['Location#82001']);
 });
 
-test('locations are listed earliest sphere first, then by name, with no known sphere last', () => {
+test('only the earliest sphere is listed, by name, and later ones are counted, with no known sphere last', () => {
     // A null sphere is a location generation gave no sphere to. The rules still say it is open,
-    // so it is listed, only not ahead of anything whose sphere is known.
+    // so it is counted, only never ahead of anything whose sphere is known. It arrives first here
+    // so that taking the worker's first location as the earliest would show.
     const out = fromLogic({
         slot: 4,
         verified: true,
         locations: [[82003, null], [82002, 2], [82001, 1], [82000, 1]],
         open: 4
     });
-    assert.deepStrictEqual(out.locations, ['Power Bomb (Crateria surface)', 'X-Ray Scope', 'Ridley', 'Morphing Ball']);
-    assert.deepStrictEqual(out.spheres, [1, 1, 2, null], 'each location\'s sphere, in the same order, for the headings');
+    assert.deepStrictEqual(out.locations, ['Power Bomb (Crateria surface)', 'X-Ray Scope']);
     assert.strictEqual(out.sphere, 1);
+    assert.deepStrictEqual(out.later, [{ sphere: 2, count: 1 }, { sphere: null, count: 1 }]);
+    assert.strictEqual(out.total, 4);
+});
+
+test('later spheres come in sphere order, each counted exactly, with no group for a sphere holding nothing', () => {
+    // Out of order, and with the unknown ones split up, so the counts only come out right if each
+    // sphere's locations are gathered wherever the worker put them. Nothing is in sphere 4.
+    const out = fromLogic({
+        slot: 4,
+        verified: true,
+        locations: [
+            [90005, 5], [82002, 3], [90009, null], [82001, 1], [90002, 2],
+            [90006, 5], [82003, 3], [90010, null], [90007, 5], [90003, 3]
+        ],
+        open: 40
+    });
+    assert.deepStrictEqual(out.locations, ['X-Ray Scope']);
+    assert.strictEqual(out.sphere, 1);
+    assert.deepStrictEqual(out.later, [
+        { sphere: 2, count: 1 },
+        { sphere: 3, count: 3 },
+        { sphere: 5, count: 3 },
+        { sphere: null, count: 2 }
+    ]);
+});
+
+test('a later sphere is never named, only counted', () => {
+    // The reply has room for one sphere's names. A name from a later sphere listed beside them
+    // would read as somewhere to go now.
+    const out = fromLogic({ slot: 4, verified: true, locations: [[82002, 2], [82000, 1], [82003, null]], open: 3 });
+    assert.deepStrictEqual(out.locations, ['Power Bomb (Crateria surface)']);
+    const serialised = JSON.stringify(out);
+    for (const later of ['Ridley', 'Morphing Ball']) {
+        assert.ok(!serialised.includes(later), `${later} was named`);
+    }
+});
+
+test('the total counts everything in logic: the names listed plus every later sphere\'s count', () => {
+    // The reply says how much is locked as open minus total, so a total of only the names listed
+    // would call everything in a later sphere locked.
+    const replies = [
+        [],
+        [[82001, 1]],
+        [[82003, null], [82002, null]],
+        [[82002, 2], [82001, 1], [82000, 1], [82003, null]],
+        [[90002, 2], [90003, 3], [90004, 3], [90005, 7], [90006, null]]
+    ];
+    for (const locations of replies) {
+        const out = fromLogic({ slot: 4, verified: true, locations, open: 20 });
+        const later = out.later.reduce((sum, group) => sum + group.count, 0);
+        assert.strictEqual(out.total, locations.length, JSON.stringify(locations));
+        assert.strictEqual(out.total, out.locations.length + later, JSON.stringify(locations));
+    }
 });
 
 test('names within one sphere are in natural order, so "Layer 67" comes before "Layer 100"', () => {
@@ -950,11 +1004,14 @@ test('names within one sphere are in natural order, so "Layer 67" comes before "
     assert.deepStrictEqual(out.locations, ['Layer 9', 'Layer 67', 'Layer 100']);
 });
 
-test('a list with no known sphere at all reports no sphere, not zero or Infinity', () => {
-    const out = fromLogic({ slot: 4, verified: true, locations: [[82003, null]], open: 1 });
-    assert.deepStrictEqual(out.locations, ['Morphing Ball']);
+test('a list with no known sphere at all lists every name under no sphere, not zero or Infinity, with nothing later', () => {
+    // Unknown is the earliest there is here, so its names are the ones to show. Counted as a later
+    // group instead, they would leave a slot with something in logic listing nothing.
+    const out = fromLogic({ slot: 4, verified: true, locations: [[82003, null], [82002, null]], open: 2 });
+    assert.deepStrictEqual(out.locations, ['Morphing Ball', 'Ridley']);
     assert.strictEqual(out.sphere, null);
-    assert.strictEqual(out.total, 1);
+    assert.deepStrictEqual(out.later, []);
+    assert.strictEqual(out.total, 2);
 });
 
 test('a slot whose rebuild did not verify answers as sphere 1 only, and says why', () => {
@@ -985,6 +1042,7 @@ test('a slot with locations left but none in logic answers an empty list, not no
     assert.strictEqual(out.ok, true);
     assert.deepStrictEqual(out.locations, []);
     assert.strictEqual(out.sphere, null);
+    assert.deepStrictEqual(out.later, []);
     assert.strictEqual(out.total, 0);
     assert.strictEqual(out.open, 5);
 });

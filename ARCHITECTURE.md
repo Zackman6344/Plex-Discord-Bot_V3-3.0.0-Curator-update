@@ -840,25 +840,56 @@ every slot in a single `inLogic` request, or, with no worker, runs `suggestFor(p
 slot, which is arithmetic with no I/O at all. Answering eight claimed slots through a single-slot
 path would have re-fetched the tracker's 400 KB of check data eight times to answer one command.
 
-A reply holding several slots gives each fewer locations (four rather than fifteen) and stops at a
+A reply holding several slots gives each a summary line and three names, and stops at a
 1,900-character budget, counting off any slots it could not fit rather than being cut in half by
-Discord at 2,000. Each block leads with its counts, `N in logic, M still locked` from the logic or
-`sphere 1 only: N open, M further in` from the fallback, where M is the rest of the slot's
-unchecked locations. An answer from a spoiler has no M (see "The sphere 1 fallback").
+Discord at 2,000. A reply about one slot, named or the only live one the caller holds, lists up to
+fifteen. A list one name over the cap shows that name rather than `…1 more`.
 
-**Slots are listed earliest sphere first** (`orderBySoonest`), in three bands: slots with locations
-listed, by the lowest sphere among them; then slots with nothing listed; then slots with no answer
-at all. Ties go by slot name, ignoring case, so the same room always lists the same way. Claim
-order said nothing about where to go, and it decided which slots the budget cut. Now the first
-block is the nearest thing to do, and the budget cuts from the far end. On the room this shipped
-against, one player held 21 slots and about half fit.
+**From the logic, a block lists only the soonest sphere with anything in logic, and counts the
+rest.** `answerFromLogic` sorts the slot's in-logic locations by sphere and then name, returns that
+sphere's names as `locations` and its number as `sphere`, and counts each later sphere into
+`later` as `{ sphere, count }`, in sphere order. `total` is everything in logic and `open` every
+unchecked location. This replaced one list run across every sphere, which showed the first few
+names in logic and never said which sphere they came from, and the heading per sphere that a
+one-slot reply briefly carried inside its fifteen lines.
 
-**Within a slot, locations go earliest sphere first and then by name in natural order**, so
-`Chest 2` comes before `Chest 10`, whichever source answered. The worker's own list comes back in
-location id order within a sphere, and `answerFromLogic` re-sorts it by name. `suggestFor` sorts
-the table fallback's names once it has resolved their ids, and `sphereOneFromRows` sorts the
-spoiler's the same way.
-Locations left in an unreachable remainder (see "The self-check") carry no sphere and go last.
+The summary line after the slot name, with counts in thousands separators:
+
+- **Several slots:** `sphere 1: 56 in logic · +1,177 later · 1,696 locked`, then the names and
+  `…N more`.
+- **One slot:** `sphere 1: 56 in logic`, then the names, `…N more in sphere 1`, and an italic
+  closing line, `Also in logic: sphere 2 (1,175), sphere 3 (2) · 1,696 still locked`. With nothing
+  later it reads `Nothing later in logic yet · 3,825 still locked`, and with nothing later and
+  nothing locked it is left out. With nothing in logic at all the block is
+  `nothing in logic yet; 73 still locked.`
+- **The sphere 1 fallback:** `sphere 1 only: 12 open · 40 further in`, and `…N more in sphere 1`
+  for one slot. An answer from a spoiler has no "further in" (see "The sphere 1 fallback").
+
+"Locked" and "further in" are the rest of the slot's unchecked locations, `open` less `total`.
+Locations in an unreachable remainder (see "The self-check") carry no sphere and read as
+`no sphere`, counted after every numbered sphere.
+
+**A slot with nothing to list gets no block in a reply about several slots.** A slot with nothing
+in logic, a fallback slot with nothing open in sphere 1, and a slot with nothing left to check are
+each named in the footer instead, as ``2 with nothing in logic yet: `A`, `B`.``,
+`N with nothing open in sphere 1: …` and `N with nothing left to check: …`, at most ten names and
+then `and N more`. The header counts only the slots given a block,
+`What is in logic across 19 of your slots`, and reads `Nothing in logic yet across your N slots`
+when every live slot went to the footer. A slot not in the room, or whose query failed, still gets
+its one-line block.
+
+**Slots are listed earliest sphere first** (`orderBySoonest`): slots with locations listed, by
+their soonest sphere, then slots with no answer at all. `orderBySoonest` still sorts slots with
+nothing listed between the two, which a several-slot reply no longer holds. Ties go by slot name,
+ignoring case, so the same room always lists the same way. Claim order said nothing about where to
+go, and it decided which slots the budget cut. Now the first block is the nearest thing to do, and
+the budget cuts from the far end. On the room this shipped against, one player held 21 slots: 2
+had nothing in logic and went to the footer, and 10 of the other 19 fit.
+
+**Within a slot, the listed names go in natural order**, so `Chest 2` comes before `Chest 10`,
+whichever source answered. The worker's own list comes back in location id order within a sphere,
+and `answerFromLogic` re-sorts it by sphere and then name. `suggestFor` sorts the table fallback's
+names once it has resolved their ids, and `sphereOneFromRows` sorts the spoiler's the same way.
 
 **Finished slots are skipped, and that is settled first** (`resolveSlot`), before any logic, sphere
 or tracker work. A goaled slot can still have locations open, and the logic would list them. A
@@ -1124,8 +1155,9 @@ answers with it whenever exact logic is unavailable, in three cases:
   slot whose answer is missing or carries an error.
 
 From the worker or the multidata table, the answer also counts every unchecked location of the
-slot (`open`), so a block reads `sphere 1 only: N open, M further in`, or
-`nothing open in sphere 1; M further in` once sphere 1 is done.
+slot (`open`), so a block reads `sphere 1 only: N open · M further in`, or
+`nothing open in sphere 1; M further in.` once sphere 1 is done. In a reply about several slots, a
+slot with nothing open in sphere 1, from any source, is named in the footer instead.
 
 **An answer from a spoiler carries no count and never says a slot has nothing left.** Its
 Playthrough lists only the placements the seed's completion needs, so running out of its rows says
