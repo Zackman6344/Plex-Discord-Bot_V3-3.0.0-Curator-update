@@ -1369,8 +1369,23 @@ reads Plex:
   ffmpeg blocked writing to a stdout nobody reads, still running 45 s later. A normal track leaks
   voice's own ffmpeg the same way; that path is untouched by this change.
 
-A seek while paused resumes playback at the new position. A plain `stop()` on a paused player does
-not reach Idle until the player is unpaused, so `!seek` forces it.
+A seek while paused resumes playback at the new position. **A plain `stop()` on a paused player does
+not reach Idle until the player is unpaused**: it only arms the resource's trailing silence, and a
+paused player reads no frames to play that out. `!seek` forces its stop. `Bot.stop()`, behind
+`!skip`, `!stop`, Hitster and the playback buttons, unpauses a paused player and then stops it
+unforced, so it goes Idle in its own time as a playing one does: 30 ms after `!skip` in a run
+against the real player, with no audio sent in between, because the connection is already gone.
+Both clear `isPaused`, since the next track gets a new player. Until October 2026 `Bot.stop()` did
+neither, so a `!skip` or `!stop` after `!pause` waited for `!resume`: the queue stayed put, and
+`isPlaying` stayed true, so a later `!play` only queued.
+
+A forced stop in `Bot.stop()` was tried and dropped. It goes Idle inside the call, so the next
+track has started before `Bot.stop()` returns. `!hitster stop` during a turn calls `Bot.stop()`
+twice, once from `resolveTurn` through the collector's synchronous `'end'` and once itself, and the
+second call skipped the music track the first had just started. The unpause emits `'playing'` again,
+which `runPlayback`'s now-playing listener ignores after a player's first. Until October 2026 that
+listener also re-posted the now-playing embed on every `!resume`. Covered by
+`test/playbackPause.test.js`.
 
 Known costs:
 
