@@ -647,11 +647,9 @@ class Bot extends EventEmitter{
 	 * so a seek brings an ffmpeg that already outputs Ogg/Opus and voice only demuxes it. With
 	 * ffmpeg-static, which has libopus, that is also how normal tracks are encoded.
 	 *
-	 * `readstream` stays the download: ffmpeg's 'finish' fires once the download has been written
-	 * into it, well before the audio ends, and runPlayback hangs dispatcherFunc on readstream's
-	 * 'finish'. `pipeline` so a download failing mid-track ends the track at once, as voice's own
-	 * pipeline does for a normal track. Its callback is empty because every stop ends it with a
-	 * premature close, and readstream's own listener already logs a failed download.
+	 * `pipeline` so a download failing mid-track ends the track at once, as voice's own pipeline
+	 * does for a normal track. Its callback is empty because every stop ends it with a premature
+	 * close, and readstream's own listener already logs a failed download.
 	 *
 	 * prism kills ffmpeg only while its stdin is open, so a stop after the whole download has gone
 	 * in would leave it blocked writing to a stdout nobody reads.
@@ -826,6 +824,10 @@ class Bot extends EventEmitter{
 						maxMissedFrames: Math.round(maxTransmissionGap / 20),
 					},
 				});
+				// Neither the download's 'finish' nor its 'end' may end a track. ytdl's stream, like
+				// ffmpeg, emits 'finish' once the whole download has been written in, with about a
+				// megabyte of audio still buffered ahead of the player: 2.5 minutes at lowestaudio.
+				// 'end' comes once ffmpeg has read it all, still about 30 s before the audio runs out.
 				this.dispatcher.on(AudioPlayerStatus.Idle, () => {
 					readstream.destroy();
 					dispatcherFunc()
@@ -857,7 +859,6 @@ class Bot extends EventEmitter{
 						message.channel.send(`⚠️ Playback failed for ${label}. Skipping.`).catch(() => {});
 					}
 				});
-				readstream.on('finish', dispatcherFunc)
 				readstream.on('error', (err) => logger.error('Read stream error:', err));
 				/*
 				.on('start', () => {

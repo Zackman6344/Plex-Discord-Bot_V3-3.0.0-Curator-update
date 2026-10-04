@@ -191,7 +191,8 @@ args rather than crashes.
       `this.conn`/`this.dispatcher` with no null guard — [app/bot.js:405](app/bot.js#L405)).
 - [ ] Start playback from two different channels/users back to back (`workingTask` semaphore).
 - [ ] A track that 404s on Plex → `⚠️ Playback failed … Skipping.` and the queue advances.
-- [ ] `!play` a YouTube URL (ytdl path) as well as a Plex track.
+- [ ] `!youtube` a URL (ytdl path) as well as `!play` a Plex track. Queue two videos with
+      `!youtube` and let the first play to its last second: the second is announced only then.
 
 ## Phase 6 — Integrations
 
