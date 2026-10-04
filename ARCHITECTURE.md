@@ -1378,7 +1378,7 @@ Known costs:
   seek 540 seconds into a 10-minute FLAC started in 0.8 s. At about 2.3 MB/s the same seek took
   13.3 s.
 - Until ffmpeg reaches the offset the player is Buffering, and a `!skip` or `!stop` sent then waits
-  for it. A `!pause` sent then replies that playback is paused, but it starts unpaused.
+  for it. A `!pause` sent then is refused, as it is for any track still buffering.
 - Seeking past the end produces no audio, and the queue advances as if the track had finished.
 - An M4A with its index at the end of the file plays neither normally nor seeked, because ffmpeg
   cannot reach the index through a pipe.
