@@ -844,6 +844,10 @@ class Bot extends EventEmitter{
 						});
 					}
 				});
+				// No dispatcherFunc here. The AudioPlayer emits 'error' only for a resource whose stream
+				// failed, then sets itself Idle for that resource in the same call, so the Idle handler
+				// above runs it. Running it here too dropped the next track unplayed. Voice skips that
+				// Idle if this handler throws or changes the player's state.
 				this.dispatcher.on('error', (err) => {
 					logger.error('AudioPlayer error:', err.message || err);
 					try { readstream.destroy(); } catch (_) {}
@@ -852,7 +856,6 @@ class Bot extends EventEmitter{
 					if (message && message.channel) {
 						message.channel.send(`⚠️ Playback failed for ${label}. Skipping.`).catch(() => {});
 					}
-					dispatcherFunc();
 				});
 				readstream.on('finish', dispatcherFunc)
 				readstream.on('error', (err) => logger.error('Read stream error:', err));
