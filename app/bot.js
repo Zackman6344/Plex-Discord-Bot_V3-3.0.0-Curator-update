@@ -635,8 +635,18 @@ class Bot extends EventEmitter{
 			try { this.conn.destroy(); } catch (_) {}
 			this.conn = null;
 		}
+		// The next track gets a player of its own, which starts unpaused.
+		this.isPaused = false;
 		if (this.dispatcher) {
-			try { this.dispatcher.stop(); } catch (_) {}
+			// A paused player ignores an unforced stop until it is unpaused, so the queue waited for
+			// !resume. Unpaused first, it goes Idle in its own time like a playing one. Not forced:
+			// that goes Idle inside this call and starts the next track, and a second stop straight
+			// after, which !hitster stop makes, then stopped that track too. The unpause emits
+			// Playing again, which runPlayback's listener ignores after a player's first.
+			try {
+				if (this.dispatcher.state.status === AudioPlayerStatus.Paused) this.dispatcher.unpause();
+				this.dispatcher.stop();
+			} catch (_) {}
 		}
 	}
 
@@ -831,6 +841,8 @@ class Bot extends EventEmitter{
 					dispatcherFunc()
 				})
 				this.dispatcher.on(AudioPlayerStatus.Playing, () => {
+					// unpause() moves the player from Paused back to Playing, which emits this again.
+					if (announced) return;
 					announced = true;
 					// A !stop while the player is still buffering has emptied the queue by the time
 					// the audio starts.
