@@ -189,6 +189,9 @@ args rather than crashes.
 - [ ] Queue one track, let it finish → bot advances, then disconnects.
 - [ ] Queue several, `!skip` mid-track, `!pause`/`!resume`, `!stop` while idle (`stop()` touches
       `this.conn`/`this.dispatcher` with no null guard — [app/bot.js:405](app/bot.js#L405)).
+- [ ] `!pause`, `!resume`, then click the now-playing card's Pause/Resume button: it pauses, and a
+      second click resumes. The next track's card reads Pause. A second `!resume` replies "Nothing
+      to be resume."
 - [ ] Start playback from two different channels/users back to back (`workingTask` semaphore).
 - [ ] A track that 404s on Plex → `⚠️ Playback failed … Skipping.` and the queue advances.
 - [ ] `!youtube` a URL (ytdl path) as well as `!play` a Plex track. Queue two videos with

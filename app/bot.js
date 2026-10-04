@@ -823,6 +823,9 @@ class Bot extends EventEmitter{
 					try { this.dispatcher.removeAllListeners(); } catch (_) {}
 					try { this.dispatcher.stop(true); } catch (_) {}
 				}
+				// With its listeners gone, that Idle clears nothing. A Hitster clip replaces paused
+				// music this way, and the player built below starts unpaused.
+				this.isPaused = false;
 				if (this.readstream) {
 					try { this.readstream.destroy(); } catch (_) {}
 				}
@@ -840,6 +843,8 @@ class Bot extends EventEmitter{
 				// 'end' comes once ffmpeg has read it all, still about 30 s before the audio runs out.
 				this.dispatcher.on(AudioPlayerStatus.Idle, () => {
 					readstream.destroy();
+					// A paused player goes Idle too, when its stream fails or stops being readable.
+					this.isPaused = false;
 					dispatcherFunc()
 				})
 				this.dispatcher.on(AudioPlayerStatus.Playing, () => {
