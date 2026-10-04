@@ -626,6 +626,11 @@ class Bot extends EventEmitter{
 		// stop, so it checks these once the wait is over.
 		this.stopGeneration++;
 		this.stoppedEntry = this.songQueue[0];
+		// With nothing left to play, playback is over now rather than when the stopped player goes
+		// Idle. A player still buffering gets there only once ffmpeg's output turns readable or its
+		// download fails, seconds later behind a deep seek, and until then a !play only queued its
+		// track, which that late Idle then ended as if it had played.
+		if (this.songQueue.length === 0) this.isPlaying = false;
 		// destroy() (not disconnect()) so discord.js drops the connection from its
 		// per-guild registry. A disconnect()-ed connection lingers in a half-dead
 		// state; the next joinVoiceChannel returns that corpse, entersState(Ready)
@@ -754,15 +759,13 @@ class Bot extends EventEmitter{
 					// A second !play before anything played, or a Hitster clip, started a run of
 					// its own. Only the newest acts, or one skip would advance the queue twice.
 					if (this.playRun !== run) return true;
-					// A Hitster clip loads while the music plays on. The stop also stopped that
-					// player, and its own Idle moves the queue on.
-					if (this.stopGeneration !== generation && this.dispatcher
-						&& this.dispatcher.state.status !== AudioPlayerStatus.Idle) return true;
 					const head = this.songQueue[0];
 					if (this.stopGeneration !== generation && head === this.stoppedEntry) {
 						// The stop was meant for this entry, so the queue moves on as it would have
-						// when its player went Idle. A seek still waiting on this download would
-						// turn that into a replay and swallow a skip.
+						// when its player went Idle. That includes a Hitster clip loading over music:
+						// the stop also stopped the music's player, whose Idle leaves the queue to
+						// this run. A seek still waiting on this download would turn that into a
+						// replay and swallow a skip.
 						seek.takeSeek(track);
 						dispatcherFunc();
 						return true;
@@ -831,6 +834,10 @@ class Bot extends EventEmitter{
 				}
 				this.readstream = readstream;
 
+				// Bot.stop() stops this.dispatcher, so until a newer run replaces this player, every
+				// stop from here on is a stop of this one.
+				const stopsBefore = this.stopGeneration;
+				const stopped = () => this.stopGeneration !== stopsBefore;
 				this.dispatcher = createAudioPlayer({
 					behaviors: {
 						noSubscriber: NoSubscriberBehavior.Stop,
@@ -845,14 +852,23 @@ class Bot extends EventEmitter{
 					readstream.destroy();
 					// A paused player goes Idle too, when its stream fails or stops being readable.
 					this.isPaused = false;
+					// A stopped player can go Idle seconds after the stop, when the queue may no longer be
+					// its own. It ends the stopped entry only while that is still the head and no newer
+					// run has started. A Hitster clip loading when the stop landed acts on it in
+					// superseded(), and a track queued after !stop, with a run of its own or without one
+					// (a requester outside voice, !artist between album lookups), is not this player's.
+					if (stopped() && (this.playRun !== run || this.songQueue[0] !== this.stoppedEntry)) return;
 					dispatcherFunc()
 				})
 				this.dispatcher.on(AudioPlayerStatus.Playing, () => {
 					// unpause() moves the player from Paused back to Playing, which emits this again.
 					if (announced) return;
+					// A player stopped while still buffering reaches Playing anyway once ffmpeg's output
+					// turns readable, and goes Idle only after that. Announced, the stopped track, or
+					// one queued since, got live controls while nothing played. Left unannounced, a
+					// loop or seek replay of it is announced when it plays.
+					if (stopped()) return;
 					announced = true;
-					// A !stop while the player is still buffering has emptied the queue by the time
-					// the audio starts.
 					const head = this.songQueue[0];
 					if(head && !head.played) {
 						let embedObj = this.songToEmbedObject(head);
@@ -870,6 +886,9 @@ class Bot extends EventEmitter{
 				this.dispatcher.on('error', (err) => {
 					logger.error('AudioPlayer error:', err.message || err);
 					try { readstream.destroy(); } catch (_) {}
+					// The user already stopped this track, and the head may be one queued since, which
+					// then plays.
+					if (stopped()) return;
 					const failed = this.songQueue[0];
 					const label = failed && failed.title ? `**${failed.title}**` : 'this track';
 					if (message && message.channel) {

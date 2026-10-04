@@ -1387,13 +1387,58 @@ which `runPlayback`'s now-playing listener ignores after a player's first. Until
 listener also re-posted the now-playing embed on every `!resume`. Covered by
 `test/playbackPause.test.js`.
 
+**A stopped player that is still Buffering goes Idle late, usually by way of Playing.** It ignores
+the stop until ffmpeg's output turns readable, goes Playing, and goes Idle on the next 20 ms audio
+cycle, because the stop destroyed the connection and the player's `noSubscriber` behaviour is Stop.
+A download that fails first takes it straight from Buffering to Idle, after an `'error'`. Until
+October 2026 its listeners acted on whatever was at the head by then. A `!skip` while buffering
+posted the skip, then a now-playing embed with live controls for the skipped track, then the next
+track's. After `!stop`, `isPlaying` stayed true until the late Idle, so a `!play` in between only
+queued its track; the late Playing announced it and the late Idle ended it as if it had played, so
+it was announced, never downloaded, and dropped. Both reproduced against the real player,
+`createAudioResource` and ffmpeg-static, with the download held back to keep the player Buffering.
+A stop now counts against the player that was current when it landed (`stopped()` in
+`runPlayback`):
+
+- Its now-playing listener announces nothing. `announced` stays false, so a loop or seek replay of
+  that entry is still announced when it plays.
+- Its `'error'` listener only logs. It used to post "Playback failed" for the head, which after
+  `!stop` and `!play X` named X while X went on to play.
+- **Its Idle ends the stopped entry only while that entry is still the head and no newer run has
+  started.** A track queued after `!stop` is never its to end, whether the `!play` started a run of
+  its own or could not: a requester outside voice gets "Join a voice channel first", and `!artist`
+  queues album by album and starts playback after the last lookup.
+- `Bot.stop()` sets `isPlaying` false when the stop leaves the queue empty, which only `!stop` does,
+  so the next `!play` starts a run at once rather than queueing behind the stopped player.
+
+A Hitster clip run that was loading when the stop landed handles it in `superseded()`.
+`superseded()` used to hand that stop to the music player's Idle whenever the music had not reached
+Idle yet. That Idle now leaves the queue to the newer run, so the clip run handles the stop itself,
+**once its Plex request answers**. The music resumes that much later than before: with Plex
+answering 50 ms after the stop, A was requested again 63 ms after it, where the old code took 3 ms.
+Letting the stopped music player take the stop over instead, and cancel the clip run, could emit
+`'finish'` twice or leave the bot in the voice channel when the queue ended there.
+
+An older player that ends on its own while a newer run loads still runs its own `dispatcherFunc`,
+as before. Covered by `test/playbackBufferingStop.test.js`, whose FakePlayer stays Buffering after
+an unforced stop until the test makes its output readable or fails its download. The FakePlayers in
+`test/playbackRace.test.js` and `test/playbackPause.test.js` go straight from Buffering to Idle.
+
+**Still open:** a run that starts after a stop which left the queue non-empty does not act on that
+stop. Hitster's next turn does this when the previous clip, stopped by a guess, is still Buffering
+3 s later, and so does a turn starting right after a `!skip` of buffering music. The stopped entry
+stays queued behind the new clip and plays after it. The old code was worse here: the late Idle
+shifted the new clip, so the turn played the wrong song. The same leftover entry already came from
+a stopped player that a newer run force-stops before it reaches Playing.
+
 Known costs:
 
 - **A seek downloads the file again from byte 0** and decodes up to the offset. Over loopback, a
   seek 540 seconds into a 10-minute FLAC started in 0.8 s. At about 2.3 MB/s the same seek took
   13.3 s.
-- Until ffmpeg reaches the offset the player is Buffering, and a `!skip` or `!stop` sent then waits
-  for it. A `!pause` sent then is refused, as it is for any track still buffering.
+- Until ffmpeg reaches the offset the player is Buffering, and the track after a `!skip` sent then
+  waits for it. A `!play` after a `!stop` does not. A `!pause` sent then is refused, as it is for
+  any track still buffering.
 - Seeking past the end produces no audio, and the queue advances as if the track had finished.
 - An M4A with its index at the end of the file plays neither normally nor seeked, because ffmpeg
   cannot reach the index through a pipe.
