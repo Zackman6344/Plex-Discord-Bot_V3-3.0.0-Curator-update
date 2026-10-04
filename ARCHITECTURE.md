@@ -1357,9 +1357,9 @@ reads Plex:
   25-second seek and started 1 s in. As an output option ffmpeg decodes and discards up to the
   offset, and the start landed exactly in FLAC, MP3 (CBR and VBR), M4A (AAC and ALAC), WAV, Ogg
   Vorbis and Ogg Opus.
-- **`readstream` stays the download.** ffmpeg's `'finish'` fires once the download has been written
-  into it, 16 seconds before the end of a 19.5-second seeked clip in one run, and `runPlayback`
-  hangs `dispatcherFunc` on `readstream`'s `'finish'`.
+- **ffmpeg's `'finish'` says nothing about the audio.** It fires once the download has been written
+  into it, 16 seconds before the end of a 19.5-second seeked clip in one run. Nothing ends a track on
+  it (see "Quirks worth knowing").
 - **The download is joined to ffmpeg with `stream.pipeline`.** On Idle the player destroys ffmpeg
   either way. The difference is a download that fails mid-track: with `pipeline` the error reaches
   the player at once, as it does for a normal track. With `.pipe` the player played out ffmpeg's
@@ -1413,6 +1413,7 @@ Errors caught by the global `uncaughtException` / `unhandledRejection` handlers 
 - **The `Bot` class instantiates its own `PlexAPI`** in `app/bot.js`, separate from `helpers/plexClient.js`'s shared instance. Two TCP connection pools to the same Plex server. Legacy from before the helper existed; could be unified later.
 - **`iceName` was a typo** in the Bot class's PlexAPI options — fixed in this iteration to `deviceName`. The Bot now identifies itself correctly to Plex.
 - **`!youtube` works in two modes**: a URL plays directly; anything else hits `@distube/ytsr` for search and plays the top video result.
+- **A download's `'finish'` or `'end'` must not end a track.** Until October 2026 YouTube tracks were cut short: at the shipped `youtube_quality` of `lowestaudio`, a 60 s video was dropped before it played and a 3:30 one stopped after 47.7 s. `runPlayback` ended a track on its download's `'finish'` as well as on the player going Idle. ytdl's stream emits `'finish'` once the whole file has been written into it, with 0.9–1.15 MB of audio still buffered ahead of the player, about 2.5 minutes at `lowestaudio`. `'end'` is early too: on a real player with a 120 s track, `'finish'` came at 0.2 s, `'end'` at 89 s and Idle at 120 s. A Plex download never emits `'finish'`. Covered by `test/playbackDownloadEnd.test.js`.
 - **YouTube playback can break upstream** when YouTube rotates its player. The cure is `npm install @distube/ytdl-core@latest` (the fork ships patches fast). When it fails, the cipher-parse warnings appear in the log.
 - **`config.managedUser` in `plex.js` is reserved** for a planned user-switching feature that isn't wired up yet.
 
