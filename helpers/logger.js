@@ -87,5 +87,6 @@ module.exports = {
     info:  (...args) => log('info',  args),
     warn:  (...args) => log('warn',  args),
     error: (...args) => log('error', args),
+    mirrorsToConsole: toConsole,
     _dir: DIR
 };
