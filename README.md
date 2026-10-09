@@ -260,6 +260,16 @@ window stops the bot.** You also get three desktop shortcuts:
 If the bot exits on its own, the window stays open with the exit code so you can read what
 happened instead of watching it vanish.
 
+**Only one copy runs at a time.** Starting the bot while it is already running, from any shortcut
+or by hand, ends the new copy before it logs in, with exit code 1 and a line naming the running
+copy's PID. `scripts\stop-bot.ps1` finds only a copy started by the shortcuts or the start scripts;
+end one started by hand through its window or that PID. Two copies logged in with the same token both answered every command and kept
+separate queues, so a Stop click reached one of them and the other's queue played at the next
+`!play`. The check keys on the bot token, so a second install or a worktree configured with the
+same token is refused too. It only sees copies on the same operating system: a copy inside a
+Docker container or WSL and a copy outside it do not see each other, and neither does a copy on
+another machine.
+
 **The window shows no log, on purpose.** A Windows console that enters selection mode — one click
 or drag inside it is enough — blocks whatever process owns it on its next write, until the
 selection is cleared. With the log mirrored there, a stray click froze the entire bot: it stopped
@@ -661,7 +671,7 @@ Some Commands
 
 !skip : skips the current song if one is playing and plays the next song in queue if it exists.
 
-!stop : stops song if one is playing.
+!stop : stops playback and clears the queue, including tracks still waiting after a failed voice join.
 
 !viewqueue : displays current song queue.
 

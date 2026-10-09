@@ -784,6 +784,13 @@ class Bot extends EventEmitter{
 					// A newer run's openConnection destroyed this run's unfinished join, which then
 					// only times out. Failing here would destroy that run's connection mid-track.
 					if (this.playRun !== run) return;
+					// A !stop that emptied the queue while the join hung already said playback stopped,
+					// and has no queue left to keep. Only that case: a !skip keeps the queue, so its
+					// failed join still reports and keeps the rest for the next !play.
+					if (this.stopGeneration !== generation && this.songQueue.length === 0) {
+						superseded();
+						return;
+					}
 					throw error;
 				}
 				if (superseded()) return;

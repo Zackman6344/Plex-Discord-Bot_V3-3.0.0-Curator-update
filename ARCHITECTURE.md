@@ -10,7 +10,7 @@ This is a Discord bot that wraps a Plex Media Server, ties in optional integrati
 
 | Directory       | What's in it                                                                 |
 | --------------- | ---------------------------------------------------------------------------- |
-| `index.js`      | Entry point. Five lines: imports `app/utils.js` and calls `start()`.         |
+| `index.js`      | Entry point. Claims the single-instance lock, then calls `start()` from `app/utils.js`. |
 | `app/`          | Process lifecycle, Discord client setup, the `Bot` class, message dispatch. |
 | `commands/`     | One file per Discord command. Auto-loaded by `commands/index.js`.            |
 | `commands/playlist.js/` | Sub-commands of `!playlist` (it's a directory named `*.js` — see Quirks). |
@@ -28,7 +28,7 @@ This is a Discord bot that wraps a Plex Media Server, ties in optional integrati
 
 When you run `node index.js`:
 
-1. `index.js` requires `app/utils.js` and calls `start()`.
+1. `index.js` claims the single-instance lock (`helpers/singleInstance.js`): a named pipe on Windows, an abstract socket on Linux, keyed by a hash of the bot token. If another copy already holds it, this one logs the holder's PID, exits with code 1 and never logs in. Otherwise it calls `start()` from `app/utils.js`.
 2. `start()` creates the Discord `Client` with the needed gateway intents (`Guilds`, `GuildMessages`, `GuildVoiceStates`, `MessageContent`, `DirectMessages`) and `Channel`/`Message` partials for DMs.
 3. Constructs a `new Bot(client)` (`app/bot.js`). The Bot's constructor instantiates the Plex API client and initializes empty state (`songQueue`, `cache_library`, etc.).
 4. Calls `require('./music.js')(client, bot)`. This:
@@ -117,6 +117,7 @@ Two signature styles coexist in the codebase:
 | File                       | Role                                                                                                                                    |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `logger.js`                | Tiny no-deps leveled logger (`debug`/`info`/`warn`/`error`) with ISO timestamps. Level set via `LOG_LEVEL` env var. Default: `info`.    |
+| `singleInstance.js`        | Refuses a second copy of the bot. `claim(token)` listens on a named pipe (Windows), an abstract socket (Linux) or a socket file in the temp dir, all named from a SHA-256 of the token; the OS drops it when the process dies, so a crash leaves no stale lock. A refused copy asks the holder for its PID over the same pipe and names it. Lock errors other than a live holder fail open with a warning. |
 | `geminiAPI.js`             | Centralized Gemini SDK. Exports `DEFAULT_MODEL`, `getGenAI()`, `getModel(options?)`, and `generateCharacterSheet(...)`. **Single place to change the model name.** |
 | `plexClient.js`            | Memoized Plex client. `getPlex()` returns a single shared `PlexAPI` instance for the bot's *default* account.                          |
 | `plexHome.js`              | Handles Plex Home managed-user switching for the `!playlist plex-copy` / `plex-list <user>` flows. Uses `plexConfig.homeOwnerToken` against plex.tv's `/api/v2/home/users/<id>/switch` endpoint; caches switched clients in memory by `(discordUserId, plexUsername)` for 30 minutes. See "Plex multi-account auth" below. |

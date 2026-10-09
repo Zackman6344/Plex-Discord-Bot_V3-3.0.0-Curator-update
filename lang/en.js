@@ -47,6 +47,7 @@ module.exports = {
   STOP_SUCCES : '**Update:**',
   STOP_INFO : '**Playback has been stopped.**',
   STOP_FAIL : '**Nothing currently playing.**',
+  STOP_QUEUE_CLEARED : '**Stopped, and cleared {number} queued song{plurial} that had not started playing.**',
   VIEWQUEUE_SONG_INFO : '{index} - {artist} - {title}',
   VIEWQUEUE_SUCCES : '\n**Song Queue:**\n\n',
   VIEWQUEUE_INFO : '\n***{commandPrefix}removesong (number)** to remove a song*\n***{commandPrefix}skip** to skip the current song*',
