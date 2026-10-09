@@ -1,6 +1,11 @@
 'use strict';
 
 function stop(bot, client) {
+    // !restart builds a second Bot in this same process. bot.destroy() leaves a playing track
+    // alone, so this one's player and voice connection played on where no Stop could reach them.
+    // Stopped here, while the gateway is still up, the connection's destroy also leaves voice.
+    bot.songQueue = [];
+    bot.stop();
     bot.destroy();
     client.destroy();
 }

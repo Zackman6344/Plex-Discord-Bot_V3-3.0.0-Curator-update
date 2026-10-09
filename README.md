@@ -661,7 +661,7 @@ Some Commands
 
 !skip : skips the current song if one is playing and plays the next song in queue if it exists.
 
-!stop : stops song if one is playing.
+!stop : stops playback and clears the queue, including tracks still waiting after a failed voice join.
 
 !viewqueue : displays current song queue.
 
