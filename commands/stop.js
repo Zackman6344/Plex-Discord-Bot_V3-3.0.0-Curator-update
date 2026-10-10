@@ -7,6 +7,12 @@ module.exports = {
       description: 'Stop playback'
     },
     process: function(bot, client, message) {
+      // !stop still clears the queue. The book ends with reason 'generic', which never starts the
+      // queued music (D1): only /book stop or the card's Stop hands voice over.
+      if (bot.books && bot.books.routeGeneric('stop', message)) {
+        bot.songQueue = [];
+        return;
+      }
       const wasPlaying = bot.isPlaying;
       const queued = bot.songQueue.length;
       // A queue can wait with isPlaying false: kept after a failed voice join or for a requester

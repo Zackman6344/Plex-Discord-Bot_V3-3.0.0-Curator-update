@@ -4,10 +4,30 @@ function stop(bot, client) {
     // !restart builds a second Bot in this same process. bot.destroy() leaves a playing track
     // alone, so this one's player and voice connection played on where no Stop could reach them.
     // Stopped here, while the gateway is still up, the connection's destroy also leaves voice.
+    // The book goes first: its saves are synchronous, and process.exit follows straight after.
+    try { if (bot.books) bot.books.shutdown(); } catch (_) {}
     bot.songQueue = [];
     bot.stop();
     bot.destroy();
     client.destroy();
+}
+
+// !restart runs start() again in this process. A quitter per start() closed over its own bot,
+// and the first one registered (the stopped bot's) exits the process before the next one runs,
+// so one quitter is bound once and always stops whichever bot is running now.
+let current = null;
+let signalsBound = false;
+
+async function quitter(){
+    const logger = require('../helpers/logger.js');
+    try {
+       logger.info('Bot shutdown');
+       if (current) stop(current.bot, current.client);
+    } catch (e){
+       logger.error('Error during shutdown:', e);
+    } finally {
+       process.exit(0);
+    }
 }
 
 function start(){
@@ -18,6 +38,11 @@ function start(){
     // my keys ---------------------------------------------------------------------
     var keys = require('../config/keys.js');
     var config = require('../config/config.js');
+
+    // Before the login, so the voice timer has its priority from the first track. Both follow
+    // /config live, and both are safe to repeat when !restart runs this again.
+    require('../helpers/processPriority.js').bindToConfig(config);
+    require('../helpers/voiceHealth.js').bindToConfig(config);
 
     // discord client --------------------------------------------------------------
 
@@ -41,21 +66,11 @@ function start(){
        ]
     });
     const bot = new Bot(client);
+    current = { bot, client };
     // bot functions ---------------------------------------------------------------
     require('./music.js')(client, bot);
 
     client.login(keys.botToken);
-
-    async function quitter(){
-       try {
-          logger.info('Bot shutdown');
-          stop(bot, client);
-       } catch (e){
-          logger.error('Error during shutdown:', e);
-       } finally {
-          process.exit(0);
-       }
-    }
 
     // Catch anything that escapes a try/catch or a .catch() so the bot doesn't die mid-session.
     // Node's default would crash the process on an uncaught exception; for a long-running bot we'd
@@ -75,9 +90,11 @@ function start(){
         commandLog.recordEvent('unhandled-rejection', { error: (reason && reason.stack) || String(reason) });
     });
 
-    process.on('SIGTERM', quitter);
-
-    process.on('SIGINT', quitter);
+    if (!signalsBound) {
+        signalsBound = true;
+        process.on('SIGTERM', quitter);
+        process.on('SIGINT', quitter);
+    }
 }
 
 exports.stop = stop;

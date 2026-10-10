@@ -14,6 +14,7 @@ This is a Discord bot that wraps a Plex Media Server, ties in optional integrati
 | `app/`          | Process lifecycle, Discord client setup, the `Bot` class, message dispatch. |
 | `commands/`     | One file per Discord command. Auto-loaded by `commands/index.js`.            |
 | `commands/playlist.js/` | Sub-commands of `!playlist` (it's a directory named `*.js` — see Quirks). |
+| `commands/book.js/` | `/book` and `!book`: `index.js` holds the slash spec, autocomplete and dispatch, and requires `play.js`, `controls.js`, `library.js` and `admin.js` by name. Same directory trick as `playlist.js/`. |
 | `helpers/`      | Shared utilities: API clients, Gemini wrapper, logger, health check, etc.    |
 | `config/`       | Config files (`config.js`, `keys.js`, `plex.js`) + `.example.js` templates.  |
 | `lang/`         | Localized message strings + the `String.prototype.format` polyfill.          |
@@ -29,24 +30,28 @@ This is a Discord bot that wraps a Plex Media Server, ties in optional integrati
 When you run `node index.js`:
 
 1. `index.js` claims the single-instance lock (`helpers/singleInstance.js`): a named pipe on Windows, an abstract socket on Linux, keyed by a hash of the bot token. If another copy already holds it, this one logs the holder's PID, exits with code 1 and never logs in. Otherwise it calls `start()` from `app/utils.js`.
-2. `start()` creates the Discord `Client` with the needed gateway intents (`Guilds`, `GuildMessages`, `GuildVoiceStates`, `MessageContent`, `DirectMessages`) and `Channel`/`Message` partials for DMs.
-3. Constructs a `new Bot(client)` (`app/bot.js`). The Bot's constructor instantiates the Plex API client and initializes empty state (`songQueue`, `cache_library`, etc.).
-4. Calls `require('./music.js')(client, bot)`. This:
+2. `start()` applies the process priority (`helpers/processPriority.js`, `above_normal` by default, logged as `Process priority: <name>`) and switches the voice-health log on or off (`helpers/voiceHealth.js`, off by default). Both happen before the login so the first track already runs at the chosen priority, both subscribe to `/config` changes, and both are safe to repeat when `!restart` runs `start()` again. See "Voice health and process priority".
+3. `start()` creates the Discord `Client` with the needed gateway intents (`Guilds`, `GuildMessages`, `GuildVoiceStates`, `MessageContent`, `DirectMessages`) and `Channel`/`Message` partials for DMs.
+4. Constructs a `new Bot(client)` (`app/bot.js`). The Bot's constructor instantiates the Plex API client and initializes empty state (`songQueue`, `cache_library`, `books = null`, `loadingRuns = 0`, etc.).
+5. Calls `require('./music.js')(client, bot)`. This:
    - Requires `commands/` (the loader runs and logs `Loaded N commands (M aliases)`).
+   - Creates the audiobook director, `bot.books = createBookDirector({ client, bot })` (`helpers/bookEngine.js`). This happens at module init rather than on ready, because the music gate and `utils.stop()`'s shutdown both need it before the gateway is up. It reads nothing and opens nothing until a book is played.
    - Registers the `clientReady` and `messageCreate` event handlers.
-5. Installs `uncaughtException` / `unhandledRejection` handlers (log only, don't exit).
-6. Installs `SIGTERM` / `SIGINT` handlers for graceful shutdown.
-7. Calls `client.login(keys.botToken)`. Discord login is async.
-8. On `clientReady` (Discord ready), `app/music.js` calls `startHealthMonitor(client)`, which runs an initial health check and schedules re-checks every 15 minutes.
-9. Still on `clientReady`, `app/music.js` calls `startEventServer(client)` (`helpers/eventServer.js`). When `config.eventServerEnabled` is true it opens a localhost-only HTTP listener that relays Kometa run + Playnite game-launch pushes to the broadcast channel; otherwise it logs "disabled" and no-ops.
-10. Then `app/music.js` calls `startGamePresence(client)` (`helpers/gamePresence.js`) — when `config.gamePresenceEnabled` is true it subscribes to `presenceUpdate` and broadcasts games the owner starts (detected via Discord activity). No-op otherwise. The `GuildPresences` intent it needs is added in `app/utils.js` only when the flag is on, so the default keeps login working.
-11. `app/music.js` calls `startKometaTheater(client)` (`helpers/kometaTheater.js`) — when `config.kometaTheaterEnabled` is true it starts tailing `config.kometaLogPath` to narrate Kometa runs in-character (and `broadcast.broadcastKometaRun` routes run boundaries + changes to it instead of factual cards). No-op otherwise.
-12. `app/music.js` calls `startArchipelagoMonitor(client)` (`helpers/archipelagoMonitor.js`), which reopens any saved Archipelago watches. Returns immediately when `config.archipelagoEnabled` is false, which is the default.
-13. Finally `app/music.js` calls `broadcast.broadcastStartup(client)` — when `config.broadcastStartup` is true it posts a "System has started" card to a single channel (the general `broadcastChannelId`, else the first configured channel), confirming the bot is live and the listener is bound. No-op when the toggle is off or no channel is set.
+6. Calls `client.login(keys.botToken)`. Discord login is async, so the next two steps run in the same tick, before the gateway answers.
+7. Installs `uncaughtException` / `unhandledRejection` handlers (log only, don't exit).
+8. Installs `SIGTERM` / `SIGINT` handlers for graceful shutdown. `utils.stop()` calls `bot.books.shutdown()` first, before the music queue is emptied: book saves are synchronous, and `process.exit` follows straight after.
+9. On `clientReady` (Discord ready), `app/music.js` calls `startHealthMonitor(client)`, which runs an initial health check and schedules re-checks every 15 minutes.
+10. Still on `clientReady`, `app/music.js` calls `startEventServer(client)` (`helpers/eventServer.js`). When `config.eventServerEnabled` is true it opens a localhost-only HTTP listener that relays Kometa run + Playnite game-launch pushes to the broadcast channel; otherwise it logs "disabled" and no-ops.
+11. Then `app/music.js` calls `startGamePresence(client)` (`helpers/gamePresence.js`). When `config.gamePresenceEnabled` is true it subscribes to `presenceUpdate` and broadcasts games the owner starts (detected via Discord activity). No-op otherwise. The `GuildPresences` intent it needs is added in `app/utils.js` only when the flag is on, so the default keeps login working.
+12. `app/music.js` calls `startKometaTheater(client)` (`helpers/kometaTheater.js`). When `config.kometaTheaterEnabled` is true it starts tailing `config.kometaLogPath` to narrate Kometa runs in-character (and `broadcast.broadcastKometaRun` routes run boundaries + changes to it instead of factual cards). No-op otherwise.
+13. `app/music.js` calls `startArchipelagoMonitor(client)` (`helpers/archipelagoMonitor.js`), which reopens any saved Archipelago watches. Returns immediately when `config.archipelagoEnabled` is false, which is the default.
+14. `app/music.js` calls `bot.books.start()`, which hands over to `helpers/bookLibrary.js`: read the stored catalog, rebuild it in the background if the library changed, and arm the hourly library check. Returns `null` and arms nothing while `config.audiobooksEnabled` is false, which is the default. If the setting is switched on later, the first `/book play` or `/book library` arms it.
+15. Finally `app/music.js` calls `broadcast.broadcastStartup(client)`. When `config.broadcastStartup` is true it posts a "System has started" card to a single channel (the general `broadcastChannelId`, else the first configured channel), confirming the bot is live and the listener is bound. No-op when the toggle is off or no channel is set.
 
 A clean boot looks like:
 ```
-INFO  Loaded 51 commands (2 aliases)
+INFO  Process priority: above_normal
+INFO  Loaded 56 commands (4 aliases)
 INFO  Bot ready — logged in as <BotName>
 INFO  Boot health check:
   ✓ Config: all required keys present
@@ -69,6 +74,7 @@ A single `Bot` instance is created at startup. It extends `EventEmitter` and own
 - **Pagination state** — `this.plexQuery`, `this.plexOffset`, `this.plexPageSize`, `this.tracks` (last search results).
 - **Library cache** — `this.cache_library` keyed by Plex section key.
 - **Concurrency control** — `this.workingTask` semaphore + `this.waitForStart` flag, used to serialize song additions while audio is being prepared.
+- **The audiobook seam.** `this.books` is the book director, assigned by `app/music.js`. `this.loadingRuns` counts `playSong` calls in flight. `musicBusy()` says whether music owns, or is about to own, the bot's voice: `loadingRuns`, `waitForStart`, `workingTask`, a connection that is not destroyed, or `isPlaying`. `openConnection(channel)` takes the channel to join, so the book engine can join with it. The engine reads nothing else on the Bot apart from `songQueue.length`. See "Audiobooks and podcasts".
 
 Commands receive `bot` as their first arg and call methods on it (`bot.findSong(...)`, `bot.songQueue.push(...)`, `bot.playSong(message)`, etc.).
 
@@ -149,8 +155,8 @@ Two signature styles coexist in the codebase:
 | `archipelagoSpheres.js`    | Sphere data for a seed, from the extracted multidata table or a spoiler log, and the sphere 1 fallback `!ap next` answers with when the seed's own logic is unavailable. |
 | `archipelagoClaims.js`     | Which Discord user holds which slot in which watch, persisted to `data/archipelago_claims.json`. Storage and lookup only; whether a line is worth a ping is decided by `archipelagoMonitor.shouldPing`. See "Slot claims" below. |
 | `archipelagoCatchup.js`    | Which lines each watch has already posted, per watch and seed, persisted to `data/archipelago_catchup.json`, plus the pure `buildCatchup` that diffs a tracker read against that record and renders the missed lines exactly as the live relay would. See "Catching up after downtime" below. |
-| `jsonStore.js`             | One small JSON file holding one collection: env-overridable path, test gate, lazy cache, atomic write, and a corrupt file moved aside to `<file>.corrupt-<timestamp>` rather than overwritten. The claims, goals, roles and catch-up stores are built on it. |
-| `logPrune.js`              | Day-file housekeeping shared by both sinks under `data/logs/`: the `PLEXBOT_LOG_RETENTION_DAYS` parse, the hourly throttle and the cutoff. No dependencies, so `logger.js` can use it. |
+| `jsonStore.js`             | One small JSON file holding one collection: env-overridable path, test gate, lazy cache, atomic write, and a corrupt file moved aside to `<file>.corrupt-<timestamp>` rather than overwritten. The claims, goals, roles and catch-up stores are built on it, and so are the audiobook catalog and bookmarks. Two opt-in options: `feature` names the feature in its log lines (default `'Archipelago'`, so the five Archipelago stores log byte for byte as before), and `durable` fsyncs each write before the rename, keeps an hourly `<file>.bak`, and loads from that backup when the main file is damaged. Only the bookmark store sets `durable`. |
+| `logPrune.js`              | Day-file housekeeping shared by every day-file writer under `data/logs/` (bot log, command log, voice-health log): the `PLEXBOT_LOG_RETENTION_DAYS` parse, the hourly throttle and the cutoff. No dependencies, so `logger.js` can use it. |
 | `leaderboard.js`           | One ranked-list renderer. Only the Archipelago leaderboard calls in so far; the four game commands still carry their own copies and disagree on the fourth-place marker. |
 | `archipelagoGoals.js`      | Lifetime count of multiworlds each user has goaled, keyed `<seed>::<slot>` so it outlives the watch that saw it and so a slot changing hands cannot re-credit a finished game. Recording is idempotent, because the goal set is rebuilt on every reconnect. Goals only, never releases. Migrates the original user-keyed file shape on read. |
 | `archipelagoRoles.js`      | Creates and assigns the participant role and the per-count "N Games Goaled" roles, and deletes count roles nobody holds. Records every role id it creates in `data/archipelago_roles.json` and only ever touches those. Degrades to doing nothing rather than throwing. |
@@ -158,6 +164,22 @@ Two signature styles coexist in the codebase:
 | `aiCharacterMapper.js`     | Maps gaming/media habits to a D&D class. Uses centralized `getModel()`. Powers `!buildcharacter`.                                      |
 | `characterStorage.js`      | Persists character sheets to `data/characters.json`. Used by `!buildcharacter` and `!mysheet`.                                          |
 | `compendiumProvider.js`    | Loads `compendium/FightClub5e.xml` on first access; exposes class/spell/item lookups for the D&D commands.                              |
+| `voiceClaims.js`           | Which feature holds a guild's voice apart from the music queue: a Hitster game or an audiobook. Each registers a predicate over its own live state (`register(owner, guildId => label \| null)`), so there is no flag to forget to release; `holder(guildId, { ignore })` asks. A predicate that throws counts as free. Same pattern as `channelClaims.js`. |
+| `bookModel.js`             | The arithmetic of a book, pure: where an absolute millisecond falls among a work's parts, its chapters, where a bookmark lands after a rebuild (`resolveBookmark`), how the end of a part's stream is read (`classifyPartEnd`), where `/book play` starts (`resumeStart`), the resume rewind, and the speed, sleep and `goto` inputs. Uses the sum of the part durations, never the work's stored `totalMs`. |
+| `bookCatalog.js`           | Turns a Plex music listing into the long-form catalog, pure: which tracks are parts of a book or podcast, which work each belongs to, in what order they play, the overrides, the alias match after a rebuild, and the membership index. Works are built from folders on disk first and Plex albums second. `RULES_VERSION` goes up whenever a rule change would build a different catalog from the same listing. |
+| `bookCatalogStore.js`      | The current catalog in memory and in `data/book_catalog.json`, plus the read of `data/book_overrides.json`. Lazy (nothing at require time), atomic `replace()`, `findWorks(text)`, `partKeyFor(workId, { trackRatingKey, file })` by identity, and the memoised `index()` of track, album, artist and part-id Sets that the music exclusion reads. No Plex. |
+| `bookLibrary.js`           | The Plex side of the catalog: full listing and build (single flight), chapter probes, the hourly library signature check, the once-an-hour freshness check from `/book play`, and part-key repair through the track's own ratingKey. Never `/search`. |
+| `longForm.js`              | Keeps catalogued books and podcasts out of music. `enabled()`, `isLongFormTrack/Album/Artist/Entry`, `partition(list)` into `{ music, books }`, the Plex-side exclusion fragment (`plexExclusion()`, `withExclusion(url)`), and the "📚 Also in your books" redirect lines. |
+| `bookmarks.js`             | Each listener's place in each work, in `data/book_bookmarks.json` (durable store, hourly `.bak`), and the stats and leaderboard derived from it. `record()` writes only when the place or the listening time moved by a second or more; a failed write keeps memory, flips `healthy()` and records `book-save-failed` once per failure streak. |
+| `bookAudio.js`             | The ffmpeg arguments for a book part (input `-ss` before `-i`, reconnect flags, `atempo` off 1x, Ogg Opus out) and the environment with every proxy variable removed. Pure. |
+| `partProxy.js`             | Loopback HTTP proxy between ffmpeg and Plex, so the Plex token never appears on a command line. `127.0.0.1`, random port, a 128-bit path secret per boot, GET and HEAD of `/library/parts/...` only, Host header checked. `probe(partKey)` checks a key with a one-byte range request. Started lazily on the first book play. |
+| `bookResource.js`          | One part as an `AudioResource`: spawns ffmpeg-static with the cleaned environment, wraps its stdout as `StreamType.OggOpus`, and SIGKILLs it when voice closes the stream. A spawn failure logs, records `book-stream-error`, and ends the stream. |
+| `bookEngine.js`            | The audiobook player. `createBookDirector({ client, bot })` returns `bot.books`: one session per guild with its own AudioPlayer and voice join, controls, saves, sleep and chapter timers, the runPlayback gate (`blocksMusic`), the generic-command delegation (`routeGeneric`), the card lifecycle and `shutdown()`. Every dependency is injectable for tests. See "Audiobooks and podcasts". |
+| `bookCard.js`              | The public book card as raw embed and component JSON, rendered from the engine's `view()`. Pure, no discord.js, so a renderer fault cannot reach playback. |
+| `bookButtons.js`           | The `book:*` button namespace. A control click runs the engine action and answers with `interaction.update`, which acks and edits the card in one call. A stale card (its session id is not the live one) has its buttons stripped. |
+| `processPriority.js`       | Sets the bot process to `above_normal` (default) or `normal` priority from `config.processPriority`, and again whenever `/config` changes it. Never throws; a refused raise warns once. |
+| `voiceHealth.js`           | The opt-in voice-health sampler behind `!voicehealth`: per-packet send gaps, source underruns, connection and networking changes, event-loop delay, CPU, memory and GC, rolled into one record per active minute in `data/logs/voice-<date>.jsonl`. Every hook returns on its first line while `config.voiceHealthEnabled` is off. |
+| `voiceHealthFormat.js`     | Renders a `voiceHealth.snapshot()` as one Discord message inside 2,000 characters, dropping the oldest minutes first. |
 
 ---
 
@@ -167,7 +189,7 @@ Three files in `config/`. The two with secrets are **gitignored**; templates are
 
 | File                   | Tracked? | What it holds                                                              |
 | ---------------------- | -------- | -------------------------------------------------------------------------- |
-| `config/config.js`     | yes      | Feature flags + display strings: `commandPrefix`, `listenChannel`, `playlistsDir`, `serverName`, `ownerId`, `launchRoleId`, `playniteEnabled`, `tautulliEnabled` + `tautulliApiKey` + `tautulliUrl`, `language`, `youtube_quality`, the broadcast block (`broadcastChannelId`, `eventServerEnabled`, `eventServerPort`, `eventServerToken`, `broadcastKometa`, `broadcastGameLaunch`), `archipelagoEnabled` + `archipelagoBatchSeconds`, and `archipelagoInstallDir` + `archipelagoPython` for `!ap next`. |
+| `config/config.js`     | yes      | Feature flags + display strings: `commandPrefix`, `listenChannel`, `playlistsDir`, `serverName`, `ownerId`, `launchRoleId`, `playniteEnabled`, `tautulliEnabled` + `tautulliApiKey` + `tautulliUrl`, `language`, `youtube_quality`, the broadcast block (`broadcastChannelId`, `eventServerEnabled`, `eventServerPort`, `eventServerToken`, `broadcastKometa`, `broadcastGameLaunch`), `archipelagoEnabled` + `archipelagoBatchSeconds`, `archipelagoInstallDir` + `archipelagoPython` for `!ap next`, the six audiobook settings and the two voice settings (tables below). |
 | `config/keys.js`       | **no**   | `botToken` (Discord) + `geminiApiKey` (Gemini). Copy from `keys.example.js`. |
 | `config/plex.js`       | **no**   | Plex `hostname`, `port`, `https`, `token` (the bot's default user), `homeOwnerToken` (optional, only for cross-account playlist features), `managedUser`, `options`. Copy from `plex.example.js`. |
 
@@ -179,6 +201,32 @@ exist in `defaults`. That overrides file is written by the `/config` wizard (`he
 Because `bot.config` is the *same* object as `require('config/config.js')` and consumers read
 `config.X` at call time, the wizard mutating that object takes effect live for most settings; the
 JSON file makes the change durable across restarts. A missing/malformed overrides file is ignored.
+
+**Audiobook settings** (`/config` → Audiobooks). All apply live, and every consumer reads them
+with a code fallback (15 s saves, 10 minutes idle, 10 s rewind, speed 1), so a missing or
+out-of-range value cannot break playback.
+
+| Key | Type | Default | What it does |
+| --- | ---- | ------- | ------------ |
+| `audiobooksEnabled` | bool | `false` | Turns `/book` on. Off, every subcommand answers "Audiobooks are turned off…", nothing reads the library and the loopback proxy never opens. Read at call time, so turning it on needs no restart. |
+| `audiobooksExcludeFromMusic` | bool | `true` | Keeps catalogued books and podcast episodes out of music once a catalog exists. Turning `audiobooksEnabled` off does not let books back into music; only this does. |
+| `audiobookSaveSeconds` | int 5–300 | `15` | Bookmark save interval while playing. The most a crash or hard kill can lose. |
+| `audiobookDefaultSpeed` | choice `0.75` `0.9` `1` `1.1` `1.25` `1.5` `1.75` `2` | `'1'` | Speed for a listener's first book; after that each listener keeps their last speed. Stored as a string because it is a menu choice. |
+| `audiobookIdleLeaveMinutes` | int 1–180 | `10` | How long a paused or abandoned book keeps the voice channel. |
+| `audiobookResumeRewindSeconds` | int 0–120 | `10` | Rewind on resume after more than 5 minutes away, three times this after a day. 0 resumes exactly. |
+
+**Voice settings** (`/config` → Voice). Both apply at once through `configStore.onChange`.
+
+| Key | Type | Default | What it does |
+| --- | ---- | ------- | ------------ |
+| `processPriority` | choice `above_normal` `normal` | `above_normal` | Priority of the bot process. ffmpeg children stay at normal either way. |
+| `voiceHealthEnabled` | bool | `false` | The per-minute voice-health log and `!voicehealth`. |
+
+The constants behind the audiobook engine are code, not settings: the 5 s natural-end slack, 1 s
+retry, three early ends in 2 minutes before parking, the 20 s Buffering watchdog, the proxy's 15 s
+header timeout and 5 s probe timeout, the hourly library check and bookmark backup, the 120 s
+"Mark finished" window, the 24 h catalog age, the 120 s card refresh, 1.5 s card-edit coalescing
+and the 30 s gate-explanation limit.
 
 ---
 
@@ -214,6 +262,27 @@ All persistent runtime state lives under `data/`. The directory is created if mi
 | `data/kometa_theater.json`        | `helpers/kometaTheater.js` (personas + the `seen` set, keyed `library::collection`) |
 | `data/kometa_theater_queue.json`  | `helpers/kometaTheater.js` (rendered-but-unposted transmissions) |
 | `data/kometa_theater_tail.json`   | `helpers/kometaTheater.js` (log byte offset + whether a session was open) |
+| `data/book_catalog.json`          | `helpers/bookCatalogStore.js` (the audiobook and podcast catalog built from the Plex music library: works, parts, file names, Plex keys, rejected folders, the chapter cache and the membership index; about 340 KB on a 21-work library; rebuilt from Plex whenever it is missing or damaged) |
+| `data/book_bookmarks.json`        | `helpers/bookmarks.js` (each listener's place, speed and listening time per work, keyed `<discordUserId>::<workId>`) |
+| `data/book_bookmarks.json.bak`    | `helpers/jsonStore.js` (hourly copy of the bookmarks, written only from a file that decodes; loaded in place of a damaged main file) |
+| `data/book_overrides.json`        | **You.** Hand-edited catalog corrections, read only by `helpers/bookCatalogStore.js`. Never written by the bot. Format under "Audiobooks and podcasts". |
+| `data/logs/voice-<date>.jsonl`    | `helpers/voiceHealth.js` (only while `voiceHealthEnabled` is on) |
+
+All four `book_*` files and the `.bak` are gitignored: the bookmarks are keyed by Discord user
+id, and the catalog and overrides describe your library. Each has an env override, which the
+tests set to a pid-suffixed temp path before the first require:
+
+| Env var | Default path |
+| ------- | ------------ |
+| `PLEXBOT_BOOK_CATALOG_FILE` | `data/book_catalog.json` |
+| `PLEXBOT_BOOK_BOOKMARKS_FILE` | `data/book_bookmarks.json` (the backup is always `<that>.bak`) |
+| `PLEXBOT_BOOK_OVERRIDES_FILE` | `data/book_overrides.json` |
+
+Under the test runner without its env var, each book store is memory-only and the overrides
+file is never read, the same rule as every other `jsonStore` store, so the bot tests (`app/bot.js`
+now asks the catalog whether a track is a book) never see the real catalog or the real overrides.
+Outside the runner the stores write to their real
+paths, so an ad-hoc `node -e` check against them should set the env vars first.
 
 Custom user playlists are separate — they live in `playlists/<name>.playlist` (gitignored). On-disk shape uses legacy French keys (`musiques`, `nom`, `titre`, `artiste`, `cle`) for backward compatibility with older playlist files; code reads/writes them using English variable names internally.
 
@@ -261,7 +330,7 @@ slash: {
 **Dispatch.** `app/music.js`'s `interactionCreate` handler:
 1. Filters to chat-input commands only.
 2. Looks up the command in `plexCommands` and confirms it has a `slash` block.
-3. Calls `interaction.deferReply()` immediately (Discord's 3-second acknowledgement window). A command may set `slash.ephemeral: true` to defer privately (`flags: MessageFlags.Ephemeral`) — used by `/config` so the settings panel is only visible to the owner who ran it.
+3. Calls `interaction.deferReply()` immediately (Discord's 3-second acknowledgement window). A command may set `slash.ephemeral: true` to defer privately (`flags: MessageFlags.Ephemeral`), which `/config` uses so the settings panel is only visible to the owner who ran it. `slash.ephemeral` may also be a function of the interaction: `/book` is private for every subcommand except `leaderboard`. A function that throws counts as public. The same value is used for the defer and for the failed-defer fallback.
 4. Builds a `query` string from the interaction's options, in the same shape the prefix dispatcher produces (so the existing parser code in each command works).
 5. Wraps the interaction in `interactionAdapter.adaptInteraction()` → a Message-shaped facade.
 
@@ -272,7 +341,13 @@ A `10062 Unknown interaction` on a *fast* defer means the event reached the bot 
 
 **The adapter contract** (`helpers/interactionAdapter.js`): `message.content` is rebuilt in prefix form (`!name args`) rather than set to the bare argument string, because several commands parse arguments as `content.split(' ').slice(1)` and would otherwise lose the first one. The first call to `message.reply(...)` or `message.channel.send(...)` routes through `interaction.editReply(...)`, which appears in chat as the bot's response to the slash command. Subsequent calls go through the real `interaction.channel.send(...)`. That means commands like `!trivia` (which post a "Loading..." status, then edit it, then post game messages) work unchanged: the initial `channel.send` becomes the slash command's primary response, then the game's follow-up messages are normal channel posts.
 
-**Coverage:** every command in `commands/` declares a `slash` block — 53 at the time of writing, including subcommand sets for `/playlist`, `/request`, `/hitster`, `/library`, `/list`, `/tags` and the game commands. `npm run check:slash` validates the whole set against Discord's rules without booting the bot.
+**Coverage:** every command in `commands/` declares a `slash` block. The loader picks up 56 command entries (54 files plus the `playlist.js/` and `book.js/` directories) and logs `Loaded 56 commands (4 aliases)`; the aliases `?`, `plextest`, `archipelago` and `books` are prefix-only, so 56 slash commands register. Subcommand sets include `/playlist`, `/request`, `/hitster`, `/library`, `/list`, `/tags`, `/ap`, `/book`, `/voicehealth` and the game commands. `npm run check:slash` validates the whole set against Discord's rules without booting the bot: 56 commands, 26,163 bytes of registration payload, the largest `/ap` at 2,783 of 4,000 characters, and `/book` at 1,572.
+
+`scripts/validate-slash.js` exports `validate(commands)` so its rules are tested (`test/validateSlash.test.js`). Beyond names, descriptions, option counts and required-before-optional, it checks:
+
+- **Choice values match their option's type.** A STRING option needs string values of 1–100 characters, INTEGER needs integers, NUMBER finite numbers, and every choice name is 1–100 characters. Discord rejects the whole registration payload over one bad choice, and the earlier validator only checked that a value was present, so `/book speed` declared with numeric values on its STRING `rate` option would have passed `check:slash` and taken every `/command` down with it.
+- **The 4,000-character budget per command**, which Discord counts across names, descriptions and choices.
+- **Choices and autocomplete only on STRING, INTEGER or NUMBER.**
 
 **Option conventions.** Two beyond plain options:
 - `flag: '-r'` on a BOOLEAN emits a literal token into the query string when true, so the `!`-prefix parser sees the argument shape it already understands (`/playlist play shuffle:True` → `play <name> -r`).
@@ -380,7 +455,11 @@ no file editing or restart needed for most settings.
   to the API; the worst case measures 3,473.
 - **Change hook.** `configStore.onChange(fn)` fires after a save is written and applied to the
   live config object. The Archipelago monitor subscribes so a new room, channel or filter takes
-  effect on the next batch instead of the next boot.
+  effect on the next batch instead of the next boot. `processPriority.js` and `voiceHealth.js`
+  subscribe so a change to either Voice setting applies at once. The audiobook settings need no
+  subscription: the engine reads them each time it uses them.
+- **Groups.** General, Access, Integrations, Broadcasts, Archipelago, Audiobooks and Voice, in
+  that order.
 - **Schema + persistence** live in `helpers/configStore.js`: the `SETTINGS` list (key, label,
   group, type, `secret`/`restartRequired`/`snowflake` flags, validators), pure `validate` /
   `formatValue`, and `writeOverride` (persists to `data/config.overrides.json` + mutates the
@@ -1447,30 +1526,582 @@ Known costs:
 Handing ffmpeg the Plex URL (`-ss N -i <url>`) would seek with range requests, taking 0.2–0.34 s at
 60, 300 and 540 s into the same FLAC, and would read a trailing M4A index. It was left out because
 it bypasses `openPlexStream()`'s dead-key repair and puts the Plex token on ffmpeg's command line.
+The audiobook player does hand ffmpeg a URL, and answers both objections in its own way: a
+loopback proxy keeps the token off the command line, and a probe plus a key repair replaces
+`openPlexStream()`'s (see "Audiobooks and podcasts").
 
-## Logging
+## Audiobooks and podcasts
 
-Every log line goes through `helpers/logger.js`. Format:
+Off unless `audiobooksEnabled` is set. `/book` (alias `!books`) plays long-form audio that lives
+in the Plex **music** library, with a saved place per listener per work, chapters, speed, a
+sleep timer, a shelf and listening stats. Built and unit-tested offline: 398 tests in 24 files
+belong to the suite (all 1,173 in `npm test` pass). The exclusion filters, the gate and the
+engine's guards were mutation-checked, each removed in turn with its test failing; the one
+survivor is `startAt()`'s entry check, a deliberate second line of defence behind the timer
+clearing. A contract test runs the real ffmpeg-static through the real proxy. **It has not been
+exercised against a live Discord voice channel and a live Plex server yet**; Phase 7 of
+`BUGTESTING.md` is the checklist that does.
+
+### The engine
+
+Book parts could have ridden `songQueue` and `runPlayback`. That was rejected: it puts about 85
+lines inside the most race-fixed code in the bot, gives books music's `NoSubscriberBehavior.Stop`
+(a voice blip ends the part), a fresh voice join on every `!skip`, and a sleep timer that would
+drop other people's queued music. Instead `helpers/bookEngine.js` runs **one session per guild,
+with its own `AudioPlayer` and its own voice join**, and shares only the guild's voice with music.
+
+The engine never reads or writes `bot.dispatcher`, `bot.conn`, `bot.isPlaying`, `bot.isPaused`,
+`playRun`, `stopGeneration` or `stoppedEntry`. It calls `bot.musicBusy()`, `bot.openConnection(channel)`
+and, after an explicit `/book stop` only, `bot.playSong()`, and reads `bot.songQueue.length` for
+the card.
+
+The session's player is `NoSubscriberBehavior.Pause` with `maxMissedFrames` 750 (15 s). Pause
+means a voice blip auto-pauses and resumes on Ready, with the position frozen. The 15 s leaves
+room for ffmpeg's `-reconnect` to resume a dropped Plex request through a Range request: in the
+prototype a deliberately dropped request played 120.00 s of 120 with reconnect and 24.82 s without.
+
+Three rules carry most of the weight:
+
+- **Every seek, chapter jump and speed change is `player.play(newResource)`**, which emits no Idle
+  and kills the old ffmpeg. So Idle only ever means "this part's stream ended" or "it failed".
+- **Pause parks.** ffmpeg is killed and only the position is kept, so a paused stream holds no
+  Plex socket and cannot die overnight and come back as an unasked-for retry. Resume builds a new
+  resource in 0.2–1.6 s. The Idle handler acts only while the session is `playing`, and only for
+  the resource it built.
+- **`startAt()` moves the anchor and drops the resource before its first await.** A periodic save
+  or a stop during a build writes the target, never "the next part plus the old offset". The
+  newest call wins, so rapid ±30 s clicks compose and nothing stale spawns.
+
+Sessions go `starting` → `playing` ⇄ `paused` → `ended`. The session exists, and claims the guild,
+synchronously from the moment `/book play` passes its checks, before the voice join: the gate
+refuses music from that tick on, a second `/book play` from the same person gets "Still joining
+the voice channel, one moment.", and every control except stop gets the same answer, because the
+player and connection do not exist yet. A stop during the join saves nothing (nothing was heard,
+and the bookmark stays byte-identical), releases the claim in a `finally`, and the late connection
+is destroyed only when nothing newer could be using it, since `joinVoiceChannel` hands an existing
+Ready connection to the next caller. Switching books is a stop plus a fresh join (0.6 s median),
+never a reused connection: an AutoPaused player on a destroyed connection hangs forever.
+
+**How a part's end is read** (`bookModel.classifyPartEnd`, pure). `resource.ended` is never used:
+silence padding makes it true after any unforced stop. Instead the engine reads whether the stream
+reached end-of-stream (`playStream.readableEnded`) and how far it got:
+
+| Verdict | When | Action |
+| ------- | ---- | ------ |
+| natural | end-of-stream within 5 s of the part's end, or the same short end-of-stream twice in a row from the same spot within `max(10 s, 1%)` of the end. Plex's duration can overstate the file: one part reported 31,730,164 bytes and served 31,656,436. | next part on the same player (no voice join); on the last part, finish the work |
+| natural, with sleep "end of chapter" | every part end is a chapter end | stop with reason `sleep`, place saved at the next part's start |
+| truncated | the same two short end-of-stream reads anywhere earlier in the part | park with "The file for Part N ends early at …". Never a skip, never a finish. |
+| early | no end-of-stream (a stall through `maxMissedFrames`, a stream error, a dead key, the Buffering watchdog, a probe timeout), or end-of-stream with real time left | retry from the position after 1 s. Three early ends that produced under 10 s each within 2 minutes park the book with "Plex stopped sending audio 3 times in 2 minutes." |
+
+`classifyPartEnd` returns the new failure list instead of mutating its input, and the engine keeps
+it (`s.failures = verdict.failures`), or the three-in-two-minutes rule would never fire.
+
+**Watchdogs.** An `AudioPlayer` in Buffering has no timeout of its own, and ffmpeg waits forever on
+an upstream that accepted a request and never answers (a stall prototype was still Buffering after
+60 s). Three layers bound it: the probe gives up after 5 s, the proxy answers 504 if Plex sends no
+headers within 15 s, and a 20 s Buffering watchdog kills the resource and takes the early-end path.
+The retry and watchdog timers live on the session and are cleared by park, stop and every
+`startAt`, and `startAt` refuses a session that is no longer live, so a retry that fires after a
+pause or stop builds nothing, saves nothing and spawns no ffmpeg.
+
+**Voice and presence.**
+
+- A blip (Signalling or Connecting): the player auto-pauses and resumes on Ready. If the stream
+  died meanwhile, Idle and the early-end retry rebuild it once the connection is back.
+- Disconnected: a 5 s grace for a move or a resumable drop, then park, save and end with reason
+  `voice-lost`. Destroyed: the same at once. However the status flaps, 30 s away from Ready in
+  all ends it the same way.
+- The bot is moved to a channel the listener is not in: the listener has 5 s to follow, then the
+  book parks with reason `listener-left`.
+- Something else subscribes to the book's connection: the player's `'unsubscribe'` parks and
+  saves with reason `unsubscribed` (the card: "Something else took over the voice connection.").
+- The listener leaves the book's channel: park with reason `listener-left`. Rejoining does not
+  resume; the card shows Resume.
+- A parked book leaves voice after `audiobookIdleLeaveMinutes` (10) with reason `idle`.
+
+Stop reasons: `explicit`, `generic`, `sleep`, `idle`, `voice-lost`, `finished`, `failed-file`,
+`shutdown`, `switched`, `join-failed`, `forgotten`. Only `finished` marks a work finished.
+`forgotten` saves nothing, and neither does a stop during the join; `finished` writes through
+`markFinished` and then saves nothing smaller over it. `stop()` releases the session in a `finally` with an identity check, so
+a throw in the final save cannot leave the guild blocked for music until a restart.
+
+**Timers follow audible time.** The sleep timer and the end-of-chapter timer are stashed on park,
+on AutoPaused and on every rebuild, and re-armed when the player reaches Playing, so neither runs
+during a 0.2–1.6 s startup or a voice blip. The chapter timer is armed only when the chapter ends
+more than 250 ms before its part does; a part end belongs to Idle, so the two never race. When it
+fires early (a blip, a slow start) it re-arms for the remainder instead of acting.
+
+**Permissions.**
+
+| Who | May |
+| --- | --- |
+| The listener (who ran `/book play`) | everything |
+| The bot owner (`config.ownerId`) | pause, stop |
+| Anyone in the book's voice channel while the listener is not in it | pause, stop |
+| Anyone | their own shelf, `/book library`, `/book stats`, `/book leaderboard` |
+
+Bookmarks always follow the listener, never the person who clicked.
+
+**The card.** One public message per session, sent with `textChannel.send` rather than as an
+interaction reply, so it stays editable after the 15-minute interaction token expires. It is
+edited on every state change and every 120 s while playing, at most once per 1.5 s with a
+trailing edit. Row 1: previous chapter, back 30 s, Pause/Resume, forward 30 s, next chapter.
+Row 2: speed (cycles 1, 1.1, 1.25, 1.5, 1.75, 2), sleep (cycles off, 15, 30, 60 min, end of
+chapter), Stop. Every live-card custom id is `book:<action>:<sessionId>`; a click on a card from
+an earlier session gets its buttons stripped and an ephemeral "That card is from an earlier
+session." The ended card carries `book:resume:<workId>`, `book:shelf` and, when the listener
+stopped within 120 s of the end, `book:finish:<workId>:<listenerUserId>` ("Mark finished",
+listener only; the user id is in the custom id because an ended card has no live session to say
+who the listener was). A 10008 or 50001 edit failure drops the card and the next event posts a
+fresh one; `/book now` always re-posts and turns the old one into "This card moved ↓".
+
+### Reading Plex: ffmpeg on a URL, through a loopback proxy
+
+**The trap.** The music path downloads the file and pipes it into ffmpeg. A pipe cannot seek, so
+every seek downloads the file again from byte 0 and decodes and discards everything before the
+offset (see "Seeking within a track"), five hours of it to resume five hours into a book.
+`Readable.from` in that path buffers the whole file in memory: 820 MB for one m4b. An m4b with its
+index at the end plays 0 s through a pipe.
+
+**The fix** (method B, `helpers/bookAudio.js`). ffmpeg reads the part from a URL, with the seek as
+an input option:
 
 ```
-[2026-05-16T10:44:27.633Z] INFO  Bot ready — logged in as ...
+-nostdin -loglevel 0 -reconnect 1 -reconnect_on_network_error 1 -reconnect_delay_max 5
+[-ss <seconds>] -i <url> -analyzeduration 0 -vn [-af atempo=<speed>]
+-acodec libopus -f opus -ar 48000 -ac 2 pipe:1
 ```
 
-Levels: `debug`, `info`, `warn`, `error`. Set `LOG_LEVEL=debug` to surface the verbose Gemini debug output and other internal traces. Default is `info`.
+- `-ss` before `-i` seeks with range requests: exact to the sample on m4b and on CBR and VBR mp3,
+  0.2–1.6 s to first audio at any depth. Under `atempo` the input seek is still in source time
+  (0–6 ms error measured from 0.8x to 2x). The contract test checks `-ss 2` at 2x on a 20 s WAV
+  decodes 9.0 s within 50 ms; with `-ss` after `-i` it decoded 7.998 s.
+- Offset 0 uses the same path, so an m4b with a trailing index plays.
+- Never `-usetoc`, never `-headers`, never a byte-range estimate.
+- Speed is `atempo`, pitch-preserving, 14 values from 0.75x to 3x.
+- Not changed, flagged: `-analyzeduration 0` sits after `-i`, so ffmpeg reads it as an output
+  option and the input still runs its default 5 s stream analysis. Over Plex that is only bytes,
+  but moving it before `-i` might cut resume latency. Measure live before changing it.
 
-Errors caught by the global `uncaughtException` / `unhandledRejection` handlers (`app/utils.js`) print at `ERROR` level but **do not exit the process** — the bot is intended to survive transient async errors.
+**The token.** A URL to Plex needs the token, and an ffmpeg command line travels further than a
+file: Task Manager during a screen share, crash dumps, AV telemetry, diagnostic transcripts, and
+`/proc/<pid>/cmdline` on Linux, which any user can read. `helpers/partProxy.js` is a loopback
+proxy that adds the token itself, as an `X-Plex-Token` header:
 
----
+- `http.createServer` on `127.0.0.1`, port 0, started lazily by the first probe and closed by
+  `shutdown()`. If it cannot bind, the probe reports `error`, which counts as an early end, so the
+  book parks after three tries with "Plex stopped sending audio"; the next probe tries the bind
+  again. Music is unaffected.
+- ffmpeg gets `http://127.0.0.1:<port>/<secret>/library/parts/<id>/<ts>/<file>`, where the secret
+  is 128 random bits per boot. Only GET and HEAD on that shape are forwarded, only when the Host
+  header is exactly `127.0.0.1:<port>` (a DNS-rebinding guard), and a last segment that decodes to
+  `.`, `..` or a slash is refused. Everything else is 404. What could leak reads audio parts, from
+  loopback, while this process runs.
+- `Range` and `If-Range` go up; status, `Content-Range`, `Content-Length`, `Accept-Ranges` and
+  `Content-Type` come down. Plex unreachable is 502. A client disconnect aborts the upstream.
+- The 15 s timeout covers the wait for **headers** only, as a timer cleared on the response.
+  `ClientRequest.setTimeout` would have been a socket idle timeout that keeps running after the
+  headers arrive; once ffmpeg's output backs up (the player reads in real time) a healthy upstream
+  can sit idle longer than 15 s, and it would have cut parts mid-body.
+- `probe(partKey)` sends `Range: bytes=0-0` (3–8 ms; 206 live, 404 dead), with a 5 s timeout.
+- `config/plex.js` is read per request, so a test never needs the real config.
+- Measured cost: one loopback hop, 0–150 ms, inside the noise.
+
+**ffmpeg is spawned directly** (`helpers/bookResource.js`), not through prism's `FFmpeg`, because
+prism spawns with `{ windowsHide, shell }` only and cannot change the environment. ffmpeg-static
+4.4.1 routes even `127.0.0.1` through `http_proxy`: with the proxy variables left in, the contract
+test's ffmpeg hung past 10 s. `ffmpegEnv()` drops `http_proxy`, `https_proxy` and `all_proxy` in
+any letter case (Windows env names are case-insensitive). stdout becomes an `AudioResource` with
+`StreamType.OggOpus`, and ffmpeg is SIGKILLed when voice closes the stream, the same close rule as
+`Bot.seekResource()`.
+
+**Dead keys.** Part keys change whenever Plex re-scans. Before every build the engine probes the
+key; a 404 goes to `bookLibrary.repairPartKey(work, part)`, which reads
+`/library/metadata/<trackRatingKey>` and accepts `Media[0].Part[0].key` only when its file basename
+matches. It never uses `/search`: a title search picks among duplicates, and the same artist and
+title exist many times over across narrations and re-rips. If the ratingKey itself is gone, a
+rebuild is scheduled and the session ends with "Plex can't find the file … Your place is saved."
+Part keys are looked up by identity (`partKeyFor(workId, { trackRatingKey, file })`), never by
+ordinal: a rebuild during a session can insert or reorder parts, and an ordinal lookup would play
+a different file at the old offset.
+
+### The catalog: folders first, never track length
+
+On a hand-ripped library a Plex album is not a book. Several books share one album title, one
+album holds the second half of one book and the whole of another, one book is spread over several
+albums under several artist spellings, and numbered volumes are poured into one flat folder. What
+does line up is the folder on disk, so `helpers/bookCatalog.js` groups tracks by folder first
+(a trailing `Part 2`, `Disc 3`, `[01]` or `(1 of 6)` on a folder is folded into its parent) and
+uses Plex albums second.
+
+A folder group becomes a work when it holds at least 2 h of audio and one of these holds:
+
+| Kind | Rule |
+| ---- | ---- |
+| podcast | at least half its tracks carry an episode number, and the median track is 20 min or longer |
+| book | the median track is 15 min or longer |
+| book | a name signal (GraphicAudio, unabridged, audiobook, narrated, "read by") and at least 3 h |
+| book | at least 80% mono at 96 kbps or less, 20 or more tracks, and at least 3 h |
+
+Everything else is music, and the near misses of 2 h or more are listed by `/book rescan` as
+"long groups not taken as books". Ids are slugs, `author/title`, with `~narrator` added only when
+two narrations collide. Part order is natural sort; several numbered volumes poured into one
+folder are untangled by chapter numbers and marked low confidence, and a `partOrder` override is
+the fix. Sample clips under 5 minutes are dropped from playback but stay in the index, so they
+never reach music. `RULES_VERSION` (1 today) forces a rebuild when the rules change.
+
+**Chapters.** Only mp4, m4a and m4b parts, and parts over 2 h, are asked for chapters
+(`/library/metadata/<rk>?includeChapters=1`), cached by `trackRatingKey:sizeBytes`. A list is kept
+only with 2 or more entries whose end is after their start; the 5-minute "Marker N" point lists
+seen on mp3s are dropped. A part without embedded chapters is one chapter.
+
+**Refresh.** A full listing costs about 17 s and 25 MB, so it runs only when something says the
+library changed: no catalog yet, the rules changed, the build is over a day old, or a music
+section's `scannedAt`, `updatedAt` or track count moved. The cheap check behind that (one
+`/library/sections` call and one zero-size count per music section) runs hourly while
+`audiobooksEnabled` is on, so a book added while the bot runs for days stays out of music within
+the hour; `/book play` runs it at most once an hour; `/book rescan` forces a rebuild. A rebuild
+refuses while any music section is `refreshing`, even when forced, because a mid-scan listing can
+miss folders and leak books into music, and an empty listing or a build with no works never
+replaces a catalog that has some (an unmounted drive) unless forced. If a rebuild fails the last
+catalog stays in use and `/book play` adds "(The library list may be stale: the last refresh
+failed.)".
+
+After a rebuild, `matchAliases` maps old ids to new ones by `trackRatingKey` or a basename
+overlap of at least 50%, records them in `aliases`, and a bookmark found under an alias is re-keyed
+to the new id when it is next read. A running session keeps its snapshot of the work and looks its
+part keys up by identity in the new catalog.
+
+**Overrides** (`data/book_overrides.json`, hand-edited, read only). Read with `readFileSync` and
+`JSON.parse` on each build. A parse error is logged, ignored, kept in `meta.overridesError` and
+reported by `/book rescan`.
+
+```json
+{
+	"authors": { "<author-slug>": { "series": "Series Name", "order": { "first title": 1, "second-title": 2 } } },
+	"works": {
+		"<detected id>": {
+			"title": "", "series": "", "sequence": 2.5, "narrator": "", "edition": "",
+			"partOrder": ["01 file.mp3", "02 file.mp3"], "exclude": true, "pinId": "stable/id"
+		}
+	},
+	"include": ["<folderKey or albumRatingKey>"],
+	"exclude": ["<folderKey or albumRatingKey>"],
+	"podcastArtists": ["<artistRatingKey>"]
+}
+```
+
+- `works` entries are keyed by the **detected** id, which is computed before overrides apply, so a
+  `title` or `pinId` override cannot stop its own entry from matching on the next build. `pinId`
+  gives the work a stable id and keeps the detected id as an alias. Empty strings are ignored;
+  `null` clears `series`, `narrator`, `edition` or `sequence`. A partial `partOrder` puts the
+  listed files first and keeps the rest after them in their old order.
+- `authors.<slug>.order` matches titles by slug, so `"the fall of x"` and `"the-fall-of-x"` both
+  work. Without `order`, `series` fills only works that have none.
+- `include` and `exclude` take a folder key exactly as `/book rescan`'s rejected list prints it, or a
+  work's `folderKey` (slash direction and case ignored), or an album ratingKey. The rejected list
+  prints a key from below the music root (or its last two folders), so the drive and the folders
+  above it stay out of the channel; `bookCatalogStore.readOverrides` widens such a short key to
+  the one full key from the last build that ends with it. A short key that fits two folders is
+  left as typed (and logged), so it needs the full path. For a box set merged
+  from sibling folders, the folder key is the parent folder. An album `include` carves that
+  album's tracks out of their folder into a work named after the album.
+- `podcastArtists` is additive. The artists of every detected podcast are already excluded from
+  music at artist level, so a new episode album stays out of music before any rebuild sees it; this
+  only adds artists the detector missed.
+
+### Bookmarks and what counts as finished
+
+One flat record per `<discordUserId>::<workId>` in `data/book_bookmarks.json`: `absoluteMs` (ms
+from the start of the work, the truth), a `hint` that pins it to a file (`ordinal`, `file`,
+`sizeBytes`, `durationMs`, `trackRatingKey`, `partMs`), `speed`, `listenedMs` (real time),
+`coveredMs` (book time, listened time times speed), `finished`, `finishedCount`, `finishedAt`, the
+`guildId` of the last save, and timestamps. Part keys are never stored.
+
+**Saves.** Every `audiobookSaveSeconds` (15) while playing, written only if the place or the
+listening time moved by 1 s or more. Forced on start, every seek, pause, stop for any reason, part
+advance, finish, sleep, voice loss, the listener leaving, an unsubscribe, a speed change, a switch
+and `shutdown()`. Nothing relies on the `'exit'` event, which `stop-bot.ps1`'s `Stop-Process
+-Force` and `!restart` never fire, so a hard kill loses at most one save interval, and the resume
+rewind hides most of that. A `record()` with a non-finite position is refused and logged, so no
+caller can write `NaN`.
+
+**Durable writes.** A power cut or a BSOD can leave NTFS with a renamed file of zero length, which
+`jsonStore` would quarantine and start empty, losing every listener's place. The bookmark store is
+`durable`: the temp file is fsynced before the rename (1–3 ms on an SSD at a 15 s cadence), at most
+once an hour the current file is copied to `.bak` first (only if it decodes, so a damaged file can
+never replace a good backup), and a damaged main file is quarantined to `.corrupt-<ts>` and loaded
+from `.bak` with `Restored Audiobook bookmarks from the hourly backup …`. A missing main file still
+starts empty, so deleting it still resets. A failed write keeps the newer place in memory, retries
+on the next save, sets `healthy()` false (the card shows a warning) and records `book-save-failed`
+once per streak. Nothing is rolled back: rolling back would replay the same minutes on the next
+resume for a disk fault.
+
+**Resume** (`resolveBookmark`, first match wins): the hint's `trackRatingKey` and file basename;
+then basename plus size; then a unique basename; then `absoluteMs` located in the current parts,
+which survives an m4b re-ripped as mp3s. `hint.partMs` keeps the place inside the same file when an
+override reorders parts. A place within 5 s of its part's end starts the next part at 0. A work
+missing from the library stays on the shelf, marked. After a gap of more than 5 minutes the resume
+rewinds `audiobookResumeRewindSeconds` (10), three times that after 24 h, and never at 0 or at the
+start of new material, where it would replay the end of the old.
+
+**Finished.** Only three things finish a work: the last part ending naturally, `/book finish`, and
+the ended card's "Mark finished". No stop reason finishes anything. The rejected alternative was a
+window near the end: on a 37 h 05 m book, `max(120 s, 0.5%)` is 667 s, so a sleep timer or a
+`/book stop` 11 minutes before the end would have restarted the book next time. "Mark finished"
+appears when the listener stops within 120 s of the end. Finishing is idempotent (a double click is
+one finish), sets the place to the end and points the hint at the last part's end.
+
+Where `/book play` starts (`resumeStart`):
+
+| Case | Start |
+| ---- | ----- |
+| `from-start` | 0 |
+| no bookmark | 0 |
+| in progress | the resolved bookmark, with the rewind |
+| finished, and the work has grown since (a podcast with new episodes, a re-rip with an added part) | the first new material, "▶ N new episodes since you caught up" |
+| finished otherwise | 0, "You finished this on …, starting again."; `finishedCount` is kept |
+| finished, then moved back with `goto` | the resolved bookmark, no restart |
+
+Known limit: a finished work moved back by `goto` to within 5 s of the end of an earlier part reads
+as new material. The start position is the same; only the reply wording differs.
+
+**Stats** are read from the bookmarks, never kept in a second file. Hours listened is the sum of
+`listenedMs` (pauses and blips add nothing), book hours the sum of `coveredMs`. In progress means
+not finished and at least 60 s in. The leaderboard lists users with at least one bookmark saved in
+this guild, because the bot has no GuildMembers intent and `members.cache` is not a member list;
+rows with no listening and no finishes are dropped.
+
+### Music and books sharing a guild
+
+Music and a book never hold one guild's voice at once.
+
+- **The runPlayback gate.** `runPlayback` asks `bot.books.blocksMusic(message)` after its member
+  check and before `pickVoiceChannel`. While a session exists in the guild (`starting` included)
+  the gate leaves the track queued, clears `isPlaying`, `waitForStart` and `waitForStartMessage`
+  (left true, the first would make every later producer queue silently and the second would
+  restart a run the gate just refused), records `music-gated-by-book`, and answers the message
+  exactly once, because every producer leaves the acknowledgement to `playSong`. On the slash path
+  that reply is what closes "thinking…". The short line, "📚 Queued behind <name>'s book (N
+  waiting).", is always sent; the long explanation is added at most once per 30 s per channel.
+- **`/book play` refuses while `bot.musicBusy()`** ("Music is playing here. Stop it with !stop,
+  then /book play"). `musicBusy()` deliberately ignores `bot.dispatcher`: after `!stop` a
+  stopped Buffering player stays non-Idle for 9–78 s, but `Bot.stop()` has already destroyed the
+  connection, so counting it would refuse `/book play` right after the user stopped the music.
+  `loadingRuns` covers a first track that is still joining, which `isPlaying` misses because it is
+  set only once the stream opens.
+- **Queued music after a book (decision D1).** Only an explicit `/book stop` or the card's Stop
+  hands voice back to queued music, through a plain channel-shaped message on the real text
+  channel, never an interaction adapter whose token may have expired. Sleep, idle-leave, voice
+  loss, finishing and a delegated `!stop` never start music.
+- **Generic commands (D2).** `!pause`, `!resume`, `!skip` and `!stop`, and the old music card's
+  Pause/Resume, Skip and Stop, call `bot.books.routeGeneric(cmd, message)` first. With a book in
+  the guild and a caller who may act, the book is acted on: `!skip` is one chapter forward and
+  ignores a count; `!stop` ends the book (reason `generic`) and also clears the music queue. A
+  caller who may not act gets a refusal naming the listener: `!pause`, `!resume` and `!skip`
+  change nothing, and `!stop` leaves the book playing but still clears the music queue. Only with
+  no book in the guild do the music commands run as before. The old card's toggle asks the book for its state,
+  because `bot.isPaused` is always false during a book and a parked book could never be resumed
+  from it.
+- **Hitster.** `helpers/voiceClaims.js` keeps the two apart both ways: Hitster claims a guild only
+  while a game is in state `playing`, the audiobook from `starting` on. Hitster refuses create and
+  start with "📚 <name> is listening to a book in this server. Hitster can start after `/book
+  stop`." The claim label is a plain display name, never a mention.
+- **Backstop.** If anything still subscribes another player to the book's connection, the book's
+  player goes AutoPaused, not Idle, and its `'unsubscribe'` listener parks and saves.
+
+### Keeping books out of music
+
+Membership in the catalog, never duration. A length rule drops hour-long music mixes and still
+misses books cut into 6-minute chapters. `longForm.enabled()` is true when
+`audiobooksExcludeFromMusic` is not `false` and the catalog index is non-empty. The catalog is
+built only while `audiobooksEnabled` is on, so a default install sees no change; once a catalog
+exists, turning audiobooks off does not let books back into music, and only
+`audiobooksExcludeFromMusic: false` does. Podcast artists are excluded at artist level, so every
+album by that artist, a soundtrack album included, is treated as long-form unless an override
+says otherwise.
+
+**Plex-side**, where counts and paging matter, a fragment `album.id!=<a,b,…>&artist.id!=<x,…>` is
+appended to the URL: `!list` browse (client filtering would break its full-page offset rule) and
+`plexTags.countTracks` / `sampleRandomTracks`, which share one private URL builder so the two can
+never disagree (`/vibe` discovery, `/tags coverage`). The fragment names only fully catalogued
+albums and catalogued artists, so a partly catalogued album still reaches those listings; every
+site that queues music filters client-side as well. The syntax comes from probes against a live
+server before the build (17,569 tracks became 16,643, with `totalSize` and windowing correct). It
+was not re-checked after the build, because the build had no Plex access.
+
+**Client-side**, before any random pick:
+
+| Site | Change |
+| ---- | ------ |
+| `!random`, `!mood` | filtered before the pick. `!random` on a library with only books answers "That library has no music to pick from." (it used to throw a TypeError that was only logged) |
+| Hitster | the pool filter drops dated book parts, which covers the deal and every turn |
+| Plex playlists | **smart playlists only** ("📚 Skipped N audiobook tracks in this smart playlist."). A regular playlist plays what you put in it. |
+| `!play` search, `!list` search | music hits are numbered and queued as before; book hits become one line, "📚 Also in your books: Title (Author), `/book play title`". A page of only books says "Those are audiobook chapters, not songs." |
+| `!album`, `!artist` | the first non-book hit, plus the redirect line when books were skipped; book albums and book tracks inside a chosen artist are skipped |
+| `!playlist add` | refuses a book track with the redirect |
+| `/vibe` | tag, sidecar and artist hits and the discovery loop, so no chapter reaches the queue, `recentPicks` or tag inference; "No matches" can end with the redirect line |
+| `/sonic` | the section listing and the hub results, before the synthetic `!play` |
+| `/quotethebard` | both item lists; a playlist of only books is refused |
+| `!releasesurvival` albums, `!curate`, `!groupwatch`, `!quest` | display filters, on music sections only |
+| `!identify` vault mode | each book collapses to one suspect ("An audiobook by …"), so 300 chapters cannot trip its 400-row safety limit |
+
+Never filtered: `helpers/plexResolve.js` (key repair), `!identify`'s global-mode ownership check,
+and the book suite itself.
+
+### Failure modes
+
+| Scenario | Handling |
+| -------- | -------- |
+| Voice blip | AutoPaused, position frozen, resumes on Ready; a stream that died meanwhile is retried from the position |
+| Kicked, Disconnected for more than 5 s, or 30 s away from Ready in all | park, save, end `voice-lost`, card "🔌 Lost the voice connection" with Resume |
+| Bot moved to a channel the listener does not join within 5 s | park `listener-left`; the card shows Resume |
+| Music requested during a book | queued; one short reply; plays after `/book stop` or a bare `!play` |
+| `/book play` while music plays, loads, joins or holds a connection | refused, with a hint to `!stop` |
+| Plex accepts and never answers | 15 s proxy header timeout, then the 20 s Buffering watchdog; three short failures in 2 minutes park with a warning |
+| HTTP drop mid-part | ffmpeg `-reconnect` resumes through Range; if it still ends early, retry from the position |
+| File cut or corrupt mid-part | park with "ends early at …"; never a skip or a finish |
+| Part key dead | probe 404, repair by ratingKey with a basename check, retry; ratingKey gone: rebuild scheduled, session ends with the place saved |
+| Parts re-keyed, re-ripped or reordered | `resolveBookmark` tiers; `hint.partMs` survives a reorder |
+| Folder renamed (id changes) | aliases on rebuild, bookmark re-keyed on read; `pinId` as a fallback |
+| Pause or stop during a retry gap | retry timer cleared; nothing builds, spawns or writes after the stop |
+| Stop during the voice join | no save, claim released, late connection destroyed only if nothing newer owns it |
+| ffmpeg fails to spawn | logged, `book-stream-error`, stream ends, early-end policy |
+| `!restart`, SIGINT, SIGTERM | `bot.books.shutdown()` first: synchronous saves, ffmpeg killed, voice left, proxy closed |
+| `stop-bot.ps1` hard kill | at most `audiobookSaveSeconds` lost |
+| Power cut during a bookmark write | fsync before rename; a damaged file loads from the hourly `.bak` |
+| Bookmark write fails | place kept in memory, retried, card warning, `book-save-failed` once per streak |
+| Catalog rebuild fails or Plex down at boot | last catalog stays; exclusion keeps working; `/book play` says the list may be stale |
+| Card deleted or uneditable | next event re-posts; `/book now` always re-posts |
+| Old card clicked | buttons stripped, ephemeral note |
+| Autocomplete before a catalog exists | one explanatory choice; never calls Plex |
+| Two bot copies | the single-instance lock refuses the second; without it two engines would double-save |
+
+**Not built (phase 2):** a "stop the music and start my book" takeover button, stashing and
+restoring the music queue, a sleep fade-out, "next in series", book volume (an ffmpeg `volume=`
+filter), per-episode podcast marks, auto-resume on rejoin, and a shared-bookmark book club.
+
+## Voice health and process priority
+
+Two small pieces from a stutter investigation on 2026-10-09, after listeners reported choppy voice
+audio. Neither changes how audio is produced.
+
+**What the investigation measured.** System CPU sat at 74–98% during the timing runs, mostly
+other test suites, so absolute gap sizes are upper bounds for a quieter machine. Ranked by
+evidence and by how often each can fire:
+
+1. **Wi-Fi link interruptions on the host.** The PC was on Wi-Fi only. Over 48.8 days its
+   Wi-Fi log held 154 security-renegotiation events of about 4.2 s each and 31 driver disconnects;
+   15 fell during playback, 7 of them within 2.5 minutes. About one per 10 playback-hours, but they
+   cluster. One disconnect lined up with the only voice join over 2 s (12.6 s).
+2. **The bot stalling its own 20 ms send timer at the start of long tracks.** `Readable.from` in
+   object mode (`app/bot.js:898`) pulls the whole file on the main thread. Against the real
+   `AudioPlayer` on a 7 h file: 23–29 send gaps over 40 ms, packets up to 1.83 s behind schedule,
+   about 885 MB RSS. `Readable.fromWeb` on the same file: 0–3 gaps, 81–131 MB. It persists at
+   raised priority, so it is self-inflicted.
+3. **Other programs starving the bot.** A pure scheduler loop at Normal priority had gaps up to
+   359 ms (31 over 40 ms); at Above Normal, 34 ms (0 over 40 ms).
+4. **Large synchronous parses** on the voice thread. The 54 MB D&D compendium silenced audio for
+   3.3–8.8 s on first use; a library-wide JSON parse caused 211–432 ms gaps, an xml2js parse
+   367–566 ms.
+5. **Two bot copies with the same token** for about five hours, fighting over the voice session.
+   The single-instance lock fixes it once the running copy restarts onto it.
+
+Also measured, not acted on: the upload is about 126 kbps (96k VBR Opus, no in-band FEC);
+`NoSubscriberBehavior.Stop` turns any music reconnect into a cut track; Windows' 15.6 ms timer
+granularity adds about ±11 ms of send jitter and caps catch-up at about 1.28x, because the voice
+library sends one packet per cycle (64–69 packets/s while catching up), not missed packets back to
+back.
+
+The user-side fix with the most evidence behind it is **Ethernet instead of Wi-Fi**. In code, two
+things shipped. The others are still open: replacing `Readable.from` with `Readable.fromWeb` (WP0
+in the audiobook plan, which has to keep a paused song from holding a stalled Plex socket), Opus
+bitrate profiles, moving the big parses off the main thread, and Pause instead of Stop for music.
+
+### Process priority (`helpers/processPriority.js`)
+
+`os.setPriority(0, …)` to `PRIORITY_ABOVE_NORMAL` by default, or `PRIORITY_NORMAL` when
+`processPriority` is `normal`. Applied in `start()` before the login, and again whenever `/config`
+changes the setting; the effective priority is read back and logged as `Process priority: <name>`.
+
+- Only this process is raised. Windows starts a child of an Above Normal parent at Normal (only
+  Idle and Below Normal are inherited), so ffmpeg keeps competing on equal terms with everything
+  else instead of with the voice timer.
+- Linux and Docker refuse a raise without `CAP_SYS_NICE`. That answer cannot change while the
+  process lives, so it warns once (`Could not set process priority to above_normal (…); the bot
+  runs at the priority it was started with.`), including across `!restart` and later config
+  changes, and never throws.
+- Pick `normal` if a game running beside the bot suffers.
+
+### The voice-health log (`helpers/voiceHealth.js`)
+
+Off by default (`voiceHealthEnabled`). **While off, every hook returns on its first line: no
+listeners, no timers, no writes.** While on it cost 0.063% of wall time in a smoke run, and a
+10-run A/B against the real `AudioPlayer` could not tell it apart from contention noise. It applies
+at once from `/config`; turned on mid-track, it adopts the connections and players already
+playing.
+
+What it hooks:
+
+- `Bot.openConnection()` calls `watchConnection(conn)`. The sampler wraps that connection's
+  `dispatchAudio` as an own property, so it sees every packet without touching the voice library's
+  prototype or any other connection. It also follows the connection's and its networking's state
+  changes, and the voice WebSocket's close codes.
+- `runPlayback` calls `watchPlayer(player, { kind: 'music' })` after creating each music player,
+  and the book engine `watchPlayer(player, { kind: 'book' })` for each session. The book engine
+  also records `book-early-end` events.
+- A one-second tick samples players and connections, and measures its own drift as a stall.
+
+What it records, per minute that had any voice activity (idle minutes stay in memory for the
+command and cost no disk):
+
+| Field | Meaning |
+| ----- | ------- |
+| `pkts`, `gaps` (40/60/100/200/500 ms), `maxGap`, `burst` | packets sent and the gaps between them; `burst` counts the back-to-back catch-up sends |
+| `underMs` | source starvation: the player's `playbackDuration` advanced and the resource's did not. Counted only while `silenceRemaining` is −1, so the five padding frames after a stream ends are not starvation. |
+| `ping` | `conn.ping.ws`, one reading per heartbeat. `ping.udp` is never assigned in `@discordjs/voice` 0.19. |
+| `drops` | a connection leaving Ready |
+| `el`, `elu`, `stallMax` | event-loop delay p50/p99/max (10 ms resolution, the coarsest that still sees one missed 20 ms send), utilisation, and the worst tick drift |
+| `cpu`, `sys`, `rssMB`, `heapMB`, `gc` | this process's CPU, the machine's, memory, and GC pauses |
+
+Events: `gap` (≥ 40 ms), `stall` (≥ 100 ms), `gc` (≥ 50 ms), `underrun` (≥ 100 ms), `conn`, `net`,
+`ws-close`, `player` (to and from AutoPaused), `track` (one line per music track or book part),
+`mark` and `book-early-end`. At most 120 events per minute are kept; `mark`, `conn`, `net`,
+`ws-close` and `book-early-end` are never dropped, because a complaint is read against them. Memory
+holds the last 120 minutes and 500 events.
+
+Written to `data/logs/voice-YYYY-MM-DD.jsonl` with one async append per minute, pruned by the same
+`PLEXBOT_LOG_RETENTION_DAYS` rule as the other day-files. Under the test runner it writes only
+when `PLEXBOT_LOG_DIR` is set, the same rule as the command log.
+
+**Two things it must never do.** Enable the voice library's `debug` option: its WebSocket debug
+lines carry the session token. And listen for `'error'` on a `VoiceConnection`: with no listener a
+voice error reaches the global `uncaughtException` handler in `app/utils.js`, and adding one would
+swallow it.
+
+**`!voicehealth`** (`commands/voicehealth.js`, `helpers/voiceHealthFormat.js`):
+
+- `!voicehealth [minutes]` (1–120, default 15) shows one row per active minute in the host's
+  clock, then the last 10 events and a legend. Flags: `G` a gap of 100 ms or more, `U` the source
+  starved for 100 ms or more, `N` voice dropped, `L` event-loop p99 of 50 ms or more, `C` machine
+  CPU at 90% or more. The current minute is marked `*`. It fits one 2,000-character message by
+  dropping the oldest minutes first, then the oldest events.
+- `!voicehealth mark <what you heard>` stamps the timeline at that moment and replies with the
+  last 2 minutes. Run it right after a stutter, so the minute can be read against send gaps, CPU
+  and reconnects.
+- While the log is off, both answer with how to turn it on.
 
 ## Testing
 
-`npm test` runs Node's built-in test runner (`node --test test/*.test.js`). Smoke tests cover the helpers (logger, plexClient, geminiAPI, lang/format polyfill). They don't make network calls. Tests will fail if `config/keys.js` or `config/plex.js` are missing — copy from the `.example.js` files first.
+`npm test` runs Node's built-in test runner (`node --test test/*.test.js`): 1,173 tests in 80 files on 2026-10-09, all passing, in about 25 s. They don't make network calls. Tests will fail if `config/keys.js` or `config/plex.js` are missing; copy them from the `.example.js` files first.
+
+Every test that touches a store or a log points it at a pid-suffixed `os.tmpdir()` path through its env var (`PLEXBOT_LOG_DIR`, `PLEXBOT_BOOK_CATALOG_FILE` and the rest) before the first require, and never writes `data/`. `test/bookResourceFfmpeg.test.js` runs the real ffmpeg-static through the real proxy on a generated 20 s WAV (about 1 s); the engine tests run a real `AudioPlayer` on injected Opus-silence resources, so they inject timers rather than mocking the global ones, which would freeze the player's 20 ms cycle.
 
 ---
 
 ## Quirks worth knowing
 
-- **`commands/playlist.js/` is a directory** with `.js` in its name, not a file. The auto-loader's regex (`/\.js$/`) matches the directory name, and Node resolves the `require()` to `commands/playlist.js/index.js`. Clever but surprising; rename later if it becomes confusing.
+- **`commands/playlist.js/` is a directory** with `.js` in its name, not a file. The auto-loader's regex (`/\.js$/`) matches the directory name, and Node resolves the `require()` to `commands/playlist.js/index.js`. Clever but surprising; rename later if it becomes confusing. `commands/book.js/` does the same, and its `index.js` requires its four subcommand files by name, so a stray file dropped in that directory never becomes a command.
 - **The `Bot` class instantiates its own `PlexAPI`** in `app/bot.js`, separate from `helpers/plexClient.js`'s shared instance. Two TCP connection pools to the same Plex server. Legacy from before the helper existed; could be unified later.
 - **`iceName` was a typo** in the Bot class's PlexAPI options — fixed in this iteration to `deviceName`. The Bot now identifies itself correctly to Plex.
 - **`!youtube` works in two modes**: a URL plays directly; anything else hits `@distube/ytsr` for search and plays the top video result.
@@ -1519,9 +2150,19 @@ path for tests or an externally managed sidecar.
 
 ## Logging
 
-Two sinks, both under `data/logs/`, both kept indefinitely.
+Every log line goes through `helpers/logger.js`. Format:
 
-Set `PLEXBOT_LOG_RETENTION_DAYS` to a positive number to delete day-files older than that; unset, 0 or unparseable keeps everything, which is the default. One variable covers both sinks.
+```
+[2026-05-16T10:44:27.633Z] INFO  Bot ready — logged in as ...
+```
+
+Levels: `debug`, `info`, `warn`, `error`. Set `LOG_LEVEL=debug` to surface the verbose Gemini debug output and other internal traces. Default is `info`.
+
+Errors caught by the global `uncaughtException` / `unhandledRejection` handlers (`app/utils.js`) print at `ERROR` level but **do not exit the process**, because the bot is meant to survive transient async errors.
+
+Two sinks, both under `data/logs/`, both kept indefinitely. A third, the voice-health log (`voice-<date>.jsonl`), is written only while `voiceHealthEnabled` is on; see "Voice health and process priority".
+
+Set `PLEXBOT_LOG_RETENTION_DAYS` to a positive number to delete day-files older than that; unset, 0 or unparseable keeps everything, which is the default. One variable covers both sinks and the voice-health log.
 
 Retention and the read window are separate. Readers default to the most recent 14 day-files (`commandLog.DEFAULT_READ_DAYS`), because reading every day since install would only get slower as the pile grows. `npm run logs -- --days=60` widens it, `--all` reads the lot, and a `--since` longer than the default widens it on its own.
 
@@ -1533,6 +2174,12 @@ any failure nobody was watching scrolled past unrecoverably.
 **`helpers/commandLog.js`** records structured JSON Lines: `invoke` (path, command, args, user,
 channel), `outcome` (ok, ms, error stack) and `output` (what the bot posted). One object per line,
 so a process killed mid-append costs one event rather than the file.
+
+The audiobook suite adds three event types to the command log: `music-gated-by-book` (a music
+request queued behind a book, with the guild, work and queue length), `book-stream-error` (ffmpeg
+failed to spawn or its stream errored) and `book-save-failed` (a bookmark write failed; recorded
+once per failure streak, with `Audiobook bookmarks are being saved again.` in the bot log on
+recovery).
 
 Wiring lives in `app/music.js`. Invocations are logged in all three dispatch paths — prefix, slash
 and button. Output is captured once, in a `messageCreate` listener filtered to the bot's own
@@ -1580,3 +2227,10 @@ them as a transcript, with `--errors`, `--command=`, `--user=`, `--since=`, `--n
 | Stats / diagnostic               | `commands/{stats,test}.js`           | `tautulliAPI.js`, `playniteAPI.js`, `healthCheck.js`        |
 | Broadcasts (Kometa + game launch) | `helpers/eventServer.js` (inbound)  | `helpers/broadcast.js`; `scripts/` (autostart + Playnite hook) |
 | In-Discord config wizard         | `commands/config.js`                 | `helpers/configStore.js`; `config/config.js` overrides layer |
+| Audiobooks and podcasts          | `commands/book.js/`, the card's `book:*` buttons | `helpers/bookEngine.js` (player), `bookModel.js`, `bookmarks.js`, `bookCard.js`, `bookButtons.js` |
+| Audiobook catalog                | `helpers/bookLibrary.js` (Plex), `/book rescan` | `helpers/bookCatalog.js`, `bookCatalogStore.js`; `data/book_overrides.json` |
+| Book audio from Plex             | `helpers/bookResource.js`            | `helpers/partProxy.js`, `bookAudio.js`, ffmpeg-static         |
+| Books kept out of music          | every music picker, search and Hitster | `helpers/longForm.js`; the Plex fragment in `plexTags.js` and `commands/list.js` |
+| Music and books sharing voice    | `app/bot.js` `runPlayback` gate, `musicBusy()` | `helpers/voiceClaims.js`, `bookEngine.blocksMusic` / `routeGeneric` |
+| Voice-health log                 | `commands/voicehealth.js`            | `helpers/voiceHealth.js`, `voiceHealthFormat.js`; hooks in `app/bot.js` and `bookEngine.js` |
+| Process priority                 | `app/utils.js` `start()`             | `helpers/processPriority.js`                                |

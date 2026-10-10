@@ -166,7 +166,40 @@ const defaults = {
   // DeathLink arrives on a different packet type, and the server only routes it to clients
   // advertising the tag. Turning this on reconnects so the tag is sent. The bot never sends a
   // death of its own.
-  'archipelagoShowDeaths' : false
+  'archipelagoShowDeaths' : false,
+
+  // --- Audiobooks and podcasts (/book, or the Audiobooks page of /config) ---
+  // Plays long-form audio from the music library with a saved place per listener. Off by default
+  // because it reads the whole music section to build its catalog and opens a loopback port.
+  // Read each time it is used, so turning it on takes effect without a restart.
+  'audiobooksEnabled' : false,
+  // Keep catalogued books and podcast episodes out of music pickers, search and Hitster once a
+  // catalog exists. Only turn it off if the catalog has swallowed music you want back; the
+  // overrides file (data/book_overrides.json) is the finer fix.
+  'audiobooksExcludeFromMusic' : true,
+  // Seconds between bookmark saves while a book plays. This is the most a crash or hard kill can
+  // lose; a save costs a few milliseconds.
+  'audiobookSaveSeconds' : 15,
+  // Playback speed for a listener's first book. After that each listener keeps their last speed.
+  // A string because it is a menu choice; one of '0.75' '0.9' '1' '1.1' '1.25' '1.5' '1.75' '2'.
+  'audiobookDefaultSpeed' : '1',
+  // Minutes a paused or abandoned book keeps the voice channel before leaving. The place is saved
+  // either way.
+  'audiobookIdleLeaveMinutes' : 10,
+  // Seconds to rewind when resuming after more than 5 minutes away (three times this after a
+  // day), so the listener hears the end of the last sentence again. 0 resumes exactly.
+  'audiobookResumeRewindSeconds' : 10,
+
+  // --- Voice (the Voice page of /config) ---
+  // Priority of the bot process. Above normal stops a game, VR stream or Plex transcode on this PC
+  // from delaying the 20 ms voice send timer: the worst send gap under load was 359 ms at normal
+  // and 34 ms above normal. Pick 'normal' if a game running alongside the bot suffers. ffmpeg
+  // stays at normal either way. One of 'above_normal' 'normal'; applied at once from /config.
+  'processPriority' : 'above_normal',
+  // Per-minute voice-health log for chasing stutters: send gaps, source underruns, reconnects,
+  // event-loop delay and CPU, in data/logs/voice-*.jsonl and `!voicehealth`. Off by default;
+  // about 0.06% of one core when on. Applied at once from /config.
+  'voiceHealthEnabled' : false
 };
 
 // Layer persisted overrides (written by the /config wizard, helpers/configStore.js) on top of

@@ -3,6 +3,7 @@ const { getModel } = require('../helpers/geminiAPI.js');
 const { getPlex } = require('../helpers/plexClient.js');
 const handleAIError = require('../helpers/aiErrorHandler.js');
 const logger = require('../helpers/logger.js');
+const longForm = require('../helpers/longForm.js');
 
 const model = getModel();
 const plex = getPlex();
@@ -91,7 +92,7 @@ module.exports = {
                 }
 
                 const libraryData = await plex.query(`/library/sections/${targetSection.key}/all?type=10`);
-                const allItems = libraryData.MediaContainer.Metadata || [];
+                const { music: allItems, books: bookItems } = longForm.partition(libraryData.MediaContainer.Metadata);
 
                 let aiAnchor = null;
 
@@ -102,13 +103,14 @@ module.exports = {
                     await statusMsg.edit(`🎵 **Target:** \`${displayTarget}\`\n⏳ *Scanning the vault for your exact anchor track...*`);
 
                     const queryWords = typeData.specificQuery.toLowerCase().split(' ');
-
-                    const match = allItems.find(item => {
+                    const matchesQuery = (item) => {
                         const title = (item.title || "").toLowerCase();
                         const artist = (item.grandparentTitle || "").toLowerCase();
                         const combined = `${title} ${artist}`;
                         return queryWords.every(word => combined.includes(word));
-                    });
+                    };
+
+                    const match = allItems.find(matchesQuery);
 
                     if (match) {
                         aiAnchor = {
@@ -118,7 +120,9 @@ module.exports = {
                             reason: `Requested Anchor Track.`
                         };
                     } else {
-                        return statusMsg.edit(`❌ I couldn't find any track matching **"${typeData.specificQuery}"** in the vault!`);
+                        const bookHits = bookItems.filter(matchesQuery);
+                        const redirect = bookHits.length ? `\n${longForm.onlyBooksLine(bookHits)}` : '';
+                        return statusMsg.edit(`❌ I couldn't find any track matching **"${typeData.specificQuery}"** in the vault!${redirect}`);
                     }
                 }
                 // ==========================================
@@ -192,7 +196,9 @@ module.exports = {
                     );
 
                     if (sonicHub && sonicHub.Metadata && sonicHub.Metadata.length > 0) {
-                        const similarTracks = sonicHub.Metadata;
+                        // Sonic analysis covers audiobook chapters too, so a hub can list them
+                        // beside songs; dropping them before the limit keeps the requested count.
+                        const similarTracks = longForm.partition(sonicHub.Metadata).music;
                         const limit = targetTrackCount - 1;
 
                         for (let i = 0; i < Math.min(similarTracks.length, limit); i++) {

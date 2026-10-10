@@ -129,7 +129,19 @@ module.exports = {
   'archipelagoShowJoins'  : true,
   'archipelagoShowGoals'  : true,
   'archipelagoShowMisc'   : true,
-  'archipelagoShowDeaths' : false          // DeathLink; reconnects the room to add the tag
+  'archipelagoShowDeaths' : false,         // DeathLink; reconnects the room to add the tag
+
+  // Audiobooks and podcasts (see below). All editable from /config → Audiobooks, all live.
+  'audiobooksEnabled'            : false,  // turn /book on; off = no library reads, no proxy port
+  'audiobooksExcludeFromMusic'   : true,   // keep catalogued books out of music pickers and search
+  'audiobookSaveSeconds'         : 15,     // bookmark save interval (5-300); the most a crash can lose
+  'audiobookDefaultSpeed'        : '1',    // a listener's first speed: '0.75' '0.9' '1' '1.1' '1.25' '1.5' '1.75' '2'
+  'audiobookIdleLeaveMinutes'    : 10,     // a paused book leaves voice after this (1-180)
+  'audiobookResumeRewindSeconds' : 10,     // rewind after 5+ min away, 3x after a day (0-120)
+
+  // Voice (see "If voice audio stutters"). Both editable from /config → Voice, both live.
+  'processPriority'    : 'above_normal',   // or 'normal' if a game running beside the bot suffers
+  'voiceHealthEnabled' : false             // per-minute voice log behind !voicehealth
 };
 ```
 
@@ -160,6 +172,10 @@ its own. Changes save instantly and **persist across restarts**.
   intent, and `kometaTheaterEnabled` decides whether the Kometa log is tailed. **Turning
   `kometaTheaterEnabled` on silences the Kometa cards until that restart**, since webhooks go to
   the theater as soon as it is saved and the theater has not started.
+- The sections are General, Access, Integrations, Broadcasts, Archipelago, Audiobooks and Voice.
+  Every Audiobooks and Voice setting applies at once, with no restart: turning
+  `audiobooksEnabled` on makes `/book` work on its next use, and `processPriority` and
+  `voiceHealthEnabled` switch over as soon as they are saved.
 - Discord/Gemini/Plex tokens (in `config/keys.js` and `config/plex.js`) are **not** editable
   from Discord by design; edit those files directly.
 - If `ownerId` is still blank, `/config` runs in a one-time bootstrap mode so you can set the
@@ -348,6 +364,110 @@ labelled *(tags inferred, not from Plex)*.
 portable copy — including each track's file path on the Plex host — for tagging tools outside
 the bot.
 
+## 📖 Audiobooks and podcasts
+
+`/book` plays audiobooks and podcasts that live in your Plex **music** library, and remembers each
+person's place in each one: chapters, ±30 s, speed from 0.75x to 3x without the chipmunk effect,
+a sleep timer, a shelf of what you are partway through, and hours-listened stats. The full command
+list is under **Command Directory** below.
+
+**Turning it on.** It is off by default. As the owner, run `/config`, open **Audiobooks**, and
+enable **Audiobooks and podcasts (/book)**. No restart. The first `/book play` or `/book library`
+after that (or the next boot) reads your music library once in the background (about 20 seconds
+on a large library) to work out which albums are books; until that finishes, `/book play` says it
+is still reading. After that it checks Plex for changes once an
+hour, so a book you add shows up within the hour, and `/book rescan` (owner only) re-reads it on
+demand.
+
+**What counts as a book.** The bot looks at folders on disk rather than Plex albums, because a
+hand-ripped library rarely lines up album-for-book. A folder of at least 2 hours becomes a book
+when its tracks are long (a median of 15 minutes or more), when its name says so ("unabridged",
+"audiobook", "read by", GraphicAudio), or when it is a long run of low-bitrate mono files. A folder
+whose tracks are mostly numbered episodes of 20 minutes or more is a podcast. Hour-long music mixes
+stay music: nothing is decided by track length alone. `/book library` shows what it found, and
+`/book rescan` also names the five longest folders of 2 hours or more that it left as music, so you
+can pull one in, and the books whose part order it is unsure of.
+
+**Books stay out of music.** While `audiobooksExcludeFromMusic` is on (the default), catalogued
+books and podcasts never come up in `!random`, `!mood`, `/vibe`, `/sonic`, Hitster, `/quotethebard`,
+`!list` browsing or smart Plex playlists. A search such as `!play`, `!album` or `!artist` still
+shows its music hits, and adds a line pointing at the book instead:
+"📚 Also in your books: Title (Author), `/book play title`". When a full page of results is mostly
+chapters, a lone song on it is listed for you to pick rather than played, and `!nextpage` still
+reaches the next page. The AI recommenders (`!curate`,
+`!groupwatch`, `!quest`) and Release Survival's albums leave books out too, and `!identify`'s
+vault mode shows each book as one suspect rather than one per chapter. A regular (non-smart) Plex
+playlist plays exactly what you put in it. All of a podcast artist's albums stay out of music while
+that podcast is catalogued, a soundtrack album included. No override gives back one album: the
+only ways to return them to music are excluding the podcast in the overrides file or turning
+`audiobooksExcludeFromMusic` off. Turning
+`audiobooksEnabled` back off does not let books back into music once they have been catalogued;
+turning `audiobooksExcludeFromMusic` off does.
+
+**Sharing the voice channel with music.** One guild plays either music or a book, never both.
+`/book play` refuses while music is playing or loading (stop it with `!stop` first). Music
+requested during a book is queued with a short reply ("📚 Queued behind Ana's book (2 waiting).")
+and starts when the listener runs `/book stop` or presses the card's Stop, or when someone runs a
+bare `!play` after that. A sleep timer, leaving voice or finishing the book never starts music on
+its own. While a book plays, `!pause`, `!resume`, `!skip` (one chapter forward) and `!stop` act on
+the book for anyone allowed to control it, and `!stop` also clears the music queue. Hitster cannot
+start during a book, and a book cannot start during a Hitster game.
+
+**Who controls a book.** The person who started it controls everything. The bot owner, and anyone
+in the book's voice channel while the listener has left it, may pause or stop it. Everyone has
+their own shelf and stats, and a place is always saved to the listener, never to whoever pressed
+a button.
+
+**Your place.** It is saved every 15 seconds while playing and on every pause, jump, stop and
+shutdown, so a crash loses at most 15 seconds, and resuming after more than 5 minutes rewinds 10
+seconds (30 after a day) so you hear the end of the last sentence again. A book is only marked
+finished when its last part plays out, when you run `/book finish`, or when you press **Mark
+finished** on the card (offered when you stop within 2 minutes of the end); stopping near the end
+never finishes it for you. Playing a finished book starts it again; playing a podcast you had
+caught up on starts at its first new episode. A podcast plays in episode order, and a new season
+added to the same folder that numbers its episodes from 1 again plays after the season before it.
+
+**Fixing the catalog by hand.** Create `data/book_overrides.json` (the bot only ever reads it) to
+correct series, order, titles or what counts as a book. Every key is optional:
+
+```json
+{
+	"authors": {
+		"jane-author": { "series": "The Example Cycle", "order": { "first book": 1, "second book": 2 } }
+	},
+	"works": {
+		"jane-author/second-book": { "sequence": 2.5, "narrator": "Sam Reader" },
+		"jane-author/box-set": { "partOrder": ["01 Intro.mp3", "02 Chapter 1.mp3", "03 Chapter 2.mp3"] },
+		"some-artist/not-a-book": { "exclude": true }
+	},
+	"include": ["M:/Music/Some Artist/Radio Drama"],
+	"exclude": ["M:/Music/Some Artist/Two Hour Live Set"],
+	"podcastArtists": ["12345"]
+}
+```
+
+- `works` is keyed by the id `/book library` shows (`author/title`). `partOrder` lists file names
+  in play order; files you leave out keep their order after the listed ones. `title`, `series`,
+  `sequence`, `narrator` and `edition` override what was detected, `exclude: true` drops the work,
+  and `pinId` gives it an id that survives a folder rename.
+- `include` and `exclude` take a folder exactly as `/book rescan` prints it (slash direction and
+  case do not matter), or a Plex album ratingKey. For a box set spread over sibling folders, use
+  the parent folder.
+- `podcastArtists` adds artists (by Plex ratingKey) to keep out of music entirely, for podcast
+  artists the detector missed. A detected podcast's artist is already kept out, so a new episode
+  album stays out of music before the next rescan sees it.
+- `authors` sets a series for every book by that author, with `order` giving each title its
+  number.
+
+Run `/book rescan` after editing it. A typo in the JSON is logged and reported by `/book rescan`,
+and the file is ignored until it parses.
+
+**Files.** `data/book_catalog.json` is the catalog (rebuilt from Plex if you delete it).
+`data/book_bookmarks.json` holds everyone's places, keyed by Discord user ID, with an hourly backup
+beside it in `book_bookmarks.json.bak` that the bot loads automatically if the main file is ever
+found damaged. Both, and the overrides file, are gitignored. If a bookmark write fails, the card
+shows a warning and the command log gets a `book-save-failed` line (`npm run logs -- --raw`).
+
 ## 🧾 Logs
 
 The bot keeps two logs under `data/logs/`, both plain text, and **both kept indefinitely**:
@@ -376,7 +496,7 @@ npm run logs -- --all            # every day-file there is
 
 Reading is windowed even though keeping is not. A read looks at the **14 most recent day-files** unless told otherwise, because walking every day since install would only get slower as the pile grows. `--days` and `--all` widen it, a `--since` reaching further back widens it on its own, and `--stats` says which it is rather than presenting a window as a lifetime total.
 
-Set `PLEXBOT_LOG_RETENTION_DAYS` to a positive number to start deleting day-files older than that; unset, 0 or unparseable keeps everything, which is the default. One variable covers both logs.
+Set `PLEXBOT_LOG_RETENTION_DAYS` to a positive number to start deleting day-files older than that; unset, 0 or unparseable keeps everything, which is the default. One variable covers both logs, and the voice-health log below when it is on.
 
 Output is tied back to the command that caused it, so a session reads as a transcript:
 
@@ -392,6 +512,39 @@ Your tokens are redacted before anything is written. Command arguments and the b
 stored as written, so treat `data/logs/` as being as private as the channels the bot posts in.
 Set `PLEXBOT_COMMAND_LOG=0` to disable the command log, or `PLEXBOT_LOG_TO_FILE=0` for the
 console mirror.
+
+## 🔊 If voice audio stutters
+
+Choppy or rushed voice audio has several causes that sound the same from the listener's side. A
+stutter investigation on this bot's own host ranked them, with these measurements:
+
+- **Wi-Fi on the PC running the bot** was the most frequent cause of multi-second drops: 154
+  link-security renegotiations of about 4 seconds each and 31 driver disconnects in 49 days, in
+  clusters. **Plug the PC into the router with Ethernet** if you can; it removes all of them.
+- **Other programs on the same PC** (a game, VR streaming, a Plex transcode) delayed the bot's
+  20 ms send timer by up to 359 ms at normal priority, against 34 ms at above-normal. The bot now
+  raises its own priority to above normal by default (`processPriority`; ffmpeg stays at normal).
+  If a game running beside it suffers, set it back to `normal` in `/config` → Voice.
+- **The first seconds of a very long track** can stutter while the bot downloads the whole file
+  (packets up to 1.8 s late on a 7-hour file). Not fixed yet.
+- **Two copies of the bot running at once** fight over the voice session. The bot now refuses to
+  start a second copy, but a copy started before that change has to be restarted once.
+
+**To find out which one you are hearing**, turn on the voice-health log: `/config` → Voice →
+**Voice health log**. It takes effect at once and costs about 0.06% of one CPU core. Then:
+
+- Right after a stutter, run **`!voicehealth mark choppy for 2 s`** (or `/voicehealth mark`). It
+  stamps the moment and replies with the last 2 minutes.
+- `!voicehealth [minutes]` (1–120, default 15) shows one row per minute: packets sent, send gaps
+  over 40 and 100 ms, the longest gap, how long the audio source ran dry, Discord's ping,
+  event-loop delay, CPU and memory, and flags (`G` gap, `U` source starved, `N` voice dropped,
+  `L` bot busy, `C` machine CPU at 90% or more).
+
+Reading it: gaps with high CPU (`C`) point at other programs; gaps with a high event-loop delay
+(`L`) at the bot itself; `U` at Plex or the network between Plex and the bot; `N` or a reconnect
+event at the network between the bot and Discord. A minute with a mark and no flags at all points
+at the network beyond the bot, or at the listener's side. The log is written to
+`data/logs/voice-YYYY-MM-DD.jsonl` (gitignored with the rest of `data/logs/`).
 
 ## 📚 Command Directory
 
@@ -412,6 +565,10 @@ A few take a required option, because they can't do anything without one:
 | `/sonic` | `target:` — a vibe, or a specific song to build the station around |
 | `/releasesurvival start` | `category:` — movies, shows or albums |
 | `/survive start` | none, but `start` is the subcommand that begins a game (`difficulty:` is optional) |
+| `/book goto` | `time:`, `1:23:45` from the start of the book, or `+5m` / `-90` from where you are |
+| `/book speed` | `rate:`, picked from the list (0.75x to 3x) |
+| `/book sleep` | `after:`, minutes from the list, `End of this chapter`, or `Off` |
+| `/book forget` | `title:`, then a confirm button |
 
 Run `npm run check:slash` after editing any command's `slash` block. Registration is
 all-or-nothing, so a single malformed spec makes *every* slash command disappear at once.
@@ -441,6 +598,41 @@ all-or-nothing, so a single malformed spec makes *every* slash command disappear
 - `!mood [mood]` — Random song matching your given mood.
 - `!sonic [vibe or song]` — Plex Sonic Analysis playlist built around a vibe or an anchor track.
 - `!seek [time]` — Jump to a position in the current track.
+- `!voicehealth [minutes]` / `!voicehealth mark [note]`: the voice stutter log, once enabled in `/config` → Voice. See **If voice audio stutters**.
+
+While an audiobook is playing in the server, `!pause`, `!resume`, `!skip` and `!stop` (and the old
+now-playing card's buttons) act on the book for anyone allowed to control it. `!skip` moves one
+chapter forward and ignores a count, and `!stop` ends the book and also clears the music queue.
+
+### 📖 Audiobooks and podcasts
+
+Off until the owner enables it in `/config` → Audiobooks; until then every `/book` subcommand
+answers "📚 Audiobooks are turned off…". `!book ?` (or a bare `!book`) shows the sub-help;
+`!books` works as well as `!book`. **Every `/book` reply is private to you except
+`leaderboard`.** The book card that `play` posts is public, so others in the channel can see what
+is playing.
+
+| Command | What it does |
+| ------- | ------------ |
+| `/book play [title] [from-start]` | Start or resume a book or podcast in your voice channel. No title resumes your latest. Prefix: `!book play <title> --restart`, also `!book start` / `!book listen`. |
+| `/book pause` / `resume` / `stop` | Stop saves your place and leaves voice, and starts any music queued during the book. |
+| `/book back [seconds]` / `forward [seconds]` | Jump 10 s to 10 min from the list (default 30 s), across part boundaries. Prefix takes any length, such as `90`, `1:30` or `2m`, and `!book rewind` / `!book fwd`. |
+| `/book goto <time>` | `1:23:45` from the start, or `+5m` / `-90` from here. |
+| `/book chapter [number]` | Jump to a chapter; no number lists the chapters around the current one. Prefix also has `!book next` / `!book prev`. |
+| `/book speed <rate>` | 0.75x to 3x, pitch kept. Saved per book; a new book starts at your last speed. |
+| `/book sleep <after>` | Stop after 5–90 minutes of listening (prefix: any whole number of minutes up to 1440), or at the end of the chapter, or `off`. Paused time does not count. |
+| `/book now` | Post the book card again at the bottom of the channel. |
+| `/book shelf` | Your books in progress and finished, with Resume buttons; podcasts say "caught up" or "new episodes". |
+| `/book library [filter]` | Every book and podcast the bot found, by series, with your progress. |
+| `/book stats [user]` | Hours listened, book hours covered, books finished, top three. |
+| `/book leaderboard` | Hours listened in this server. Public. |
+| `/book finish [title]` | Mark a book finished (default: the one you are listening to). |
+| `/book forget <title>` | Drop your place in a book. Asks first: a button on `/`, `!book forget <id> confirm` on `!`. |
+| `/book rescan` | Owner only (anyone while `ownerId` is blank, as with `/config`): re-read the library from Plex now and report what changed. |
+
+The card has Previous chapter, −30 s, Pause/Resume, +30 s and Next chapter, a speed button that
+cycles 1x–2x, a sleep button that cycles off, 15, 30, 60 minutes and end of chapter, and Stop. A
+card from an earlier session loses its buttons when clicked; `/book now` shows the current one.
 
 ### 🍿 Plex & Media Utilities
 

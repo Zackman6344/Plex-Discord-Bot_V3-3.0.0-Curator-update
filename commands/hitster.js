@@ -4,6 +4,8 @@ const { getPlex } = require('../helpers/plexClient.js');
 const logger = require('../helpers/logger.js');
 const hitsterTurn = require('../helpers/hitsterTurn.js');
 const channelClaims = require('../helpers/channelClaims.js');
+const voiceClaims = require('../helpers/voiceClaims.js');
+const longForm = require('../helpers/longForm.js');
 
 const plex = getPlex();
 
@@ -24,6 +26,24 @@ const activeGames = new Map();
 // consumed by the turn collector, not the command dispatcher. Claim the channel
 // so the dispatcher doesn't reply "unknown command" to those in-game inputs.
 channelClaims.register((channelId) => activeGames.has(channelId));
+
+// Only a game past its lobby plays clips; a lobby left open must not keep a book out.
+voiceClaims.register('hitster', (guildId) => {
+    for (const g of activeGames.values()) {
+        if (g.state === 'playing' && g.voiceChannel && g.voiceChannel.guild && g.voiceChannel.guild.id === guildId) return 'a Hitster game';
+    }
+    return null;
+});
+
+// Hitster clips run through bot.playSong, which a book's gate would refuse turn after turn.
+function refuseForBook(message, guildId) {
+    const held = voiceClaims.holder(guildId, { ignore: ['hitster'] });
+    if (!held || held.owner !== 'audiobook') return null;
+    return message.reply({
+        content: `📚 ${held.label} is listening to a book in this server. Hitster can start after \`/book stop\`.`,
+        allowedMentions: { parse: [] }
+    });
+}
 
 class HitsterGame {
     constructor(hostId, channelId) {
@@ -346,6 +366,8 @@ if (commandArg === 'stop') {
 
             if (!activeGames.has(channelId)) {
                 if (!message.member.voice.channel) return message.reply("Join a voice channel!");
+                const bookRefusal = refuseForBook(message, message.member.voice.channel.guild.id);
+                if (bookRefusal) return bookRefusal;
                 const game = new HitsterGame(message.author.id, channelId);
                 // The host's channel IS the game's channel — join / join-for / in-turn
                 // proxy all gate against its live .members. Refreshed at start in case
@@ -378,6 +400,9 @@ if (commandArg === 'stop') {
             if (commandArg === 'start') {
                 if (message.author.id !== game.hostId) return message.reply("Only the host can start the game.");
                 if (game.state !== 'lobby') return message.reply("The game has already started.");
+                // A book can start between lobby and start, so create's check is not enough.
+                const bookRefusal = refuseForBook(message, (message.member.voice.channel || game.voiceChannel).guild.id);
+                if (bookRefusal) return bookRefusal;
                 game.state = 'playing';
                 // Refresh to the host's current channel (set at lobby creation) in case
                 // they moved — this is where the bot plays clips and what proxy/join gate on.
@@ -389,7 +414,7 @@ if (commandArg === 'stop') {
                     const sections = await plex.query('/library/sections');
                     const musicSec = sections.MediaContainer.Directory.filter(s => s.type === 'artist');
                     const tracksData = await plex.query(`/library/sections/${musicSec[0].key}/all?type=10`);
-                    let allTracks = tracksData.MediaContainer.Metadata.filter(t => t.year || t.parentYear);
+                    let allTracks = tracksData.MediaContainer.Metadata.filter(t => (t.year || t.parentYear) && !longForm.isLongFormTrack(t));
                     game.playerOrder.forEach(p => {
                         const a = allTracks.splice(Math.floor(Math.random() * allTracks.length), 1)[0];
                         game.timelines[p].push({ year: a.year || a.parentYear, title: a.title, artist: a.grandparentTitle, album: a.parentTitle, plexKey: a.Media[0].Part[0].key });

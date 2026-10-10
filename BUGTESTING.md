@@ -1,7 +1,9 @@
 # Bug-testing checklist
 
 Practical pass for this bot. Phase 0 is the `/play` symptom specifically; Phases 1–6 are the
-repeatable sweep to run after any change that touches dispatch, commands, or deps.
+repeatable sweep to run after any change that touches dispatch, commands, or deps. Phases 7 and 8
+are the first live pass of the audiobook suite and of the voice-health log and process priority,
+none of which has met a real voice channel yet.
 
 The bot now persists its own logs to `data/logs/`, so a failure you didn't happen to be watching
 is still there afterwards:
@@ -28,7 +30,7 @@ command. Answer Q1 first — it splits the tree.
 
 - [ ] **Restart the bot and read the boot lines.** Registration only runs on `clientReady`
       ([app/music.js:16](app/music.js#L16)). You want to see
-      `Registered 52 slash commands in guild 396106436326981642 (instant).`
+      `Registered 56 slash commands in guild 396106436326981642 (instant).`
       Anything starting `Failed to register slash commands` is the answer — the error text names
       the cause (403 Missing Access, 401, invalid form body).
 - [ ] **Confirm the bot was invited with the `applications.commands` scope.** This is the #1
@@ -72,10 +74,14 @@ node -e "const k=require('./config/keys.js'),c=require('./config/config.js');con
 
 ## Phase 1 — Boot
 
-- [ ] `Loaded 52 commands (2 aliases)` — any `Failed to load N command file(s)` line means a
+- [ ] `Process priority: above_normal` (or `normal`, if that is what `/config` → Voice says). On
+      Linux or Docker without `CAP_SYS_NICE` there is one `Could not set process priority` warning
+      instead, and the bot carries on.
+- [ ] `Loaded 56 commands (4 aliases)`: any `Failed to load N command file(s)` line means a
       command file is broken and **silently unavailable on both paths**.
-- [ ] `Registered N slash commands …` — N should equal the number of slash-declaring commands
-      (52 today; aliases `?` and `plextest` are correctly excluded).
+- [ ] `Registered N slash commands …`: N should equal the number of slash-declaring commands
+      (56 on 2026-10-09; the aliases `?`, `plextest`, `archipelago` and `books` are correctly
+      excluded).
 - [ ] Health monitor / event server / presence / theater lines appear as expected for the
       toggles in config.
 - [ ] No `Uncaught exception` / `Unhandled promise rejection` in the first 30s.
@@ -93,8 +99,11 @@ npm run check:slash
 It checks the rules Discord rejects on: lowercase names matching `^[\w-]{1,32}$`, 1–100 char
 descriptions, ≤25 options/choices, no subcommands mixed with top-level options, and
 **required options declared before optional ones**. It also warns when a command bails out
-without an argument but declares no option to supply one — the bug that shipped twice. All 53
-specs pass today.
+without an argument but declares no option to supply one, the bug that shipped twice. Since the
+audiobook suite it also checks that every choice value matches its option's type (a number on a
+STRING option takes down the whole registration), choice names of 1–100 characters, choices and
+autocomplete only on STRING, INTEGER or NUMBER, and Discord's 4,000-character budget per command.
+All 56 specs passed on 2026-10-09, the largest `/ap` at 2,783 characters and `/book` at 1,572.
 
 - [ ] New/edited `slash:` block → re-run the validator.
 - [ ] Renamed or deleted a command → confirm the stale one disappeared from the picker (the `set()`
@@ -182,7 +191,10 @@ args rather than crashes.
 - [ ] **DM flows.** `/request add`, `/playlist plex-list`, `/playlist plex-copy` open a DM and await
       messages there. Test with DMs closed too — `createDM()` rejects and should surface an error,
       not a silent hang.
-- [ ] **Ephemeral commands** (`/config`) answer privately and stay private.
+- [ ] **Ephemeral commands** (`/config`) answer privately and stay private. `/book` is private
+      for every subcommand except `/book leaderboard`, including its second and later replies (a
+      "Which one?" list, a chapter list), which go out as private follow-ups rather than channel
+      posts.
 
 ## Phase 5 — Playback (the part that breaks quietly)
 
@@ -202,6 +214,147 @@ args rather than crashes.
 - [ ] `/diag` — one call covers Plex, Gemini, Tautulli, Playnite connectivity.
 - [ ] Plex Home account switching (`/playlist plex-list account:…`).
 - [ ] Tautulli-backed `/stats`, Playnite-backed `/launch`, `/pickgame`.
+
+## Phase 7: Audiobooks and podcasts (live)
+
+Built and unit-tested offline (398 tests in 24 files, the filters and guards mutation-checked),
+never yet run against a live voice channel and a live Plex. Everything below is what the tests
+cannot reach. Watch `npm run logs -- --raw` for `music-gated-by-book`, `book-stream-error` and
+`book-save-failed` while you go.
+
+**Turning it on**
+
+- [ ] Before enabling: `/book play` and every other subcommand answer "📚 Audiobooks are turned
+      off…", the help embed has no AUDIOBOOKS line, and nothing about music has changed.
+- [ ] `/config` → Audiobooks → enable. No restart. The first `/book play` says "Reading the
+      library (about 20 s)"; a minute later `/book library` lists the books and podcasts. The help
+      embed now has the AUDIOBOOKS line.
+- [ ] `/book rescan` as the owner reports works, parts, hours, any low-confidence part orders and
+      the long folders left as music. As anyone else it is refused. During a Plex library scan it
+      says Plex is scanning.
+- [ ] Put a deliberate JSON typo in `data/book_overrides.json`, `/book rescan`: the reply names the
+      error and the catalog is unchanged. Fix it, rescan: the override applies.
+
+**Playing**
+
+- [ ] Resume 5 h into a single-file m4b that has embedded chapters: audio within about 2 s.
+- [ ] Note the time to first audio at the start, an hour in and five hours in. `-analyzeduration
+      0` sits after `-i`, so ffmpeg still runs its default 5 s input analysis; if resumes feel slow,
+      this is the number to bring back.
+- [ ] ±30 s across a part boundary lands in the previous or next file at the right spot.
+- [ ] `/book chapter` autocomplete is centred on the current chapter; jump to chapter 4 of 6 inside
+      that m4b.
+- [ ] `/book goto 1:23:45`, `+5m`, `-90` all land; `/book goto 1:75` is refused.
+- [ ] 1.5x, then back to 1x: pitch is normal at both, and `/book shelf` shows the right %.
+- [ ] `/book sleep` 5 min: stops after 5 minutes of listening, not counting a pause in between.
+- [ ] `/book sleep` end of chapter, including the **last** chapter of a chaptered m4b: it stops
+      there and does not run on into the next file.
+- [ ] A work with 300 or more part files plays from one file into the next with only card edits:
+      no voice rejoin, no new message.
+- [ ] The card still edits after 15+ minutes (it is a channel message, not an interaction reply).
+- [ ] Rapid ±30 s clicks: one stream, ending where the clicks add up to.
+
+**Voice and presence**
+
+- [ ] Leave voice: the card says you left and shows Resume; rejoining does not resume on its own.
+      After `audiobookIdleLeaveMinutes` (10) the bot leaves.
+- [ ] Disconnect the bot from voice: the card ends with "🔌 Lost the voice connection", and
+      `/book play` resumes from the saved place.
+- [ ] Move the bot to another channel: it either carries on there or ends the same way with the
+      place saved. Note which. Silence with a live card is the failure.
+- [ ] `/book stop` while the bot is still joining, then `/book play` again: it starts, and the
+      bookmark did not move.
+- [ ] `/book play` from phone and desktop at once: one session; the second gets "Still joining the
+      voice channel, one moment."
+
+**Music and books in one server**
+
+- [ ] `!play <song>` during a book: one short reply each time ("📚 Queued behind …'s book (N
+      waiting)."), the long explanation at most once per 30 s. `/book stop` then starts the queued
+      music.
+- [ ] `/play song:<x>` during a book: the "thinking…" closes with the queued line.
+- [ ] Sleep timer, leaving voice, or the book finishing with music queued: the music does **not**
+      start on its own.
+- [ ] `!stop` on music, then `/book play` straight away: accepted.
+- [ ] `/book play` while music is playing: "Music is playing here. Stop it with !stop, then /book
+      play."
+- [ ] `!hitster` create and start during a book: refused, naming the listener. `/book play`
+      during a Hitster game: refused.
+- [ ] `!pause`, `!resume`, `!skip 3` (moves **one** chapter) and `!stop` during a book act on the
+      book. `!stop` also clears the music queue and does not start it. Someone not allowed to
+      control the book gets the music command as before.
+- [ ] The old now-playing card's Pause/Resume on a parked book resumes it.
+- [ ] Someone else clicking the card's controls gets the private "This is …'s book" refusal; the
+      owner, and someone in the channel after the listener left, can pause and stop.
+- [ ] Clicking a card from an earlier session strips its buttons and says so privately.
+
+**Bookmarks and finishing**
+
+- [ ] `!restart` mid-book: the place is saved. `scripts/stop-bot.ps1` mid-book, start, resume: at
+      most 15 s lost.
+- [ ] Resume the next day: it rewinds 30 s (10 s after more than 5 minutes away).
+- [ ] Re-scan the library in Plex, then resume: it plays (the part key is repaired), from the right
+      place.
+- [ ] Stop within the last 2 minutes of a book: not finished; the ended card offers ✅ Mark
+      finished. Only the listener can press it; pressing it marks it finished once.
+- [ ] Catch up on a podcast, add an episode in Plex, wait for the hourly check or `/book rescan`,
+      `/book play`: it starts on the new episode ("▶ 1 new episode since you caught up").
+- [ ] `/book play` on a finished book: "You finished this on …, starting again."
+- [ ] `/book forget` asks first (a button on `/`, `!book forget <id> confirm` on `!`).
+- [ ] `data/book_bookmarks.json` exists after a play, and `data/book_bookmarks.json.bak` appears
+      within the hour.
+- [ ] `/book leaderboard` is public; `/book stats`, `/book shelf` and the rest are private.
+
+**Books kept out of music**
+
+- [ ] The Plex-side filter syntax (`album.id!=…&artist.id!=…`) was taken from probes before the
+      build and has not been re-checked since. `!list` browse shows no chapters, and the Hitster
+      pool shrinks by the number of dated book parts. If either is wrong, every Plex-side count
+      and sample is wrong too.
+- [ ] `/vibe`, `/sonic` and `!random` never return a chapter over several runs.
+- [ ] `/vibe <a book author>`: nothing queued, a "📚 Also in your books" line.
+- [ ] `/sonic songs like <a book title>`: the redirect line, no anchor track.
+- [ ] `!quotethebard start easy playlist <a playlist of only books>`: refused.
+- [ ] `!play <a book title>`: music hits as before plus the redirect line; a page of only books
+      says "Those are audiobook chapters, not songs." `!album` and `!artist` for a book behave the
+      same.
+- [ ] `!playlist add` of a book chapter is refused with the redirect.
+- [ ] A smart Plex playlist that contains books: "📚 Skipped N audiobook tracks in this smart
+      playlist." A regular playlist with a book in it still plays it.
+- [ ] `/curate` asking for audiobooks or a book author in Music: no chapter files recommended.
+- [ ] `!groupwatch` with target Music, and `!quest` in the Music realm: no chapters.
+- [ ] `!identify`, answer Yes (vault), describe a long book you own: one suspect for the book, no
+      "Whoa there … possible suspects". (It still says "Grab the popcorn", which reads oddly for a
+      book; that wording is unchanged.)
+- [ ] `!identify`, answer No (global), naming an audiobook author: still "Good news! … in the
+      vault".
+- [ ] `!releasesurvival start albums` over several rounds: no audiobook or podcast albums.
+- [ ] `/tags coverage`: the track total drops by about the number of catalogued book tracks.
+- [ ] Turn `audiobooksEnabled` off: books stay out of music. Turn `audiobooksExcludeFromMusic`
+      off: they come back. Turn both back on.
+
+## Phase 8: Voice health and process priority (live)
+
+- [ ] During a track, Task Manager → Details shows `node.exe` at Above normal and its `ffmpeg.exe`
+      at Normal.
+- [ ] `/config` → Voice → Bot process priority → Normal: the log says `Process priority: normal`
+      at once, no restart, and Task Manager agrees. Set it back.
+- [ ] `!voicehealth` while the log is off: it explains how to turn it on.
+- [ ] `/config` → Voice → Voice health log → on: the log says `Voice health log on`, no restart.
+      Turned on mid-track, rows appear within a minute (it adopts the playing connection).
+- [ ] `!voicehealth` during music: one row per minute with packets near 3,000, idle minutes
+      hidden and counted in the title.
+- [ ] `!voicehealth mark choppy for 2 s`: replies "**Marked.**" with the last 2 minutes, and the
+      `mark` event is in the list.
+- [ ] `!voicehealth 999` gives the usage line; `/voicehealth show minutes:5` and
+      `/voicehealth mark` work.
+- [ ] During a book: `track` events per part, and `book-early-end` events if Plex stalls.
+- [ ] `data/logs/voice-<today>.jsonl` gains one `min` line per active minute and nothing while
+      idle.
+- [ ] `!voicehealth 120` after a long session still fits one message (oldest minutes dropped).
+- [ ] Pull the network for a few seconds mid-track: the minute shows `N` and the events show
+      `conn` or `net` changes.
+- [ ] Turn the log off: `Voice health log off`, and the file stops growing.
 
 ---
 

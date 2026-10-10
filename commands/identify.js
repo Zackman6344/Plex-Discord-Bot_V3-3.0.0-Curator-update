@@ -2,9 +2,31 @@ const config = require('../config/config.js');
 const { getModel } = require('../helpers/geminiAPI.js');
 const { getPlex } = require('../helpers/plexClient.js');
 const logger = require('../helpers/logger.js');
+const longForm = require('../helpers/longForm.js');
 
 const model = getModel({ model: "gemini-2.5-pro" });
 const plex = getPlex();
+
+// One suspect per audiobook or podcast, not one per chapter: a work's chapters all match the
+// same keywords, so a single long book would trip SAFETY_LIMIT on any description of it.
+// Long-form tracks no catalog work claims (a podcast's brand-new episode album) are dropped.
+function collapseBooks(items) {
+    const { music, books } = longForm.partition(items);
+    if (books.length === 0) return music;
+    const works = new Map();
+    for (const track of books) {
+        const work = longForm.worksFor([track])[0];
+        if (!work || works.has(work)) continue;
+        const kind = work.kind === 'podcast' ? 'A podcast' : 'An audiobook';
+        works.set(work, {
+            title: work.title,
+            grandparentTitle: work.author,
+            year: track.year || track.parentYear,
+            summary: `${kind} by ${work.author || 'an unknown author'}${work.narrator ? `, read by ${work.narrator}` : ''}.`
+        });
+    }
+    return music.concat([...works.values()]);
+}
 
 const promptUser = async (channel, authorId, text, time = 60000) => {
     if (text) await channel.send(text);
@@ -83,7 +105,8 @@ module.exports = {
                         if (targetSection && targetSection.type === 'artist') queryUrl += `?type=10`;
 
                         const libraryData = await plex.query(queryUrl);
-                        const allItems = libraryData.MediaContainer.Metadata || [];
+                        let allItems = libraryData.MediaContainer.Metadata || [];
+                        if (targetSection && targetSection.type === 'artist') allItems = collapseBooks(allItems);
 
                         await statusMsg.edit(`🔍 **Detective Mode [VAULT RESTRICTED]**\n✅ Netted ${typeData.keywords.length} keywords\n⏳ *Sifting through the server files...*`);
 

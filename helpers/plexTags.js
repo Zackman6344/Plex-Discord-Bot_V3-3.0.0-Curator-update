@@ -12,6 +12,7 @@
 
 const { getPlex } = require('./plexClient.js');
 const logger = require('./logger.js');
+const longForm = require('./longForm.js');
 
 const VOCAB_TTL_MS = 60 * 60 * 1000;
 const DEFAULT_TAG_LIMIT = 400;
@@ -79,10 +80,12 @@ function resolveTag(list, name) {
 async function fetchTracksByTag(sectionKey, kind, tagKey, limit = DEFAULT_TAG_LIMIT) {
     try {
         const plex = getPlex();
-        const res = await plex.query(
+        // The cap applies server-side, so chapters sharing a tag would otherwise fill it and
+        // push the tag's music past the last row.
+        const res = await plex.query(longForm.withExclusion(
             `/library/sections/${sectionKey}/all?type=10&${kind}=${encodeURIComponent(tagKey)}` +
             `&X-Plex-Container-Start=0&X-Plex-Container-Size=${limit}`
-        );
+        ));
         return (res.MediaContainer && res.MediaContainer.Metadata) || [];
     } catch (err) {
         logger.warn(`Plex ${kind} query failed for tag ${tagKey}:`, err.message || err);
@@ -160,11 +163,20 @@ async function fetchTracksByRatingKeys(ratingKeys = []) {
     return out;
 }
 
-/** Total tracks in the music section, for sampling and coverage estimates. */
+// The one URL countTracks and sampleRandomTracks both page. Sample offsets are drawn from the
+// count, so if the two disagreed about excluding books, offsets would run past the end of the
+// filtered listing or land on book chapters.
+function sectionTracksUrl(sectionKey, start, size) {
+    return longForm.withExclusion(
+        `/library/sections/${sectionKey}/all?type=10&X-Plex-Container-Start=${start}&X-Plex-Container-Size=${size}`
+    );
+}
+
+/** Total music tracks in the section (books excluded), for sampling and coverage estimates. */
 async function countTracks(sectionKey) {
     try {
         const plex = getPlex();
-        const res = await plex.query(`/library/sections/${sectionKey}/all?type=10&X-Plex-Container-Start=0&X-Plex-Container-Size=0`);
+        const res = await plex.query(sectionTracksUrl(sectionKey, 0, 0));
         const mc = (res && res.MediaContainer) || {};
         return Number(mc.totalSize != null ? mc.totalSize : mc.size) || 0;
     } catch (err) {
@@ -193,9 +205,7 @@ async function sampleRandomTracks(sectionKey, count, knownTotal = null) {
     for (let i = 0; i < windows; i++) {
         const start = Math.floor(Math.random() * Math.max(1, total - windowSize));
         try {
-            const res = await plex.query(
-                `/library/sections/${sectionKey}/all?type=10&X-Plex-Container-Start=${start}&X-Plex-Container-Size=${windowSize}`
-            );
+            const res = await plex.query(sectionTracksUrl(sectionKey, start, windowSize));
             for (const track of (res.MediaContainer && res.MediaContainer.Metadata) || []) {
                 seen.set(String(track.ratingKey), track);
             }

@@ -1,0 +1,6630 @@
+{
+	"albums": [
+		{
+			"ratingKey": "1001",
+			"key": "/library/metadata/1001/children",
+			"parentRatingKey": "9001",
+			"type": "album",
+			"title": "Ashfall (Mara Lindqvist,...)",
+			"parentTitle": "Avery Quill",
+			"Genre": [
+				{
+					"tag": "English ABook"
+				}
+			]
+		},
+		{
+			"ratingKey": "1002",
+			"key": "/library/metadata/1002/children",
+			"parentRatingKey": "9001",
+			"type": "album",
+			"title": "Ashfall (Mara Lindqvist,...)",
+			"parentTitle": "Avery Quill",
+			"Genre": [
+				{
+					"tag": "English ABook"
+				}
+			]
+		},
+		{
+			"ratingKey": "1003",
+			"key": "/library/metadata/1003/children",
+			"parentRatingKey": "9001",
+			"type": "album",
+			"title": "Ashfall (Mara Lindqvist,...)",
+			"parentTitle": "Avery Quill",
+			"Genre": [
+				{
+					"tag": "English ABook"
+				}
+			]
+		},
+		{
+			"ratingKey": "1004",
+			"key": "/library/metadata/1004/children",
+			"parentRatingKey": "9001",
+			"type": "album",
+			"title": "Ashfall (Mara Lindqvist,...)",
+			"parentTitle": "Avery Quill",
+			"Genre": [
+				{
+					"tag": "English ABook"
+				}
+			]
+		},
+		{
+			"ratingKey": "1005",
+			"key": "/library/metadata/1005/children",
+			"parentRatingKey": "9001",
+			"type": "album",
+			"title": "Ashfall (Mara Lindqvist,...)",
+			"parentTitle": "Avery Quill",
+			"Genre": [
+				{
+					"tag": "English ABook"
+				}
+			]
+		},
+		{
+			"ratingKey": "1006",
+			"key": "/library/metadata/1006/children",
+			"parentRatingKey": "9002",
+			"type": "album",
+			"title": "Ashfall (Mara Lindqvist,...)",
+			"parentTitle": "GraphicAudio",
+			"Genre": [
+				{
+					"tag": "English ABook"
+				}
+			]
+		},
+		{
+			"ratingKey": "1007",
+			"key": "/library/metadata/1007/children",
+			"parentRatingKey": "9001",
+			"type": "album",
+			"title": "Ashfall (Mara Lindqvist,...)",
+			"parentTitle": "Avery Quill",
+			"Genre": [
+				{
+					"tag": "English ABook"
+				}
+			]
+		},
+		{
+			"ratingKey": "1010",
+			"key": "/library/metadata/1010/children",
+			"parentRatingKey": "9002",
+			"type": "album",
+			"title": "The Glass Road (3 of 3)",
+			"parentTitle": "GraphicAudio"
+		},
+		{
+			"ratingKey": "1020",
+			"key": "/library/metadata/1020/children",
+			"parentRatingKey": "9003",
+			"type": "album",
+			"title": "The Long Tide [01]",
+			"parentTitle": "GraphicAudio [Corin Vale]"
+		},
+		{
+			"ratingKey": "1021",
+			"key": "/library/metadata/1021/children",
+			"parentRatingKey": "9003",
+			"type": "album",
+			"title": "The Long Tide [02]",
+			"parentTitle": "GraphicAudio [Corin Vale]"
+		},
+		{
+			"ratingKey": "1022",
+			"key": "/library/metadata/1022/children",
+			"parentRatingKey": "9003",
+			"type": "album",
+			"title": "The Long Tide 3: Tidefall (3 of 3)",
+			"parentTitle": "GraphicAudio [Corin Vale]"
+		},
+		{
+			"ratingKey": "1030",
+			"key": "/library/metadata/1030/children",
+			"parentRatingKey": "9004",
+			"type": "album",
+			"title": "The Glass Sea",
+			"parentTitle": "Ilse Moreau"
+		},
+		{
+			"ratingKey": "1031",
+			"key": "/library/metadata/1031/children",
+			"parentRatingKey": "9004",
+			"type": "album",
+			"title": "The Far Shore",
+			"parentTitle": "Ilse Moreau"
+		},
+		{
+			"ratingKey": "1032",
+			"key": "/library/metadata/1032/children",
+			"parentRatingKey": "9004",
+			"type": "album",
+			"title": "The Far Shore",
+			"parentTitle": "Ilse Moreau"
+		},
+		{
+			"ratingKey": "1033",
+			"key": "/library/metadata/1033/children",
+			"parentRatingKey": "9004",
+			"type": "album",
+			"title": "The Night Gate",
+			"parentTitle": "Ilse Moreau"
+		},
+		{
+			"ratingKey": "1034",
+			"key": "/library/metadata/1034/children",
+			"parentRatingKey": "9004",
+			"type": "album",
+			"title": "The Night Gate",
+			"parentTitle": "Ilse Moreau"
+		},
+		{
+			"ratingKey": "1040",
+			"key": "/library/metadata/1040/children",
+			"parentRatingKey": "9005",
+			"type": "album",
+			"title": "The Hollow King",
+			"parentTitle": "R.J. Ashdown"
+		},
+		{
+			"ratingKey": "1050",
+			"key": "/library/metadata/1050/children",
+			"parentRatingKey": "9006",
+			"type": "album",
+			"title": "The Tin Valley",
+			"parentTitle": "Lantern Hollow"
+		},
+		{
+			"ratingKey": "1051",
+			"key": "/library/metadata/1051/children",
+			"parentRatingKey": "9006",
+			"type": "album",
+			"title": "Tin Valley OST",
+			"parentTitle": "Lantern Hollow"
+		},
+		{
+			"ratingKey": "1060",
+			"key": "/library/metadata/1060/children",
+			"parentRatingKey": "9007",
+			"type": "album",
+			"title": "[Unknown Album]",
+			"parentTitle": "Sam Drift"
+		},
+		{
+			"ratingKey": "1070",
+			"key": "/library/metadata/1070/children",
+			"parentRatingKey": "9008",
+			"type": "album",
+			"title": "well.",
+			"parentTitle": "Theo Bramble",
+			"Genre": [
+				{
+					"tag": "Comedy/Spoken"
+				}
+			]
+		},
+		{
+			"ratingKey": "1080",
+			"key": "/library/metadata/1080/children",
+			"parentRatingKey": "9009",
+			"type": "album",
+			"title": "Lighthouse",
+			"parentTitle": "The Quiet Hours"
+		},
+		{
+			"ratingKey": "1090",
+			"key": "/library/metadata/1090/children",
+			"parentRatingKey": "9010",
+			"type": "album",
+			"title": "Drama CD Vol 1",
+			"parentTitle": "Studio Kiseki"
+		},
+		{
+			"ratingKey": "1091",
+			"key": "/library/metadata/1091/children",
+			"parentRatingKey": "9011",
+			"type": "album",
+			"title": "Uploads",
+			"parentTitle": "Various Uploads"
+		}
+	],
+	"tracks": [
+		{
+			"ratingKey": "20001",
+			"key": "/library/metadata/20001",
+			"parentRatingKey": "1001",
+			"grandparentRatingKey": "9001",
+			"type": "track",
+			"title": "Ashfall: The Ember Throne Part 1 Part 1",
+			"grandparentTitle": "Avery Quill",
+			"parentTitle": "Ashfall (Mara Lindqvist,...)",
+			"parentIndex": 1,
+			"duration": 3900000,
+			"addedAt": 1700000001,
+			"Media": [
+				{
+					"id": 50001,
+					"duration": 3900000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50001,
+							"key": "/library/parts/50001/1700000000/01.The Ember Throne.mp3",
+							"duration": 3900000,
+							"file": "M:/Music/Avery Quill/1.The Ember Throne/The Ember Throne 1/01.The Ember Throne.mp3",
+							"size": 62400046,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 1
+		},
+		{
+			"ratingKey": "20002",
+			"key": "/library/metadata/20002",
+			"parentRatingKey": "1001",
+			"grandparentRatingKey": "9001",
+			"type": "track",
+			"title": "Ashfall: The Ember Throne Part 1 Part 2",
+			"grandparentTitle": "Avery Quill",
+			"parentTitle": "Ashfall (Mara Lindqvist,...)",
+			"parentIndex": 1,
+			"duration": 3780000,
+			"addedAt": 1700000002,
+			"Media": [
+				{
+					"id": 50002,
+					"duration": 3780000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50002,
+							"key": "/library/parts/50002/1700000000/02.The Ember Throne.mp3",
+							"duration": 3780000,
+							"file": "M:/Music/Avery Quill/1.The Ember Throne/The Ember Throne 1/02.The Ember Throne.mp3",
+							"size": 60480047,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 2
+		},
+		{
+			"ratingKey": "20003",
+			"key": "/library/metadata/20003",
+			"parentRatingKey": "1001",
+			"grandparentRatingKey": "9001",
+			"type": "track",
+			"title": "03.The Ember Throne",
+			"grandparentTitle": "Avery Quill",
+			"parentTitle": "Ashfall (Mara Lindqvist,...)",
+			"parentIndex": 1,
+			"duration": 3660000,
+			"addedAt": 1700000003,
+			"Media": [
+				{
+					"id": 50003,
+					"duration": 3660000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50003,
+							"key": "/library/parts/50003/1700000000/03.The Ember Throne.mp3",
+							"duration": 3660000,
+							"file": "M:/Music/Avery Quill/1.The Ember Throne/The Ember Throne 2/03.The Ember Throne.mp3",
+							"size": 58560048,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 3
+		},
+		{
+			"ratingKey": "20004",
+			"key": "/library/metadata/20004",
+			"parentRatingKey": "1001",
+			"grandparentRatingKey": "9001",
+			"type": "track",
+			"title": "04.The Ember Throne",
+			"grandparentTitle": "Avery Quill",
+			"parentTitle": "Ashfall (Mara Lindqvist,...)",
+			"parentIndex": 1,
+			"duration": 3540000,
+			"addedAt": 1700000004,
+			"Media": [
+				{
+					"id": 50004,
+					"duration": 3540000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50004,
+							"key": "/library/parts/50004/1700000000/04.The Ember Throne.mp3",
+							"duration": 3540000,
+							"file": "M:/Music/Avery Quill/1.The Ember Throne/The Ember Throne 2/04.The Ember Throne.mp3",
+							"size": 56640049,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 4
+		},
+		{
+			"ratingKey": "20005",
+			"key": "/library/metadata/20005",
+			"parentRatingKey": "1002",
+			"grandparentRatingKey": "9001",
+			"type": "track",
+			"title": "Ashfall: The Salt Crown Part 1 Part 1",
+			"grandparentTitle": "Avery Quill",
+			"parentTitle": "Ashfall (Mara Lindqvist,...)",
+			"parentIndex": 1,
+			"duration": 3900000,
+			"addedAt": 1700000005,
+			"Media": [
+				{
+					"id": 50005,
+					"duration": 3900000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50005,
+							"key": "/library/parts/50005/1700000000/01.The Salt Crown.mp3",
+							"duration": 3900000,
+							"file": "M:/Music/Avery Quill/2.The Salt Crown/The Salt Crown 1/01.The Salt Crown.mp3",
+							"size": 62400050,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 1
+		},
+		{
+			"ratingKey": "20006",
+			"key": "/library/metadata/20006",
+			"parentRatingKey": "1002",
+			"grandparentRatingKey": "9001",
+			"type": "track",
+			"title": "Ashfall: The Salt Crown Part 1 Part 2",
+			"grandparentTitle": "Avery Quill",
+			"parentTitle": "Ashfall (Mara Lindqvist,...)",
+			"parentIndex": 1,
+			"duration": 3780000,
+			"addedAt": 1700000006,
+			"Media": [
+				{
+					"id": 50006,
+					"duration": 3780000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50006,
+							"key": "/library/parts/50006/1700000000/02.The Salt Crown.mp3",
+							"duration": 3780000,
+							"file": "M:/Music/Avery Quill/2.The Salt Crown/The Salt Crown 1/02.The Salt Crown.mp3",
+							"size": 60480051,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 2
+		},
+		{
+			"ratingKey": "20007",
+			"key": "/library/metadata/20007",
+			"parentRatingKey": "1002",
+			"grandparentRatingKey": "9001",
+			"type": "track",
+			"title": "03.The Salt Crown",
+			"grandparentTitle": "Avery Quill",
+			"parentTitle": "Ashfall (Mara Lindqvist,...)",
+			"parentIndex": 1,
+			"duration": 3660000,
+			"addedAt": 1700000007,
+			"Media": [
+				{
+					"id": 50007,
+					"duration": 3660000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50007,
+							"key": "/library/parts/50007/1700000000/03.The Salt Crown.mp3",
+							"duration": 3660000,
+							"file": "M:/Music/Avery Quill/2.The Salt Crown/The Salt Crown 2/03.The Salt Crown.mp3",
+							"size": 58560052,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 3
+		},
+		{
+			"ratingKey": "20008",
+			"key": "/library/metadata/20008",
+			"parentRatingKey": "1002",
+			"grandparentRatingKey": "9001",
+			"type": "track",
+			"title": "04.The Salt Crown",
+			"grandparentTitle": "Avery Quill",
+			"parentTitle": "Ashfall (Mara Lindqvist,...)",
+			"parentIndex": 1,
+			"duration": 3540000,
+			"addedAt": 1700000008,
+			"Media": [
+				{
+					"id": 50008,
+					"duration": 3540000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50008,
+							"key": "/library/parts/50008/1700000000/04.The Salt Crown.mp3",
+							"duration": 3540000,
+							"file": "M:/Music/Avery Quill/2.The Salt Crown/The Salt Crown 2/04.The Salt Crown.mp3",
+							"size": 56640053,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 4
+		},
+		{
+			"ratingKey": "20009",
+			"key": "/library/metadata/20009",
+			"parentRatingKey": "1003",
+			"grandparentRatingKey": "9001",
+			"type": "track",
+			"title": "Ashfall: The Last Lantern Part 1 Part 1",
+			"grandparentTitle": "Avery Quill",
+			"parentTitle": "Ashfall (Mara Lindqvist,...)",
+			"parentIndex": 1,
+			"duration": 3900000,
+			"addedAt": 1700000009,
+			"Media": [
+				{
+					"id": 50009,
+					"duration": 3900000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50009,
+							"key": "/library/parts/50009/1700000000/01.The Last Lantern.mp3",
+							"duration": 3900000,
+							"file": "M:/Music/Avery Quill/3.The Last Lantern/The Last Lantern 1/01.The Last Lantern.mp3",
+							"size": 62400054,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 1
+		},
+		{
+			"ratingKey": "20010",
+			"key": "/library/metadata/20010",
+			"parentRatingKey": "1003",
+			"grandparentRatingKey": "9001",
+			"type": "track",
+			"title": "Ashfall: The Last Lantern Part 1 Part 2",
+			"grandparentTitle": "Avery Quill",
+			"parentTitle": "Ashfall (Mara Lindqvist,...)",
+			"parentIndex": 1,
+			"duration": 3780000,
+			"addedAt": 1700000010,
+			"Media": [
+				{
+					"id": 50010,
+					"duration": 3780000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50010,
+							"key": "/library/parts/50010/1700000000/02.The Last Lantern.mp3",
+							"duration": 3780000,
+							"file": "M:/Music/Avery Quill/3.The Last Lantern/The Last Lantern 1/02.The Last Lantern.mp3",
+							"size": 60480055,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 2
+		},
+		{
+			"ratingKey": "20011",
+			"key": "/library/metadata/20011",
+			"parentRatingKey": "1003",
+			"grandparentRatingKey": "9001",
+			"type": "track",
+			"title": "03.The Last Lantern",
+			"grandparentTitle": "Avery Quill",
+			"parentTitle": "Ashfall (Mara Lindqvist,...)",
+			"parentIndex": 1,
+			"duration": 3660000,
+			"addedAt": 1700000011,
+			"Media": [
+				{
+					"id": 50011,
+					"duration": 3660000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50011,
+							"key": "/library/parts/50011/1700000000/03.The Last Lantern.mp3",
+							"duration": 3660000,
+							"file": "M:/Music/Avery Quill/3.The Last Lantern/The Last Lantern 1/03.The Last Lantern.mp3",
+							"size": 58560056,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 3
+		},
+		{
+			"ratingKey": "20012",
+			"key": "/library/metadata/20012",
+			"parentRatingKey": "1004",
+			"grandparentRatingKey": "9001",
+			"type": "track",
+			"title": "1.The Iron Wake",
+			"grandparentTitle": "Avery Quill",
+			"parentTitle": "Ashfall (Mara Lindqvist,...)",
+			"parentIndex": 1,
+			"duration": 4140000,
+			"addedAt": 1700000012,
+			"Media": [
+				{
+					"id": 50012,
+					"duration": 4140000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50012,
+							"key": "/library/parts/50012/1700000000/1.The Iron Wake.mp3",
+							"duration": 4140000,
+							"file": "M:/Music/Avery Quill/4.The Iron Wake/1.The Iron Wake.mp3",
+							"size": 66240057,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20013",
+			"key": "/library/metadata/20013",
+			"parentRatingKey": "1004",
+			"grandparentRatingKey": "9001",
+			"type": "track",
+			"title": "2.The Iron Wake",
+			"grandparentTitle": "Avery Quill",
+			"parentTitle": "Ashfall (Mara Lindqvist,...)",
+			"parentIndex": 1,
+			"duration": 4020000,
+			"addedAt": 1700000013,
+			"Media": [
+				{
+					"id": 50013,
+					"duration": 4020000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50013,
+							"key": "/library/parts/50013/1700000000/2.The Iron Wake.mp3",
+							"duration": 4020000,
+							"file": "M:/Music/Avery Quill/4.The Iron Wake/2.The Iron Wake.mp3",
+							"size": 64320058,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20014",
+			"key": "/library/metadata/20014",
+			"parentRatingKey": "1004",
+			"grandparentRatingKey": "9001",
+			"type": "track",
+			"title": "3.The Iron Wake",
+			"grandparentTitle": "Avery Quill",
+			"parentTitle": "Ashfall (Mara Lindqvist,...)",
+			"parentIndex": 1,
+			"duration": 3900000,
+			"addedAt": 1700000014,
+			"Media": [
+				{
+					"id": 50014,
+					"duration": 3900000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50014,
+							"key": "/library/parts/50014/1700000000/3.The Iron Wake.mp3",
+							"duration": 3900000,
+							"file": "M:/Music/Avery Quill/4.The Iron Wake/3.The Iron Wake.mp3",
+							"size": 62400059,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20015",
+			"key": "/library/metadata/20015",
+			"parentRatingKey": "1004",
+			"grandparentRatingKey": "9001",
+			"type": "track",
+			"title": "Sample",
+			"grandparentTitle": "Avery Quill",
+			"parentTitle": "Ashfall (Mara Lindqvist,...)",
+			"parentIndex": 1,
+			"duration": 72000,
+			"addedAt": 1700000015,
+			"Media": [
+				{
+					"id": 50015,
+					"duration": 72000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50015,
+							"key": "/library/parts/50015/1700000000/Sample.mp3",
+							"duration": 72000,
+							"file": "M:/Music/Avery Quill/4.The Iron Wake/Sample.mp3",
+							"size": 1152060,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 4
+		},
+		{
+			"ratingKey": "20016",
+			"key": "/library/metadata/20016",
+			"parentRatingKey": "1005",
+			"grandparentRatingKey": "9001",
+			"type": "track",
+			"title": "01.Shadows of Glass",
+			"grandparentTitle": "Avery Quill",
+			"parentTitle": "Ashfall (Mara Lindqvist,...)",
+			"parentIndex": 1,
+			"duration": 4380000,
+			"addedAt": 1700000016,
+			"Media": [
+				{
+					"id": 50016,
+					"duration": 4380000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50016,
+							"key": "/library/parts/50016/1700000000/01.Shadows of Glass.mp3",
+							"duration": 4380000,
+							"file": "M:/Music/Avery Quill/5.Shadows of Glass/01.Shadows of Glass.mp3",
+							"size": 70080061,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 1
+		},
+		{
+			"ratingKey": "20017",
+			"key": "/library/metadata/20017",
+			"parentRatingKey": "1005",
+			"grandparentRatingKey": "9001",
+			"type": "track",
+			"title": "02.Shadows of Glass",
+			"grandparentTitle": "Avery Quill",
+			"parentTitle": "Ashfall (Mara Lindqvist,...)",
+			"parentIndex": 1,
+			"duration": 4260000,
+			"addedAt": 1700000017,
+			"Media": [
+				{
+					"id": 50017,
+					"duration": 4260000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50017,
+							"key": "/library/parts/50017/1700000000/02.Shadows of Glass.mp3",
+							"duration": 4260000,
+							"file": "M:/Music/Avery Quill/5.Shadows of Glass/02.Shadows of Glass.mp3",
+							"size": 68160062,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 2
+		},
+		{
+			"ratingKey": "20018",
+			"key": "/library/metadata/20018",
+			"parentRatingKey": "1005",
+			"grandparentRatingKey": "9001",
+			"type": "track",
+			"title": "03.Shadows of Glass",
+			"grandparentTitle": "Avery Quill",
+			"parentTitle": "Ashfall (Mara Lindqvist,...)",
+			"parentIndex": 1,
+			"duration": 4140000,
+			"addedAt": 1700000018,
+			"Media": [
+				{
+					"id": 50018,
+					"duration": 4140000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50018,
+							"key": "/library/parts/50018/1700000000/03.Shadows of Glass.mp3",
+							"duration": 4140000,
+							"file": "M:/Music/Avery Quill/5.Shadows of Glass/03.Shadows of Glass.mp3",
+							"size": 66240063,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 3
+		},
+		{
+			"ratingKey": "20019",
+			"key": "/library/metadata/20019",
+			"parentRatingKey": "1006",
+			"grandparentRatingKey": "9002",
+			"type": "track",
+			"title": "01.The Copper Bells",
+			"grandparentTitle": "GraphicAudio",
+			"parentTitle": "Ashfall (Mara Lindqvist,...)",
+			"parentIndex": 1,
+			"duration": 4260000,
+			"addedAt": 1700000019,
+			"Media": [
+				{
+					"id": 50019,
+					"duration": 4260000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50019,
+							"key": "/library/parts/50019/1700000000/01.The Copper Bells.mp3",
+							"duration": 4260000,
+							"file": "M:/Music/Avery Quill/6.The Copper Bells/The Copper Bells 1/01.The Copper Bells.mp3",
+							"size": 68160064,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 1
+		},
+		{
+			"ratingKey": "20020",
+			"key": "/library/metadata/20020",
+			"parentRatingKey": "1006",
+			"grandparentRatingKey": "9002",
+			"type": "track",
+			"title": "02.The Copper Bells",
+			"grandparentTitle": "GraphicAudio",
+			"parentTitle": "Ashfall (Mara Lindqvist,...)",
+			"parentIndex": 1,
+			"duration": 4140000,
+			"addedAt": 1700000020,
+			"Media": [
+				{
+					"id": 50020,
+					"duration": 4140000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50020,
+							"key": "/library/parts/50020/1700000000/02.The Copper Bells.mp3",
+							"duration": 4140000,
+							"file": "M:/Music/Avery Quill/6.The Copper Bells/The Copper Bells 1/02.The Copper Bells.mp3",
+							"size": 66240065,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 2
+		},
+		{
+			"ratingKey": "20021",
+			"key": "/library/metadata/20021",
+			"parentRatingKey": "1007",
+			"grandparentRatingKey": "9001",
+			"type": "track",
+			"title": "03.The Copper Bells",
+			"grandparentTitle": "Avery Quill",
+			"parentTitle": "Ashfall (Mara Lindqvist,...)",
+			"parentIndex": 1,
+			"duration": 3780000,
+			"addedAt": 1700000021,
+			"Media": [
+				{
+					"id": 50021,
+					"duration": 3780000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50021,
+							"key": "/library/parts/50021/1700000000/03.The Copper Bells.mp3",
+							"duration": 3780000,
+							"file": "M:/Music/Avery Quill/6.The Copper Bells/The Copper Bells 2/03.The Copper Bells.mp3",
+							"size": 60480066,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 3
+		},
+		{
+			"ratingKey": "20022",
+			"key": "/library/metadata/20022",
+			"parentRatingKey": "1007",
+			"grandparentRatingKey": "9001",
+			"type": "track",
+			"title": "04.The Copper Bells",
+			"grandparentTitle": "Avery Quill",
+			"parentTitle": "Ashfall (Mara Lindqvist,...)",
+			"parentIndex": 1,
+			"duration": 3660000,
+			"addedAt": 1700000022,
+			"Media": [
+				{
+					"id": 50022,
+					"duration": 3660000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50022,
+							"key": "/library/parts/50022/1700000000/04.The Copper Bells.mp3",
+							"duration": 3660000,
+							"file": "M:/Music/Avery Quill/6.The Copper Bells/The Copper Bells 2/04.The Copper Bells.mp3",
+							"size": 58560067,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 4
+		},
+		{
+			"ratingKey": "20023",
+			"key": "/library/metadata/20023",
+			"parentRatingKey": "1007",
+			"grandparentRatingKey": "9001",
+			"type": "track",
+			"title": "1.Collected Tales",
+			"grandparentTitle": "Avery Quill",
+			"parentTitle": "Ashfall (Mara Lindqvist,...)",
+			"parentIndex": 1,
+			"duration": 2700000,
+			"addedAt": 1700000023,
+			"Media": [
+				{
+					"id": 50023,
+					"duration": 2700000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50023,
+							"key": "/library/parts/50023/1700000000/1.Collected Tales.mp3",
+							"duration": 2700000,
+							"file": "M:/Music/Avery Quill/7.Ashfall - Collected Tales/1.Collected Tales.mp3",
+							"size": 43200068,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 1
+		},
+		{
+			"ratingKey": "20024",
+			"key": "/library/metadata/20024",
+			"parentRatingKey": "1007",
+			"grandparentRatingKey": "9001",
+			"type": "track",
+			"title": "2.Collected Tales",
+			"grandparentTitle": "Avery Quill",
+			"parentTitle": "Ashfall (Mara Lindqvist,...)",
+			"parentIndex": 1,
+			"duration": 3000000,
+			"addedAt": 1700000024,
+			"Media": [
+				{
+					"id": 50024,
+					"duration": 3000000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50024,
+							"key": "/library/parts/50024/1700000000/2.Collected Tales.mp3",
+							"duration": 3000000,
+							"file": "M:/Music/Avery Quill/7.Ashfall - Collected Tales/2.Collected Tales.mp3",
+							"size": 48000069,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 2
+		},
+		{
+			"ratingKey": "20025",
+			"key": "/library/metadata/20025",
+			"parentRatingKey": "1007",
+			"grandparentRatingKey": "9001",
+			"type": "track",
+			"title": "3.Collected Tales",
+			"grandparentTitle": "Avery Quill",
+			"parentTitle": "Ashfall (Mara Lindqvist,...)",
+			"parentIndex": 1,
+			"duration": 2400000,
+			"addedAt": 1700000025,
+			"Media": [
+				{
+					"id": 50025,
+					"duration": 2400000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50025,
+							"key": "/library/parts/50025/1700000000/3.Collected Tales.mp3",
+							"duration": 2400000,
+							"file": "M:/Music/Avery Quill/7.Ashfall - Collected Tales/3.Collected Tales.mp3",
+							"size": 38400070,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 3
+		},
+		{
+			"ratingKey": "20026",
+			"key": "/library/metadata/20026",
+			"parentRatingKey": "1007",
+			"grandparentRatingKey": "9001",
+			"type": "track",
+			"title": "4.Collected Tales",
+			"grandparentTitle": "Avery Quill",
+			"parentTitle": "Ashfall (Mara Lindqvist,...)",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000026,
+			"Media": [
+				{
+					"id": 50026,
+					"duration": 180000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50026,
+							"key": "/library/parts/50026/1700000000/4.Collected Tales.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Avery Quill/7.Ashfall - Collected Tales/4.Collected Tales.mp3",
+							"size": 2880071,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 4
+		},
+		{
+			"ratingKey": "20027",
+			"key": "/library/metadata/20027",
+			"parentRatingKey": "1010",
+			"grandparentRatingKey": "9002",
+			"type": "track",
+			"title": "01 intro",
+			"grandparentTitle": "GraphicAudio",
+			"parentTitle": "The Glass Road (3 of 3)",
+			"parentIndex": 1,
+			"duration": 120000,
+			"addedAt": 1700000027,
+			"Media": [
+				{
+					"id": 50027,
+					"duration": 120000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50027,
+							"key": "/library/parts/50027/1700000000/01 The Glass Road (Grahpic Audio) - intro.mp3",
+							"duration": 120000,
+							"file": "M:/Music/Avery Quill/01 The Glass Road (Grahpic Audio) - intro.mp3",
+							"size": 1920072,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 1
+		},
+		{
+			"ratingKey": "20028",
+			"key": "/library/metadata/20028",
+			"parentRatingKey": "1010",
+			"grandparentRatingKey": "9002",
+			"type": "track",
+			"title": "01 Chapter 10",
+			"grandparentTitle": "GraphicAudio",
+			"parentTitle": "The Glass Road (3 of 3)",
+			"parentIndex": 1,
+			"duration": 1620000,
+			"addedAt": 1700000028,
+			"Media": [
+				{
+					"id": 50028,
+					"duration": 1620000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50028,
+							"key": "/library/parts/50028/1700000000/01 The Glass Road (Grahpic Audio) - Chapter 10.mp3",
+							"duration": 1620000,
+							"file": "M:/Music/Avery Quill/01 The Glass Road (Grahpic Audio) - Chapter 10.mp3",
+							"size": 25920073,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 1
+		},
+		{
+			"ratingKey": "20029",
+			"key": "/library/metadata/20029",
+			"parentRatingKey": "1010",
+			"grandparentRatingKey": "9002",
+			"type": "track",
+			"title": "01 Chapter 20",
+			"grandparentTitle": "GraphicAudio",
+			"parentTitle": "The Glass Road (3 of 3)",
+			"parentIndex": 1,
+			"duration": 1560000,
+			"addedAt": 1700000029,
+			"Media": [
+				{
+					"id": 50029,
+					"duration": 1560000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50029,
+							"key": "/library/parts/50029/1700000000/01 The Glass Road (Graphic Audio) - Chapter 20.mp3",
+							"duration": 1560000,
+							"file": "M:/Music/Avery Quill/01 The Glass Road (Graphic Audio) - Chapter 20.mp3",
+							"size": 24960074,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 1
+		},
+		{
+			"ratingKey": "20030",
+			"key": "/library/metadata/20030",
+			"parentRatingKey": "1010",
+			"grandparentRatingKey": "9002",
+			"type": "track",
+			"title": "02 Prelude",
+			"grandparentTitle": "GraphicAudio",
+			"parentTitle": "The Glass Road (3 of 3)",
+			"parentIndex": 1,
+			"duration": 540000,
+			"addedAt": 1700000030,
+			"Media": [
+				{
+					"id": 50030,
+					"duration": 540000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50030,
+							"key": "/library/parts/50030/1700000000/02 The Glass Road (Grahpic Audio) - Prelude.mp3",
+							"duration": 540000,
+							"file": "M:/Music/Avery Quill/02 The Glass Road (Grahpic Audio) - Prelude.mp3",
+							"size": 8640075,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 2
+		},
+		{
+			"ratingKey": "20031",
+			"key": "/library/metadata/20031",
+			"parentRatingKey": "1010",
+			"grandparentRatingKey": "9002",
+			"type": "track",
+			"title": "02 Chapter 11",
+			"grandparentTitle": "GraphicAudio",
+			"parentTitle": "The Glass Road (3 of 3)",
+			"parentIndex": 1,
+			"duration": 1440000,
+			"addedAt": 1700000031,
+			"Media": [
+				{
+					"id": 50031,
+					"duration": 1440000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50031,
+							"key": "/library/parts/50031/1700000000/02 The Glass Road (Grahpic Audio) - Chapter 11.mp3",
+							"duration": 1440000,
+							"file": "M:/Music/Avery Quill/02 The Glass Road (Grahpic Audio) - Chapter 11.mp3",
+							"size": 23040076,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 2
+		},
+		{
+			"ratingKey": "20032",
+			"key": "/library/metadata/20032",
+			"parentRatingKey": "1010",
+			"grandparentRatingKey": "9002",
+			"type": "track",
+			"title": "02 Chapter 21",
+			"grandparentTitle": "GraphicAudio",
+			"parentTitle": "The Glass Road (3 of 3)",
+			"parentIndex": 1,
+			"duration": 1380000,
+			"addedAt": 1700000032,
+			"Media": [
+				{
+					"id": 50032,
+					"duration": 1380000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50032,
+							"key": "/library/parts/50032/1700000000/02 The Glass Road (Graphic Audio) - Chapter 21.mp3",
+							"duration": 1380000,
+							"file": "M:/Music/Avery Quill/02 The Glass Road (Graphic Audio) - Chapter 21.mp3",
+							"size": 22080077,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 2
+		},
+		{
+			"ratingKey": "20033",
+			"key": "/library/metadata/20033",
+			"parentRatingKey": "1010",
+			"grandparentRatingKey": "9002",
+			"type": "track",
+			"title": "03 Prologue",
+			"grandparentTitle": "GraphicAudio",
+			"parentTitle": "The Glass Road (3 of 3)",
+			"parentIndex": 1,
+			"duration": 1860000,
+			"addedAt": 1700000033,
+			"Media": [
+				{
+					"id": 50033,
+					"duration": 1860000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50033,
+							"key": "/library/parts/50033/1700000000/03 The Glass Road (Grahpic Audio) - Prologue.mp3",
+							"duration": 1860000,
+							"file": "M:/Music/Avery Quill/03 The Glass Road (Grahpic Audio) - Prologue.mp3",
+							"size": 29760078,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 3
+		},
+		{
+			"ratingKey": "20034",
+			"key": "/library/metadata/20034",
+			"parentRatingKey": "1010",
+			"grandparentRatingKey": "9002",
+			"type": "track",
+			"title": "03 Chapter 12",
+			"grandparentTitle": "GraphicAudio",
+			"parentTitle": "The Glass Road (3 of 3)",
+			"parentIndex": 1,
+			"duration": 1740000,
+			"addedAt": 1700000034,
+			"Media": [
+				{
+					"id": 50034,
+					"duration": 1740000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50034,
+							"key": "/library/parts/50034/1700000000/03 The Glass Road (Grahpic Audio) - Chapter 12.mp3",
+							"duration": 1740000,
+							"file": "M:/Music/Avery Quill/03 The Glass Road (Grahpic Audio) - Chapter 12.mp3",
+							"size": 27840079,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 3
+		},
+		{
+			"ratingKey": "20035",
+			"key": "/library/metadata/20035",
+			"parentRatingKey": "1010",
+			"grandparentRatingKey": "9002",
+			"type": "track",
+			"title": "03 Epilogue",
+			"grandparentTitle": "GraphicAudio",
+			"parentTitle": "The Glass Road (3 of 3)",
+			"parentIndex": 1,
+			"duration": 1080000,
+			"addedAt": 1700000035,
+			"Media": [
+				{
+					"id": 50035,
+					"duration": 1080000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50035,
+							"key": "/library/parts/50035/1700000000/03 The Glass Road (Graphic Audio) - Epilogue.mp3",
+							"duration": 1080000,
+							"file": "M:/Music/Avery Quill/03 The Glass Road (Graphic Audio) - Epilogue.mp3",
+							"size": 17280080,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 3
+		},
+		{
+			"ratingKey": "20036",
+			"key": "/library/metadata/20036",
+			"parentRatingKey": "1010",
+			"grandparentRatingKey": "9002",
+			"type": "track",
+			"title": "04 Chapter 1",
+			"grandparentTitle": "GraphicAudio",
+			"parentTitle": "The Glass Road (3 of 3)",
+			"parentIndex": 1,
+			"duration": 1560000,
+			"addedAt": 1700000036,
+			"Media": [
+				{
+					"id": 50036,
+					"duration": 1560000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50036,
+							"key": "/library/parts/50036/1700000000/04 The Glass Road (Grahpic Audio) - Chapter 1.mp3",
+							"duration": 1560000,
+							"file": "M:/Music/Avery Quill/04 The Glass Road (Grahpic Audio) - Chapter 1.mp3",
+							"size": 24960081,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 4
+		},
+		{
+			"ratingKey": "20037",
+			"key": "/library/metadata/20037",
+			"parentRatingKey": "1010",
+			"grandparentRatingKey": "9002",
+			"type": "track",
+			"title": "04 Endnote",
+			"grandparentTitle": "GraphicAudio",
+			"parentTitle": "The Glass Road (3 of 3)",
+			"parentIndex": 1,
+			"duration": 120000,
+			"addedAt": 1700000037,
+			"Media": [
+				{
+					"id": 50037,
+					"duration": 120000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50037,
+							"key": "/library/parts/50037/1700000000/04 The Glass Road (Graphic Audio) - Endnote.mp3",
+							"duration": 120000,
+							"file": "M:/Music/Avery Quill/04 The Glass Road (Graphic Audio) - Endnote.mp3",
+							"size": 1920082,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 4
+		},
+		{
+			"ratingKey": "20038",
+			"key": "/library/metadata/20038",
+			"parentRatingKey": "1010",
+			"grandparentRatingKey": "9002",
+			"type": "track",
+			"title": "05 Chapter 2",
+			"grandparentTitle": "GraphicAudio",
+			"parentTitle": "The Glass Road (3 of 3)",
+			"parentIndex": 1,
+			"duration": 1680000,
+			"addedAt": 1700000038,
+			"Media": [
+				{
+					"id": 50038,
+					"duration": 1680000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50038,
+							"key": "/library/parts/50038/1700000000/05 The Glass Road (Grahpic Audio) - Chapter 2.mp3",
+							"duration": 1680000,
+							"file": "M:/Music/Avery Quill/05 The Glass Road (Grahpic Audio) - Chapter 2.mp3",
+							"size": 26880083,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 5
+		},
+		{
+			"ratingKey": "20039",
+			"key": "/library/metadata/20039",
+			"parentRatingKey": "1010",
+			"grandparentRatingKey": "9002",
+			"type": "track",
+			"title": "05 outro",
+			"grandparentTitle": "GraphicAudio",
+			"parentTitle": "The Glass Road (3 of 3)",
+			"parentIndex": 1,
+			"duration": 240000,
+			"addedAt": 1700000039,
+			"Media": [
+				{
+					"id": 50039,
+					"duration": 240000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50039,
+							"key": "/library/parts/50039/1700000000/05 The Glass Road (Graphic Audio) - outro.mp3",
+							"duration": 240000,
+							"file": "M:/Music/Avery Quill/05 The Glass Road (Graphic Audio) - outro.mp3",
+							"size": 3840084,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 5
+		},
+		{
+			"ratingKey": "20040",
+			"key": "/library/metadata/20040",
+			"parentRatingKey": "1010",
+			"grandparentRatingKey": "9002",
+			"type": "track",
+			"title": "06 Interlude 1-1",
+			"grandparentTitle": "GraphicAudio",
+			"parentTitle": "The Glass Road (3 of 3)",
+			"parentIndex": 1,
+			"duration": 1020000,
+			"addedAt": 1700000040,
+			"Media": [
+				{
+					"id": 50040,
+					"duration": 1020000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50040,
+							"key": "/library/parts/50040/1700000000/06 The Glass Road (Grahpic Audio) - Interlude 1-1.mp3",
+							"duration": 1020000,
+							"file": "M:/Music/Avery Quill/06 The Glass Road (Grahpic Audio) - Interlude 1-1.mp3",
+							"size": 16320085,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 6
+		},
+		{
+			"ratingKey": "20041",
+			"key": "/library/metadata/20041",
+			"parentRatingKey": "1010",
+			"grandparentRatingKey": "9002",
+			"type": "track",
+			"title": "07 Chapter 3",
+			"grandparentTitle": "GraphicAudio",
+			"parentTitle": "The Glass Road (3 of 3)",
+			"parentIndex": 1,
+			"duration": 1500000,
+			"addedAt": 1700000041,
+			"Media": [
+				{
+					"id": 50041,
+					"duration": 1500000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50041,
+							"key": "/library/parts/50041/1700000000/07 The Glass Road (Grahpic Audio) - Chapter 3.mp3",
+							"duration": 1500000,
+							"file": "M:/Music/Avery Quill/07 The Glass Road (Grahpic Audio) - Chapter 3.mp3",
+							"size": 24000086,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 7
+		},
+		{
+			"ratingKey": "20042",
+			"key": "/library/metadata/20042",
+			"parentRatingKey": "1020",
+			"grandparentRatingKey": "9003",
+			"type": "track",
+			"title": "The Long Tide [01-01]",
+			"grandparentTitle": "GraphicAudio [Corin Vale]",
+			"parentTitle": "The Long Tide [01]",
+			"parentIndex": 2,
+			"duration": 3660000,
+			"addedAt": 1700000042,
+			"Media": [
+				{
+					"id": 50042,
+					"duration": 3660000,
+					"bitrate": 256,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50042,
+							"key": "/library/parts/50042/1700000000/The Long Tide [01-01].mp3",
+							"duration": 3660000,
+							"file": "M:/Music/Corin Vale/The Long Tide [01]/The Long Tide [01-01].mp3",
+							"size": 117120087,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 1
+		},
+		{
+			"ratingKey": "20043",
+			"key": "/library/metadata/20043",
+			"parentRatingKey": "1020",
+			"grandparentRatingKey": "9003",
+			"type": "track",
+			"title": "The Long Tide [01-02]",
+			"grandparentTitle": "GraphicAudio [Corin Vale]",
+			"parentTitle": "The Long Tide [01]",
+			"parentIndex": 2,
+			"duration": 3840000,
+			"addedAt": 1700000043,
+			"Media": [
+				{
+					"id": 50043,
+					"duration": 3840000,
+					"bitrate": 256,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50043,
+							"key": "/library/parts/50043/1700000000/The Long Tide [01-02].mp3",
+							"duration": 3840000,
+							"file": "M:/Music/Corin Vale/The Long Tide [01]/The Long Tide [01-02].mp3",
+							"size": 122880088,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 2
+		},
+		{
+			"ratingKey": "20044",
+			"key": "/library/metadata/20044",
+			"parentRatingKey": "1021",
+			"grandparentRatingKey": "9003",
+			"type": "track",
+			"title": "The Long Tide [02-01]",
+			"grandparentTitle": "GraphicAudio [Corin Vale]",
+			"parentTitle": "The Long Tide [02]",
+			"parentIndex": 2,
+			"duration": 3480000,
+			"addedAt": 1700000044,
+			"Media": [
+				{
+					"id": 50044,
+					"duration": 3480000,
+					"bitrate": 256,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50044,
+							"key": "/library/parts/50044/1700000000/The Long Tide [02-01].mp3",
+							"duration": 3480000,
+							"file": "M:/Music/Corin Vale/The Long Tide [02]/The Long Tide [02-01].mp3",
+							"size": 111360089,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 1
+		},
+		{
+			"ratingKey": "20045",
+			"key": "/library/metadata/20045",
+			"parentRatingKey": "1021",
+			"grandparentRatingKey": "9003",
+			"type": "track",
+			"title": "The Long Tide [02-02]",
+			"grandparentTitle": "GraphicAudio [Corin Vale]",
+			"parentTitle": "The Long Tide [02]",
+			"parentIndex": 2,
+			"duration": 3960000,
+			"addedAt": 1700000045,
+			"Media": [
+				{
+					"id": 50045,
+					"duration": 3960000,
+					"bitrate": 256,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50045,
+							"key": "/library/parts/50045/1700000000/The Long Tide [02-02].mp3",
+							"duration": 3960000,
+							"file": "M:/Music/Corin Vale/The Long Tide [02]/The Long Tide [02-02].mp3",
+							"size": 126720090,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 2
+		},
+		{
+			"ratingKey": "20046",
+			"key": "/library/metadata/20046",
+			"parentRatingKey": "1022",
+			"grandparentRatingKey": "9003",
+			"type": "track",
+			"title": "The Long Tide [03]",
+			"grandparentTitle": "GraphicAudio [Corin Vale]",
+			"parentTitle": "The Long Tide 3: Tidefall (3 of 3)",
+			"parentIndex": 1,
+			"duration": 18000000,
+			"addedAt": 1700000046,
+			"Media": [
+				{
+					"id": 50046,
+					"duration": 18000000,
+					"bitrate": 256,
+					"audioChannels": 2,
+					"audioCodec": "aac",
+					"container": "mp4",
+					"Part": [
+						{
+							"id": 50046,
+							"key": "/library/parts/50046/1700000000/The Long Tide [03].m4b",
+							"duration": 18000000,
+							"file": "M:/Music/Corin Vale/The Long Tide [03]/The Long Tide [03].m4b",
+							"size": 576000091,
+							"container": "mp4"
+						}
+					]
+				}
+			],
+			"index": 1
+		},
+		{
+			"ratingKey": "20047",
+			"key": "/library/metadata/20047",
+			"parentRatingKey": "1030",
+			"grandparentRatingKey": "9004",
+			"type": "track",
+			"title": "00: Glass Sea 00",
+			"grandparentTitle": "Ilse Moreau",
+			"parentTitle": "The Glass Sea",
+			"parentIndex": 1,
+			"duration": 2160000,
+			"addedAt": 1700000047,
+			"Media": [
+				{
+					"id": 50047,
+					"duration": 2160000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50047,
+							"key": "/library/parts/50047/1700000000/Glass Sea 00.mp3",
+							"duration": 2160000,
+							"file": "M:/Music/Ilse Moreau/1989 - The Glass Sea (Various) 500mb/Glass Sea 00.mp3",
+							"size": 17280092,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 1
+		},
+		{
+			"ratingKey": "20048",
+			"key": "/library/metadata/20048",
+			"parentRatingKey": "1030",
+			"grandparentRatingKey": "9004",
+			"type": "track",
+			"title": "01: Glass Sea 01",
+			"grandparentTitle": "Ilse Moreau",
+			"parentTitle": "The Glass Sea",
+			"parentIndex": 1,
+			"duration": 2580000,
+			"addedAt": 1700000048,
+			"Media": [
+				{
+					"id": 50048,
+					"duration": 2580000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50048,
+							"key": "/library/parts/50048/1700000000/Glass Sea 01.mp3",
+							"duration": 2580000,
+							"file": "M:/Music/Ilse Moreau/1989 - The Glass Sea (Various) 500mb/Glass Sea 01.mp3",
+							"size": 20640093,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 2
+		},
+		{
+			"ratingKey": "20049",
+			"key": "/library/metadata/20049",
+			"parentRatingKey": "1030",
+			"grandparentRatingKey": "9004",
+			"type": "track",
+			"title": "02: Glass Sea 02",
+			"grandparentTitle": "Ilse Moreau",
+			"parentTitle": "The Glass Sea",
+			"parentIndex": 1,
+			"duration": 2460000,
+			"addedAt": 1700000049,
+			"Media": [
+				{
+					"id": 50049,
+					"duration": 2460000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50049,
+							"key": "/library/parts/50049/1700000000/Glass Sea 02.mp3",
+							"duration": 2460000,
+							"file": "M:/Music/Ilse Moreau/1989 - The Glass Sea (Various) 500mb/Glass Sea 02.mp3",
+							"size": 19680094,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 3
+		},
+		{
+			"ratingKey": "20050",
+			"key": "/library/metadata/20050",
+			"parentRatingKey": "1030",
+			"grandparentRatingKey": "9004",
+			"type": "track",
+			"title": "03: Glass Sea 03",
+			"grandparentTitle": "Ilse Moreau",
+			"parentTitle": "The Glass Sea",
+			"parentIndex": 1,
+			"duration": 2340000,
+			"addedAt": 1700000050,
+			"Media": [
+				{
+					"id": 50050,
+					"duration": 2340000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50050,
+							"key": "/library/parts/50050/1700000000/Glass Sea 03.mp3",
+							"duration": 2340000,
+							"file": "M:/Music/Ilse Moreau/1989 - The Glass Sea (Various) 500mb/Glass Sea 03.mp3",
+							"size": 18720095,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 4
+		},
+		{
+			"ratingKey": "20051",
+			"key": "/library/metadata/20051",
+			"parentRatingKey": "1030",
+			"grandparentRatingKey": "9004",
+			"type": "track",
+			"title": "04: Glass Sea 04",
+			"grandparentTitle": "Ilse Moreau",
+			"parentTitle": "The Glass Sea",
+			"parentIndex": 1,
+			"duration": 2220000,
+			"addedAt": 1700000051,
+			"Media": [
+				{
+					"id": 50051,
+					"duration": 2220000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50051,
+							"key": "/library/parts/50051/1700000000/Glass Sea 04.mp3",
+							"duration": 2220000,
+							"file": "M:/Music/Ilse Moreau/1989 - The Glass Sea (Various) 500mb/Glass Sea 04.mp3",
+							"size": 17760096,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 5
+		},
+		{
+			"ratingKey": "20052",
+			"key": "/library/metadata/20052",
+			"parentRatingKey": "1031",
+			"grandparentRatingKey": "9004",
+			"type": "track",
+			"title": "Far Shore 01",
+			"grandparentTitle": "Ilse Moreau",
+			"parentTitle": "The Far Shore",
+			"parentIndex": 1,
+			"duration": 1020000,
+			"addedAt": 1700000052,
+			"Media": [
+				{
+					"id": 50052,
+					"duration": 1020000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50052,
+							"key": "/library/parts/50052/1700000000/Far Shore 01.mp3",
+							"duration": 1020000,
+							"file": "M:/Music/Ilse Moreau/1990 - The Far Shore (Penrose) 540mb/Far Shore 01.mp3",
+							"size": 8160000,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 1
+		},
+		{
+			"ratingKey": "20053",
+			"key": "/library/metadata/20053",
+			"parentRatingKey": "1031",
+			"grandparentRatingKey": "9004",
+			"type": "track",
+			"title": "Far Shore 02",
+			"grandparentTitle": "Ilse Moreau",
+			"parentTitle": "The Far Shore",
+			"parentIndex": 1,
+			"duration": 1020000,
+			"addedAt": 1700000053,
+			"Media": [
+				{
+					"id": 50053,
+					"duration": 1020000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50053,
+							"key": "/library/parts/50053/1700000000/Far Shore 02.mp3",
+							"duration": 1020000,
+							"file": "M:/Music/Ilse Moreau/1990 - The Far Shore (Penrose) 540mb/Far Shore 02.mp3",
+							"size": 8160001,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 2
+		},
+		{
+			"ratingKey": "20054",
+			"key": "/library/metadata/20054",
+			"parentRatingKey": "1031",
+			"grandparentRatingKey": "9004",
+			"type": "track",
+			"title": "Far Shore 03",
+			"grandparentTitle": "Ilse Moreau",
+			"parentTitle": "The Far Shore",
+			"parentIndex": 1,
+			"duration": 1020000,
+			"addedAt": 1700000054,
+			"Media": [
+				{
+					"id": 50054,
+					"duration": 1020000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50054,
+							"key": "/library/parts/50054/1700000000/Far Shore 03.mp3",
+							"duration": 1020000,
+							"file": "M:/Music/Ilse Moreau/1990 - The Far Shore (Penrose) 540mb/Far Shore 03.mp3",
+							"size": 8160002,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 3
+		},
+		{
+			"ratingKey": "20055",
+			"key": "/library/metadata/20055",
+			"parentRatingKey": "1031",
+			"grandparentRatingKey": "9004",
+			"type": "track",
+			"title": "Far Shore 04",
+			"grandparentTitle": "Ilse Moreau",
+			"parentTitle": "The Far Shore",
+			"parentIndex": 1,
+			"duration": 1020000,
+			"addedAt": 1700000055,
+			"Media": [
+				{
+					"id": 50055,
+					"duration": 1020000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50055,
+							"key": "/library/parts/50055/1700000000/Far Shore 04.mp3",
+							"duration": 1020000,
+							"file": "M:/Music/Ilse Moreau/1990 - The Far Shore (Penrose) 540mb/Far Shore 04.mp3",
+							"size": 8160003,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 4
+		},
+		{
+			"ratingKey": "20056",
+			"key": "/library/metadata/20056",
+			"parentRatingKey": "1031",
+			"grandparentRatingKey": "9004",
+			"type": "track",
+			"title": "Far Shore 05",
+			"grandparentTitle": "Ilse Moreau",
+			"parentTitle": "The Far Shore",
+			"parentIndex": 1,
+			"duration": 1020000,
+			"addedAt": 1700000056,
+			"Media": [
+				{
+					"id": 50056,
+					"duration": 1020000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50056,
+							"key": "/library/parts/50056/1700000000/Far Shore 05.mp3",
+							"duration": 1020000,
+							"file": "M:/Music/Ilse Moreau/1990 - The Far Shore (Penrose) 540mb/Far Shore 05.mp3",
+							"size": 8160004,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 5
+		},
+		{
+			"ratingKey": "20057",
+			"key": "/library/metadata/20057",
+			"parentRatingKey": "1031",
+			"grandparentRatingKey": "9004",
+			"type": "track",
+			"title": "Far Shore 06",
+			"grandparentTitle": "Ilse Moreau",
+			"parentTitle": "The Far Shore",
+			"parentIndex": 1,
+			"duration": 1020000,
+			"addedAt": 1700000057,
+			"Media": [
+				{
+					"id": 50057,
+					"duration": 1020000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50057,
+							"key": "/library/parts/50057/1700000000/Far Shore 06.mp3",
+							"duration": 1020000,
+							"file": "M:/Music/Ilse Moreau/1990 - The Far Shore (Penrose) 540mb/Far Shore 06.mp3",
+							"size": 8160005,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 6
+		},
+		{
+			"ratingKey": "20058",
+			"key": "/library/metadata/20058",
+			"parentRatingKey": "1031",
+			"grandparentRatingKey": "9004",
+			"type": "track",
+			"title": "Far Shore 07",
+			"grandparentTitle": "Ilse Moreau",
+			"parentTitle": "The Far Shore",
+			"parentIndex": 1,
+			"duration": 1020000,
+			"addedAt": 1700000058,
+			"Media": [
+				{
+					"id": 50058,
+					"duration": 1020000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50058,
+							"key": "/library/parts/50058/1700000000/Far Shore 07.mp3",
+							"duration": 1020000,
+							"file": "M:/Music/Ilse Moreau/1990 - The Far Shore (Penrose) 540mb/Far Shore 07.mp3",
+							"size": 8160006,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 7
+		},
+		{
+			"ratingKey": "20059",
+			"key": "/library/metadata/20059",
+			"parentRatingKey": "1031",
+			"grandparentRatingKey": "9004",
+			"type": "track",
+			"title": "Far Shore 08",
+			"grandparentTitle": "Ilse Moreau",
+			"parentTitle": "The Far Shore",
+			"parentIndex": 1,
+			"duration": 1020000,
+			"addedAt": 1700000059,
+			"Media": [
+				{
+					"id": 50059,
+					"duration": 1020000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50059,
+							"key": "/library/parts/50059/1700000000/Far Shore 08.mp3",
+							"duration": 1020000,
+							"file": "M:/Music/Ilse Moreau/1990 - The Far Shore (Penrose) 540mb/Far Shore 08.mp3",
+							"size": 8160007,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 8
+		},
+		{
+			"ratingKey": "20060",
+			"key": "/library/metadata/20060",
+			"parentRatingKey": "1032",
+			"grandparentRatingKey": "9004",
+			"type": "track",
+			"title": "Far Shore 01",
+			"grandparentTitle": "Ilse Moreau",
+			"parentTitle": "The Far Shore",
+			"parentIndex": 1,
+			"duration": 1200000,
+			"addedAt": 1700000060,
+			"Media": [
+				{
+					"id": 50060,
+					"duration": 1200000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50060,
+							"key": "/library/parts/50060/1700000000/Far Shore 01.mp3",
+							"duration": 1200000,
+							"file": "M:/Music/Ilse Moreau/1990 - The Far Shore (Harlow) 600mb/Far Shore 01.mp3",
+							"size": 9600008,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 1
+		},
+		{
+			"ratingKey": "20061",
+			"key": "/library/metadata/20061",
+			"parentRatingKey": "1032",
+			"grandparentRatingKey": "9004",
+			"type": "track",
+			"title": "Far Shore 02",
+			"grandparentTitle": "Ilse Moreau",
+			"parentTitle": "The Far Shore",
+			"parentIndex": 1,
+			"duration": 1200000,
+			"addedAt": 1700000061,
+			"Media": [
+				{
+					"id": 50061,
+					"duration": 1200000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50061,
+							"key": "/library/parts/50061/1700000000/Far Shore 02.mp3",
+							"duration": 1200000,
+							"file": "M:/Music/Ilse Moreau/1990 - The Far Shore (Harlow) 600mb/Far Shore 02.mp3",
+							"size": 9600009,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 2
+		},
+		{
+			"ratingKey": "20062",
+			"key": "/library/metadata/20062",
+			"parentRatingKey": "1032",
+			"grandparentRatingKey": "9004",
+			"type": "track",
+			"title": "Far Shore 03",
+			"grandparentTitle": "Ilse Moreau",
+			"parentTitle": "The Far Shore",
+			"parentIndex": 1,
+			"duration": 1200000,
+			"addedAt": 1700000062,
+			"Media": [
+				{
+					"id": 50062,
+					"duration": 1200000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50062,
+							"key": "/library/parts/50062/1700000000/Far Shore 03.mp3",
+							"duration": 1200000,
+							"file": "M:/Music/Ilse Moreau/1990 - The Far Shore (Harlow) 600mb/Far Shore 03.mp3",
+							"size": 9600010,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 3
+		},
+		{
+			"ratingKey": "20063",
+			"key": "/library/metadata/20063",
+			"parentRatingKey": "1032",
+			"grandparentRatingKey": "9004",
+			"type": "track",
+			"title": "Far Shore 04",
+			"grandparentTitle": "Ilse Moreau",
+			"parentTitle": "The Far Shore",
+			"parentIndex": 1,
+			"duration": 1200000,
+			"addedAt": 1700000063,
+			"Media": [
+				{
+					"id": 50063,
+					"duration": 1200000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50063,
+							"key": "/library/parts/50063/1700000000/Far Shore 04.mp3",
+							"duration": 1200000,
+							"file": "M:/Music/Ilse Moreau/1990 - The Far Shore (Harlow) 600mb/Far Shore 04.mp3",
+							"size": 9600011,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 4
+		},
+		{
+			"ratingKey": "20064",
+			"key": "/library/metadata/20064",
+			"parentRatingKey": "1032",
+			"grandparentRatingKey": "9004",
+			"type": "track",
+			"title": "Far Shore 05",
+			"grandparentTitle": "Ilse Moreau",
+			"parentTitle": "The Far Shore",
+			"parentIndex": 1,
+			"duration": 1200000,
+			"addedAt": 1700000064,
+			"Media": [
+				{
+					"id": 50064,
+					"duration": 1200000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50064,
+							"key": "/library/parts/50064/1700000000/Far Shore 05.mp3",
+							"duration": 1200000,
+							"file": "M:/Music/Ilse Moreau/1990 - The Far Shore (Harlow) 600mb/Far Shore 05.mp3",
+							"size": 9600012,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 5
+		},
+		{
+			"ratingKey": "20065",
+			"key": "/library/metadata/20065",
+			"parentRatingKey": "1032",
+			"grandparentRatingKey": "9004",
+			"type": "track",
+			"title": "Far Shore 06",
+			"grandparentTitle": "Ilse Moreau",
+			"parentTitle": "The Far Shore",
+			"parentIndex": 1,
+			"duration": 1200000,
+			"addedAt": 1700000065,
+			"Media": [
+				{
+					"id": 50065,
+					"duration": 1200000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50065,
+							"key": "/library/parts/50065/1700000000/Far Shore 06.mp3",
+							"duration": 1200000,
+							"file": "M:/Music/Ilse Moreau/1990 - The Far Shore (Harlow) 600mb/Far Shore 06.mp3",
+							"size": 9600013,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 6
+		},
+		{
+			"ratingKey": "20066",
+			"key": "/library/metadata/20066",
+			"parentRatingKey": "1032",
+			"grandparentRatingKey": "9004",
+			"type": "track",
+			"title": "Far Shore 07",
+			"grandparentTitle": "Ilse Moreau",
+			"parentTitle": "The Far Shore",
+			"parentIndex": 1,
+			"duration": 1200000,
+			"addedAt": 1700000066,
+			"Media": [
+				{
+					"id": 50066,
+					"duration": 1200000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50066,
+							"key": "/library/parts/50066/1700000000/Far Shore 07.mp3",
+							"duration": 1200000,
+							"file": "M:/Music/Ilse Moreau/1990 - The Far Shore (Harlow) 600mb/Far Shore 07.mp3",
+							"size": 9600014,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 7
+		},
+		{
+			"ratingKey": "20067",
+			"key": "/library/metadata/20067",
+			"parentRatingKey": "1032",
+			"grandparentRatingKey": "9004",
+			"type": "track",
+			"title": "Far Shore 08",
+			"grandparentTitle": "Ilse Moreau",
+			"parentTitle": "The Far Shore",
+			"parentIndex": 1,
+			"duration": 1200000,
+			"addedAt": 1700000067,
+			"Media": [
+				{
+					"id": 50067,
+					"duration": 1200000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50067,
+							"key": "/library/parts/50067/1700000000/Far Shore 08.mp3",
+							"duration": 1200000,
+							"file": "M:/Music/Ilse Moreau/1990 - The Far Shore (Harlow) 600mb/Far Shore 08.mp3",
+							"size": 9600015,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 8
+		},
+		{
+			"ratingKey": "20068",
+			"key": "/library/metadata/20068",
+			"parentRatingKey": "1033",
+			"grandparentRatingKey": "9004",
+			"type": "track",
+			"title": "Night Gate 20",
+			"grandparentTitle": "Ilse Moreau",
+			"parentTitle": "The Night Gate",
+			"parentIndex": 1,
+			"duration": 4200000,
+			"addedAt": 1700000068,
+			"Media": [
+				{
+					"id": 50068,
+					"duration": 4200000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50068,
+							"key": "/library/parts/50068/1700000000/Night Gate 20.mp3",
+							"duration": 4200000,
+							"file": "M:/Music/Ilse Moreau/1997 - The Night Gate (Penrose) 844mb/Night Gate 20.mp3",
+							"size": 33600016,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 20
+		},
+		{
+			"ratingKey": "20069",
+			"key": "/library/metadata/20069",
+			"parentRatingKey": "1033",
+			"grandparentRatingKey": "9004",
+			"type": "track",
+			"title": "Night Gate 21",
+			"grandparentTitle": "Ilse Moreau",
+			"parentTitle": "The Night Gate",
+			"parentIndex": 1,
+			"duration": 9702000,
+			"addedAt": 1700000069,
+			"Media": [
+				{
+					"id": 50069,
+					"duration": 9702000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50069,
+							"key": "/library/parts/50069/1700000000/Night Gate 21.mp3",
+							"duration": 9702000,
+							"file": "M:/Music/Ilse Moreau/1997 - The Night Gate (Penrose) 844mb/Night Gate 21.mp3",
+							"size": 77616017,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 21
+		},
+		{
+			"ratingKey": "20070",
+			"key": "/library/metadata/20070",
+			"parentRatingKey": "1034",
+			"grandparentRatingKey": "9004",
+			"type": "track",
+			"title": "Night Gate 20",
+			"grandparentTitle": "Ilse Moreau",
+			"parentTitle": "The Night Gate",
+			"parentIndex": 1,
+			"duration": 4200000,
+			"addedAt": 1700000070,
+			"Media": [
+				{
+					"id": 50070,
+					"duration": 4200000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50070,
+							"key": "/library/parts/50070/1700000000/Night Gate 20.mp3",
+							"duration": 4200000,
+							"file": "M:/Music/Ilse Moreau/1997 - The Night Gate (Harlow) 822mb/Night Gate 20.mp3",
+							"size": 33600018,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 20
+		},
+		{
+			"ratingKey": "20071",
+			"key": "/library/metadata/20071",
+			"parentRatingKey": "1034",
+			"grandparentRatingKey": "9004",
+			"type": "track",
+			"title": "Night Gate 21",
+			"grandparentTitle": "Ilse Moreau",
+			"parentTitle": "The Night Gate",
+			"parentIndex": 1,
+			"duration": 9564000,
+			"addedAt": 1700000071,
+			"Media": [
+				{
+					"id": 50071,
+					"duration": 9564000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50071,
+							"key": "/library/parts/50071/1700000000/Night Gate 21.mp3",
+							"duration": 9564000,
+							"file": "M:/Music/Ilse Moreau/1997 - The Night Gate (Harlow) 822mb/Night Gate 21.mp3",
+							"size": 76512019,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 21
+		},
+		{
+			"ratingKey": "20072",
+			"key": "/library/metadata/20072",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "1-01 Book 1  The Stone Garden - Intro",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 1,
+			"duration": 60000,
+			"addedAt": 1700000072,
+			"Media": [
+				{
+					"id": 50072,
+					"duration": 60000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50072,
+							"key": "/library/parts/50072/1700000000/1-01 Book 1_ The Stone Garden - Intro.mp3",
+							"duration": 60000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/01.The Stone Garden.Book 1/1-01 Book 1_ The Stone Garden - Intro.mp3",
+							"size": 480020,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 1
+		},
+		{
+			"ratingKey": "20073",
+			"key": "/library/metadata/20073",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "1-02 Book 1  The Stone Garden - Chapter 01a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 1,
+			"duration": 390000,
+			"addedAt": 1700000073,
+			"Media": [
+				{
+					"id": 50073,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50073,
+							"key": "/library/parts/50073/1700000000/1-02 Book 1_ The Stone Garden - Chapter 01a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/01.The Stone Garden.Book 1/1-02 Book 1_ The Stone Garden - Chapter 01a.mp3",
+							"size": 3120021,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 2
+		},
+		{
+			"ratingKey": "20074",
+			"key": "/library/metadata/20074",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "1-03 Book 1  The Stone Garden - Chapter 02a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 1,
+			"duration": 390000,
+			"addedAt": 1700000074,
+			"Media": [
+				{
+					"id": 50074,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50074,
+							"key": "/library/parts/50074/1700000000/1-03 Book 1_ The Stone Garden - Chapter 02a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/01.The Stone Garden.Book 1/1-03 Book 1_ The Stone Garden - Chapter 02a.mp3",
+							"size": 3120022,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 3
+		},
+		{
+			"ratingKey": "20075",
+			"key": "/library/metadata/20075",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "1-04 Book 1  The Stone Garden - Chapter 03a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 1,
+			"duration": 390000,
+			"addedAt": 1700000075,
+			"Media": [
+				{
+					"id": 50075,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50075,
+							"key": "/library/parts/50075/1700000000/1-04 Book 1_ The Stone Garden - Chapter 03a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/01.The Stone Garden.Book 1/1-04 Book 1_ The Stone Garden - Chapter 03a.mp3",
+							"size": 3120023,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 4
+		},
+		{
+			"ratingKey": "20076",
+			"key": "/library/metadata/20076",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "1-05 Book 1  The Stone Garden - Chapter 04a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 1,
+			"duration": 390000,
+			"addedAt": 1700000076,
+			"Media": [
+				{
+					"id": 50076,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50076,
+							"key": "/library/parts/50076/1700000000/1-05 Book 1_ The Stone Garden - Chapter 04a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/01.The Stone Garden.Book 1/1-05 Book 1_ The Stone Garden - Chapter 04a.mp3",
+							"size": 3120024,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 5
+		},
+		{
+			"ratingKey": "20077",
+			"key": "/library/metadata/20077",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "1-06 Book 1  The Stone Garden - Chapter 05a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 1,
+			"duration": 390000,
+			"addedAt": 1700000077,
+			"Media": [
+				{
+					"id": 50077,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50077,
+							"key": "/library/parts/50077/1700000000/1-06 Book 1_ The Stone Garden - Chapter 05a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/01.The Stone Garden.Book 1/1-06 Book 1_ The Stone Garden - Chapter 05a.mp3",
+							"size": 3120025,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 6
+		},
+		{
+			"ratingKey": "20078",
+			"key": "/library/metadata/20078",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "1-07 Book 1  The Stone Garden - Chapter 06a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 1,
+			"duration": 390000,
+			"addedAt": 1700000078,
+			"Media": [
+				{
+					"id": 50078,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50078,
+							"key": "/library/parts/50078/1700000000/1-07 Book 1_ The Stone Garden - Chapter 06a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/01.The Stone Garden.Book 1/1-07 Book 1_ The Stone Garden - Chapter 06a.mp3",
+							"size": 3120026,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 7
+		},
+		{
+			"ratingKey": "20079",
+			"key": "/library/metadata/20079",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "2-01 Book 2  The Weeping Queen - Intro",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 2,
+			"duration": 60000,
+			"addedAt": 1700000079,
+			"Media": [
+				{
+					"id": 50079,
+					"duration": 60000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50079,
+							"key": "/library/parts/50079/1700000000/2-01 Book 2_ The Weeping Queen - Intro.mp3",
+							"duration": 60000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/02.The Weeping Queen.Book 2/2-01 Book 2_ The Weeping Queen - Intro.mp3",
+							"size": 480027,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 1
+		},
+		{
+			"ratingKey": "20080",
+			"key": "/library/metadata/20080",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "2-02 Book 2  The Weeping Queen - Chapter 01a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 2,
+			"duration": 390000,
+			"addedAt": 1700000080,
+			"Media": [
+				{
+					"id": 50080,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50080,
+							"key": "/library/parts/50080/1700000000/2-02 Book 2_ The Weeping Queen - Chapter 01a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/02.The Weeping Queen.Book 2/2-02 Book 2_ The Weeping Queen - Chapter 01a.mp3",
+							"size": 3120028,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 2
+		},
+		{
+			"ratingKey": "20081",
+			"key": "/library/metadata/20081",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "2-03 Book 2  The Weeping Queen - Chapter 02a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 2,
+			"duration": 390000,
+			"addedAt": 1700000081,
+			"Media": [
+				{
+					"id": 50081,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50081,
+							"key": "/library/parts/50081/1700000000/2-03 Book 2_ The Weeping Queen - Chapter 02a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/02.The Weeping Queen.Book 2/2-03 Book 2_ The Weeping Queen - Chapter 02a.mp3",
+							"size": 3120029,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 3
+		},
+		{
+			"ratingKey": "20082",
+			"key": "/library/metadata/20082",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "2-04 Book 2  The Weeping Queen - Chapter 03a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 2,
+			"duration": 390000,
+			"addedAt": 1700000082,
+			"Media": [
+				{
+					"id": 50082,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50082,
+							"key": "/library/parts/50082/1700000000/2-04 Book 2_ The Weeping Queen - Chapter 03a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/02.The Weeping Queen.Book 2/2-04 Book 2_ The Weeping Queen - Chapter 03a.mp3",
+							"size": 3120030,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 4
+		},
+		{
+			"ratingKey": "20083",
+			"key": "/library/metadata/20083",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "2-05 Book 2  The Weeping Queen - Chapter 04a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 2,
+			"duration": 390000,
+			"addedAt": 1700000083,
+			"Media": [
+				{
+					"id": 50083,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50083,
+							"key": "/library/parts/50083/1700000000/2-05 Book 2_ The Weeping Queen - Chapter 04a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/02.The Weeping Queen.Book 2/2-05 Book 2_ The Weeping Queen - Chapter 04a.mp3",
+							"size": 3120031,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 5
+		},
+		{
+			"ratingKey": "20084",
+			"key": "/library/metadata/20084",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "2-06 Book 2  The Weeping Queen - Chapter 05a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 2,
+			"duration": 390000,
+			"addedAt": 1700000084,
+			"Media": [
+				{
+					"id": 50084,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50084,
+							"key": "/library/parts/50084/1700000000/2-06 Book 2_ The Weeping Queen - Chapter 05a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/02.The Weeping Queen.Book 2/2-06 Book 2_ The Weeping Queen - Chapter 05a.mp3",
+							"size": 3120032,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 6
+		},
+		{
+			"ratingKey": "20085",
+			"key": "/library/metadata/20085",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "2-07 Book 2  The Weeping Queen - Chapter 06a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 2,
+			"duration": 390000,
+			"addedAt": 1700000085,
+			"Media": [
+				{
+					"id": 50085,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50085,
+							"key": "/library/parts/50085/1700000000/2-07 Book 2_ The Weeping Queen - Chapter 06a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/02.The Weeping Queen.Book 2/2-07 Book 2_ The Weeping Queen - Chapter 06a.mp3",
+							"size": 3120033,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 7
+		},
+		{
+			"ratingKey": "20086",
+			"key": "/library/metadata/20086",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "3-01 Book 3  The Errant Knight - Intro",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 3,
+			"duration": 60000,
+			"addedAt": 1700000086,
+			"Media": [
+				{
+					"id": 50086,
+					"duration": 60000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50086,
+							"key": "/library/parts/50086/1700000000/3-01 Book 3_ The Errant Knight - Intro.mp3",
+							"duration": 60000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/03.The Errant Knight.Book 3/3-01 Book 3_ The Errant Knight - Intro.mp3",
+							"size": 480034,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 1
+		},
+		{
+			"ratingKey": "20087",
+			"key": "/library/metadata/20087",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "3-02 Book 3  The Errant Knight - Chapter 01a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 3,
+			"duration": 390000,
+			"addedAt": 1700000087,
+			"Media": [
+				{
+					"id": 50087,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50087,
+							"key": "/library/parts/50087/1700000000/3-02 Book 3_ The Errant Knight - Chapter 01a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/03.The Errant Knight.Book 3/3-02 Book 3_ The Errant Knight - Chapter 01a.mp3",
+							"size": 3120035,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 2
+		},
+		{
+			"ratingKey": "20088",
+			"key": "/library/metadata/20088",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "3-03 Book 3  The Errant Knight - Chapter 02a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 3,
+			"duration": 390000,
+			"addedAt": 1700000088,
+			"Media": [
+				{
+					"id": 50088,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50088,
+							"key": "/library/parts/50088/1700000000/3-03 Book 3_ The Errant Knight - Chapter 02a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/03.The Errant Knight.Book 3/3-03 Book 3_ The Errant Knight - Chapter 02a.mp3",
+							"size": 3120036,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 3
+		},
+		{
+			"ratingKey": "20089",
+			"key": "/library/metadata/20089",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "3-04 Book 3  The Errant Knight - Chapter 03a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 3,
+			"duration": 390000,
+			"addedAt": 1700000089,
+			"Media": [
+				{
+					"id": 50089,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50089,
+							"key": "/library/parts/50089/1700000000/3-04 Book 3_ The Errant Knight - Chapter 03a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/03.The Errant Knight.Book 3/3-04 Book 3_ The Errant Knight - Chapter 03a.mp3",
+							"size": 3120037,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 4
+		},
+		{
+			"ratingKey": "20090",
+			"key": "/library/metadata/20090",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "3-05 Book 3  The Errant Knight - Chapter 04a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 3,
+			"duration": 390000,
+			"addedAt": 1700000090,
+			"Media": [
+				{
+					"id": 50090,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50090,
+							"key": "/library/parts/50090/1700000000/3-05 Book 3_ The Errant Knight - Chapter 04a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/03.The Errant Knight.Book 3/3-05 Book 3_ The Errant Knight - Chapter 04a.mp3",
+							"size": 3120038,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 5
+		},
+		{
+			"ratingKey": "20091",
+			"key": "/library/metadata/20091",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "3-06 Book 3  The Errant Knight - Chapter 05a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 3,
+			"duration": 390000,
+			"addedAt": 1700000091,
+			"Media": [
+				{
+					"id": 50091,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50091,
+							"key": "/library/parts/50091/1700000000/3-06 Book 3_ The Errant Knight - Chapter 05a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/03.The Errant Knight.Book 3/3-06 Book 3_ The Errant Knight - Chapter 05a.mp3",
+							"size": 3120039,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 6
+		},
+		{
+			"ratingKey": "20092",
+			"key": "/library/metadata/20092",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "3-07 Book 3  The Errant Knight - Chapter 06a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 3,
+			"duration": 390000,
+			"addedAt": 1700000092,
+			"Media": [
+				{
+					"id": 50092,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50092,
+							"key": "/library/parts/50092/1700000000/3-07 Book 3_ The Errant Knight - Chapter 06a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/03.The Errant Knight.Book 3/3-07 Book 3_ The Errant Knight - Chapter 06a.mp3",
+							"size": 3120040,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 7
+		},
+		{
+			"ratingKey": "20093",
+			"key": "/library/metadata/20093",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "4-01 Book 4  The Candle Wind - Intro",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 4,
+			"duration": 60000,
+			"addedAt": 1700000093,
+			"Media": [
+				{
+					"id": 50093,
+					"duration": 60000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50093,
+							"key": "/library/parts/50093/1700000000/4-01 Book 4_ The Candle Wind - Intro.mp3",
+							"duration": 60000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/04.The Candle Wind.Book 4/4-01 Book 4_ The Candle Wind - Intro.mp3",
+							"size": 480041,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 1
+		},
+		{
+			"ratingKey": "20094",
+			"key": "/library/metadata/20094",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "4-02 Book 4  The Candle Wind - Chapter 01a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 4,
+			"duration": 390000,
+			"addedAt": 1700000094,
+			"Media": [
+				{
+					"id": 50094,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50094,
+							"key": "/library/parts/50094/1700000000/4-02 Book 4_ The Candle Wind - Chapter 01a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/04.The Candle Wind.Book 4/4-02 Book 4_ The Candle Wind - Chapter 01a.mp3",
+							"size": 3120042,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 2
+		},
+		{
+			"ratingKey": "20095",
+			"key": "/library/metadata/20095",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "4-03 Book 4  The Candle Wind - Chapter 02a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 4,
+			"duration": 390000,
+			"addedAt": 1700000095,
+			"Media": [
+				{
+					"id": 50095,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50095,
+							"key": "/library/parts/50095/1700000000/4-03 Book 4_ The Candle Wind - Chapter 02a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/04.The Candle Wind.Book 4/4-03 Book 4_ The Candle Wind - Chapter 02a.mp3",
+							"size": 3120043,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 3
+		},
+		{
+			"ratingKey": "20096",
+			"key": "/library/metadata/20096",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "4-04 Book 4  The Candle Wind - Chapter 03a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 4,
+			"duration": 390000,
+			"addedAt": 1700000096,
+			"Media": [
+				{
+					"id": 50096,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50096,
+							"key": "/library/parts/50096/1700000000/4-04 Book 4_ The Candle Wind - Chapter 03a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/04.The Candle Wind.Book 4/4-04 Book 4_ The Candle Wind - Chapter 03a.mp3",
+							"size": 3120044,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 4
+		},
+		{
+			"ratingKey": "20097",
+			"key": "/library/metadata/20097",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "4-05 Book 4  The Candle Wind - Chapter 04a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 4,
+			"duration": 390000,
+			"addedAt": 1700000097,
+			"Media": [
+				{
+					"id": 50097,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50097,
+							"key": "/library/parts/50097/1700000000/4-05 Book 4_ The Candle Wind - Chapter 04a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/04.The Candle Wind.Book 4/4-05 Book 4_ The Candle Wind - Chapter 04a.mp3",
+							"size": 3120045,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 5
+		},
+		{
+			"ratingKey": "20098",
+			"key": "/library/metadata/20098",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "4-06 Book 4  The Candle Wind - Chapter 05a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 4,
+			"duration": 390000,
+			"addedAt": 1700000098,
+			"Media": [
+				{
+					"id": 50098,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50098,
+							"key": "/library/parts/50098/1700000000/4-06 Book 4_ The Candle Wind - Chapter 05a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/04.The Candle Wind.Book 4/4-06 Book 4_ The Candle Wind - Chapter 05a.mp3",
+							"size": 3120046,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 6
+		},
+		{
+			"ratingKey": "20099",
+			"key": "/library/metadata/20099",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "4-07 Book 4  The Candle Wind - Chapter 06a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 4,
+			"duration": 390000,
+			"addedAt": 1700000099,
+			"Media": [
+				{
+					"id": 50099,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50099,
+							"key": "/library/parts/50099/1700000000/4-07 Book 4_ The Candle Wind - Chapter 06a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/04.The Candle Wind.Book 4/4-07 Book 4_ The Candle Wind - Chapter 06a.mp3",
+							"size": 3120047,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 7
+		},
+		{
+			"ratingKey": "20100",
+			"key": "/library/metadata/20100",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "5-01 Book 5  The Book of Ash - Intro",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 5,
+			"duration": 60000,
+			"addedAt": 1700000100,
+			"Media": [
+				{
+					"id": 50100,
+					"duration": 60000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50100,
+							"key": "/library/parts/50100/1700000000/5-01 Book 5_ The Book of Ash - Intro.mp3",
+							"duration": 60000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/05.The Book of Ash.Book 5/5-01 Book 5_ The Book of Ash - Intro.mp3",
+							"size": 480048,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 1
+		},
+		{
+			"ratingKey": "20101",
+			"key": "/library/metadata/20101",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "5-02 Book 5  The Book of Ash - Chapter 01a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 5,
+			"duration": 390000,
+			"addedAt": 1700000101,
+			"Media": [
+				{
+					"id": 50101,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50101,
+							"key": "/library/parts/50101/1700000000/5-02 Book 5_ The Book of Ash - Chapter 01a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/05.The Book of Ash.Book 5/5-02 Book 5_ The Book of Ash - Chapter 01a.mp3",
+							"size": 3120049,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 2
+		},
+		{
+			"ratingKey": "20102",
+			"key": "/library/metadata/20102",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "5-03 Book 5  The Book of Ash - Chapter 02a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 5,
+			"duration": 390000,
+			"addedAt": 1700000102,
+			"Media": [
+				{
+					"id": 50102,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50102,
+							"key": "/library/parts/50102/1700000000/5-03 Book 5_ The Book of Ash - Chapter 02a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/05.The Book of Ash.Book 5/5-03 Book 5_ The Book of Ash - Chapter 02a.mp3",
+							"size": 3120050,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 3
+		},
+		{
+			"ratingKey": "20103",
+			"key": "/library/metadata/20103",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "5-04 Book 5  The Book of Ash - Chapter 03a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 5,
+			"duration": 390000,
+			"addedAt": 1700000103,
+			"Media": [
+				{
+					"id": 50103,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50103,
+							"key": "/library/parts/50103/1700000000/5-04 Book 5_ The Book of Ash - Chapter 03a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/05.The Book of Ash.Book 5/5-04 Book 5_ The Book of Ash - Chapter 03a.mp3",
+							"size": 3120051,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 4
+		},
+		{
+			"ratingKey": "20104",
+			"key": "/library/metadata/20104",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "5-05 Book 5  The Book of Ash - Chapter 04a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 5,
+			"duration": 390000,
+			"addedAt": 1700000104,
+			"Media": [
+				{
+					"id": 50104,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50104,
+							"key": "/library/parts/50104/1700000000/5-05 Book 5_ The Book of Ash - Chapter 04a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/05.The Book of Ash.Book 5/5-05 Book 5_ The Book of Ash - Chapter 04a.mp3",
+							"size": 3120052,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 5
+		},
+		{
+			"ratingKey": "20105",
+			"key": "/library/metadata/20105",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "5-06 Book 5  The Book of Ash - Chapter 05a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 5,
+			"duration": 390000,
+			"addedAt": 1700000105,
+			"Media": [
+				{
+					"id": 50105,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50105,
+							"key": "/library/parts/50105/1700000000/5-06 Book 5_ The Book of Ash - Chapter 05a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/05.The Book of Ash.Book 5/5-06 Book 5_ The Book of Ash - Chapter 05a.mp3",
+							"size": 3120053,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 6
+		},
+		{
+			"ratingKey": "20106",
+			"key": "/library/metadata/20106",
+			"parentRatingKey": "1040",
+			"grandparentRatingKey": "9005",
+			"type": "track",
+			"title": "5-07 Book 5  The Book of Ash - Chapter 06a",
+			"grandparentTitle": "R.J. Ashdown",
+			"parentTitle": "The Hollow King",
+			"parentIndex": 5,
+			"duration": 390000,
+			"addedAt": 1700000106,
+			"Media": [
+				{
+					"id": 50106,
+					"duration": 390000,
+					"bitrate": 64,
+					"audioChannels": 1,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50106,
+							"key": "/library/parts/50106/1700000000/5-07 Book 5_ The Book of Ash - Chapter 06a.mp3",
+							"duration": 390000,
+							"file": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/05.The Book of Ash.Book 5/5-07 Book 5_ The Book of Ash - Chapter 06a.mp3",
+							"size": 3120054,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 7
+		},
+		{
+			"ratingKey": "20107",
+			"key": "/library/metadata/20107",
+			"parentRatingKey": "1050",
+			"grandparentRatingKey": "9006",
+			"type": "track",
+			"title": "LH Tin Valley ep3",
+			"grandparentTitle": "Lantern Hollow",
+			"parentTitle": "The Tin Valley",
+			"parentIndex": 1,
+			"duration": 4320000,
+			"addedAt": 1700000107,
+			"Media": [
+				{
+					"id": 50107,
+					"duration": 4320000,
+					"bitrate": 142,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50107,
+							"key": "/library/parts/50107/1700000000/LH Tin Valley ep3.mp3",
+							"duration": 4320000,
+							"file": "M:/Music/Lantern Hollow/LH Tin Valley ep3.mp3",
+							"size": 76680055,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20108",
+			"key": "/library/metadata/20108",
+			"parentRatingKey": "1050",
+			"grandparentRatingKey": "9006",
+			"type": "track",
+			"title": "LH Tin Valley ep1 Overture",
+			"grandparentTitle": "Lantern Hollow",
+			"parentTitle": "The Tin Valley",
+			"parentIndex": 1,
+			"duration": 7200000,
+			"addedAt": 1700000108,
+			"Media": [
+				{
+					"id": 50108,
+					"duration": 7200000,
+					"bitrate": 167,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50108,
+							"key": "/library/parts/50108/1700000000/LH Tin Valley ep1 Overture.mp3",
+							"duration": 7200000,
+							"file": "M:/Music/Lantern Hollow/LH Tin Valley ep1 Overture.mp3",
+							"size": 150300056,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20109",
+			"key": "/library/metadata/20109",
+			"parentRatingKey": "1050",
+			"grandparentRatingKey": "9006",
+			"type": "track",
+			"title": "LH Tin Valley Ep8",
+			"grandparentTitle": "Lantern Hollow",
+			"parentTitle": "The Tin Valley",
+			"parentIndex": 1,
+			"duration": 6480000,
+			"addedAt": 1700000109,
+			"Media": [
+				{
+					"id": 50109,
+					"duration": 6480000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50109,
+							"key": "/library/parts/50109/1700000000/LH Tin Campaign - Ep 8.mp3",
+							"duration": 6480000,
+							"file": "M:/Music/Lantern Hollow/LH Tin Campaign - Ep 8.mp3",
+							"size": 103680057,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20110",
+			"key": "/library/metadata/20110",
+			"parentRatingKey": "1050",
+			"grandparentRatingKey": "9006",
+			"type": "track",
+			"title": "LH Tin Valley Ep2",
+			"grandparentTitle": "Lantern Hollow",
+			"parentTitle": "The Tin Valley",
+			"parentIndex": 1,
+			"duration": 5880000,
+			"addedAt": 1700000110,
+			"Media": [
+				{
+					"id": 50110,
+					"duration": 5880000,
+					"bitrate": 128,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50110,
+							"key": "/library/parts/50110/1700000000/LH Tin Valley - Ep 2.mp3",
+							"duration": 5880000,
+							"file": "M:/Music/Lantern Hollow/LH Tin Valley - Ep 2.mp3",
+							"size": 94080058,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20111",
+			"key": "/library/metadata/20111",
+			"parentRatingKey": "1050",
+			"grandparentRatingKey": "9006",
+			"type": "track",
+			"title": "LH Tin Valley ep5",
+			"grandparentTitle": "Lantern Hollow",
+			"parentTitle": "The Tin Valley",
+			"parentIndex": 1,
+			"duration": 3180000,
+			"addedAt": 1700000111,
+			"Media": [
+				{
+					"id": 50111,
+					"duration": 3180000,
+					"bitrate": 146,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50111,
+							"key": "/library/parts/50111/1700000000/LH Tin Valley ep5.mp3",
+							"duration": 3180000,
+							"file": "M:/Music/Lantern Hollow/LH Tin Valley ep5.mp3",
+							"size": 58035059,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20112",
+			"key": "/library/metadata/20112",
+			"parentRatingKey": "1050",
+			"grandparentRatingKey": "9006",
+			"type": "track",
+			"title": "LH Tin Valley ep4",
+			"grandparentTitle": "Lantern Hollow",
+			"parentTitle": "The Tin Valley",
+			"parentIndex": 1,
+			"duration": 3960000,
+			"addedAt": 1700000112,
+			"Media": [
+				{
+					"id": 50112,
+					"duration": 3960000,
+					"bitrate": 154,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50112,
+							"key": "/library/parts/50112/1700000000/LH Tin Valley ep4.mp3",
+							"duration": 3960000,
+							"file": "M:/Music/Lantern Hollow/LH Tin Valley ep4.mp3",
+							"size": 76230060,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20113",
+			"key": "/library/metadata/20113",
+			"parentRatingKey": "1050",
+			"grandparentRatingKey": "9006",
+			"type": "track",
+			"title": "LH Tin Valley ep7",
+			"grandparentTitle": "Lantern Hollow",
+			"parentTitle": "The Tin Valley",
+			"parentIndex": 1,
+			"duration": 3600000,
+			"addedAt": 1700000113,
+			"Media": [
+				{
+					"id": 50113,
+					"duration": 3600000,
+					"bitrate": 137,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50113,
+							"key": "/library/parts/50113/1700000000/LH Tin Valley ep7.mp3",
+							"duration": 3600000,
+							"file": "M:/Music/Lantern Hollow/LH Tin Valley ep7.mp3",
+							"size": 61650061,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20114",
+			"key": "/library/metadata/20114",
+			"parentRatingKey": "1050",
+			"grandparentRatingKey": "9006",
+			"type": "track",
+			"title": "LH Tin Valley ep6",
+			"grandparentTitle": "Lantern Hollow",
+			"parentTitle": "The Tin Valley",
+			"parentIndex": 1,
+			"duration": 5700000,
+			"addedAt": 1700000114,
+			"Media": [
+				{
+					"id": 50114,
+					"duration": 5700000,
+					"bitrate": 142,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50114,
+							"key": "/library/parts/50114/1700000000/LH Tin Valley ep6.mp3",
+							"duration": 5700000,
+							"file": "M:/Music/Lantern Hollow/LH Tin Valley ep6.mp3",
+							"size": 101175062,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20115",
+			"key": "/library/metadata/20115",
+			"parentRatingKey": "1050",
+			"grandparentRatingKey": "9006",
+			"type": "track",
+			"title": "Tin Valley Theme",
+			"grandparentTitle": "Lantern Hollow",
+			"parentTitle": "The Tin Valley",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000115,
+			"Media": [
+				{
+					"id": 50115,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50115,
+							"key": "/library/parts/50115/1700000000/Tin Valley Theme.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Lantern Hollow/Extras/Tin Valley Theme.mp3",
+							"size": 7200063,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 1
+		},
+		{
+			"ratingKey": "20116",
+			"key": "/library/metadata/20116",
+			"parentRatingKey": "1051",
+			"grandparentRatingKey": "9006",
+			"type": "track",
+			"title": "Valley Song 1",
+			"grandparentTitle": "Lantern Hollow",
+			"parentTitle": "Tin Valley OST",
+			"parentIndex": 1,
+			"duration": 192000,
+			"addedAt": 1700000116,
+			"Media": [
+				{
+					"id": 50116,
+					"duration": 192000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50116,
+							"key": "/library/parts/50116/1700000000/01 Valley Song 1.mp3",
+							"duration": 192000,
+							"file": "M:/Music/Lantern Hollow/Tin Valley OST/01 Valley Song 1.mp3",
+							"size": 7680064,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 1
+		},
+		{
+			"ratingKey": "20117",
+			"key": "/library/metadata/20117",
+			"parentRatingKey": "1051",
+			"grandparentRatingKey": "9006",
+			"type": "track",
+			"title": "Valley Song 2",
+			"grandparentTitle": "Lantern Hollow",
+			"parentTitle": "Tin Valley OST",
+			"parentIndex": 1,
+			"duration": 192000,
+			"addedAt": 1700000117,
+			"Media": [
+				{
+					"id": 50117,
+					"duration": 192000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50117,
+							"key": "/library/parts/50117/1700000000/02 Valley Song 2.mp3",
+							"duration": 192000,
+							"file": "M:/Music/Lantern Hollow/Tin Valley OST/02 Valley Song 2.mp3",
+							"size": 7680065,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 2
+		},
+		{
+			"ratingKey": "20118",
+			"key": "/library/metadata/20118",
+			"parentRatingKey": "1051",
+			"grandparentRatingKey": "9006",
+			"type": "track",
+			"title": "Valley Song 3",
+			"grandparentTitle": "Lantern Hollow",
+			"parentTitle": "Tin Valley OST",
+			"parentIndex": 1,
+			"duration": 192000,
+			"addedAt": 1700000118,
+			"Media": [
+				{
+					"id": 50118,
+					"duration": 192000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50118,
+							"key": "/library/parts/50118/1700000000/03 Valley Song 3.mp3",
+							"duration": 192000,
+							"file": "M:/Music/Lantern Hollow/Tin Valley OST/03 Valley Song 3.mp3",
+							"size": 7680066,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 3
+		},
+		{
+			"ratingKey": "20119",
+			"key": "/library/metadata/20119",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 01",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000119,
+			"Media": [
+				{
+					"id": 50119,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50119,
+							"key": "/library/parts/50119/1700000000/Drift 01.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 01.mp3",
+							"size": 7200067,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20120",
+			"key": "/library/metadata/20120",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 02",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000120,
+			"Media": [
+				{
+					"id": 50120,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50120,
+							"key": "/library/parts/50120/1700000000/Drift 02.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 02.mp3",
+							"size": 7200068,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20121",
+			"key": "/library/metadata/20121",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 03",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000121,
+			"Media": [
+				{
+					"id": 50121,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50121,
+							"key": "/library/parts/50121/1700000000/Drift 03.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 03.mp3",
+							"size": 7200069,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20122",
+			"key": "/library/metadata/20122",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 04",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000122,
+			"Media": [
+				{
+					"id": 50122,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50122,
+							"key": "/library/parts/50122/1700000000/Drift 04.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 04.mp3",
+							"size": 7200070,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20123",
+			"key": "/library/metadata/20123",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 05",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000123,
+			"Media": [
+				{
+					"id": 50123,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50123,
+							"key": "/library/parts/50123/1700000000/Drift 05.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 05.mp3",
+							"size": 7200071,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20124",
+			"key": "/library/metadata/20124",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 06",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000124,
+			"Media": [
+				{
+					"id": 50124,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50124,
+							"key": "/library/parts/50124/1700000000/Drift 06.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 06.mp3",
+							"size": 7200072,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20125",
+			"key": "/library/metadata/20125",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 07",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000125,
+			"Media": [
+				{
+					"id": 50125,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50125,
+							"key": "/library/parts/50125/1700000000/Drift 07.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 07.mp3",
+							"size": 7200073,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20126",
+			"key": "/library/metadata/20126",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 08",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000126,
+			"Media": [
+				{
+					"id": 50126,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50126,
+							"key": "/library/parts/50126/1700000000/Drift 08.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 08.mp3",
+							"size": 7200074,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20127",
+			"key": "/library/metadata/20127",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 09",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000127,
+			"Media": [
+				{
+					"id": 50127,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50127,
+							"key": "/library/parts/50127/1700000000/Drift 09.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 09.mp3",
+							"size": 7200075,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20128",
+			"key": "/library/metadata/20128",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 10",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000128,
+			"Media": [
+				{
+					"id": 50128,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50128,
+							"key": "/library/parts/50128/1700000000/Drift 10.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 10.mp3",
+							"size": 7200076,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20129",
+			"key": "/library/metadata/20129",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 11",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000129,
+			"Media": [
+				{
+					"id": 50129,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50129,
+							"key": "/library/parts/50129/1700000000/Drift 11.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 11.mp3",
+							"size": 7200077,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20130",
+			"key": "/library/metadata/20130",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 12",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000130,
+			"Media": [
+				{
+					"id": 50130,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50130,
+							"key": "/library/parts/50130/1700000000/Drift 12.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 12.mp3",
+							"size": 7200078,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20131",
+			"key": "/library/metadata/20131",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 13",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000131,
+			"Media": [
+				{
+					"id": 50131,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50131,
+							"key": "/library/parts/50131/1700000000/Drift 13.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 13.mp3",
+							"size": 7200079,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20132",
+			"key": "/library/metadata/20132",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 14",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000132,
+			"Media": [
+				{
+					"id": 50132,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50132,
+							"key": "/library/parts/50132/1700000000/Drift 14.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 14.mp3",
+							"size": 7200080,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20133",
+			"key": "/library/metadata/20133",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 15",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000133,
+			"Media": [
+				{
+					"id": 50133,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50133,
+							"key": "/library/parts/50133/1700000000/Drift 15.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 15.mp3",
+							"size": 7200081,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20134",
+			"key": "/library/metadata/20134",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 16",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000134,
+			"Media": [
+				{
+					"id": 50134,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50134,
+							"key": "/library/parts/50134/1700000000/Drift 16.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 16.mp3",
+							"size": 7200082,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20135",
+			"key": "/library/metadata/20135",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 17",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000135,
+			"Media": [
+				{
+					"id": 50135,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50135,
+							"key": "/library/parts/50135/1700000000/Drift 17.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 17.mp3",
+							"size": 7200083,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20136",
+			"key": "/library/metadata/20136",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 18",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000136,
+			"Media": [
+				{
+					"id": 50136,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50136,
+							"key": "/library/parts/50136/1700000000/Drift 18.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 18.mp3",
+							"size": 7200084,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20137",
+			"key": "/library/metadata/20137",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 19",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000137,
+			"Media": [
+				{
+					"id": 50137,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50137,
+							"key": "/library/parts/50137/1700000000/Drift 19.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 19.mp3",
+							"size": 7200085,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20138",
+			"key": "/library/metadata/20138",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 20",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000138,
+			"Media": [
+				{
+					"id": 50138,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50138,
+							"key": "/library/parts/50138/1700000000/Drift 20.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 20.mp3",
+							"size": 7200086,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20139",
+			"key": "/library/metadata/20139",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 21",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000139,
+			"Media": [
+				{
+					"id": 50139,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50139,
+							"key": "/library/parts/50139/1700000000/Drift 21.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 21.mp3",
+							"size": 7200087,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20140",
+			"key": "/library/metadata/20140",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 22",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000140,
+			"Media": [
+				{
+					"id": 50140,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50140,
+							"key": "/library/parts/50140/1700000000/Drift 22.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 22.mp3",
+							"size": 7200088,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20141",
+			"key": "/library/metadata/20141",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 23",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000141,
+			"Media": [
+				{
+					"id": 50141,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50141,
+							"key": "/library/parts/50141/1700000000/Drift 23.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 23.mp3",
+							"size": 7200089,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20142",
+			"key": "/library/metadata/20142",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 24",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000142,
+			"Media": [
+				{
+					"id": 50142,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50142,
+							"key": "/library/parts/50142/1700000000/Drift 24.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 24.mp3",
+							"size": 7200090,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20143",
+			"key": "/library/metadata/20143",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 25",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000143,
+			"Media": [
+				{
+					"id": 50143,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50143,
+							"key": "/library/parts/50143/1700000000/Drift 25.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 25.mp3",
+							"size": 7200091,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20144",
+			"key": "/library/metadata/20144",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 26",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000144,
+			"Media": [
+				{
+					"id": 50144,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50144,
+							"key": "/library/parts/50144/1700000000/Drift 26.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 26.mp3",
+							"size": 7200092,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20145",
+			"key": "/library/metadata/20145",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 27",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000145,
+			"Media": [
+				{
+					"id": 50145,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50145,
+							"key": "/library/parts/50145/1700000000/Drift 27.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 27.mp3",
+							"size": 7200093,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20146",
+			"key": "/library/metadata/20146",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 28",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000146,
+			"Media": [
+				{
+					"id": 50146,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50146,
+							"key": "/library/parts/50146/1700000000/Drift 28.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 28.mp3",
+							"size": 7200094,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20147",
+			"key": "/library/metadata/20147",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 29",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000147,
+			"Media": [
+				{
+					"id": 50147,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50147,
+							"key": "/library/parts/50147/1700000000/Drift 29.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 29.mp3",
+							"size": 7200095,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20148",
+			"key": "/library/metadata/20148",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Drift 30",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 180000,
+			"addedAt": 1700000148,
+			"Media": [
+				{
+					"id": 50148,
+					"duration": 180000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50148,
+							"key": "/library/parts/50148/1700000000/Drift 30.mp3",
+							"duration": 180000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Drift 30.mp3",
+							"size": 7200096,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20149",
+			"key": "/library/metadata/20149",
+			"parentRatingKey": "1060",
+			"grandparentRatingKey": "9007",
+			"type": "track",
+			"title": "Night Drive Mix",
+			"grandparentTitle": "Sam Drift",
+			"parentTitle": "[Unknown Album]",
+			"parentIndex": 1,
+			"duration": 3672000,
+			"addedAt": 1700000149,
+			"Media": [
+				{
+					"id": 50149,
+					"duration": 3672000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50149,
+							"key": "/library/parts/50149/1700000000/Night Drive Mix.mp3",
+							"duration": 3672000,
+							"file": "M:/Music/Sam Drift/[Unknown Album]/Night Drive Mix.mp3",
+							"size": 146880000,
+							"container": "mp3"
+						}
+					]
+				}
+			]
+		},
+		{
+			"ratingKey": "20150",
+			"key": "/library/metadata/20150",
+			"parentRatingKey": "1070",
+			"grandparentRatingKey": "9008",
+			"type": "track",
+			"title": "Song 1",
+			"grandparentTitle": "Theo Bramble",
+			"parentTitle": "well.",
+			"parentIndex": 1,
+			"duration": 240000,
+			"addedAt": 1700000150,
+			"Media": [
+				{
+					"id": 50150,
+					"duration": 240000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50150,
+							"key": "/library/parts/50150/1700000000/01 Song 1.mp3",
+							"duration": 240000,
+							"file": "M:/Music/Theo Bramble/well/01 Song 1.mp3",
+							"size": 9600001,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 1
+		},
+		{
+			"ratingKey": "20151",
+			"key": "/library/metadata/20151",
+			"parentRatingKey": "1070",
+			"grandparentRatingKey": "9008",
+			"type": "track",
+			"title": "Song 2",
+			"grandparentTitle": "Theo Bramble",
+			"parentTitle": "well.",
+			"parentIndex": 1,
+			"duration": 240000,
+			"addedAt": 1700000151,
+			"Media": [
+				{
+					"id": 50151,
+					"duration": 240000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50151,
+							"key": "/library/parts/50151/1700000000/02 Song 2.mp3",
+							"duration": 240000,
+							"file": "M:/Music/Theo Bramble/well/02 Song 2.mp3",
+							"size": 9600002,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 2
+		},
+		{
+			"ratingKey": "20152",
+			"key": "/library/metadata/20152",
+			"parentRatingKey": "1070",
+			"grandparentRatingKey": "9008",
+			"type": "track",
+			"title": "Song 3",
+			"grandparentTitle": "Theo Bramble",
+			"parentTitle": "well.",
+			"parentIndex": 1,
+			"duration": 240000,
+			"addedAt": 1700000152,
+			"Media": [
+				{
+					"id": 50152,
+					"duration": 240000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50152,
+							"key": "/library/parts/50152/1700000000/03 Song 3.mp3",
+							"duration": 240000,
+							"file": "M:/Music/Theo Bramble/well/03 Song 3.mp3",
+							"size": 9600003,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 3
+		},
+		{
+			"ratingKey": "20153",
+			"key": "/library/metadata/20153",
+			"parentRatingKey": "1070",
+			"grandparentRatingKey": "9008",
+			"type": "track",
+			"title": "Song 4",
+			"grandparentTitle": "Theo Bramble",
+			"parentTitle": "well.",
+			"parentIndex": 1,
+			"duration": 240000,
+			"addedAt": 1700000153,
+			"Media": [
+				{
+					"id": 50153,
+					"duration": 240000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50153,
+							"key": "/library/parts/50153/1700000000/04 Song 4.mp3",
+							"duration": 240000,
+							"file": "M:/Music/Theo Bramble/well/04 Song 4.mp3",
+							"size": 9600004,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 4
+		},
+		{
+			"ratingKey": "20154",
+			"key": "/library/metadata/20154",
+			"parentRatingKey": "1070",
+			"grandparentRatingKey": "9008",
+			"type": "track",
+			"title": "Song 5",
+			"grandparentTitle": "Theo Bramble",
+			"parentTitle": "well.",
+			"parentIndex": 1,
+			"duration": 240000,
+			"addedAt": 1700000154,
+			"Media": [
+				{
+					"id": 50154,
+					"duration": 240000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50154,
+							"key": "/library/parts/50154/1700000000/05 Song 5.mp3",
+							"duration": 240000,
+							"file": "M:/Music/Theo Bramble/well/05 Song 5.mp3",
+							"size": 9600005,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 5
+		},
+		{
+			"ratingKey": "20155",
+			"key": "/library/metadata/20155",
+			"parentRatingKey": "1070",
+			"grandparentRatingKey": "9008",
+			"type": "track",
+			"title": "Song 6",
+			"grandparentTitle": "Theo Bramble",
+			"parentTitle": "well.",
+			"parentIndex": 1,
+			"duration": 240000,
+			"addedAt": 1700000155,
+			"Media": [
+				{
+					"id": 50155,
+					"duration": 240000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50155,
+							"key": "/library/parts/50155/1700000000/06 Song 6.mp3",
+							"duration": 240000,
+							"file": "M:/Music/Theo Bramble/well/06 Song 6.mp3",
+							"size": 9600006,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 6
+		},
+		{
+			"ratingKey": "20156",
+			"key": "/library/metadata/20156",
+			"parentRatingKey": "1070",
+			"grandparentRatingKey": "9008",
+			"type": "track",
+			"title": "well. (Full Show)",
+			"grandparentTitle": "Theo Bramble",
+			"parentTitle": "well.",
+			"parentIndex": 1,
+			"duration": 3618000,
+			"addedAt": 1700000156,
+			"Media": [
+				{
+					"id": 50156,
+					"duration": 3618000,
+					"bitrate": 320,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50156,
+							"key": "/library/parts/50156/1700000000/07 well. (Full Show).mp3",
+							"duration": 3618000,
+							"file": "M:/Music/Theo Bramble/well/07 well. (Full Show).mp3",
+							"size": 144720007,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 7
+		},
+		{
+			"ratingKey": "20157",
+			"key": "/library/metadata/20157",
+			"parentRatingKey": "1080",
+			"grandparentRatingKey": "9009",
+			"type": "track",
+			"title": "Lighthouse 1",
+			"grandparentTitle": "The Quiet Hours",
+			"parentTitle": "Lighthouse",
+			"parentIndex": 1,
+			"duration": 246000,
+			"addedAt": 1700000157,
+			"Media": [
+				{
+					"id": 50157,
+					"duration": 246000,
+					"bitrate": 900,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "flac",
+					"Part": [
+						{
+							"id": 50157,
+							"key": "/library/parts/50157/1700000000/01 Lighthouse 1.flac",
+							"duration": 246000,
+							"file": "M:/Music/The Quiet Hours/Lighthouse/01 Lighthouse 1.flac",
+							"size": 27675008,
+							"container": "flac"
+						}
+					]
+				}
+			],
+			"index": 1
+		},
+		{
+			"ratingKey": "20158",
+			"key": "/library/metadata/20158",
+			"parentRatingKey": "1080",
+			"grandparentRatingKey": "9009",
+			"type": "track",
+			"title": "Lighthouse 2",
+			"grandparentTitle": "The Quiet Hours",
+			"parentTitle": "Lighthouse",
+			"parentIndex": 1,
+			"duration": 246000,
+			"addedAt": 1700000158,
+			"Media": [
+				{
+					"id": 50158,
+					"duration": 246000,
+					"bitrate": 900,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "flac",
+					"Part": [
+						{
+							"id": 50158,
+							"key": "/library/parts/50158/1700000000/02 Lighthouse 2.flac",
+							"duration": 246000,
+							"file": "M:/Music/The Quiet Hours/Lighthouse/02 Lighthouse 2.flac",
+							"size": 27675009,
+							"container": "flac"
+						}
+					]
+				}
+			],
+			"index": 2
+		},
+		{
+			"ratingKey": "20159",
+			"key": "/library/metadata/20159",
+			"parentRatingKey": "1080",
+			"grandparentRatingKey": "9009",
+			"type": "track",
+			"title": "Lighthouse 3",
+			"grandparentTitle": "The Quiet Hours",
+			"parentTitle": "Lighthouse",
+			"parentIndex": 1,
+			"duration": 246000,
+			"addedAt": 1700000159,
+			"Media": [
+				{
+					"id": 50159,
+					"duration": 246000,
+					"bitrate": 900,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "flac",
+					"Part": [
+						{
+							"id": 50159,
+							"key": "/library/parts/50159/1700000000/03 Lighthouse 3.flac",
+							"duration": 246000,
+							"file": "M:/Music/The Quiet Hours/Lighthouse/03 Lighthouse 3.flac",
+							"size": 27675010,
+							"container": "flac"
+						}
+					]
+				}
+			],
+			"index": 3
+		},
+		{
+			"ratingKey": "20160",
+			"key": "/library/metadata/20160",
+			"parentRatingKey": "1080",
+			"grandparentRatingKey": "9009",
+			"type": "track",
+			"title": "Lighthouse 4",
+			"grandparentTitle": "The Quiet Hours",
+			"parentTitle": "Lighthouse",
+			"parentIndex": 1,
+			"duration": 246000,
+			"addedAt": 1700000160,
+			"Media": [
+				{
+					"id": 50160,
+					"duration": 246000,
+					"bitrate": 900,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "flac",
+					"Part": [
+						{
+							"id": 50160,
+							"key": "/library/parts/50160/1700000000/04 Lighthouse 4.flac",
+							"duration": 246000,
+							"file": "M:/Music/The Quiet Hours/Lighthouse/04 Lighthouse 4.flac",
+							"size": 27675011,
+							"container": "flac"
+						}
+					]
+				}
+			],
+			"index": 4
+		},
+		{
+			"ratingKey": "20161",
+			"key": "/library/metadata/20161",
+			"parentRatingKey": "1080",
+			"grandparentRatingKey": "9009",
+			"type": "track",
+			"title": "Lighthouse 5",
+			"grandparentTitle": "The Quiet Hours",
+			"parentTitle": "Lighthouse",
+			"parentIndex": 1,
+			"duration": 246000,
+			"addedAt": 1700000161,
+			"Media": [
+				{
+					"id": 50161,
+					"duration": 246000,
+					"bitrate": 900,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "flac",
+					"Part": [
+						{
+							"id": 50161,
+							"key": "/library/parts/50161/1700000000/05 Lighthouse 5.flac",
+							"duration": 246000,
+							"file": "M:/Music/The Quiet Hours/Lighthouse/05 Lighthouse 5.flac",
+							"size": 27675012,
+							"container": "flac"
+						}
+					]
+				}
+			],
+			"index": 5
+		},
+		{
+			"ratingKey": "20162",
+			"key": "/library/metadata/20162",
+			"parentRatingKey": "1080",
+			"grandparentRatingKey": "9009",
+			"type": "track",
+			"title": "Lighthouse 6",
+			"grandparentTitle": "The Quiet Hours",
+			"parentTitle": "Lighthouse",
+			"parentIndex": 1,
+			"duration": 246000,
+			"addedAt": 1700000162,
+			"Media": [
+				{
+					"id": 50162,
+					"duration": 246000,
+					"bitrate": 900,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "flac",
+					"Part": [
+						{
+							"id": 50162,
+							"key": "/library/parts/50162/1700000000/06 Lighthouse 6.flac",
+							"duration": 246000,
+							"file": "M:/Music/The Quiet Hours/Lighthouse/06 Lighthouse 6.flac",
+							"size": 27675013,
+							"container": "flac"
+						}
+					]
+				}
+			],
+			"index": 6
+		},
+		{
+			"ratingKey": "20163",
+			"key": "/library/metadata/20163",
+			"parentRatingKey": "1080",
+			"grandparentRatingKey": "9009",
+			"type": "track",
+			"title": "Lighthouse 7",
+			"grandparentTitle": "The Quiet Hours",
+			"parentTitle": "Lighthouse",
+			"parentIndex": 1,
+			"duration": 246000,
+			"addedAt": 1700000163,
+			"Media": [
+				{
+					"id": 50163,
+					"duration": 246000,
+					"bitrate": 900,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "flac",
+					"Part": [
+						{
+							"id": 50163,
+							"key": "/library/parts/50163/1700000000/07 Lighthouse 7.flac",
+							"duration": 246000,
+							"file": "M:/Music/The Quiet Hours/Lighthouse/07 Lighthouse 7.flac",
+							"size": 27675014,
+							"container": "flac"
+						}
+					]
+				}
+			],
+			"index": 7
+		},
+		{
+			"ratingKey": "20164",
+			"key": "/library/metadata/20164",
+			"parentRatingKey": "1080",
+			"grandparentRatingKey": "9009",
+			"type": "track",
+			"title": "Lighthouse 8",
+			"grandparentTitle": "The Quiet Hours",
+			"parentTitle": "Lighthouse",
+			"parentIndex": 1,
+			"duration": 246000,
+			"addedAt": 1700000164,
+			"Media": [
+				{
+					"id": 50164,
+					"duration": 246000,
+					"bitrate": 900,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "flac",
+					"Part": [
+						{
+							"id": 50164,
+							"key": "/library/parts/50164/1700000000/08 Lighthouse 8.flac",
+							"duration": 246000,
+							"file": "M:/Music/The Quiet Hours/Lighthouse/08 Lighthouse 8.flac",
+							"size": 27675015,
+							"container": "flac"
+						}
+					]
+				}
+			],
+			"index": 8
+		},
+		{
+			"ratingKey": "20165",
+			"key": "/library/metadata/20165",
+			"parentRatingKey": "1080",
+			"grandparentRatingKey": "9009",
+			"type": "track",
+			"title": "Lighthouse 9",
+			"grandparentTitle": "The Quiet Hours",
+			"parentTitle": "Lighthouse",
+			"parentIndex": 1,
+			"duration": 246000,
+			"addedAt": 1700000165,
+			"Media": [
+				{
+					"id": 50165,
+					"duration": 246000,
+					"bitrate": 900,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "flac",
+					"Part": [
+						{
+							"id": 50165,
+							"key": "/library/parts/50165/1700000000/09 Lighthouse 9.flac",
+							"duration": 246000,
+							"file": "M:/Music/The Quiet Hours/Lighthouse/09 Lighthouse 9.flac",
+							"size": 27675016,
+							"container": "flac"
+						}
+					]
+				}
+			],
+			"index": 9
+		},
+		{
+			"ratingKey": "20166",
+			"key": "/library/metadata/20166",
+			"parentRatingKey": "1080",
+			"grandparentRatingKey": "9009",
+			"type": "track",
+			"title": "Lighthouse 10",
+			"grandparentTitle": "The Quiet Hours",
+			"parentTitle": "Lighthouse",
+			"parentIndex": 1,
+			"duration": 246000,
+			"addedAt": 1700000166,
+			"Media": [
+				{
+					"id": 50166,
+					"duration": 246000,
+					"bitrate": 900,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "flac",
+					"Part": [
+						{
+							"id": 50166,
+							"key": "/library/parts/50166/1700000000/10 Lighthouse 10.flac",
+							"duration": 246000,
+							"file": "M:/Music/The Quiet Hours/Lighthouse/10 Lighthouse 10.flac",
+							"size": 27675017,
+							"container": "flac"
+						}
+					]
+				}
+			],
+			"index": 10
+		},
+		{
+			"ratingKey": "20167",
+			"key": "/library/metadata/20167",
+			"parentRatingKey": "1090",
+			"grandparentRatingKey": "9010",
+			"type": "track",
+			"title": "Drama Track 1",
+			"grandparentTitle": "Studio Kiseki",
+			"parentTitle": "Drama CD Vol 1",
+			"parentIndex": 1,
+			"duration": 2232000,
+			"addedAt": 1700000167,
+			"Media": [
+				{
+					"id": 50167,
+					"duration": 2232000,
+					"bitrate": 192,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50167,
+							"key": "/library/parts/50167/1700000000/Drama Track 1.mp3",
+							"duration": 2232000,
+							"file": "M:/Music/music-uploads/Drama Track 1.mp3",
+							"size": 53568018,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 1
+		},
+		{
+			"ratingKey": "20168",
+			"key": "/library/metadata/20168",
+			"parentRatingKey": "1090",
+			"grandparentRatingKey": "9010",
+			"type": "track",
+			"title": "Drama Track 2",
+			"grandparentTitle": "Studio Kiseki",
+			"parentTitle": "Drama CD Vol 1",
+			"parentIndex": 1,
+			"duration": 1080000,
+			"addedAt": 1700000168,
+			"Media": [
+				{
+					"id": 50168,
+					"duration": 1080000,
+					"bitrate": 192,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50168,
+							"key": "/library/parts/50168/1700000000/Drama Track 2.mp3",
+							"duration": 1080000,
+							"file": "M:/Music/music-uploads/Drama Track 2.mp3",
+							"size": 25920019,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 2
+		},
+		{
+			"ratingKey": "20169",
+			"key": "/library/metadata/20169",
+			"parentRatingKey": "1091",
+			"grandparentRatingKey": "9011",
+			"type": "track",
+			"title": "Upload 1",
+			"grandparentTitle": "Various Uploads",
+			"parentTitle": "Uploads",
+			"parentIndex": 1,
+			"duration": 240000,
+			"addedAt": 1700000169,
+			"Media": [
+				{
+					"id": 50169,
+					"duration": 240000,
+					"bitrate": 192,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50169,
+							"key": "/library/parts/50169/1700000000/Upload 01.mp3",
+							"duration": 240000,
+							"file": "M:/Music/music-uploads/Upload 01.mp3",
+							"size": 5760020,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 1
+		},
+		{
+			"ratingKey": "20170",
+			"key": "/library/metadata/20170",
+			"parentRatingKey": "1091",
+			"grandparentRatingKey": "9011",
+			"type": "track",
+			"title": "Upload 2",
+			"grandparentTitle": "Various Uploads",
+			"parentTitle": "Uploads",
+			"parentIndex": 1,
+			"duration": 240000,
+			"addedAt": 1700000170,
+			"Media": [
+				{
+					"id": 50170,
+					"duration": 240000,
+					"bitrate": 192,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50170,
+							"key": "/library/parts/50170/1700000000/Upload 02.mp3",
+							"duration": 240000,
+							"file": "M:/Music/music-uploads/Upload 02.mp3",
+							"size": 5760021,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 2
+		},
+		{
+			"ratingKey": "20171",
+			"key": "/library/metadata/20171",
+			"parentRatingKey": "1091",
+			"grandparentRatingKey": "9011",
+			"type": "track",
+			"title": "Upload 3",
+			"grandparentTitle": "Various Uploads",
+			"parentTitle": "Uploads",
+			"parentIndex": 1,
+			"duration": 240000,
+			"addedAt": 1700000171,
+			"Media": [
+				{
+					"id": 50171,
+					"duration": 240000,
+					"bitrate": 192,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50171,
+							"key": "/library/parts/50171/1700000000/Upload 03.mp3",
+							"duration": 240000,
+							"file": "M:/Music/music-uploads/Upload 03.mp3",
+							"size": 5760022,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 3
+		},
+		{
+			"ratingKey": "20172",
+			"key": "/library/metadata/20172",
+			"parentRatingKey": "1091",
+			"grandparentRatingKey": "9011",
+			"type": "track",
+			"title": "Upload 4",
+			"grandparentTitle": "Various Uploads",
+			"parentTitle": "Uploads",
+			"parentIndex": 1,
+			"duration": 240000,
+			"addedAt": 1700000172,
+			"Media": [
+				{
+					"id": 50172,
+					"duration": 240000,
+					"bitrate": 192,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50172,
+							"key": "/library/parts/50172/1700000000/Upload 04.mp3",
+							"duration": 240000,
+							"file": "M:/Music/music-uploads/Upload 04.mp3",
+							"size": 5760023,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 4
+		},
+		{
+			"ratingKey": "20173",
+			"key": "/library/metadata/20173",
+			"parentRatingKey": "1091",
+			"grandparentRatingKey": "9011",
+			"type": "track",
+			"title": "Upload 5",
+			"grandparentTitle": "Various Uploads",
+			"parentTitle": "Uploads",
+			"parentIndex": 1,
+			"duration": 240000,
+			"addedAt": 1700000173,
+			"Media": [
+				{
+					"id": 50173,
+					"duration": 240000,
+					"bitrate": 192,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50173,
+							"key": "/library/parts/50173/1700000000/Upload 05.mp3",
+							"duration": 240000,
+							"file": "M:/Music/music-uploads/Upload 05.mp3",
+							"size": 5760024,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 5
+		},
+		{
+			"ratingKey": "20174",
+			"key": "/library/metadata/20174",
+			"parentRatingKey": "1091",
+			"grandparentRatingKey": "9011",
+			"type": "track",
+			"title": "Upload 6",
+			"grandparentTitle": "Various Uploads",
+			"parentTitle": "Uploads",
+			"parentIndex": 1,
+			"duration": 240000,
+			"addedAt": 1700000174,
+			"Media": [
+				{
+					"id": 50174,
+					"duration": 240000,
+					"bitrate": 192,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50174,
+							"key": "/library/parts/50174/1700000000/Upload 06.mp3",
+							"duration": 240000,
+							"file": "M:/Music/music-uploads/Upload 06.mp3",
+							"size": 5760025,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 6
+		},
+		{
+			"ratingKey": "20175",
+			"key": "/library/metadata/20175",
+			"parentRatingKey": "1091",
+			"grandparentRatingKey": "9011",
+			"type": "track",
+			"title": "Upload 7",
+			"grandparentTitle": "Various Uploads",
+			"parentTitle": "Uploads",
+			"parentIndex": 1,
+			"duration": 240000,
+			"addedAt": 1700000175,
+			"Media": [
+				{
+					"id": 50175,
+					"duration": 240000,
+					"bitrate": 192,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50175,
+							"key": "/library/parts/50175/1700000000/Upload 07.mp3",
+							"duration": 240000,
+							"file": "M:/Music/music-uploads/Upload 07.mp3",
+							"size": 5760026,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 7
+		},
+		{
+			"ratingKey": "20176",
+			"key": "/library/metadata/20176",
+			"parentRatingKey": "1091",
+			"grandparentRatingKey": "9011",
+			"type": "track",
+			"title": "Upload 8",
+			"grandparentTitle": "Various Uploads",
+			"parentTitle": "Uploads",
+			"parentIndex": 1,
+			"duration": 240000,
+			"addedAt": 1700000176,
+			"Media": [
+				{
+					"id": 50176,
+					"duration": 240000,
+					"bitrate": 192,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50176,
+							"key": "/library/parts/50176/1700000000/Upload 08.mp3",
+							"duration": 240000,
+							"file": "M:/Music/music-uploads/Upload 08.mp3",
+							"size": 5760027,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 8
+		},
+		{
+			"ratingKey": "20177",
+			"key": "/library/metadata/20177",
+			"parentRatingKey": "1091",
+			"grandparentRatingKey": "9011",
+			"type": "track",
+			"title": "Upload 9",
+			"grandparentTitle": "Various Uploads",
+			"parentTitle": "Uploads",
+			"parentIndex": 1,
+			"duration": 240000,
+			"addedAt": 1700000177,
+			"Media": [
+				{
+					"id": 50177,
+					"duration": 240000,
+					"bitrate": 192,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50177,
+							"key": "/library/parts/50177/1700000000/Upload 09.mp3",
+							"duration": 240000,
+							"file": "M:/Music/music-uploads/Upload 09.mp3",
+							"size": 5760028,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 9
+		},
+		{
+			"ratingKey": "20178",
+			"key": "/library/metadata/20178",
+			"parentRatingKey": "1091",
+			"grandparentRatingKey": "9011",
+			"type": "track",
+			"title": "Upload 10",
+			"grandparentTitle": "Various Uploads",
+			"parentTitle": "Uploads",
+			"parentIndex": 1,
+			"duration": 240000,
+			"addedAt": 1700000178,
+			"Media": [
+				{
+					"id": 50178,
+					"duration": 240000,
+					"bitrate": 192,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50178,
+							"key": "/library/parts/50178/1700000000/Upload 10.mp3",
+							"duration": 240000,
+							"file": "M:/Music/music-uploads/Upload 10.mp3",
+							"size": 5760029,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 10
+		},
+		{
+			"ratingKey": "20179",
+			"key": "/library/metadata/20179",
+			"parentRatingKey": "1091",
+			"grandparentRatingKey": "9011",
+			"type": "track",
+			"title": "Upload 11",
+			"grandparentTitle": "Various Uploads",
+			"parentTitle": "Uploads",
+			"parentIndex": 1,
+			"duration": 240000,
+			"addedAt": 1700000179,
+			"Media": [
+				{
+					"id": 50179,
+					"duration": 240000,
+					"bitrate": 192,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50179,
+							"key": "/library/parts/50179/1700000000/Upload 11.mp3",
+							"duration": 240000,
+							"file": "M:/Music/music-uploads/Upload 11.mp3",
+							"size": 5760030,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 11
+		},
+		{
+			"ratingKey": "20180",
+			"key": "/library/metadata/20180",
+			"parentRatingKey": "1091",
+			"grandparentRatingKey": "9011",
+			"type": "track",
+			"title": "Upload 12",
+			"grandparentTitle": "Various Uploads",
+			"parentTitle": "Uploads",
+			"parentIndex": 1,
+			"duration": 240000,
+			"addedAt": 1700000180,
+			"Media": [
+				{
+					"id": 50180,
+					"duration": 240000,
+					"bitrate": 192,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50180,
+							"key": "/library/parts/50180/1700000000/Upload 12.mp3",
+							"duration": 240000,
+							"file": "M:/Music/music-uploads/Upload 12.mp3",
+							"size": 5760031,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 12
+		},
+		{
+			"ratingKey": "20181",
+			"key": "/library/metadata/20181",
+			"parentRatingKey": "1091",
+			"grandparentRatingKey": "9011",
+			"type": "track",
+			"title": "Upload 13",
+			"grandparentTitle": "Various Uploads",
+			"parentTitle": "Uploads",
+			"parentIndex": 1,
+			"duration": 240000,
+			"addedAt": 1700000181,
+			"Media": [
+				{
+					"id": 50181,
+					"duration": 240000,
+					"bitrate": 192,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50181,
+							"key": "/library/parts/50181/1700000000/Upload 13.mp3",
+							"duration": 240000,
+							"file": "M:/Music/music-uploads/Upload 13.mp3",
+							"size": 5760032,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 13
+		},
+		{
+			"ratingKey": "20182",
+			"key": "/library/metadata/20182",
+			"parentRatingKey": "1091",
+			"grandparentRatingKey": "9011",
+			"type": "track",
+			"title": "Upload 14",
+			"grandparentTitle": "Various Uploads",
+			"parentTitle": "Uploads",
+			"parentIndex": 1,
+			"duration": 240000,
+			"addedAt": 1700000182,
+			"Media": [
+				{
+					"id": 50182,
+					"duration": 240000,
+					"bitrate": 192,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50182,
+							"key": "/library/parts/50182/1700000000/Upload 14.mp3",
+							"duration": 240000,
+							"file": "M:/Music/music-uploads/Upload 14.mp3",
+							"size": 5760033,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 14
+		},
+		{
+			"ratingKey": "20183",
+			"key": "/library/metadata/20183",
+			"parentRatingKey": "1091",
+			"grandparentRatingKey": "9011",
+			"type": "track",
+			"title": "Upload 15",
+			"grandparentTitle": "Various Uploads",
+			"parentTitle": "Uploads",
+			"parentIndex": 1,
+			"duration": 240000,
+			"addedAt": 1700000183,
+			"Media": [
+				{
+					"id": 50183,
+					"duration": 240000,
+					"bitrate": 192,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50183,
+							"key": "/library/parts/50183/1700000000/Upload 15.mp3",
+							"duration": 240000,
+							"file": "M:/Music/music-uploads/Upload 15.mp3",
+							"size": 5760034,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 15
+		},
+		{
+			"ratingKey": "20184",
+			"key": "/library/metadata/20184",
+			"parentRatingKey": "1091",
+			"grandparentRatingKey": "9011",
+			"type": "track",
+			"title": "Upload 16",
+			"grandparentTitle": "Various Uploads",
+			"parentTitle": "Uploads",
+			"parentIndex": 1,
+			"duration": 240000,
+			"addedAt": 1700000184,
+			"Media": [
+				{
+					"id": 50184,
+					"duration": 240000,
+					"bitrate": 192,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50184,
+							"key": "/library/parts/50184/1700000000/Upload 16.mp3",
+							"duration": 240000,
+							"file": "M:/Music/music-uploads/Upload 16.mp3",
+							"size": 5760035,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 16
+		},
+		{
+			"ratingKey": "20185",
+			"key": "/library/metadata/20185",
+			"parentRatingKey": "1091",
+			"grandparentRatingKey": "9011",
+			"type": "track",
+			"title": "Upload 17",
+			"grandparentTitle": "Various Uploads",
+			"parentTitle": "Uploads",
+			"parentIndex": 1,
+			"duration": 240000,
+			"addedAt": 1700000185,
+			"Media": [
+				{
+					"id": 50185,
+					"duration": 240000,
+					"bitrate": 192,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50185,
+							"key": "/library/parts/50185/1700000000/Upload 17.mp3",
+							"duration": 240000,
+							"file": "M:/Music/music-uploads/Upload 17.mp3",
+							"size": 5760036,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 17
+		},
+		{
+			"ratingKey": "20186",
+			"key": "/library/metadata/20186",
+			"parentRatingKey": "1091",
+			"grandparentRatingKey": "9011",
+			"type": "track",
+			"title": "Upload 18",
+			"grandparentTitle": "Various Uploads",
+			"parentTitle": "Uploads",
+			"parentIndex": 1,
+			"duration": 240000,
+			"addedAt": 1700000186,
+			"Media": [
+				{
+					"id": 50186,
+					"duration": 240000,
+					"bitrate": 192,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50186,
+							"key": "/library/parts/50186/1700000000/Upload 18.mp3",
+							"duration": 240000,
+							"file": "M:/Music/music-uploads/Upload 18.mp3",
+							"size": 5760037,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 18
+		},
+		{
+			"ratingKey": "20187",
+			"key": "/library/metadata/20187",
+			"parentRatingKey": "1091",
+			"grandparentRatingKey": "9011",
+			"type": "track",
+			"title": "Upload 19",
+			"grandparentTitle": "Various Uploads",
+			"parentTitle": "Uploads",
+			"parentIndex": 1,
+			"duration": 240000,
+			"addedAt": 1700000187,
+			"Media": [
+				{
+					"id": 50187,
+					"duration": 240000,
+					"bitrate": 192,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50187,
+							"key": "/library/parts/50187/1700000000/Upload 19.mp3",
+							"duration": 240000,
+							"file": "M:/Music/music-uploads/Upload 19.mp3",
+							"size": 5760038,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 19
+		},
+		{
+			"ratingKey": "20188",
+			"key": "/library/metadata/20188",
+			"parentRatingKey": "1091",
+			"grandparentRatingKey": "9011",
+			"type": "track",
+			"title": "Upload 20",
+			"grandparentTitle": "Various Uploads",
+			"parentTitle": "Uploads",
+			"parentIndex": 1,
+			"duration": 240000,
+			"addedAt": 1700000188,
+			"Media": [
+				{
+					"id": 50188,
+					"duration": 240000,
+					"bitrate": 192,
+					"audioChannels": 2,
+					"audioCodec": "mp3",
+					"container": "mp3",
+					"Part": [
+						{
+							"id": 50188,
+							"key": "/library/parts/50188/1700000000/Upload 20.mp3",
+							"duration": 240000,
+							"file": "M:/Music/music-uploads/Upload 20.mp3",
+							"size": 5760039,
+							"container": "mp3"
+						}
+					]
+				}
+			],
+			"index": 20
+		}
+	],
+	"chapters": {
+		"20042": [
+			{
+				"index": 1,
+				"tag": "Marker 1",
+				"startTimeOffset": 0,
+				"endTimeOffset": 0
+			},
+			{
+				"index": 2,
+				"tag": "Marker 2",
+				"startTimeOffset": 300000,
+				"endTimeOffset": 300000
+			},
+			{
+				"index": 3,
+				"tag": "Marker 3",
+				"startTimeOffset": 600000,
+				"endTimeOffset": 600000
+			}
+		],
+		"20046": [
+			{
+				"index": 1,
+				"tag": "Tidefall Part 1",
+				"startTimeOffset": 0,
+				"endTimeOffset": 6000000
+			},
+			{
+				"index": 2,
+				"tag": "Tidefall Part 2",
+				"startTimeOffset": 6000000,
+				"endTimeOffset": 12500000
+			},
+			{
+				"index": 3,
+				"tag": "Tidefall Part 3",
+				"startTimeOffset": 12500000,
+				"endTimeOffset": 18000000
+			}
+		]
+	}
+}

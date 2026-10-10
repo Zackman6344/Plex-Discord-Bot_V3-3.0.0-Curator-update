@@ -10,6 +10,8 @@ const { getPlex } = require('../helpers/plexClient.js');
 const playbackButtons = require('../helpers/playbackButtons.js');
 const plexResolve = require('../helpers/plexResolve.js');
 const seek = require('../helpers/seek.js');
+const longForm = require('../helpers/longForm.js');
+const voiceHealth = require('../helpers/voiceHealth.js');
 const { FFmpeg } = require('prism-media');
 const { Readable, pipeline } = require('stream');
 const {
@@ -70,6 +72,10 @@ class Bot extends EventEmitter{
 				this.playRun = 0;
 				this.stopGeneration = 0;
 				this.stoppedEntry = null;
+				// Set by app/music.js to the book director. Null keeps the runPlayback gate a no-op,
+				// which is what every test Bot without books relies on.
+				this.books = null;
+				this.loadingRuns = 0;
 		}
 	/**
 	 * Work like a simple semaphore to avoid conflict while playing song.
@@ -95,8 +101,13 @@ class Bot extends EventEmitter{
 		}
 		const nombre = getRandomNumber(Object.keys(this.cache_library).length);
 		const res = await this.plex.query('/library/sections/' + this.cache_library[Object.keys(this.cache_library)[nombre]].key + '/all?type=10');
-		const nombre2 = getRandomNumber(res.MediaContainer.Metadata.length);
-		const music = this.trackToMusic(res.MediaContainer.Metadata[nombre2]);
+		const pool = longForm.partition(res.MediaContainer.Metadata).music;
+		if (pool.length === 0) {
+			message.reply('That library has no music to pick from.');
+			return;
+		}
+		const nombre2 = getRandomNumber(pool.length);
+		const music = this.trackToMusic(pool[nombre2]);
 		this.songQueue.push(music);
 		if(!this.isPlaying){
 			this.playSong(message);
@@ -172,15 +183,32 @@ class Bot extends EventEmitter{
 	async findArtist(name, message) {
 		// Artist : type = 8
 		const resArtist = await this.findTracksOnPlex(name, 0, 10, 8);
-		const resAlbums = await this.plex.query(resArtist.MediaContainer.Metadata[0].key);
+		const artists = resArtist.MediaContainer.Metadata || [];
+		const artist = artists.find(a => !longForm.isLongFormArtist(a));
+		if (!artist) {
+			if (artists.length) {
+				message.reply(longForm.onlyBooksLine(artists));
+				return;
+			}
+			throw new Error('The artist was not found.');
+		}
+		const resAlbums = await this.plex.query(artist.key);
+		const skipped = artists.slice(0, artists.indexOf(artist));
 		for(let album of resAlbums.MediaContainer.Metadata) {
+			if (longForm.isLongFormAlbum(album)) {
+				skipped.push(album);
+				continue;
+			}
 			const resTracks = await this.plex.query(album.key);
-			for(let track of resTracks.MediaContainer.Metadata) {
+			const { music: tracks, books } = longForm.partition(resTracks.MediaContainer.Metadata);
+			skipped.push(...books);
+			for(let track of tracks) {
 				const music = this.trackToMusic(track);
 				this.songQueue.push(music);
 			}
 		}
-		message.reply('add ' + name + '\'s albums to the queue.');
+		const bookLine = skipped.length ? longForm.redirectLine(longForm.worksFor(skipped)) : '';
+		message.reply('add ' + name + '\'s albums to the queue.' + (bookLine ? '\n' + bookLine : ''));
 		if(!this.isPlaying) {
 			this.playSong(message);
 		}
@@ -197,7 +225,7 @@ class Bot extends EventEmitter{
 		for (let library of Object.values(this.cache_library)){
 			if(library.mood[moodName]) {
 				const res = await this.plex.query(library.mood[moodName].url)
-				for(let track of res.MediaContainer.Metadata){
+				for(let track of longForm.partition(res.MediaContainer.Metadata).music){
 					musics.push(this.trackToMusic(track));
 				}
 			}
@@ -266,7 +294,7 @@ class Bot extends EventEmitter{
 		}
 		for (const entry of res.MediaContainer.Metadata) {
 			if (entry.title.toLowerCase().includes(query.toLowerCase())) {
-				this.loadPlaylist(entry.key, message, random);
+				this.loadPlaylist(entry.key, message, random, entry.smart);
 				message.reply(`The playlist "${entry.title}" has been loaded.`);
 				return ;
 			}
@@ -278,10 +306,19 @@ class Bot extends EventEmitter{
 	/**
 	 *
 	 */
-	async loadPlaylist(key, message, random=false) {
+	async loadPlaylist(key, message, random=false, smart=false) {
 		try {
 			const res = await this.plex.query(key);
-			const tracks = res.MediaContainer.Metadata || [];
+			let tracks = res.MediaContainer.Metadata || [];
+
+			// Only smart playlists: one like "All Music" pulls in every book chapter, while a
+			// hand-made playlist holding a book was built that way on purpose.
+			const isSmart = (v) => v === true || v === 1 || v === '1';
+			if (isSmart(smart) || isSmart(res.MediaContainer.smart)) {
+				const { music, books } = longForm.partition(tracks);
+				tracks = music;
+				if (books.length) message.reply(`📚 Skipped ${books.length} audiobook track${books.length === 1 ? '' : 's'} in this smart playlist.`);
+			}
 
 			for (const track of tracks) {
 				this.songQueue.push(this.trackToMusic(track));
@@ -314,12 +351,21 @@ class Bot extends EventEmitter{
 	async findAlbum(query, message) {
 		// Album : type = 9
 		const res = await this.findTracksOnPlex(query, 0, 10, 9);
+		const albums = (res.MediaContainer && res.MediaContainer.Metadata) || [];
+		const album = albums.find(a => !longForm.isLongFormAlbum(a));
+		if (!album && albums.length) {
+			message.reply(longForm.onlyBooksLine(albums));
+			return;
+		}
 		try {
-			const key = res.MediaContainer.Metadata[0].key;
+			const key = album.key;
 			this.loadAlbum(key, message);
 		} catch (err) {
 			throw new Error('The album was not found.');
 		}
+		const passed = albums.slice(0, albums.indexOf(album));
+		const bookLine = passed.length ? longForm.redirectLine(longForm.worksFor(passed)) : '';
+		if (bookLine) message.reply(bookLine);
 	}
 
 	/**
@@ -328,7 +374,7 @@ class Bot extends EventEmitter{
 	async loadAlbum(key, message) {
 		try {
 			const res = await this.plex.query(key);
-			const tracks = res.MediaContainer.Metadata || [];
+			const tracks = longForm.partition(res.MediaContainer.Metadata).music;
 
 			for (const track of tracks) {
 				this.songQueue.push(this.trackToMusic(track));
@@ -348,20 +394,32 @@ class Bot extends EventEmitter{
 	async findSong(query, offset, pageSize, message) {
 		try {
 			const res = await this.findTracksOnPlex(query, offset, pageSize);
-			this.tracks = res.MediaContainer.Metadata;
+			// Numbers in the reply index this.tracks (!playsong, playlist choice), so it holds only
+			// the music hits; paging still advances by the raw page, or !nextpage repeats hits.
+			const { music, books } = longForm.partition(res.MediaContainer.Metadata);
+			this.tracks = music;
 
 			const resultSize = res.MediaContainer.size;
 			this.plexQuery = query; // set query for !nextpage
 			this.plexOffset = this.plexOffset + resultSize; // set paging
 
+			// Hits excluded only by a podcast's artist map to no work; beside music the fallback
+			// would claim the listed songs are audiobooks, so it is kept for the no-music reply.
+			const bookLine = books.length
+				? longForm.redirectLine(longForm.worksFor(books), music.length ? longForm.ALSO_PREFIX : longForm.ONLY_PREFIX) || (music.length ? '' : longForm.fallbackLine(books))
+				: '';
+			// A full raw page may hide songs on the next one, so a lone song among chapters is
+			// offered for choice rather than auto-queued, and an all-chapter page keeps the paging hint.
+			const morePages = books.length > 0 && resultSize >= pageSize;
 			let messageLines = '\n';
 			let artist = '';
-			if (resultSize == 1 && offset == 0) {
+			if (music.length == 1 && offset == 0 && !morePages) {
 				// songKey = 0;
 				// add song to queue
 				this.addToQueue(0, this.tracks, message);
+				if (bookLine) message.reply(bookLine);
 			}
-			else if (resultSize > 1) {
+			else if (music.length > 1 || (music.length == 1 && books.length)) {
 				for (let t = 0; t < this.tracks.length; t++) {
 					if ('originalTitle' in this.tracks[t]) {
 						artist = this.tracks[t].originalTitle;
@@ -371,8 +429,12 @@ class Bot extends EventEmitter{
 					}
 					messageLines += language.BOT_FIND_SONG_INFO_MUSIC.format({index : t+1, artist : artist, title : this.tracks[t].title}) + '\n';
 				}
+				if (bookLine) messageLines += bookLine + '\n';
 				messageLines += language.BOT_FIND_SONG_INFO.format({commandPrefix: this.config.commandPrefix});
 				message.reply(messageLines);
+			}
+			else if (bookLine) {
+				message.reply(morePages ? `${bookLine}\n**${this.config.commandPrefix}nextpage** if the music you want is not in this page.` : bookLine);
 			}
 			else {
 				message.reply(language.BOT_FIND_SONG_ERROR);
@@ -539,8 +601,9 @@ class Bot extends EventEmitter{
 	}
 
 	/**
-	 * Join `this.voiceChannel`, first destroying any connection for the guild that is not Ready,
-	 * an earlier run's unfinished join included.
+	 * Join `channel` (music's `this.voiceChannel` unless an audiobook passes its own), first
+	 * destroying any connection for the guild that is not Ready, an earlier run's unfinished join
+	 * included.
 	 *
 	 * joinVoiceChannel hands back an existing connection for the guild as-is. If that one is
 	 * disconnected or destroyed it never reaches Ready, so entersState waits the full timeout and
@@ -549,8 +612,7 @@ class Bot extends EventEmitter{
 	 * The channel is read once, up front: while the join waits, a newer run can replace
 	 * `this.voiceChannel`, and its failure can clear it.
 	 */
-	async openConnection() {
-		const channel = this.voiceChannel;
+	async openConnection(channel = this.voiceChannel) {
 		const guildId = channel.guild.id;
 		const existing = getVoiceConnection(guildId);
 		if (existing && existing.state && existing.state.status !== VoiceConnectionStatus.Ready) {
@@ -562,6 +624,7 @@ class Bot extends EventEmitter{
 			guildId,
 			adapterCreator: channel.guild.voiceAdapterCreator
 		});
+		voiceHealth.watchConnection(connection, { channelId: channel.id });
 
 		const startedAt = Date.now();
 		try {
@@ -619,6 +682,21 @@ class Bot extends EventEmitter{
 				(queued ? ` ${queued} track${queued === 1 ? '' : 's'} are still queued — join a channel and run \`${this.config.commandPrefix}play\` to pick up where this left off.` : '')
 			).catch(() => {});
 		}
+	}
+
+	/**
+	 * Whether music owns, or is about to own, this bot's voice. isPlaying alone misses a first
+	 * track that is still joining or opening its stream: it is set only once the stream is open.
+	 *
+	 * The dispatcher is left out on purpose. A player stopped while Buffering stays non-Idle until
+	 * ffmpeg's output turns readable, up to a minute behind a deep seek, but stop() has already
+	 * destroyed the connection, so it holds no voice. Counting it would refuse `/book play` right
+	 * after a `!stop`.
+	 */
+	musicBusy() {
+		if (this.loadingRuns > 0 || this.waitForStart || this.workingTask > 0) return true;
+		if (this.conn && this.conn.state && this.conn.state.status !== VoiceConnectionStatus.Destroyed) return true;
+		return !!this.isPlaying;
 	}
 
 	stop() {
@@ -687,10 +765,13 @@ class Bot extends EventEmitter{
 	 * left `isPlaying` stuck true and the bot accepting commands while playing nothing.
 	 */
 	async playSong(message) {
+		this.loadingRuns++;
 		try {
 			await this.runPlayback(message);
 		} catch (error) {
 			this.failPlayback(message, error);
+		} finally {
+			this.loadingRuns--;
 		}
 	}
 
@@ -700,6 +781,15 @@ class Bot extends EventEmitter{
 			if (message && message.channel) {
 				message.channel.send("The bot cannot see who sent the message, and therefore cannot connect to the voice channel.");
 			}
+			return;
+		}
+
+		if (this.books && this.books.blocksMusic(message)) {
+			// The producer has already queued its track. Left true, isPlaying would make every later
+			// producer queue silently, and waitForStart would restart a run the gate just refused.
+			this.isPlaying = false;
+			this.waitForStart = false;
+			this.waitForStartMessage = null;
 			return;
 		}
 
@@ -851,6 +941,7 @@ class Bot extends EventEmitter{
 						maxMissedFrames: Math.round(maxTransmissionGap / 20),
 					},
 				});
+				voiceHealth.watchPlayer(this.dispatcher, { kind: 'music' });
 				// Neither the download's 'finish' nor its 'end' may end a track. ytdl's stream, like
 				// ffmpeg, emits 'finish' once the whole download has been written in, with about a
 				// megabyte of audio still buffered ahead of the player: 2.5 minutes at lowestaudio.
