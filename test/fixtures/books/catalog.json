@@ -1,7 +1,7 @@
 {
 	"meta": {
 		"builtAt": 1760000000000,
-		"rulesVersion": 1,
+		"rulesVersion": 2,
 		"sections": {
 			"1": {
 				"scannedAt": 1760000000,
@@ -19,12 +19,16 @@
 			"author": "Avery Quill",
 			"narrator": null,
 			"edition": "GraphicAudio",
+			"publisher": "GraphicAudio",
 			"series": null,
 			"sequence": null,
 			"confidence": "low",
 			"aliases": [],
 			"totalMs": 17460000,
 			"folderKey": "M:/Music/Avery Quill",
+			"dirs": [
+				"M:/Music/Avery Quill"
+			],
 			"detectedBy": "median",
 			"orderMethod": "interleaved-volumes",
 			"notes": [
@@ -207,12 +211,17 @@
 			"author": "Avery Quill",
 			"narrator": "Mara Lindqvist",
 			"edition": "Mara Lindqvist",
+			"publisher": null,
 			"series": "Ashfall",
 			"sequence": 1,
 			"confidence": "high",
 			"aliases": [],
 			"totalMs": 14880000,
 			"folderKey": "M:/Music/Avery Quill/1.The Ember Throne",
+			"dirs": [
+				"M:/Music/Avery Quill/1.The Ember Throne/The Ember Throne 1",
+				"M:/Music/Avery Quill/1.The Ember Throne/The Ember Throne 2"
+			],
 			"detectedBy": "median",
 			"orderMethod": "path-natural",
 			"notes": [],
@@ -271,12 +280,17 @@
 			"author": "Avery Quill",
 			"narrator": "Mara Lindqvist",
 			"edition": "Mara Lindqvist",
+			"publisher": null,
 			"series": "Ashfall",
 			"sequence": 2,
 			"confidence": "high",
 			"aliases": [],
 			"totalMs": 14880000,
 			"folderKey": "M:/Music/Avery Quill/2.The Salt Crown",
+			"dirs": [
+				"M:/Music/Avery Quill/2.The Salt Crown/The Salt Crown 1",
+				"M:/Music/Avery Quill/2.The Salt Crown/The Salt Crown 2"
+			],
 			"detectedBy": "median",
 			"orderMethod": "path-natural",
 			"notes": [],
@@ -335,12 +349,16 @@
 			"author": "Avery Quill",
 			"narrator": "Mara Lindqvist",
 			"edition": "Mara Lindqvist",
+			"publisher": null,
 			"series": "Ashfall",
 			"sequence": 3,
 			"confidence": "high",
 			"aliases": [],
 			"totalMs": 11340000,
 			"folderKey": "M:/Music/Avery Quill/3.The Last Lantern",
+			"dirs": [
+				"M:/Music/Avery Quill/3.The Last Lantern/The Last Lantern 1"
+			],
 			"detectedBy": "median",
 			"orderMethod": "path-natural",
 			"notes": [],
@@ -388,12 +406,16 @@
 			"author": "Avery Quill",
 			"narrator": "Mara Lindqvist",
 			"edition": "Mara Lindqvist",
+			"publisher": null,
 			"series": "Ashfall",
 			"sequence": 4,
 			"confidence": "high",
 			"aliases": [],
 			"totalMs": 12060000,
 			"folderKey": "M:/Music/Avery Quill/4.The Iron Wake",
+			"dirs": [
+				"M:/Music/Avery Quill/4.The Iron Wake"
+			],
 			"detectedBy": "median",
 			"orderMethod": "path-natural",
 			"notes": [
@@ -450,12 +472,16 @@
 			"author": "Avery Quill",
 			"narrator": "Mara Lindqvist",
 			"edition": "Mara Lindqvist",
+			"publisher": null,
 			"series": "Ashfall",
 			"sequence": 5,
 			"confidence": "high",
 			"aliases": [],
 			"totalMs": 12780000,
 			"folderKey": "M:/Music/Avery Quill/5.Shadows of Glass",
+			"dirs": [
+				"M:/Music/Avery Quill/5.Shadows of Glass"
+			],
 			"detectedBy": "median",
 			"orderMethod": "path-natural",
 			"notes": [],
@@ -503,12 +529,17 @@
 			"author": "Avery Quill",
 			"narrator": "Mara Lindqvist",
 			"edition": "Mara Lindqvist",
+			"publisher": "GraphicAudio",
 			"series": "Ashfall",
 			"sequence": 6,
 			"confidence": "medium",
 			"aliases": [],
 			"totalMs": 15840000,
 			"folderKey": "M:/Music/Avery Quill/6.The Copper Bells",
+			"dirs": [
+				"M:/Music/Avery Quill/6.The Copper Bells/The Copper Bells 1",
+				"M:/Music/Avery Quill/6.The Copper Bells/The Copper Bells 2"
+			],
 			"detectedBy": "median",
 			"orderMethod": "path-natural",
 			"notes": [
@@ -570,12 +601,16 @@
 			"author": "Avery Quill",
 			"narrator": "Mara Lindqvist",
 			"edition": "Mara Lindqvist",
+			"publisher": null,
 			"series": "Ashfall",
 			"sequence": 7,
 			"confidence": "medium",
 			"aliases": [],
 			"totalMs": 8280000,
 			"folderKey": "M:/Music/Avery Quill/7.Ashfall - Collected Tales",
+			"dirs": [
+				"M:/Music/Avery Quill/7.Ashfall - Collected Tales"
+			],
 			"detectedBy": "median",
 			"orderMethod": "path-natural",
 			"notes": [
@@ -636,12 +671,18 @@
 			"author": "Corin Vale",
 			"narrator": null,
 			"edition": "GraphicAudio",
+			"publisher": "GraphicAudio",
 			"series": null,
 			"sequence": null,
 			"confidence": "medium",
 			"aliases": [],
 			"totalMs": 32940000,
 			"folderKey": "M:/Music/Corin Vale/The Long Tide",
+			"dirs": [
+				"M:/Music/Corin Vale/The Long Tide [01]",
+				"M:/Music/Corin Vale/The Long Tide [02]",
+				"M:/Music/Corin Vale/The Long Tide [03]"
+			],
 			"detectedBy": "median",
 			"orderMethod": "path-natural",
 			"notes": [
@@ -731,12 +772,16 @@
 			"author": "Ilse Moreau",
 			"narrator": "Harlow",
 			"edition": "Harlow",
+			"publisher": null,
 			"series": null,
 			"sequence": null,
 			"confidence": "high",
 			"aliases": [],
 			"totalMs": 9600000,
 			"folderKey": "M:/Music/Ilse Moreau/1990 - The Far Shore (Harlow) 600mb",
+			"dirs": [
+				"M:/Music/Ilse Moreau/1990 - The Far Shore (Harlow) 600mb"
+			],
 			"detectedBy": "median",
 			"orderMethod": "path-natural",
 			"notes": [],
@@ -839,12 +884,16 @@
 			"author": "Ilse Moreau",
 			"narrator": "Penrose",
 			"edition": "Penrose",
+			"publisher": null,
 			"series": null,
 			"sequence": null,
 			"confidence": "high",
 			"aliases": [],
 			"totalMs": 8160000,
 			"folderKey": "M:/Music/Ilse Moreau/1990 - The Far Shore (Penrose) 540mb",
+			"dirs": [
+				"M:/Music/Ilse Moreau/1990 - The Far Shore (Penrose) 540mb"
+			],
 			"detectedBy": "median",
 			"orderMethod": "path-natural",
 			"notes": [],
@@ -947,12 +996,16 @@
 			"author": "Ilse Moreau",
 			"narrator": "Various",
 			"edition": "Various",
+			"publisher": null,
 			"series": null,
 			"sequence": null,
 			"confidence": "high",
 			"aliases": [],
 			"totalMs": 11760000,
 			"folderKey": "M:/Music/Ilse Moreau/1989 - The Glass Sea (Various) 500mb",
+			"dirs": [
+				"M:/Music/Ilse Moreau/1989 - The Glass Sea (Various) 500mb"
+			],
 			"detectedBy": "median",
 			"orderMethod": "path-natural",
 			"notes": [],
@@ -1022,12 +1075,16 @@
 			"author": "Ilse Moreau",
 			"narrator": "Harlow",
 			"edition": "Harlow",
+			"publisher": null,
 			"series": null,
 			"sequence": null,
 			"confidence": "high",
 			"aliases": [],
 			"totalMs": 13764000,
 			"folderKey": "M:/Music/Ilse Moreau/1997 - The Night Gate (Harlow) 822mb",
+			"dirs": [
+				"M:/Music/Ilse Moreau/1997 - The Night Gate (Harlow) 822mb"
+			],
 			"detectedBy": "median",
 			"orderMethod": "path-natural",
 			"notes": [],
@@ -1064,12 +1121,16 @@
 			"author": "Ilse Moreau",
 			"narrator": "Penrose",
 			"edition": "Penrose",
+			"publisher": null,
 			"series": null,
 			"sequence": null,
 			"confidence": "high",
 			"aliases": [],
 			"totalMs": 13902000,
 			"folderKey": "M:/Music/Ilse Moreau/1997 - The Night Gate (Penrose) 844mb",
+			"dirs": [
+				"M:/Music/Ilse Moreau/1997 - The Night Gate (Penrose) 844mb"
+			],
 			"detectedBy": "median",
 			"orderMethod": "path-natural",
 			"notes": [],
@@ -1106,12 +1167,16 @@
 			"author": "Lantern Hollow",
 			"narrator": null,
 			"edition": null,
+			"publisher": null,
 			"series": "Lantern Hollow",
 			"sequence": null,
 			"confidence": "medium",
 			"aliases": [],
 			"totalMs": 40320000,
 			"folderKey": "M:/Music/Lantern Hollow",
+			"dirs": [
+				"M:/Music/Lantern Hollow"
+			],
 			"detectedBy": "episodes",
 			"orderMethod": "episode-number",
 			"notes": [
@@ -1217,12 +1282,20 @@
 			"author": "R.J. Ashdown",
 			"narrator": "Tomas Brandt",
 			"edition": "Tomas Brandt",
+			"publisher": null,
 			"series": null,
 			"sequence": null,
 			"confidence": "medium",
 			"aliases": [],
 			"totalMs": 12000000,
 			"folderKey": "M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)",
+			"dirs": [
+				"M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/01.The Stone Garden.Book 1",
+				"M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/02.The Weeping Queen.Book 2",
+				"M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/03.The Errant Knight.Book 3",
+				"M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/04.The Candle Wind.Book 4",
+				"M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/05.The Book of Ash.Book 5"
+			],
 			"detectedBy": "name-signal",
 			"orderMethod": "path-natural",
 			"notes": [],

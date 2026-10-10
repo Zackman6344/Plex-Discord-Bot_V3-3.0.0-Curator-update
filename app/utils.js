@@ -6,6 +6,10 @@ function stop(bot, client) {
     // Stopped here, while the gateway is still up, the connection's destroy also leaves voice.
     // The book goes first: its saves are synchronous, and process.exit follows straight after.
     try { if (bot.books) bot.books.shutdown(); } catch (_) {}
+    // After the books: their stop() ends each session, which queues the stub edit for any open
+    // read-along DM page. On a signal the process exits before that edit is sent, and the left-over
+    // page is stubbed or adopted when it is next clicked.
+    try { if (bot.readAlong) bot.readAlong.shutdown(); } catch (_) {}
     bot.songQueue = [];
     bot.stop();
     bot.destroy();

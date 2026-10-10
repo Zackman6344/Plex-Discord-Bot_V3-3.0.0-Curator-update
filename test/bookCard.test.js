@@ -251,3 +251,21 @@ test('marking finished drops only that button and says so', () => {
 	assert.match(p.embeds[0].description, /⏹ Stopped/, 'the rest of the card is kept');
 	assert.deepStrictEqual(bookCard.finishedOnCard({}), { embeds: [], components: [], allowedMentions: { parse: [] } });
 });
+
+// ---- the read-along's 📖 -----------------------------------------------------------------------
+
+test('📖 joins the settings row only when the read-along says there is text, and never on the ended card', () => {
+	assert.ok(!ids(bookCard.buildCard(view())).some(id => id.startsWith('bookread:')), 'no text info: no button');
+	assert.ok(!ids(bookCard.buildCard(view({ text: { button: false } }))).some(id => id.startsWith('bookread:')));
+	const p = bookCard.buildCard(view({ text: { button: true } }));
+	const settings = p.components[1].components;
+	assert.ok(settings.length <= 5);
+	assert.deepStrictEqual(settings.map(b => b.custom_id), ['book:speed:a1b2c3', 'book:sleep:a1b2c3', 'bookread:a1b2c3', 'book:stop:a1b2c3']);
+	const read = settings[2];
+	assert.strictEqual(read.label, 'Text');
+	assert.deepStrictEqual(read.emoji, { name: '📖' });
+	assert.strictEqual(bookCard.buildCard(view({ text: { button: true }, state: 'starting' })).components[1].components[2].disabled, true, 'disabled while joining, like the rest');
+	const ended = bookCard.endedCard(view({ text: { button: true }, state: 'ended', endReason: 'explicit' }));
+	assert.ok(!ids(ended).some(id => id.startsWith('bookread:')));
+	assert.ok(!JSON.stringify(p.embeds).includes('📖'), 'the card itself carries no read-along text');
+});

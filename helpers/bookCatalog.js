@@ -15,7 +15,7 @@
 // by hand against a real library; RULES_VERSION goes up whenever a change here would build a
 // different catalog from the same listing, so a stored catalog built under older rules is rebuilt.
 
-const RULES_VERSION = 1;
+const RULES_VERSION = 2;
 
 const MIN = 60 * 1000;
 const HOUR = 60 * MIN;
@@ -81,6 +81,16 @@ function containerOf(t) {
 
 function segmentsOf(t) {
 	return String(partOf(t).file || '').split(/[\\/]+/).filter(Boolean);
+}
+
+// Unlike segmentsOf this keeps the path as Plex wrote it, so a POSIX path keeps its leading "/".
+function dirOfTrack(t) {
+	const file = String(partOf(t).file || '');
+	const cut = Math.max(file.lastIndexOf('/'), file.lastIndexOf('\\'));
+	if (cut < 0) return '';
+	const dir = cut === 0 ? file.slice(0, 1) : file.slice(0, cut);
+	// "C:" alone names the drive's current directory, not its root.
+	return /^[A-Za-z]:$/.test(dir) ? `${dir}/` : dir;
 }
 
 function median(nums) {
@@ -799,12 +809,18 @@ function buildCatalog({ albums = [], tracks = [], chapters = {}, overrides = {} 
 			author: d.author,
 			narrator: d.edition && d.edition !== d.publisher ? d.edition : null,
 			edition: d.edition,
+			// Kept apart from edition, which holds the narrator's name when there is one and so
+			// hides a GraphicAudio edition from the read-along's "dramatized" label.
+			publisher: d.publisher || null,
 			series: series || null,
 			sequence: d.sequence ?? null,
 			confidence,
 			aliases: [],
 			totalMs: outParts.reduce((s, p) => s + p.durationMs, 0),
 			folderKey: c.key,
+			// part.file keeps only the basename, and folderKey is a grouping key rather than a real
+			// folder, yet sidecar EPUBs sit beside the audio files themselves.
+			dirs: [...new Set(parts.map(dirOfTrack))].filter(Boolean).sort(natural),
 			detectedBy: c.cls.rule,
 			orderMethod: method,
 			notes: workNotes,

@@ -34,6 +34,9 @@
 /data/book_bookmarks.json
 /data/book_bookmarks.json.bak
 /data/book_overrides.json
+# book_text/ is the read-along's cache of each linked ebook's extracted text (copyrighted, from
+# your own library), the ebook links you set with !book link, and who turned the read-along on.
+/data/book_text/
 
 # Player data written by the games and AI commands. Every one of these is keyed by Discord
 # user ID and belongs to whoever runs the bot, not to the code.

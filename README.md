@@ -13,6 +13,7 @@ A multipurpose Discord bot designed to integrate your Plex media server with you
 - *(Optional)* A **Gemini API key** — required for any AI command (`!trivia`, `!curate`, `!vibe`, `!identify`, `!quest`, `!hitster`, etc.). Without it, music and basic Plex commands still work; AI commands will fail at the API call.
 - *(Optional)* A running [**Tautulli**](https://tautulli.com/) instance for `!stats`.
 - *(Optional)* A **Playnite HTTP server** on the host PC for `!game`, `!launch`, `!backlog`, and the gaming-history half of `!profile`.
+- *(Optional)* [**Calibre**](https://calibre-ebook.com/) with its content server running, or `.epub` files next to the audio, for the audiobook read-along (`!book text`). See **Reading along** below.
 - *(Optional)* [**Kometa**](https://kometa.wiki/) and/or Playnite on the host PC for the automated broadcasts described in **Broadcasts & autostart** below.
 
 Some features cost money to use (Gemini API beyond the free tier). Non-AI features don't. If you find the bot referencing my specific media library somewhere, open an issue so I can pull it out.
@@ -85,6 +86,12 @@ module.exports = {
   'tautulliApiKey'  : '',
   'tautulliUrl'     : '',                  // e.g. http://localhost:8181
 
+  // Calibre, for the audiobook read-along (see "Reading along"). Read-only. /config → Integrations.
+  'calibreUrl'       : 'http://127.0.0.1:8080', // Calibre's content server; blank = Calibre off
+  'calibreLibraryId' : '',                 // blank = the server's default library
+  'calibreUsername'  : '',                 // only if you turn on Calibre's login
+  'calibrePassword'  : '',                 // never put the login in the URL; it is refused there
+
   // --- Automated broadcasts (Kometa runs + Playnite game launches) — see below ---
   'broadcastChannelId'  : '',              // fallback channel used when the two below are blank
   'kometaChannelId'     : '',              // Kometa run announcements (falls back to broadcastChannelId)
@@ -138,6 +145,8 @@ module.exports = {
   'audiobookDefaultSpeed'        : '1',    // a listener's first speed: '0.75' '0.9' '1' '1.1' '1.25' '1.5' '1.75' '2'
   'audiobookIdleLeaveMinutes'    : 10,     // a paused book leaves voice after this (1-180)
   'audiobookResumeRewindSeconds' : 10,     // rewind after 5+ min away, 3x after a day (0-120)
+  'audiobookTextEnabled'         : true,   // !book text and the card's 📖 (see "Reading along")
+  'audiobookTextSidecars'        : true,   // also look for .epub files next to a book's audio
 
   // Voice (see "If voice audio stutters"). Both editable from /config → Voice, both live.
   'processPriority'    : 'above_normal',   // or 'normal' if a game running beside the bot suffers
@@ -176,6 +185,9 @@ its own. Changes save instantly and **persist across restarts**.
   Every Audiobooks and Voice setting applies at once, with no restart: turning
   `audiobooksEnabled` on makes `/book` work on its next use, and `processPriority` and
   `voiceHealthEnabled` switch over as soon as they are saved.
+- Integrations holds the four Calibre settings for the read-along. `calibrePassword` is masked in
+  the panel like the Tautulli API key and never written to the logs, and a `calibreUrl` with a
+  login typed into it is refused.
 - Discord/Gemini/Plex tokens (in `config/keys.js` and `config/plex.js`) are **not** editable
   from Discord by design; edit those files directly.
 - If `ownerId` is still blank, `/config` runs in a one-time bootstrap mode so you can set the
@@ -468,6 +480,110 @@ beside it in `book_bookmarks.json.bak` that the bot loads automatically if the m
 found damaged. Both, and the overrides file, are gitignored. If a bookmark write fails, the card
 shows a warning and the command log gets a `book-save-failed` line (`npm run logs -- --raw`).
 
+### 📜 Reading along: the book's text in your DMs
+
+While you listen, the bot can send you the book's text a page at a time, turning with the
+narration. It needs an ebook of the same book, either in Calibre or as an `.epub` next to the
+audio files. It is on by default (`audiobookTextEnabled`, `/config` → Audiobooks). No ebook is downloaded or
+parsed until someone uses it; a book starting only triggers a quick check (a Calibre search and a
+folder listing) that decides whether the card shows 📖.
+
+| Command | What it does |
+| ------- | ------------ |
+| `!book text on` | Turns the read-along on for you. With a book playing, a page arrives in your DMs at once; otherwise the next book you play opens one. Remembered for you across books and restarts until you turn it off. |
+| `!book text off` | Turns it off; the DM page says so. |
+| `!book text now` | Sends a fresh page at the bottom of your DMs. The old one becomes "📖 This page moved ↓". |
+| `!book text` | Whether it is on for you, where your book's text comes from, its word count, and how closely it lines up. |
+| `!book link <title> <ebook>` | Owner only: tie a book to its ebook by hand. Forms below. |
+
+On `/`: `/book text mode:on` (or `off`, `now`, or no mode for the status) and
+`/book link title:<book> ebook:<id, ISBN, path, off or auto>`.
+
+**The page.** One DM message, edited in place. Each page is about 180 words, roughly a minute of
+narration at 1x. Its buttons:
+
+- ◀ Page and ▶ Page browse the book. The page stops following the narration until you press 📍.
+- 📍 Now jumps to where the narration is and follows again.
+- ↪ Play from here moves the audiobook to the start of the page you are reading, and resumes it if
+  it was paused.
+- ✖ Off turns the read-along off.
+
+Following never skips a page, even at 3x; it turns at most once every 12 seconds. When the book
+stops, the page says so and loses its buttons. The first time a book's text is used the bot reads
+the ebook once; if that takes more than a moment the DM says "⏳ Preparing the text of The Way
+of Kings (first time only)…" and turns into the page when it is done. After that the text is kept in `data/book_text/`
+(gitignored), so it works with Calibre closed.
+
+**📖 on the book card.** Shows the current page as a private reply only the person who pressed it
+can see. The button appears only on a book whose ebook was found. **The listener can use it from
+anywhere; anyone else only while they are in the book's voice channel**, since they hear the same
+words. The listener's page has ◀ ▶ 📍 ↪ and 📩 Follow in DMs in place of ✖ Off. Anyone else gets
+◀ ▶ 📍 only: they cannot move the listener's book, and DM follow-along stays the listener's. Every
+click checks the voice channel again, so someone who leaves it gets "🔊 Join `<channel>` to read
+along." in place of their page, and anyone outside it gets that line and no text from the start.
+
+**If your DMs are closed** to the server, `!book text on` says so; use 📖 instead. When a page
+would open by itself (the read-along is on and you start a book), the bot posts one short line in
+the card's channel instead, at most once per book session, with no book text and no ping.
+
+**How close it follows.** There is no speech recognition. A track named after a chapter pins that
+chapter's text to it, and between those the bot goes by reading pace. Measured on The Way of Kings:
+70 of its 83 tracks are named after chapters, and inside one the page is within about ±9% of the
+voice (about 3 minutes in a 30-minute chapter). A book split into hour-long files has only pace to
+go on: about 12 minutes off on average, 20 at worst. Every page footer says "≈ Approximate" and
+"chapter-level" or "estimated from pace". **Dramatized editions (GraphicAudio, full cast) are
+followed the same way and also say "dramatized edition"**, because their script is adapted and the
+words you hear are not always the words on the page. Intro, credits and music tracks show "No text
+for this part of the audio".
+
+**Where the text comes from.** First match wins:
+
+1. A link the owner set with `!book link`.
+2. Calibre's content server, at `calibreUrl` (default `http://127.0.0.1:8080`; `/config` →
+   Integrations). The bot only reads from it. It finds a book by its title, or by its series number
+   and author, so The Final Empire finds the Calibre book titled "Mistborn" (series Mistborn, book
+   1). The content server runs only while the Calibre app is open with its server started.
+3. `.epub` files in the folders that hold the book's audio files (`audiobookTextSidecars`, on by
+   default). The file name has to match the title; a companion book or another title in the same
+   folder is skipped.
+
+DRM-free EPUBs only. If two ebooks fit equally well, none is picked, and `!book link` settles it.
+Podcasts have no text.
+
+**Linking by hand** (owner only; `ownerId` must be set, because a link can point at any EPUB on
+this PC):
+
+| Command | Links |
+| ------- | ----- |
+| `!book link "The Final Empire" 299` | Calibre book 299. Quote the title when it ends in a number. A bare number also works when the rest names exactly one book. |
+| `!book link The Final Empire id:299` | The same, with no guessing. |
+| `!book link The Final Empire isbn:9780765350381` | The Calibre book with that ISBN. The 10-digit form works too: `isbn:0765350386`. |
+| `!book link Words of Radiance D:\Books\Words of Radiance.epub` | A file on this PC. A typed network path (`\\server\share\…`) is refused; a mapped network drive letter is not detected and is read like a local one. |
+| `!book link The Final Empire off` | No read-along for this book. |
+| `!book link The Final Empire auto` | Forget the link and search again. |
+| `!book link The Final Empire` | What it uses now, and the Calibre books and files it considered. Typed in a server channel, the reply names Calibre ids and file names only, and the full paths go to you by DM. |
+
+Every link echoes what it linked, such as "Linked The Final Empire to Calibre #299 “Mistborn”
+(EPUB).", so a wrong id shows at once. An ebook that could not be read (DRM, damaged) is not tried
+again until the file changes or you link it again.
+
+**Calibre's content server and your network.** By default Calibre's content server listens on
+every network interface and asks for no login, so anyone who can reach this PC on port 8080 can
+browse and download your whole library. Fix it in Calibre under **Preferences → Sharing over the
+net**, either or both:
+
+- **Keep it to this PC.** On the Advanced tab, set the interface it listens on to `127.0.0.1`. The
+  bot runs on the same PC, so it keeps working with no other change.
+- **Add a login.** On the Main tab, tick "Require username and password to access the Content
+  server". On the User accounts tab, add a user for the bot and leave its write access off. Put
+  that username and password in `/config` → Integrations (`calibreUsername`, `calibrePassword`).
+  The password is masked there and never logged, and over plain http the bot only sends it as a
+  Digest login (Calibre's default), never in clear text. Never put it in the URL as
+  `http://user:pass@...`: the bot refuses that, because error messages can repeat a URL.
+
+Restart the content server after either change. If Windows Firewall has an allow rule for
+`calibre.exe` on the Public profile, it is open on every network the PC joins; check that too.
+
 ## 🧾 Logs
 
 The bot keeps two logs under `data/logs/`, both plain text, and **both kept indefinitely**:
@@ -512,6 +628,10 @@ Your tokens are redacted before anything is written. Command arguments and the b
 stored as written, so treat `data/logs/` as being as private as the channels the bot posts in.
 Set `PLEXBOT_COMMAND_LOG=0` to disable the command log, or `PLEXBOT_LOG_TO_FILE=0` for the
 console mirror.
+
+Pages of a book are the exception: a read-along DM or private page is logged as
+`[book text not logged]`, and the read-along's bot-log lines carry only ids, error codes, counts
+and timings.
 
 ## 🔊 If voice audio stutters
 
@@ -606,8 +726,8 @@ chapter forward and ignores a count, and `!stop` ends the book and also clears t
 
 ### 📖 Audiobooks and podcasts
 
-Off until the owner enables it in `/config` → Audiobooks; until then every `/book` subcommand
-answers "📚 Audiobooks are turned off…". `!book ?` (or a bare `!book`) shows the sub-help;
+Off until the owner enables it in `!config` (or `/config`) → Audiobooks; until then every `/book`
+subcommand answers "📚 Audiobooks are turned off…", naming `!config` with the bot's own prefix. `!book ?` (or a bare `!book`) shows the sub-help;
 `!books` works as well as `!book`. **Every `/book` reply is private to you except
 `leaderboard`.** The book card that `play` posts is public, so others in the channel can see what
 is playing.
@@ -628,10 +748,13 @@ is playing.
 | `/book leaderboard` | Hours listened in this server. Public. |
 | `/book finish [title]` | Mark a book finished (default: the one you are listening to). |
 | `/book forget <title>` | Drop your place in a book. Asks first: a button on `/`, `!book forget <id> confirm` on `!`. |
+| `/book text [mode]` | The read-along: `on`, `off` or `now`; no mode shows its status. The text goes to your DMs. See **Reading along**. |
+| `/book link <title> [ebook]` | Owner only, and `ownerId` must be set: tie a book to its ebook (a Calibre id, an ISBN, an EPUB path, `off` or `auto`); no ebook shows what it uses now. |
 | `/book rescan` | Owner only (anyone while `ownerId` is blank, as with `/config`): re-read the library from Plex now and report what changed. |
 
 The card has Previous chapter, −30 s, Pause/Resume, +30 s and Next chapter, a speed button that
-cycles 1x–2x, a sleep button that cycles off, 15, 30, 60 minutes and end of chapter, and Stop. A
+cycles 1x–2x, a sleep button that cycles off, 15, 30, 60 minutes and end of chapter, 📖 Text (only
+on a book whose ebook was found; the listener's private page), and Stop. A
 card from an earlier session loses its buttons when clicked; `/book now` shows the current one.
 
 ### 🍿 Plex & Media Utilities

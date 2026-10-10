@@ -17,11 +17,21 @@ module.exports = function(client, bot) {
   const interactionFallback = require('../helpers/interactionFallback.js');
   const { createBookDirector } = require('../helpers/bookEngine.js');
   const bookButtons = require('../helpers/bookButtons.js');
+  const { createReadAlong } = require('../helpers/readAlong.js');
+  const readAlongButtons = require('../helpers/readAlongButtons.js');
 
   // At module init, not on ready: the music gate and utils.stop's shutdown both need it before
   // the gateway is up. !restart builds a new Bot and runs this again; utils.stop shut the old
   // director down first.
   bot.books = createBookDirector({ client, bot });
+  // The read-along hooks itself into the director (change events, the card's 📖). A failure here
+  // leaves it null: no card ever shows 📖, and !book text says it failed to load.
+  try {
+    bot.readAlong = createReadAlong({ client, books: bot.books });
+  } catch (err) {
+    bot.readAlong = null;
+    logger.error('Read-along failed to start:', err.message || err);
+  }
 
   // Arguments are written to the command log before the command runs, and commandLog only knows
   // how to redact the static secrets in config/. A command that takes a secret typed at runtime
@@ -73,7 +83,7 @@ module.exports = function(client, bot) {
       id: recentInvocations.get(message.channelId),
       kind: (message.interaction || message.interactionMetadata) ? 'interaction-reply' : 'message',
       channelId: message.channelId,
-      payload: { content: message.content, embeds: message.embeds, components: message.components }
+      payload: commandLog.payloadOfMessage(message)
     });
   });
   const channelClaims = require('../helpers/channelClaims.js');
@@ -221,6 +231,7 @@ module.exports = function(client, bot) {
         // the module that defined the button.
         let claimed = await playbackButtons.handle(interaction, bot, client, plexCommands, { onInteractionResponse });
         if (!claimed) claimed = await bookButtons.handle(interaction, bot, client, { onInteractionResponse });
+        if (!claimed) claimed = await readAlongButtons.handle(interaction, bot, client, { onInteractionResponse });
         if (!claimed) await tagInference.handle(interaction, { onInteractionResponse });
         commandLog.finishInvocation(buttonLogId, { ok: true, ms: Date.now() - buttonStartedAt });
       } catch (err) {

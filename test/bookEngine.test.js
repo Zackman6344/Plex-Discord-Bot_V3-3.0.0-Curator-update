@@ -834,3 +834,117 @@ test('shutdown saves synchronously, flushes and closes the proxy without awaitin
 	const again = await h.play({ workId: LONG.id });
 	assert.strictEqual(again.code, 'closed');
 });
+
+// ---- read-along hooks (helpers/readAlong.js) -----------------------------------------------------
+// The pager follows the narration from these notifications alone, so each kind of move must
+// produce one: a missed one leaves the DM page on the wrong chapter until the next timed turn.
+
+function watch(h) {
+	const seen = [];
+	h.director.onChange((s, kind) => seen.push(kind));
+	return seen;
+}
+
+test('change listeners hear started, moved, audible, paused and ended', async (t) => {
+	const h = harness();
+	t.after(() => h.done());
+	const seen = watch(h);
+	const s = await playing(h, { workId: LONG.id });
+	assert.deepStrictEqual(seen, ['started', 'moved', 'audible'], 'the start, its first build and its first frame');
+
+	seen.length = 0;
+	h.director.control('g1', h.listener, 'fwd', 30);
+	await until(() => s.audible, 'audio after the seek');
+	h.director.control('g1', h.listener, 'speed', 1.5);
+	await until(() => s.audible, 'audio after the speed change');
+	assert.deepStrictEqual(seen, ['moved', 'audible', 'moved', 'audible'], 'a seek and a speed change');
+
+	seen.length = 0;
+	h.director.control('g1', h.listener, 'pause');
+	h.director.control('g1', h.listener, 'back', 10);
+	h.director.control('g1', h.listener, 'speed', 2);
+	assert.deepStrictEqual(seen, ['paused', 'moved', 'moved'], 'a parked jump and a parked speed change are moves too');
+
+	seen.length = 0;
+	h.director.control('g1', h.listener, 'resume');
+	await until(() => s.audible, 'audio after the resume');
+	h.director.control('g1', h.listener, 'stop');
+	assert.deepStrictEqual(seen, ['moved', 'audible', 'ended']);
+});
+
+test('a natural part advance and a chapter jump are moves', async (t) => {
+	const h = harness();
+	t.after(() => h.done());
+	const seen = watch(h);
+	const s = await playing(h);
+	seen.length = 0;
+	await until(() => h.builds.length === 2 && s.audible, 'the next part', 4000);
+	assert.deepStrictEqual(seen, ['moved', 'audible']);
+
+	const h2 = harness();
+	t.after(() => h2.done());
+	const seen2 = watch(h2);
+	const s2 = await playing(h2, { workId: CHAPTERED.id });
+	seen2.length = 0;
+	h2.director.control('g1', h2.listener, 'nextch');
+	await until(() => s2.audible && h2.builds.length === 2, 'the chapter jump');
+	assert.deepStrictEqual(seen2, ['moved', 'audible']);
+});
+
+test('a throwing change listener breaks nothing, and a later listener still hears every event', async (t) => {
+	const h = harness();
+	t.after(() => h.done());
+	h.director.onChange(() => { throw new Error('listener bug'); });
+	const seen = watch(h);
+	const s = await playing(h, { workId: LONG.id });
+	h.director.control('g1', h.listener, 'fwd', 30);
+	await until(() => s.audible && h.builds.length === 2, 'the seek still plays');
+	h.director.control('g1', h.listener, 'stop');
+	assert.strictEqual(s.state, 'ended');
+	assert.deepStrictEqual(seen, ['started', 'moved', 'audible', 'moved', 'audible', 'ended']);
+});
+
+test('onChange returns an unsubscribe', async (t) => {
+	const h = harness();
+	t.after(() => h.done());
+	const seen = [];
+	const off = h.director.onChange((s, kind) => seen.push(kind));
+	off();
+	await playing(h, { workId: LONG.id });
+	assert.deepStrictEqual(seen, []);
+});
+
+test('view().text comes from setTextInfo, is null without it, and a throwing one gives null', async (t) => {
+	const h = harness();
+	t.after(() => h.done());
+	const s = await playing(h, { workId: LONG.id });
+	assert.strictEqual(h.director.view(s).text, null);
+	h.director.setTextInfo(x => ({ button: x.id === s.id }));
+	assert.deepStrictEqual(h.director.view(s).text, { button: true });
+	h.director.setTextInfo(() => { throw new Error('renderer bug'); });
+	assert.strictEqual(h.director.view(s).text, null);
+	h.director.setTextInfo(null);
+	assert.strictEqual(h.director.view(s).text, null);
+});
+
+test('refreshCard edits the live card (coalesced) and ignores a session that is gone', async (t) => {
+	const h = harness();
+	t.after(() => h.done());
+	const s = await playing(h, { workId: LONG.id });
+	await until(() => h.textChannel.sent.length === 1, 'the card');
+	const card = h.textChannel.sent[0];
+	h.clock.advance(2000);
+	const before = card.edits.length;
+	h.director.setTextInfo(() => ({ button: true }));
+	h.director.refreshCard(s);
+	await until(() => card.edits.length === before + 1, 'the refresh edit');
+	assert.deepStrictEqual(card.edits[card.edits.length - 1].view.text, { button: true });
+	h.director.control('g1', h.listener, 'stop');
+	await tick();
+	const after = card.edits.length;
+	h.director.refreshCard(s);
+	h.director.refreshCard(null);
+	h.clock.advance(5000);
+	await tick();
+	assert.strictEqual(card.edits.length, after);
+});

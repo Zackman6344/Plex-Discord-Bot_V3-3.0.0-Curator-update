@@ -54,7 +54,9 @@ function secrets() {
         add(require('../config/plex.js').token);
     } catch (_) { /* not configured yet */ }
     try {
-        add(require('../config/config.js').tautulliApiKey);
+        const config = require('../config/config.js');
+        add(config.tautulliApiKey);
+        add(config.calibrePassword);
     } catch (_) { /* not configured yet */ }
     return redactions;
 }
@@ -138,10 +140,49 @@ function finishInvocation(id, { ok = true, ms = null, error = null, awaited = tr
     });
 }
 
+// A payload carrying one of these component ids holds a page of a copyrighted book (the
+// read-along, helpers/readAlongCard.js), sent privately to one person. The renderer guarantees
+// every such payload carries the row, so the check is by id, not by guessing at the text.
+const PRIVATE_TEXT_PREFIXES = ['bookpage:'];
+const PRIVATE_TEXT = '[book text not logged]';
+
+function plain(x) {
+    return x && typeof x.toJSON === 'function' ? x.toJSON() : x;
+}
+
+/**
+ * True when any component id in the payload names private text. Reads raw JSON rows and the
+ * discord.js classes alike (Message.components from the messageCreate path, builders).
+ */
+function carriesPrivateText(payload) {
+    if (!payload || typeof payload !== 'object') return false;
+    for (const rawRow of payload.components || []) {
+        const row = plain(rawRow) || {};
+        for (const raw of row.components || (row.data && row.data.components) || []) {
+            const c = raw || {};
+            const id = String(c.custom_id || c.customId || (c.data && c.data.custom_id) || '');
+            if (PRIVATE_TEXT_PREFIXES.some((p) => id.startsWith(p))) return true;
+        }
+    }
+    return false;
+}
+
+/** The parts of a sent Message the log keeps; shared with app/music.js's output recorder. */
+function payloadOfMessage(message) {
+    return { content: message.content, embeds: message.embeds, components: message.components };
+}
+
 /** Summarise a Discord message payload down to what's worth keeping. */
 function summarise(payload) {
     if (payload === null || payload === undefined) return { content: null, embeds: [], components: 0 };
     if (typeof payload === 'string') return { content: scrub(payload, MAX_CONTENT), embeds: [], components: 0 };
+    if (carriesPrivateText(payload)) {
+        return {
+            content: payload.content ? PRIVATE_TEXT : null,
+            embeds: (payload.embeds || []).slice(0, 5).map(() => ({ title: PRIVATE_TEXT, description: null, fields: 0 })),
+            components: (payload.components || []).length
+        };
+    }
 
     const embeds = [];
     for (const embed of (payload.embeds || []).slice(0, 5)) {
@@ -346,5 +387,5 @@ function _reset() {
 
 module.exports = {
     startInvocation, finishInvocation, recordOutput, recordEvent, readEventLog, readEvents, readInvocations, stats,
-    summarise, _reset, _dir: DIR, countOr, windowInfo, RETENTION_DAYS, DEFAULT_READ_DAYS
+    summarise, carriesPrivateText, payloadOfMessage, _reset, _dir: DIR, countOr, windowInfo, RETENTION_DAYS, DEFAULT_READ_DAYS
 };

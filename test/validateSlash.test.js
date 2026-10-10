@@ -109,6 +109,6 @@ test('the real command tree passes, /book included and under budget', () => {
 	assert.deepStrictEqual(problems, []);
 	const bookSpec = specs.find(s => s.name === 'book');
 	assert.ok(bookSpec, '/book is registered');
-	assert.strictEqual(bookSpec.options.length, 18);
+	assert.strictEqual(bookSpec.options.length, 20, '18 plus text and link (the read-along)');
 	assert.ok(commandChars(bookSpec) < 2000, `/book uses ${commandChars(bookSpec)} of 4000`);
 });

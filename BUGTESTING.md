@@ -1,9 +1,9 @@
 # Bug-testing checklist
 
 Practical pass for this bot. Phase 0 is the `/play` symptom specifically; Phases 1–6 are the
-repeatable sweep to run after any change that touches dispatch, commands, or deps. Phases 7 and 8
-are the first live pass of the audiobook suite and of the voice-health log and process priority,
-none of which has met a real voice channel yet.
+repeatable sweep to run after any change that touches dispatch, commands, or deps. Phases 7, 8
+and 9 are the first live pass of the audiobook suite, of the voice-health log and process
+priority, and of the audiobook read-along, none of which has met a real voice channel yet.
 
 The bot now persists its own logs to `data/logs/`, so a failure you didn't happen to be watching
 is still there afterwards:
@@ -103,7 +103,8 @@ without an argument but declares no option to supply one, the bug that shipped t
 audiobook suite it also checks that every choice value matches its option's type (a number on a
 STRING option takes down the whole registration), choice names of 1–100 characters, choices and
 autocomplete only on STRING, INTEGER or NUMBER, and Discord's 4,000-character budget per command.
-All 56 specs passed on 2026-10-09, the largest `/ap` at 2,783 characters and `/book` at 1,572.
+All 56 specs passed on 2026-10-10, the largest `/ap` at 2,783 characters and `/book` at 1,833
+(20 subcommands, with `text` and `link`).
 
 - [ ] New/edited `slash:` block → re-run the validator.
 - [ ] Renamed or deleted a command → confirm the stale one disappeared from the picker (the `set()`
@@ -355,6 +356,136 @@ cannot reach. Watch `npm run logs -- --raw` for `music-gated-by-book`, `book-str
 - [ ] Pull the network for a few seconds mid-track: the minute shows `N` and the events show
       `conn` or `net` changes.
 - [ ] Turn the log off: `Voice health log off`, and the file stops growing.
+
+## Phase 9: Read-along (live)
+
+Built and unit-tested offline: 250 tests added, 1,462 of 1,462 passing on 2026-10-10. In those
+tests Calibre is always a fake and every ebook is generated, so nothing below has been seen yet:
+a real Calibre, a real EPUB, a DM page in a real client. Needs Phase 7's audiobooks on. Keep
+`npm run logs -- --raw` and the bot log open while you go; neither may ever show a sentence of a
+book.
+
+**Before you start**
+
+- [ ] The first start after this change rebuilds the book catalog once (the rules version went to
+      2). `/book library` afterwards lists the same books as before.
+- [ ] Calibre is open with its content server started: `http://127.0.0.1:8080` lists the library
+      in a browser.
+- [ ] `ownerId` is set (needed for `!book link`).
+
+**The DM page**
+
+- [ ] `!book play The Way of Kings`, then `!book text on`: "📩 Sent to your DMs." (or "Preparing
+      the text in your DMs" the first time), and a DM page arrives. The first time, the bot log has
+      `Read-along: read the ebook for cache <16 hex>: N sections, N words in N ms.`
+- [ ] The page is in the chapter being narrated, and its footer reads "≈ Approximate ·
+      dramatized edition · chapter-level · page N of M · following the narration".
+- [ ] Let it play: the same message edits itself to the next page about once a minute at 1x.
+      Note how far the page is from the voice, in words, at a few points.
+- [ ] On a track not named after a chapter, the footer says "estimated from pace". Note how far
+      off it is there.
+- [ ] At 2x every page still appears, in order, about every 30 s. None is skipped.
+- [ ] ±30 s: the page stays or steps one page. `/book chapter` to a far chapter: the page jumps
+      there within about 2 s.
+- [ ] ◀ and ▶ in the DM move the page, the footer says "browsing: 📍 Now follows again", and it
+      stops turning. 📍 Now jumps back to the narration and follows again. (The DM click has no
+      guild and no member; this is the path the tests could only fake.)
+- [ ] ↪ Play from here on a page a few pages ahead: the audio jumps to that page's first words,
+      and the page stays put until the narration passes it.
+- [ ] Pause, then ↪ on another page: the book resumes from that page with no rewind.
+- [ ] Pause: the footer says "⏸ paused" and nothing turns. Resume: it follows again.
+- [ ] `!book text now`: a new page at the bottom of the DM; the old one says "📖 This page moved
+      ↓". Clicking a button on the old one changes only that message.
+- [ ] ✖ Off: the page says "📕 Read-along is off…", and `!book text` reports it off.
+- [ ] `/book stop`: the page becomes "📕 `<title>`: the book stopped, so this page did too." with
+      no buttons.
+- [ ] The preference is remembered: `!book text on`, `/book stop`, `!restart`, then play another
+      book that has an ebook. A new DM page opens by itself. After `!book text off`, it does not.
+- [ ] Delete the DM page while the book plays: the log does not fill with errors, and the next
+      `/book play` opens a new page.
+
+**📖 on the card**
+
+- [ ] A book with an ebook shows 📖 Text in the card's second row within a few seconds of
+      starting. A book with none (a Dan Simmons) and a podcast never show it.
+- [ ] As the listener, 📖: a private page, footer "only you can see this; 📍 Now shows the
+      latest", with ◀ ▶ 📍 ↪ and 📩 Follow in DMs. On a book never read before, "⏳ Preparing the
+      text" comes first, then the page.
+- [ ] 📩 Follow in DMs turns the read-along on and opens the DM page.
+- [ ] A second account in the book's voice channel clicks 📖: a private page at the same place
+      as the listener's, with ◀ ▶ 📍 only (no ↪, no 📩). ◀ ▶ 📍 work for them, and the listener's
+      book and DM page do not move.
+- [ ] A second account in another voice channel, or in none, clicks 📖: a private "🔊 Join
+      `<voice channel>` to read along." with no ping and no text.
+- [ ] With that page open, the second account leaves the voice channel and presses ▶: the page
+      turns into "🔊 Join `<voice channel>` to read along." with no buttons. Rejoin and press 📖
+      on the card: a page again.
+- [ ] The second account runs `!book text on`: "📖 Read-along is on. The next book you play opens
+      a page in your DMs.", and no DM page of the listener's book opens for them. `!book text now`
+      from them says they are not listening to a book. `!book text off` afterwards.
+- [ ] 📖 on a card whose book has stopped: "That book is no longer playing."
+
+**DMs closed**
+
+- [ ] Turn off "Direct Messages" from server members for this server (Privacy Settings), then
+      `!book text on`: "I can't DM you (your DMs are closed to this server). Use the 📖 button on
+      the book card instead…". 📖 still works.
+- [ ] With the read-along on and DMs still closed, start a book: exactly one line in the card's
+      channel, "📖 `<name>`: I can't DM you the book's text. Open your DMs for this server, or use
+      the 📖 button on the card.", with no ping and no book text. Pausing and resuming in the same
+      session posts nothing more.
+
+**Calibre closed**
+
+- [ ] Close Calibre after The Way of Kings has been read once: the page keeps turning, and
+      `!book text` says "(a cached copy: the source isn't answering)". After `!restart` and a new
+      `/book play`, the page still opens.
+- [ ] With Calibre closed, `!book text on` on a Calibre book never read before: "Calibre isn't
+      answering. Open the Calibre app once…". Open Calibre and run `!book text on` again straight
+      away: it works, with no 30 s wait.
+- [ ] With Calibre closed, Words of Radiance's text still works (its EPUB is next to the audio).
+
+**Sources and `!book link`**
+
+- [ ] The Final Empire, with no link set: `!book text` works, and `!book link The Final Empire`
+      shows Calibre #299 "Mistborn" ✅ (matched by series and book number).
+- [ ] Words of Radiance: `!book text` says "text from EPUB next to the audio".
+      `!book link Words of Radiance` lists the book's EPUB ✅ and the Pocket Companion with a low
+      score and no ✅.
+- [ ] `!book link "The Final Empire" 299`, then `id:299`, `isbn:9780765350381` and
+      `isbn:0765350386`: each answers "🔗 Linked The Final Empire to Calibre #299 “Mistborn”
+      (EPUB)."
+- [ ] `!book link <a book> D:\…\file.epub` (a real local EPUB): the echo names the file name only.
+      `!book link <a book> \\server\share\x.epub`: "Only a file on this PC's own drives can be
+      linked."
+- [ ] `!book link The Final Empire off`: `!book text` says it is switched off, and the next card
+      has no 📖. `!book link The Final Empire auto` brings it back.
+- [ ] `!book link The Final Empire` typed in a server channel: the public reply has no `D:\` or
+      other full path and says the full details went to your DMs; the DM has them. The same
+      command in a DM shows the full paths there.
+- [ ] Someone who is not the owner: "⛔ Only the bot owner can link ebooks."
+
+**Nothing in the logs**
+
+- [ ] `npm run logs -- --raw`: every DM page and private page shows as `[book text not logged]`,
+      while ordinary replies are logged as written.
+- [ ] Search `data/logs/` for a distinctive sentence from a page you read: no hit in
+      `commands-*.jsonl` or `bot-*.log`.
+
+**Priority and stutter**
+
+- [ ] The first read of a large ebook while a book plays (Rhythm of War, if it has not been read
+      yet): listen for a stutter while "Preparing" shows. With `voiceHealthEnabled` on, run
+      `!voicehealth mark first read` and check that minute.
+- [ ] Task Manager → Details during that first read: a second, short-lived `node.exe` whose
+      command line ends `helpers\epubTextWorker.js --epub-text-child`, at Below normal, while the
+      bot's own `node.exe` stays Above normal. It exits within seconds.
+- [ ] With Process Lasso running, that child shows up there too for those seconds; this is
+      expected. ProBalance was seen on 2026-10-09 lowering a busy node process to Below normal
+      with no call from the process itself, which overrides the bot's Above normal exactly when
+      it is busy, and an ffmpeg spawned meanwhile inherits Below normal. Exclude `node.exe` and
+      `ffmpeg.exe` from ProBalance. The parse child needs nothing more: the bot already runs it at
+      Below normal.
 
 ---
 
