@@ -5,6 +5,7 @@ const { getModel } = require('../helpers/geminiAPI.js');
 const { getPlex } = require('../helpers/plexClient.js');
 const handleAIError = require('../helpers/aiErrorHandler.js');
 const logger = require('../helpers/logger.js');
+const longForm = require('../helpers/longForm.js');
 
 const model = getModel();
 const plex = getPlex();
@@ -208,10 +209,15 @@ module.exports = {
                     }
 
                     const playlistItems = await plex.query(`/playlists/${targetPlaylist.ratingKey}/items`);
-                    const allItems = playlistItems.MediaContainer.Metadata || [];
+                    const rawItems = playlistItems.MediaContainer.Metadata || [];
 
-                    if (allItems.length === 0) {
+                    if (rawItems.length === 0) {
                         return statusMsg.edit(`❌ The playlist "**${targetPlaylist.title}**" is empty!`);
+                    }
+
+                    const allItems = longForm.partition(rawItems).music;
+                    if (allItems.length === 0) {
+                        return statusMsg.edit(`❌ The playlist "**${targetPlaylist.title}**" holds only audiobooks and podcasts, no songs!`);
                     }
 
                     const fallbackCatalog = allItems.map(item => ({ title: item.title, artist: item.grandparentTitle || item.originalTitle || "Unknown" }));
@@ -227,7 +233,7 @@ module.exports = {
                     }
 
                     const libraryData = await plex.query(`/library/sections/${targetSection.key}/all?type=10`);
-                    const allItems = libraryData.MediaContainer.Metadata || [];
+                    const allItems = longForm.partition(libraryData.MediaContainer.Metadata).music;
 
                     if (allItems.length === 0) {
                         return statusMsg.edit(`❌ The music library is empty!`);

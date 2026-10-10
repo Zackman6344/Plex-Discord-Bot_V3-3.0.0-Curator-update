@@ -66,6 +66,13 @@ module.exports = {
                     '**🎵 CUSTOM PLAYLISTS**\n' +
                     `> \`${prefix}playlist\` — Manager for custom playlists (create/add/play/list/delete/print). Type \`${prefix}playlist ?\` for sub-commands.\n\n` +
 
+                    // Opt-in like Archipelago below. The embed description caps at 4096 chars,
+                    // and with both sections on there is little room left.
+                    (config.audiobooksEnabled
+                        ? '**📚 AUDIOBOOKS**\n' +
+                          `> \`${prefix}book play [title]\` — Audiobooks and podcasts that remember your place. \`${prefix}book ?\` for more.\n\n`
+                        : '') +
+
                     '**🍿 AI MEDIA DISCOVERY**\n' +
                     `> \`${prefix}request\` — Anonymously request a movie/show/album for the server.\n` +
                     `> \`${prefix}curator\` — AI-tailored media recommendations with follow-up Q&A.\n` +
@@ -99,6 +106,7 @@ module.exports = {
                     '**📊 ADMIN / DIAGNOSTIC**\n' +
                     `> \`${prefix}config\` *(owner-only; best as \`/config\`)* — Change bot settings from Discord.\n` +
                     `> \`${prefix}diag\` *(alias \`${prefix}plextest\`)* — Full health check across Plex, Gemini, Tautulli, Playnite, event server.\n` +
+                    `> \`${prefix}voicehealth [mark]\` — Voice stutter log *(enable in \`/config\`)*.\n` +
                     `> \`${prefix}help\` *(alias \`${prefix}?\`)* — This menu.\n` +
                     `> \`${prefix}restart\` — Restart the bot process.\n\n` +
 

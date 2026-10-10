@@ -10,6 +10,7 @@ module.exports = {
       description: 'Pause the current song'
     },
     process: function(bot, client, message) {
+      if (bot.books && bot.books.routeGeneric('pause', message)) return;
       // isPlaying is set before the first player exists, and stays set while the previous track's
       // Idle player waits for the next download. pause() refuses that player and one still
       // buffering, and a flag claiming a pause that did not take makes the toggle offer Resume over

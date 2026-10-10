@@ -3,6 +3,7 @@ const path = require('path');
 const { getPlex } = require('../helpers/plexClient.js');
 const handleAIError = require('../helpers/aiErrorHandler.js');
 const logger = require('../helpers/logger.js');
+const longForm = require('../helpers/longForm.js');
 
 const plex = getPlex();
 
@@ -194,7 +195,9 @@ module.exports = {
                     if (category === 'albums') endpoint += '?type=9';
 
                     const libraryData = await plex.query(endpoint);
-                    const items = libraryData.MediaContainer.Metadata || [];
+                    let items = libraryData.MediaContainer.Metadata || [];
+                    // Audiobook and podcast albums sit in the music section with release years of their own.
+                    if (category === 'albums') items = items.filter(item => !longForm.isLongFormAlbum(item));
                     allItems = allItems.concat(items);
                 }
 

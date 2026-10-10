@@ -1,4 +1,5 @@
 const logger = require('../helpers/logger.js');
+const longForm = require('../helpers/longForm.js');
 
 const pageSize = 10;
 var offset = 0;
@@ -39,18 +40,25 @@ module.exports = {
       switch(args[0]) {
         case 'search': {
             const res = await bot.findTracksOnPlex(query.slice(args[0].length+1), 0, 20);
-            for (let track of res.MediaContainer.Metadata) {
+            const { music: tracks, books } = longForm.partition(res.MediaContainer.Metadata);
+            for (let track of tracks) {
                 const music = bot.trackToMusic(track);
                 embedObj.fields[0].value += music.title + '\n\n';
                 embedObj.fields[1].value += music.artist + '\n\n';
                 embedObj.fields[2].value += music.album + '\n\n';
+            }
+            if (books.length) {
+                const line = tracks.length ? longForm.redirectLine(longForm.worksFor(books)) : longForm.onlyBooksLine(books);
+                if (line) embedObj.description += '\n' + line;
             }
         };break;
         case 'reset': offset = 0;
         default:
           for (let key in bot.cache_library) {
             try {
-              const res = await bot.plex.query('/library/sections/' + key + '/all?type=10&X-Plex-Container-Start=' + offset + '&X-Plex-Container-Size=' + pageSize);
+              // Filtered by Plex, not here: the offset below advances by whole pages, so dropping
+              // rows client-side would show short pages and never reach the music past them.
+              const res = await bot.plex.query(longForm.withExclusion('/library/sections/' + key + '/all?type=10&X-Plex-Container-Start=' + offset + '&X-Plex-Container-Size=' + pageSize));
               offset += res.MediaContainer.Metadata.length < pageSize ? 0: pageSize;
               for (let track of res.MediaContainer.Metadata) {
                   const music = bot.trackToMusic(track);

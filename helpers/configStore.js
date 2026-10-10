@@ -12,7 +12,7 @@ const path = require('path');
 const OVERRIDES_PATH = path.join(__dirname, '..', 'data', 'config.overrides.json');
 
 // Group render order for the wizard panel.
-const GROUPS = ['General', 'Access', 'Integrations', 'Broadcasts', 'Archipelago'];
+const GROUPS = ['General', 'Access', 'Integrations', 'Broadcasts', 'Archipelago', 'Audiobooks', 'Voice'];
 
 // Editable settings. `type`: bool | string | int | choice.
 //   secret          — never display the value; modal input starts blank.
@@ -80,6 +80,35 @@ const SETTINGS = [
     { key: 'gamePresenceEnabled', label: 'Detect games via Discord activity', group: 'Broadcasts', type: 'bool', restartRequired: true },
     { key: 'broadcastStartup', label: 'Broadcast "system started" on boot', group: 'Broadcasts', type: 'bool' },
     { key: 'kometaTheaterEnabled', label: 'Kometa Theater (in-character narration)', group: 'Broadcasts', type: 'bool', restartRequired: true },
+
+    { key: 'audiobooksEnabled', label: 'Audiobooks and podcasts (/book)', group: 'Audiobooks', type: 'bool' },
+    { key: 'audiobooksExcludeFromMusic', label: 'Keep books out of music', group: 'Audiobooks', type: 'bool' },
+    { key: 'audiobookSaveSeconds', label: 'Bookmark save interval (seconds)', group: 'Audiobooks', type: 'int', min: 5, max: 300 },
+    {
+        key: 'audiobookDefaultSpeed', label: 'Speed for a first book', group: 'Audiobooks', type: 'choice',
+        choices: [
+            { label: '0.75x', value: '0.75' },
+            { label: '0.9x', value: '0.9' },
+            { label: '1x', value: '1' },
+            { label: '1.1x', value: '1.1' },
+            { label: '1.25x', value: '1.25' },
+            { label: '1.5x', value: '1.5' },
+            { label: '1.75x', value: '1.75' },
+            { label: '2x', value: '2' },
+        ],
+    },
+    { key: 'audiobookIdleLeaveMinutes', label: 'Leave voice after idle (minutes)', group: 'Audiobooks', type: 'int', min: 1, max: 180 },
+    { key: 'audiobookResumeRewindSeconds', label: 'Rewind on resume (seconds)', group: 'Audiobooks', type: 'int', min: 0, max: 120 },
+
+    // Both apply live through onChange (helpers/processPriority.js, helpers/voiceHealth.js).
+    {
+        key: 'processPriority', label: 'Bot process priority', group: 'Voice', type: 'choice',
+        choices: [
+            { label: 'Above normal (smoother voice)', value: 'above_normal' },
+            { label: 'Normal (if a game suffers)', value: 'normal' },
+        ],
+    },
+    { key: 'voiceHealthEnabled', label: 'Voice health log (!voicehealth)', group: 'Voice', type: 'bool' },
 ];
 
 // Discord caps a string select at 25 options and a message at 5 action rows, and it rejects an

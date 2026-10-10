@@ -19,7 +19,7 @@ const ACTION_TO_COMMAND = {
     queue:   'viewqueue',
     stop:    'stop',
     // pausetoggle resolves to 'pause' or 'resume' at click time, based on
-    // bot.isPaused — the button's rendered label can lag the actual state if
+    // bot.isPaused, or the book's state while one plays — the button's rendered label can lag the actual state if
     // the bot is paused/resumed from elsewhere, but the handler re-checks.
 };
 
@@ -77,7 +77,11 @@ async function handle(interaction, bot, client, plexCommands, { onInteractionRes
 
     let cmdName = ACTION_TO_COMMAND[action];
     if (action === 'pausetoggle') {
-        cmdName = bot.isPaused ? 'resume' : 'pause';
+        // isPaused is music's flag and stays false through a book, so a parked book could never
+        // be resumed from this card. The command then delegates to the book (decision D2).
+        const book = bot.books && interaction.guildId ? bot.books.session(interaction.guildId) : null;
+        const paused = book ? book.state === 'paused' : bot.isPaused;
+        cmdName = paused ? 'resume' : 'pause';
     }
     if (!cmdName) {
         try { await interaction.reply({ content: '❌ Unknown playback action.', ephemeral: true }); } catch (_) {}

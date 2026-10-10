@@ -3,6 +3,7 @@ const { getModel } = require('../helpers/geminiAPI.js');
 const { getPlex } = require('../helpers/plexClient.js');
 const handleAIError = require('../helpers/aiErrorHandler.js');
 const logger = require('../helpers/logger.js');
+const longForm = require('../helpers/longForm.js');
 
 const model = getModel();
 const plex = getPlex();
@@ -113,7 +114,9 @@ module.exports = {
                         if (type === 'artist') queryUrl += `?type=10`;
 
                         const libraryData = await plex.query(queryUrl);
-                        const items = libraryData.MediaContainer.Metadata || [];
+                        let items = libraryData.MediaContainer.Metadata || [];
+                        // Audiobook chapters sit in the music section but are not tracks for a music quest.
+                        if (type === 'artist') items = longForm.partition(items).music;
 
                         // Tag each item so the AI knows if it's a movie or a show when mixing
                         items.forEach(item => {

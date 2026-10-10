@@ -1,0 +1,54 @@
+{
+	"authors": {
+		"ilse-moreau": {
+			"series": "Tidewater Cycle",
+			"order": {
+				"the glass sea": 1,
+				"the-far-shore": 2,
+				"The Night Gate": 3
+			}
+		}
+	},
+	"works": {
+		"avery-quill/the-glass-road": {
+			"series": "Glassworks",
+			"sequence": 1,
+			"partOrder": [
+				"01 The Glass Road (Grahpic Audio) - intro.mp3",
+				"02 The Glass Road (Grahpic Audio) - Prelude.mp3",
+				"03 The Glass Road (Grahpic Audio) - Prologue.mp3",
+				"04 The Glass Road (Grahpic Audio) - Chapter 1.mp3",
+				"05 The Glass Road (Grahpic Audio) - Chapter 2.mp3",
+				"06 The Glass Road (Grahpic Audio) - Interlude 1-1.mp3",
+				"07 The Glass Road (Grahpic Audio) - Chapter 3.mp3",
+				"01 The Glass Road (Grahpic Audio) - Chapter 10.mp3",
+				"02 The Glass Road (Grahpic Audio) - Chapter 11.mp3",
+				"03 The Glass Road (Grahpic Audio) - Chapter 12.mp3",
+				"01 The Glass Road (Graphic Audio) - Chapter 20.mp3",
+				"02 The Glass Road (Graphic Audio) - Chapter 21.mp3",
+				"03 The Glass Road (Graphic Audio) - Epilogue.mp3",
+				"05 The Glass Road (Graphic Audio) - outro.mp3",
+				"04 The Glass Road (Graphic Audio) - Endnote.mp3"
+			]
+		},
+		"corin-vale/the-long-tide": {
+			"sequence": 2.5
+		},
+		"avery-quill/shadows-of-glass": {
+			"exclude": true
+		},
+		"r-j-ashdown/the-hollow-king": {
+			"pinId": "rj-ashdown/hollow-king",
+			"title": "The Hollow King (Complete)"
+		}
+	},
+	"include": [
+		"1090"
+	],
+	"exclude": [
+		"M:/Music/Ilse Moreau/1989 - The Glass Sea (Various) 500mb"
+	],
+	"podcastArtists": [
+		"9011"
+	]
+}

@@ -3,6 +3,7 @@ const { getModel } = require('../helpers/geminiAPI.js');
 const { getPlex } = require('../helpers/plexClient.js');
 const handleAIError = require('../helpers/aiErrorHandler.js');
 const logger = require('../helpers/logger.js');
+const longForm = require('../helpers/longForm.js');
 
 const model = getModel();
 const plex = getPlex();
@@ -105,7 +106,9 @@ module.exports = {
                         }
 
                         const libraryData = await plex.query(queryUrl);
-                        const allItems = libraryData.MediaContainer.Metadata || [];
+                        let allItems = libraryData.MediaContainer.Metadata || [];
+                        // Audiobook chapters sit in the music section but are not music to recommend.
+                        if (targetSection.type === 'artist') allItems = longForm.partition(allItems).music;
 
                         await statusMsg.edit(`🔍 **Curator Status:**\n✅ Vibes & references decoded\n✅ Connected to Plex\n⏳ *Sifting through all ${allItems.length} server files...*`);
 

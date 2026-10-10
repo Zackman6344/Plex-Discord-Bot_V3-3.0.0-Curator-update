@@ -15,6 +15,13 @@ module.exports = function(client, bot) {
   const tagInference = require('../helpers/tagInference.js');
   const commandLog = require('../helpers/commandLog.js');
   const interactionFallback = require('../helpers/interactionFallback.js');
+  const { createBookDirector } = require('../helpers/bookEngine.js');
+  const bookButtons = require('../helpers/bookButtons.js');
+
+  // At module init, not on ready: the music gate and utils.stop's shutdown both need it before
+  // the gateway is up. !restart builds a new Bot and runs this again; utils.stop shut the old
+  // director down first.
+  bot.books = createBookDirector({ client, bot });
 
   // Arguments are written to the command log before the command runs, and commandLog only knows
   // how to redact the static secrets in config/. A command that takes a secret typed at runtime
@@ -87,6 +94,13 @@ module.exports = function(client, bot) {
       startArchipelagoMonitor(client);
     } catch (err) {
       logger.error('Archipelago monitor failed to start:', err.message || err);
+    }
+    // Reads or refreshes the audiobook catalog and arms its hourly check. No-op unless
+    // config.audiobooksEnabled is set; /book play arms it later if the setting is turned on live.
+    try {
+      bot.books.start();
+    } catch (err) {
+      logger.error('Audiobooks failed to start:', err.message || err);
     }
     // Announce boot to the broadcast channel so it's easy to confirm the bot is live.
     broadcast.broadcastStartup(client).catch((err) => logger.error('Startup broadcast failed:', err.message || err));
@@ -205,7 +219,8 @@ module.exports = function(client, bot) {
       try {
         // Each handler returns false when the customId isn't its own, so ownership stays with
         // the module that defined the button.
-        const claimed = await playbackButtons.handle(interaction, bot, client, plexCommands, { onInteractionResponse });
+        let claimed = await playbackButtons.handle(interaction, bot, client, plexCommands, { onInteractionResponse });
+        if (!claimed) claimed = await bookButtons.handle(interaction, bot, client, { onInteractionResponse });
         if (!claimed) await tagInference.handle(interaction, { onInteractionResponse });
         commandLog.finishInvocation(buttonLogId, { ok: true, ms: Date.now() - buttonStartedAt });
       } catch (err) {
@@ -226,6 +241,15 @@ module.exports = function(client, bot) {
 
     const query = slashRegistry.buildQueryString(interaction, cmd.slash);
 
+    // `ephemeral` may be a function of the interaction (/book is private except its leaderboard).
+    // A throwing one counts as public, the same answer as before the option existed.
+    const ephemeral = (() => {
+      try {
+        const e = cmd.slash.ephemeral;
+        return typeof e === 'function' ? !!e(interaction) : !!e;
+      } catch (_) { return false; }
+    })();
+
     // Logged before the defer: a defer that fails is exactly the "This interaction failed" case
     // the log exists to explain, and starting after it would leave no record of the attempt.
     const logId = commandLog.startInvocation({
@@ -244,7 +268,7 @@ module.exports = function(client, bot) {
     try {
       // Commands can opt into a private (ephemeral) response via `slash.ephemeral` — used by
       // /config so the settings panel isn't posted for the whole channel to see.
-      await interaction.deferReply(cmd.slash.ephemeral ? { flags: MessageFlags.Ephemeral } : undefined);
+      await interaction.deferReply(ephemeral ? { flags: MessageFlags.Ephemeral } : undefined);
     } catch (err) {
       logger.error(`Failed to defer interaction for /${name}:`, err.message || err);
       commandLog.finishInvocation(logId, { ok: false, ms: Date.now() - startedAt, error: err });
@@ -252,7 +276,7 @@ module.exports = function(client, bot) {
       // the user is a bare "This interaction failed". An ordinary channel message is the only
       // route left, and this is worth explaining: the command did not break, it never ran.
       const said = await interactionFallback.explainFailedDefer(client, interaction, name, err,
-        { ephemeral: !!cmd.slash.ephemeral });
+        { ephemeral });
       if (said) {
         commandLog.recordOutput({ id: logId, kind: 'message', channelId: interaction.channelId, payload: said });
       }

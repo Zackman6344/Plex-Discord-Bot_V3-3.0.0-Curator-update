@@ -7,6 +7,7 @@ const sidecar = require('../helpers/tagSidecar.js');
 const recentPicks = require('../helpers/recentPicks.js');
 const { discoveryQuota, weightedShuffle } = require('../helpers/selection.js');
 const tagInference = require('../helpers/tagInference.js');
+const longForm = require('../helpers/longForm.js');
 
 const model = getModel();
 const plex = getPlex();
@@ -155,16 +156,31 @@ module.exports = {
                 // section listing never returns. Every matched tag below is one Plex assigned.
                 const tagHits = await plexTags.fetchTracksByTags(typeData.moods || [], typeData.genres || []);
 
+                // Audiobook chapters and podcast episodes can carry mood and genre tags and approved
+                // sidecar entries, so every source below can return them like songs.
+                const skippedBooks = [];
+                const keepMusic = (track) => {
+                    if (!longForm.isLongFormTrack(track)) return true;
+                    skippedBooks.push(track);
+                    return false;
+                };
+                const tagTracks = tagHits.tracks.filter(e => keepMusic(e.track));
+
                 // A track Plex never tagged can't come back from a Plex tag query at all, so the
                 // approved sidecar is the only route by which it's reachable.
-                const sidecarHits = sidecar.findByTags({ moods: typeData.moods || [], genres: typeData.genres || [] }).slice(0, 60);
+                // Books are dropped by key before the cap so they cannot use up the 60 slots.
+                const sidecarHits = sidecar.findByTags({ moods: typeData.moods || [], genres: typeData.genres || [] })
+                    .filter(h => !longForm.isLongFormTrack({ ratingKey: h.ratingKey }))
+                    .slice(0, 60);
                 const sidecarTracks = [];
                 if (sidecarHits.length) {
                     const full = await plexTags.fetchTracksByRatingKeys(sidecarHits.map(h => h.ratingKey));
                     const byRatingKey = new Map(full.map(t => [String(t.ratingKey), t]));
                     for (const hit of sidecarHits) {
                         const track = byRatingKey.get(String(hit.ratingKey));
-                        if (!track) continue;
+                        // The full track also carries its album and artist, which catch a podcast
+                        // extra the key alone does not.
+                        if (!track || !keepMusic(track)) continue;
                         sidecarTracks.push({
                             track,
                             matchedMoods: hit.matched.moods,
@@ -184,7 +200,7 @@ module.exports = {
                 for (const name of (typeData.artists || []).slice(0, 5)) {
                     try {
                         const res = await plex.query(`/search/?type=10&query=${encodeURI(name)}&X-Plex-Container-Start=0&X-Plex-Container-Size=100`);
-                        const found = (res.MediaContainer && res.MediaContainer.Metadata) || [];
+                        const found = ((res.MediaContainer && res.MediaContainer.Metadata) || []).filter(keepMusic);
                         if (found.length) {
                             requestedArtists.push(name);
                             for (const t of found) artistTracks.push({ track: t, matchedMoods: [], matchedGenres: [], requestedArtist: true });
@@ -195,7 +211,7 @@ module.exports = {
                 }
 
                 const byKey = new Map();
-                for (const entry of [...tagHits.tracks, ...sidecarTracks, ...artistTracks]) {
+                for (const entry of [...tagTracks, ...sidecarTracks, ...artistTracks]) {
                     const id = entry.track.ratingKey;
                     if (!byKey.has(id)) byKey.set(id, entry);
                     else if (entry.requestedArtist) byKey.get(id).requestedArtist = true;
@@ -205,9 +221,11 @@ module.exports = {
                     // Previously this fell back to "every playable track", then presented 75 random
                     // songs as a curated vibe. Saying nothing matched is more useful than that.
                     const tried = [...tagHits.usedMoods, ...tagHits.usedGenres].join(', ') || 'nothing usable';
+                    const redirect = longForm.redirectLine(longForm.worksFor(skippedBooks));
                     return statusMsg.edit(
                         `🎧 **No matches for that vibe.**\nI mapped it to: \`${tried}\` — but no tracks in the library carry those tags.\n` +
-                        `*Try naming a genre or artist you know is on the server, or a broader mood.*`
+                        `*Try naming a genre or artist you know is on the server, or a broader mood.*` +
+                        (redirect ? `\n${redirect}` : '')
                     );
                 }
 
@@ -366,6 +384,9 @@ await statusMsg.edit(`🎵 **Vibe:** \`${typeData.vibe}\`\n⏳ *The AI Librarian
                                 if (discoveries.length >= quota) break;
                                 const rk = String(track.ratingKey);
                                 if (alreadyPicked.has(rk)) continue;
+                                // The sample's Plex filter drops whole catalogued albums, not the
+                                // tracks of a partly catalogued one.
+                                if (longForm.isLongFormTrack(track)) continue;
                                 // Wildcards are meant to broaden the queue, so don't spend them all
                                 // on one artist (or on an artist already represented).
                                 const who = String(track.originalTitle || track.grandparentTitle || '').toLowerCase();

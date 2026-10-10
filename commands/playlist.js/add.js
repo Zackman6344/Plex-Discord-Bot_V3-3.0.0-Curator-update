@@ -1,5 +1,6 @@
 const ytdl = require('@distube/ytdl-core');
 const fs = require('fs');
+const longForm = require('../../helpers/longForm.js');
 
 module.exports = {
   name : 'add',
@@ -33,17 +34,34 @@ module.exports = {
             });
           } else {
             bot.findTracksOnPlex(query, 0, 10).then(async function(res) {
-              let liste = res.MediaContainer.Metadata;
-              let taille = res.MediaContainer.size;
+              // `choice` indexes bot.tracks by the numbers shown, so only music hits are kept.
+              const { music: liste, books } = longForm.partition(res.MediaContainer.Metadata);
+              let taille = liste.length;
+              // A full raw page may hide songs on the next one, so a lone song among chapters is
+              // offered for choice rather than written straight into the playlist.
+              const morePages = books.length > 0 && res.MediaContainer.size >= 10;
+              if (taille < 1 && books.length) {
+                  if (!morePages) {
+                      await message.reply(longForm.onlyBooksLine(books));
+                      return;
+                  }
+                  bot.tracks = liste;
+                  bot.plexQuery = query;
+                  bot.plexOffset = res.MediaContainer.size;
+                  bot.botPlaylist = args[0];
+                  await message.reply(`${longForm.onlyBooksLine(books)}\n**${bot.config.commandPrefix}playlist page** if the music you want is not in this page.`);
+                  return;
+              }
               if (taille < 1) {
                   await message.reply(bot.language.BOT_FIND_SONG_ERROR);
                   throw "La musique n'a pas été trouvée.";
               }
-              if (taille > 1) {
+              const bookLine = books.length ? longForm.redirectLine(longForm.worksFor(books)) : '';
+              if (taille > 1 || morePages) {
                   let messageLines = '\n';
-                  bot.tracks = res.MediaContainer.Metadata;
+                  bot.tracks = liste;
                   bot.plexQuery = query; // set query for !nextpage
-                  bot.plexOffset = taille; // set paging
+                  bot.plexOffset = res.MediaContainer.size; // set paging
                   bot.botPlaylist = args[0];
                   let artist;
                   for (let t = 0; t < bot.tracks.length; t++) {
@@ -55,10 +73,12 @@ module.exports = {
                       }
                       messageLines += bot.language.BOT_FIND_SONG_INFO_MUSIC.format({index : t+1, artist : artist, title : bot.tracks[t].title}) + '\n';
                   }
+                  if (bookLine) messageLines += bookLine + '\n';
                   messageLines += bot.language.PLAYLIST_ADD_INFO.format({commandPrefix : bot.config.commandPrefix});
                   message.reply(messageLines);
                   return ;
               }
+              if (bookLine) message.reply(bookLine);
 
               let key = liste[0].Media[0].Part[0].key;
               let artist = '';

@@ -7,6 +7,8 @@ module.exports = {
       description: 'Skip the current song'
     },
     process: function(bot, client, message, query) {
+      // On a book this is one chapter forward; a count is ignored.
+      if (bot.books && bot.books.routeGeneric('skip', message)) return;
       let nombreSkip = 1;
       if(query) {
           nombreSkip = parseInt(query, 10);
