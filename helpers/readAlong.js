@@ -320,11 +320,13 @@ function createReadAlong(opts = {}) {
 		const seg = t.map.segments.find(x => x.level !== 'none' && x.fromMs >= pos);
 		const loc = seg ? model.locate(t.map, seg.fromWord) : null;
 		const label = loc ? String(t.map.sections[loc.section].label || '').trim() : '';
+		const bk = model.bookAt(t.map, pos);
 		return {
 			kind: 'none',
 			word: seg ? seg.fromWord : word,
 			resumeMs: seg ? seg.fromMs : null,
-			resumesAt: seg ? (label || 'the next chapter') : null
+			resumesAt: seg ? (label || 'the next chapter') : null,
+			notInEbook: bk && bk.ebookTitle === null ? `Book ${bk.number}${bk.title ? `: ${bk.title}` : ''}` : null
 		};
 	}
 
@@ -400,7 +402,7 @@ function createReadAlong(opts = {}) {
 		const bookTitle = titleOf(s);
 		if (ref.kind === 'none') {
 			return card.noTextPayload({
-				surface, sid: s.id, tag: t.tag, word: ref.word, bookTitle, resumesAt: ref.resumesAt,
+				surface, sid: s.id, tag: t.tag, word: ref.word, bookTitle, resumesAt: ref.resumesAt, notInEbook: ref.notInEbook,
 				mode, note, isListener, dramatized: t.map.dramatized
 			});
 		}

@@ -534,7 +534,9 @@ go on: about 12 minutes off on average, 20 at worst. Every page footer says "≈
 "chapter-level" or "estimated from pace". **Dramatized editions (GraphicAudio, full cast) are
 followed the same way and also say "dramatized edition"**, because their script is adapted and the
 words you hear are not always the words on the page. Intro, credits and music tracks show "No text
-for this part of the audio".
+for this part of the audio". In an omnibus whose tracks name the book ("Book 2 Title - Chapter
+01"), each chapter is matched inside its own book, and a recorded book the ebook leaves out says it
+is not in the ebook.
 
 **Where the text comes from.** First match wins:
 

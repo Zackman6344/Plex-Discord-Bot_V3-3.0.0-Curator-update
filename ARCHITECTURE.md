@@ -2142,6 +2142,13 @@ competing for the CPU, the longest stall was 42.8 ms.
   outro and credits tracks are flat: the text does not move. Between anchors the position is
   interpolated by word count. Anchors out of order are dropped (the longest chain that never goes
   back in the text is kept) and listed in `map.dropped`.
+- Omnibus books restart their chapter numbers, so "Chapter 01" alone would match the first book's
+  chapter 1 every time. When the track titles name at least two books ("Book 2 Title - Chapter
+  01") and the TOC's chapter numbers restart under a new heading, recorded books pair with
+  ebook books by number, a title match moving the pairing on (an ebook that lacks a book), and each
+  chapter matches only inside its own book. A heading section that holds a chapter's worth of text
+  before "2" is that book's chapter 1, and a recorded book the ebook lacks is cut out of the time
+  axis like an intro. Only such maps carry `map.books`; every other work's map is unchanged.
 
 So the map is chapter-level where tracks are named after chapters, and estimated from pace across
 hour-split stretches. Measured on The Way of Kings: 70 of its 83 tracks are named after chapters

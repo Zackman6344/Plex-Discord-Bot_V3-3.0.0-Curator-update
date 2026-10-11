@@ -137,10 +137,14 @@ function pagePayload(o) {
 function noTextPayload(o) {
 	// The label is the ebook's own TOC text, so it gets the masked-link escaping book text gets.
 	const where = o.resumesAt ? `The text picks up at ${escText(o.resumesAt)}.` : 'The narrated text has ended.';
+	// An omnibus recording can hold a book its ebook edition leaves out; its title comes from file tags.
+	const what = o.notInEbook
+		? `${escText(o.notInEbook)} is not in the ebook, so there is no text for it.`
+		: 'No text for this part of the audio (an intro, credits or music).';
 	const embed = {
 		color: 0x99aab5,
 		title: titleOf(o.bookTitle, '', 0, 0),
-		description: `🎧 No text for this part of the audio (an intro, credits or music). ${where}`,
+		description: `🎧 ${what} ${where}`,
 		footer: { text: footerOf({ quality: { label: 'no text' }, dramatized: o.dramatized, mode: o.mode }) }
 	};
 	return {

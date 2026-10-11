@@ -10,6 +10,8 @@
 // answers "already in your DMs" all session; a seek during the first send walking page by page;
 // ↪'s pin hiding a back-30; a failed timed turn freezing the page; a fresh page left live when
 // the book ended mid-send; a renamed work's source events missing the card; ✖ Off needing text.
+// An omnibus page showing another book's chapter 1, or no word that a recorded book is missing
+// from the ebook.
 //
 // Harness: the real pager with test/helpers/readAlongFakes.js: a manual clock whose advance()
 // runs each due timer and lets the promise chains settle, a fake director whose session plays by
@@ -540,6 +542,27 @@ function creditsWork(where) {
 	parts.forEach((p, i) => { p.ordinal = i + 1; });
 	return T.makeWork(TWO, { parts });
 }
+
+function omnibusWork(sections) {
+	const tracks = [[1, 'The First Test', 1], [1, 'The First Test', 2], [2, 'The Second Test', 1], [2, 'The Second Test', 2], [3, 'The Extra Test', 1]];
+	const parts = tracks.map(([n, title, c], i) => ({ ordinal: i + 1, title: `Book ${n}  ${title} - Chapter 0${c}`, durationMs: CH_MS, partKey: `/p/${i}` }));
+	return T.makeWork(sections, { parts });
+}
+
+test('an omnibus page follows its own book, and a recorded book the ebook lacks says so', async () => {
+	const sections = [
+		{ label: 'The First Test', words: 900 }, { label: '2', words: 900 },
+		{ label: 'The Second Test', words: 20 }, { label: '1', words: 900 }, { label: '2', words: 900 }
+	];
+	const h = harness({ sections, work: omnibusWork(sections), session: { atMs: 10000, audible: false } });
+	assert.match((await h.ra.ephemeralFor(h.s, 'u1')).embeds[0].title, /The First Test$/, 'book 1 chapter 1 is the heading section');
+	h.books.setPos(h.s, 2 * CH_MS + 10000);
+	assert.match((await h.ra.ephemeralFor(h.s, 'u1')).embeds[0].title, /· 1$/, 'book 2 chapter 1');
+	h.books.setPos(h.s, 4 * CH_MS + 10000);
+	const extra = (await h.ra.ephemeralFor(h.s, 'u1')).embeds[0].description;
+	assert.match(extra, /Book 3: The Extra Test is not in the ebook/);
+	assert.match(extra, /narrated text has ended/);
+});
 
 test('▶ on the opening-credits page shows the first page of the text, not the second', async () => {
 	const h = harness({ work: creditsWork('start'), session: { atMs: 10000, audible: false } });

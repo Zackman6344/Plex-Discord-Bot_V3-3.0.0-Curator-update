@@ -4,7 +4,8 @@
 // characters), so the DM freezes on an old page; a line of the book starting "# " or "> " turning
 // into a heading or a quote; a page with book text and no bookpage: row, which the command log
 // would then write to disk; a stub that keeps live buttons; "Play from here" or "Follow in DMs"
-// offered to someone in the voice channel who is not the listener; a ping from the page.
+// offered to someone in the voice channel who is not the listener; a ping from the page; an
+// omnibus book the ebook leaves out called "an intro, credits or music".
 //
 // Harness: pure, no Discord. Payloads are built by hand from synthetic NATO-alphabet text.
 
@@ -161,6 +162,13 @@ test('parsePageId refuses anything it did not make', () => {
 test('a TOC label on the no-text page cannot render as a masked link', () => {
 	const p = card.noTextPayload({ surface: 'd', sid: 'a1b2c3', tag: '9f0c', word: 0, bookTitle: 'B', resumesAt: '[Chapter 1](https://evil.example/login)', mode: 'following', isListener: true });
 	assert.ok(p.embeds[0].description.includes('\\[Chapter 1\\](https://evil.example/login)'), p.embeds[0].description);
+});
+
+test('an omnibus book the ebook lacks is named on the no-text page, escaped like a TOC label', () => {
+	const p = card.noTextPayload({ surface: 'd', sid: 'a1b2c3', tag: '9f0c', word: 0, bookTitle: 'B', resumesAt: null, notInEbook: 'Book 5: The *Extra* Book', mode: 'following', isListener: true });
+	assertDiscordShape(p, 'not in the ebook');
+	assert.match(p.embeds[0].description, /Book 5: The \\\*Extra\\\* Book is not in the ebook, so there is no text for it\. The narrated text has ended\./);
+	assert.doesNotMatch(p.embeds[0].description, /intro, credits or music/);
 });
 
 test('the no-text page\'s buttons say so, and parsePageId reads the mark back', () => {

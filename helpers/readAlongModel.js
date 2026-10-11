@@ -50,6 +50,15 @@ const KIND_PRIORITY = { mark: 3, 'track-start': 2, 'track-end': 2, 'work-start':
 const KIND_RANK = { 'track-end': 0, 'work-end': 0, 'no-text': 1, mark: 1, 'track-start': 2, 'work-start': 2 };
 const CHAIN_WEIGHT = 10000;
 
+// An omnibus's first book often has no heading of its own: its title is the TOC label of a
+// section that also holds chapter 1. A bare title page is far shorter than any chapter.
+const HEADING_CHAPTER_MIN_WORDS = 200;
+// Longer labels are an epigraph's or a passage's own text standing in for a missing TOC title.
+const HEADING_MAX_LABEL_WORDS = 10;
+const TITLE_STOP = new Set(['a', 'an', 'the', 'of', 'in', 'and', 'book']);
+const TITLE_MATCH = 0.5;
+const BOOK_SEP_RE = /\s+[-\u2013\u2014]+\s+|\s*[:,;]\s+/g;
+
 function words(text) {
 	const out = [];
 	for (const m of String(text ?? '').matchAll(WORD_RE)) out.push({ start: m.index, end: m.index + m[0].length });
@@ -250,6 +259,33 @@ function isNoTextPart(part, { workTitle = '' } = {}) {
 	return NO_TEXT_RE.test(title) && !partKey(title, { workTitle });
 }
 
+// An omnibus track: "1-02 Book 1  The Sword of Testing - Chapter 01a" gives book 1, its title,
+// and "Chapter 01a" as the rest, which carries the chapter key. The rest starts at the last
+// separator that still leaves a chapter key (else a no-text word), so a book title may hold
+// separators of its own and "Chapter 3: The Opening" stays one chapter. A book named after the
+// chapter ("Chapter 3 - Book 2 of Ash") is part of that chapter's own title.
+function bookOfPart(title, { workTitle = '' } = {}) {
+	const t = stripWorkTitle(String(title ?? ''), workTitle);
+	const m = /(?:^|[^\p{L}\p{N}])book\s+/iu.exec(t);
+	if (!m || partKey(t.slice(0, m.index))) return null;
+	const from = m.index + m[0].length;
+	// A worded number stops at the separator, so "Book One - Two Swords" is book 1, not 3.
+	const stop = new RegExp(BOOK_SEP_RE.source).exec(t.slice(from));
+	const n = numberAt(stop ? t.slice(0, from + stop.index) : t, from);
+	if (!n || !(n.value > 0) || (n.roman && n.text !== n.text.toUpperCase())) return null;
+	if (/^[\p{L}\p{N}]/u.test(t.slice(n.end))) return null;
+	const body = t.slice(n.end).replace(/^[\s:.,;\-\u2013\u2014]+/, '');
+	const after = (s) => body.slice(s.index + s[0].length);
+	const cuts = [...body.matchAll(BOOK_SEP_RE)].reverse();
+	const split = (cut) => ({ number: n.value, title: body.slice(0, cut.index).trim(), rest: after(cut) });
+	const keyed = cuts.find((s) => partKey(after(s)));
+	if (keyed) return split(keyed);
+	if (partKey(body)) return { number: n.value, title: '', rest: body };
+	const quiet = cuts.find((s) => NO_TEXT_RE.test(after(s)));
+	if (quiet) return split(quiet);
+	return NO_TEXT_RE.test(body) ? { number: n.value, title: '', rest: body } : { number: n.value, title: body.trim(), rest: '' };
+}
+
 function withWordStarts(sections) {
 	const list = Array.isArray(sections) ? sections : [];
 	if (list.every((s) => Number.isFinite(s.wordStart))) return list;
@@ -261,10 +297,12 @@ function withWordStarts(sections) {
 	});
 }
 
-function classifySections(sections, { performedKeys = new Set() } = {}) {
+function classifySections(sections, { performedKeys = new Set(), keyOverrides = null } = {}) {
 	const performed = [...performedKeys].filter(Boolean);
 	const isPerformed = (key) => performed.some((k) => keysMatch(k, key));
-	const list = withWordStarts(sections).map((s) => ({ ...s, key: labelKey(s.label) }));
+	const list = withWordStarts(sections).map((s, i) => ({
+		...s, key: keyOverrides && keyOverrides.has(i) ? keyOverrides.get(i) : labelKey(s.label),
+	}));
 	const info = list.map((s) => {
 		const label = String(s.label ?? '').trim();
 		const kc = keyClass(s.key);
@@ -310,6 +348,145 @@ function classifySections(sections, { performedKeys = new Set() } = {}) {
 	};
 }
 
+function isBookHeading(s) {
+	const label = String(s.label ?? '').trim();
+	if (!label || s.key || AUX_RE.test(label)) return false;
+	const n = (label.match(/[\p{L}\p{N}]+/gu) || []).length;
+	return n > 0 && n <= HEADING_MAX_LABEL_WORDS;
+}
+
+// The books of an omnibus ebook: the chapter numbering restarts under a titled heading for each
+// new book. A heading section that holds a chapter's worth of text right before chapter 2 is that
+// book's chapter 1. Title pages and epigraphs between books stay outside every book's chapters.
+function ebookBooks(list) {
+	const chapters = [];
+	list.forEach((s, i) => {
+		const m = /^c(\d+)$/.exec(s.key || '');
+		if (m) chapters.push({ index: i, n: Number(m[1]) });
+	});
+	const books = [];
+	chapters.forEach((c, j) => {
+		const prev = chapters[j - 1];
+		if (prev && !(c.n <= 2 && c.n < prev.n)) return;
+		const floor = prev ? prev.index : -1;
+		let heading = -1;
+		for (let i = c.index - 1; i > floor; i--) {
+			// A later piece of a section the cache split is labelled like its first piece plus " (2)".
+			if (list[i].part > 1) continue;
+			if (isBookHeading(list[i])) { heading = i; break; }
+		}
+		if (prev && heading < 0) return;
+		const between = list.slice(heading + 1, c.index);
+		const chapterOne = heading >= 0 && c.n === 2 && list[heading].words >= HEADING_CHAPTER_MIN_WORDS
+			&& between.every((s) => s.part > 1) ? heading : -1;
+		// An empty heading right before a short-label page is the book's own; that page is an
+		// epigraph or a subtitle, and its label must not pair the book by title.
+		if (chapterOne < 0) {
+			while (heading - 1 > floor && !(list[heading - 1].words > 0) && isBookHeading(list[heading - 1])) heading--;
+		}
+		const h = heading >= 0 ? list[heading] : null;
+		books.push({ title: h ? String(h.label).trim() : '', from: heading >= 0 ? heading : c.index, chapterOne });
+	});
+	if (books.length < 2) return null;
+	books.forEach((b, k) => {
+		b.to = k + 1 < books.length ? books[k + 1].from : list.length;
+		let last = -1;
+		for (let i = b.from; i < b.to; i++) if (list[i].key || i === b.chapterOne) last = i;
+		b.endWord = last >= 0 ? list[last].wordStart + (list[last].words || 0) : list[b.from].wordStart;
+	});
+	return books;
+}
+
+function titleWords(title) {
+	return new Set((String(title ?? '').toLowerCase().match(/[\p{L}\p{N}]+/gu) || []).filter((w) => !TITLE_STOP.has(w)));
+}
+
+function titleSimilarity(a, b) {
+	const x = titleWords(a);
+	const y = titleWords(b);
+	if (!x.size || !y.size) return 0;
+	let both = 0;
+	for (const w of x) if (y.has(w)) both++;
+	return both / (x.size + y.size - both);
+}
+
+// Audio book n reads ebook book n - 1 + shift, so a recording that starts at book 2 reads book 2.
+// The shift is the one most title-matched books agree on (an ebook that lacks the first books),
+// else 0, else the one that puts the lowest recorded number first when the numbers run past the
+// ebook's books. A title match further on moves the pairing from there, and an unmatched book
+// whose place the next book's title claims is one the ebook lacks. A book the two editions title
+// differently keeps its numbered place.
+function pairBooks(audio, ebook) {
+	const matched = audio.map((a) => ebook.findIndex((b) => titleSimilarity(a.title, b.title) >= TITLE_MATCH));
+	const votes = new Map();
+	audio.forEach((a, k) => {
+		if (matched[k] < 0) return;
+		const s = matched[k] - (a.number - 1);
+		votes.set(s, (votes.get(s) || 0) + 1);
+	});
+	const numbers = audio.map((a) => a.number);
+	let shift = Math.max(...numbers) <= ebook.length ? 0 : 1 - Math.min(...numbers);
+	let best = 0;
+	for (const [s, n] of votes) {
+		if (n > best || (n === best && Math.abs(s) < Math.abs(shift))) {
+			shift = s;
+			best = n;
+		}
+	}
+	const pairs = new Map();
+	let last = -1;
+	audio.forEach((a, k) => {
+		let e = a.number - 1 + shift;
+		if (matched[k] > last && matched[k] !== e) {
+			e = matched[k];
+			shift = e - (a.number - 1);
+		} else if (matched[k] < 0 && e >= 0 && matched[k + 1] === e) {
+			shift--;
+			return;
+		}
+		if (e > last && e < ebook.length) {
+			pairs.set(a.number, e);
+			last = e;
+		}
+	});
+	return pairs;
+}
+
+// Chapter numbers restart in every book of an omnibus, so a chapter key means something only
+// inside its book. Null unless both the tracks and the ebook name at least two books.
+function bookPlan(parts, sections, workTitle) {
+	const info = parts.map((p) => bookOfPart(p && p.title, { workTitle }));
+	const audio = [];
+	for (const b of info) {
+		if (!b) continue;
+		const seen = audio.find((a) => a.number === b.number);
+		if (!seen) audio.push({ number: b.number, title: b.title });
+		else if (!seen.title) seen.title = b.title;
+	}
+	if (audio.length < 2) return null;
+	const ebook = ebookBooks(withWordStarts(sections).map((s) => ({ ...s, key: labelKey(s.label) })));
+	if (!ebook) return null;
+	const pairs = pairBooks(audio, ebook);
+	const keys = parts.map((p, i) => (info[i] ? partKey(info[i].rest) : partKey(p && p.title, { workTitle })));
+	// Hour splits that name books carry no chapter to place inside a book, so plain pace serves them.
+	if (!keys.some(Boolean)) return null;
+	const absent = info.map((b) => !!b && !pairs.has(b.number));
+	const sectionBook = new Array(sections.length).fill(-1);
+	ebook.forEach((b, k) => { for (let i = b.from; i < b.to; i++) sectionBook[i] = k; });
+	return {
+		audio: audio.map((a) => ({ ...a, ebook: pairs.has(a.number) ? pairs.get(a.number) : -1 })),
+		ebook,
+		keys,
+		// An audio book the ebook lacks is cut out of the time axis like an intro, so it never
+		// stretches the pace map past the last book that has text.
+		noText: parts.map((p, i) => absent[i] || (info[i] ? NO_TEXT_RE.test(info[i].rest) && !keys[i] : isNoTextPart(p, { workTitle }))),
+		partBook: info.map((b) => (b && pairs.has(b.number) ? pairs.get(b.number) : -1)),
+		partAudioBook: info.map((b) => (b ? b.number : null)),
+		sectionBook,
+		keyOverrides: new Map(ebook.filter((b) => b.chapterOne >= 0).map((b) => [b.chapterOne, 'c1'])),
+	};
+}
+
 function sortAnchors(list) {
 	return list.sort((a, b) => (a.ms - b.ms) || (a.word - b.word) || (KIND_RANK[a.kind] - KIND_RANK[b.kind]));
 }
@@ -351,9 +528,11 @@ function buildMap(work, index, { extraAnchors = [] } = {}) {
 	const parts = Array.isArray(work && work.parts) ? work.parts : [];
 	if (!parts.length || !index) return null;
 	const workTitle = (work && work.title) || '';
-	const keys = parts.map((p) => partKey(p && p.title, { workTitle }));
-	const noText = parts.map((p) => isNoTextPart(p, { workTitle }));
-	const cls = classifySections(index.sections, { performedKeys: new Set(keys.filter(Boolean)) });
+	const bk = bookPlan(parts, Array.isArray(index.sections) ? index.sections : [], workTitle);
+	const keys = bk ? bk.keys : parts.map((p) => partKey(p && p.title, { workTitle }));
+	const noText = bk ? bk.noText : parts.map((p) => isNoTextPart(p, { workTitle }));
+	const partBook = bk ? bk.partBook : parts.map(() => -1);
+	const cls = classifySections(index.sections, { performedKeys: new Set(keys.filter(Boolean)), keyOverrides: bk && bk.keyOverrides });
 	const { sections, bodyStartIndex, bodyEndIndex, bodyStartWord, bodyEndWord } = cls;
 	if (!(bodyEndWord > bodyStartWord)) return null;
 	const last = sections[sections.length - 1];
@@ -387,7 +566,11 @@ function buildMap(work, index, { extraAnchors = [] } = {}) {
 		if (!byKey.has(s.key)) byKey.set(s.key, []);
 		byKey.get(s.key).push(i);
 	}
-	const optionsFor = (key) => (key[0] === 'i' ? candidates.filter((c) => keysMatch(key, sections[c].key)) : byKey.get(key) || []);
+	const inBook = (c, b) => b < 0 || bk.sectionBook[c] === b;
+	const optionsFor = (key, b) => {
+		const list = key[0] === 'i' ? candidates.filter((c) => keysMatch(key, sections[c].key)) : byKey.get(key) || [];
+		return b < 0 ? list : list.filter((c) => inBook(c, b));
+	};
 
 	// Consecutive tracks with one key are one chapter split across files.
 	const runs = [];
@@ -395,17 +578,38 @@ function buildMap(work, index, { extraAnchors = [] } = {}) {
 	for (let i = 0; i < parts.length; i++) {
 		if (!keys[i] || noText[i]) continue;
 		const r = runs[runs.length - 1];
-		if (r && r.last === i - 1 && r.key === keys[i]) r.last = i;
-		else runs.push({ key: keys[i], first: i, last: i, section: -1 });
+		if (r && r.last === i - 1 && r.key === keys[i] && r.book === partBook[i]) r.last = i;
+		else runs.push({ key: keys[i], first: i, last: i, section: -1, book: partBook[i] });
 		runOfPart[i] = runs.length - 1;
 	}
 	let lastWord = -1;
 	for (const r of runs) {
-		const options = optionsFor(r.key);
+		const options = optionsFor(r.key, r.book);
 		if (!options.length) continue;
 		const pick = options.find((c) => sections[c].wordStart > lastWord);
 		r.section = pick === undefined ? options[0] : pick;
 		lastWord = sections[r.section].wordStart;
+	}
+	// An omnibus TOC that skips a chapter number ('33' then '35') prints that chapter inside the
+	// section before it, so its tracks extend that span instead of showing no text. Kept to
+	// omnibuses so every other work's map stays as it was.
+	if (bk) {
+		const num = (key) => { const m = /^c(\d+)$/.exec(key || ''); return m ? Number(m[1]) : NaN; };
+		let host = -1;
+		runs.forEach((r, ri) => {
+			if (r.section >= 0) { host = ri; return; }
+			const h = runs[host];
+			const next = runs.slice(ri + 1).find((x) => x.section >= 0);
+			let j = h ? h.last + 1 : parts.length;
+			while (j < parts.length && noText[j]) j++;
+			if (!h || j !== r.first || r.book < 0 || h.book !== r.book || !next || next.book !== r.book
+				|| !(num(h.key) < num(r.key) && num(r.key) < num(next.key))) {
+				host = -1;
+				return;
+			}
+			h.last = r.last;
+			for (let i = r.first; i <= r.last; i++) runOfPart[i] = host;
+		});
 	}
 
 	const effAnchors = [];
@@ -416,12 +620,14 @@ function buildMap(work, index, { extraAnchors = [] } = {}) {
 		let j = r.last + 1;
 		while (j < parts.length && noText[j]) j++;
 		const nr = j < parts.length ? runOfPart[j] : -1;
-		if (nr >= 0 && runs[nr].first === j && runs[nr].section >= 0 && sections[runs[nr].section].wordStart > start) {
+		if (nr >= 0 && runs[nr].first === j && runs[nr].book === r.book && runs[nr].section >= 0 && sections[runs[nr].section].wordStart > start) {
 			end = sections[runs[nr].section].wordStart;
 		} else {
 			let p = candidatePos.get(r.section) + 1;
 			while (p < candidates.length && !(sections[candidates[p]].wordStart > start)) p++;
-			end = p < candidates.length ? sections[candidates[p]].wordStart : bodyEndWord;
+			// A book's last chapter ends at its own last word, not at the next book's title pages.
+			const limit = r.book >= 0 && r.book + 1 < bk.ebook.length ? bk.ebook[r.book].endWord : bodyEndWord;
+			end = p < candidates.length && inBook(candidates[p], r.book) ? sections[candidates[p]].wordStart : limit;
 		}
 		end = Math.max(start, Math.min(end, bodyEndWord));
 		const base = { span: ri, section: r.section };
@@ -492,7 +698,7 @@ function buildMap(work, index, { extraAnchors = [] } = {}) {
 	let matchedParts = 0;
 	runs.forEach((r, ri) => { if (keptStarts.has(ri)) matchedParts += r.last - r.first + 1; });
 
-	return {
+	const map = {
 		totalMs,
 		totalWords,
 		bodyStartWord,
@@ -508,6 +714,26 @@ function buildMap(work, index, { extraAnchors = [] } = {}) {
 		matchedMsShare: totalMs > 0 ? chapterMs / totalMs : 0,
 		dramatized: isDramatized(work),
 	};
+	// Only an omnibus carries this, so every other work's map stays exactly what it was.
+	if (bk) {
+		map.books = bk.audio.map((a) => {
+			const idx = parts.map((_, i) => i).filter((i) => bk.partAudioBook[i] === a.number);
+			return {
+				number: a.number,
+				title: a.title,
+				ebookTitle: a.ebook >= 0 ? bk.ebook[a.ebook].title : null,
+				fromMs: tl[idx[0]].realStart,
+				toMs: tl[idx[idx.length - 1]].realEnd,
+			};
+		});
+	}
+	return map;
+}
+
+// The audio book of an omnibus playing at ms, or null.
+function bookAt(map, ms) {
+	const list = (map && map.books) || [];
+	return list.find((b) => ms >= b.fromMs && (ms < b.toMs || (ms === b.toMs && ms === map.totalMs))) || null;
 }
 
 function segmentAt(map, ms) {
@@ -658,6 +884,8 @@ module.exports = {
 	words,
 	labelKey,
 	partKey,
+	bookOfPart,
+	bookAt,
 	keyClass,
 	keysMatch,
 	isNoTextPart,
