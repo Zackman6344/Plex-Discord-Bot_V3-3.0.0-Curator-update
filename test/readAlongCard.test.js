@@ -5,7 +5,8 @@
 // into a heading or a quote; a page with book text and no bookpage: row, which the command log
 // would then write to disk; a stub that keeps live buttons; "Play from here" or "Follow in DMs"
 // offered to someone in the voice channel who is not the listener; a ping from the page; an
-// omnibus book the ebook leaves out called "an intro, credits or music".
+// omnibus book the ebook leaves out called "an intro, credits or music". A 📌 sync mark offered on
+// an ephemeral page or a no-text page, or a sixth button in the first row to fit it.
 //
 // Harness: pure, no Discord. Payloads are built by hand from synthetic NATO-alphabet text.
 
@@ -60,10 +61,11 @@ function assertDiscordShape(p, where) {
 	assert.deepStrictEqual(p.allowedMentions, { parse: [] });
 }
 
-test('a DM page has one row: ◀ ▶ 📍 ↪ ✖, all bookpage ids carrying the start word in base 36', () => {
+test('a DM page has ◀ ▶ 📍 ↪ ✖ and a row of its own for 📌, all bookpage ids carrying the start word in base 36', () => {
 	const p = page();
 	assertDiscordShape(p, 'dm');
-	assert.deepStrictEqual(ids(p).map(id => id.split(':')[1]), ['prev', 'next', 'now', 'play', 'off']);
+	assert.deepStrictEqual(p.components.map(r => r.components.map(b => b.custom_id.split(':')[1])), [['prev', 'next', 'now', 'play', 'off'], ['mark']]);
+	assert.strictEqual(p.components[1].components[0].emoji.name, '📌');
 	for (const id of ids(p)) {
 		assert.deepStrictEqual(card.parsePageId(id), { act: id.split(':')[1], surface: 'd', sid: 'a1b2c3', tag: '9f0c', word: 12345 });
 		assert.ok(id.endsWith(':' + (12345).toString(36)));
@@ -80,6 +82,9 @@ test('an ephemeral page offers ↪ and 📩 to the listener only; anyone else ge
 	assert.deepStrictEqual(ids(theirs).map(id => id.split(':')[1]), ['prev', 'next', 'now'], 'no ↪ and no 📩, not even disabled');
 	const none = card.noTextPayload({ surface: 'e', sid: 'a1b2c3', tag: '9f0c', word: 0, bookTitle: 'B', resumesAt: null, mode: 'snapshot', isListener: false });
 	assert.deepStrictEqual(ids(none).map(id => id.split(':')[1]), ['prev', 'next', 'now'], 'the no-text page too');
+	assert.ok(!ids(mine).some(id => id.startsWith('bookpage:mark:')), 'no 📌 on an ephemeral page, not even the listener\'s');
+	const dmNone = card.noTextPayload({ surface: 'd', sid: 'a1b2c3', tag: '9f0c', word: 0, bookTitle: 'B', resumesAt: 'Prologue', mode: 'following', isListener: true });
+	assert.ok(!ids(dmNone).some(id => id.startsWith('bookpage:mark:')), 'no 📌 where there is no first word to pin');
 });
 
 test('◀ and ▶ are disabled at the first and last body page', () => {
@@ -175,4 +180,10 @@ test('the no-text page\'s buttons say so, and parsePageId reads the mark back', 
 	const p = card.noTextPayload({ surface: 'e', sid: 'a1b2c3', tag: '9f0c', word: 720, bookTitle: 'B', resumesAt: 'Chapter 1', mode: 'snapshot', isListener: true });
 	for (const id of ids(p)) assert.deepStrictEqual(card.parsePageId(id), { act: id.split(':')[1], surface: 'e', sid: 'a1b2c3', tag: '9f0c', word: 720, none: true });
 	assert.strictEqual(card.parsePageId('bookpage:next:d:a1b2c3:9f0c:1:x'), null);
+});
+
+test('the 📌 confirmation and the marked level read in the footer', () => {
+	const p = page({ quality: { level: 'marked', label: 'marked' }, extra: '📌 Marked at 1:02:03' });
+	assert.match(p.embeds[0].footer.text, /Approximate · dramatized edition · marked · page 3 of 9 · 📌 Marked at 1:02:03 · following the narration/);
+	assert.deepStrictEqual(card.parsePageId(p.components[1].components[0].custom_id), { act: 'mark', surface: 'd', sid: 'a1b2c3', tag: '9f0c', word: 12345 });
 });

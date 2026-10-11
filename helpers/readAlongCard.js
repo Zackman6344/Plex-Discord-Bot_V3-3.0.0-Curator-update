@@ -9,7 +9,7 @@
 // payload with text and no row would be written to disk.
 
 const NAMESPACE = 'bookpage';
-const ACTS = new Set(['prev', 'next', 'now', 'play', 'off', 'dm']);
+const ACTS = new Set(['prev', 'next', 'now', 'play', 'off', 'dm', 'mark']);
 const SURFACES = new Set(['d', 'e']);
 const STYLE = { primary: 1, secondary: 2, success: 3, danger: 4 };
 const LIMITS = { title: 256, description: 4096, footer: 2048, content: 2000 };
@@ -94,6 +94,13 @@ function pageRow({ surface, sid, tag, word, none = false, isListener, prevOk = t
 	return { type: 1, components: list };
 }
 
+// The listener's DM page only: 📌 pins the moment the narrator reaches this page's first word,
+// which an ephemeral page (a snapshot, perhaps someone else's) has no business setting. A row of
+// its own, since the first row already holds Discord's five.
+function markRow({ sid, tag, word }) {
+	return { type: 1, components: [button(pageId({ act: 'mark', surface: 'd', sid, tag, word }), 'Narrator is here', '📌', STYLE.secondary, false)] };
+}
+
 function footerOf({ quality, dramatized, page, pageCount, mode, extra }) {
 	const bits = ['≈ Approximate'];
 	if (dramatized) bits.push('dramatized edition');
@@ -128,7 +135,7 @@ function pagePayload(o) {
 	return {
 		content: noteLine(o.note),
 		embeds: [embed],
-		components: [pageRow(o)],
+		components: o.surface === 'd' && o.isListener ? [pageRow(o), markRow(o)] : [pageRow(o)],
 		allowedMentions: NO_PINGS
 	};
 }

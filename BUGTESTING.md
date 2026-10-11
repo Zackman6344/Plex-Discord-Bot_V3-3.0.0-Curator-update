@@ -465,6 +465,45 @@ book.
       command in a DM shows the full paths there.
 - [ ] Someone who is not the owner: "⛔ Only the bot owner can link ebooks."
 
+**Sync marks (📌)**
+
+Built and unit-tested offline on 2026-10-11 (model, store, pager and command tests on synthetic
+books), and checked on The Once and Future King's real map with one synthetic mark. No real click
+has set one yet.
+
+- [ ] The DM page has a second row with 📌 Narrator is here. The 📖 page has no 📌, for the
+      listener or anyone else.
+- [ ] On a page that is behind or ahead of the voice, page to the words being read and press 📌 as
+      the narrator reaches the page's first words: the page shows that page, its footer says
+      "marked · … · 📌 Marked at `<h:mm:ss>` · following the narration", and the time is about a
+      second before your click. The next page turns in step with the voice.
+- [ ] The confirmation shows once: pause, and the footer drops "📌 Marked at".
+- [ ] On a book in hour splits, browse ▶ to a page several chapters ahead and press 📌: "📌 That
+      page is too far from where the narrator is…", nothing stored, the page unchanged. Paused, 📌
+      says marks need the book playing. A page in the next chapter is refused while a
+      chapter-named track plays: near the end of a chapter track, ▶ to the next chapter's first
+      page and press 📌: "📌 That page is outside the chapter now playing…", nothing stored.
+- [ ] Press 📌 twice on the same page a few seconds apart: `!book marks` lists one mark.
+- [ ] `!book marks`: each line has an audio time, the audio's chapter title, you, and the date, and
+      no words of the book. `!book marks <title>` from someone not playing it shows the same list.
+- [ ] `!book unmark` removes your latest; `!book unmark 2` removes the second if it is yours, and
+      answers "⛔ Mark 2 is `<someone>`'s…" if it is not. `/book unmark which:1` works the same way.
+- [ ] A non-owner's `!book unmark all` is refused. The owner's `!book unmark all <title>` answers
+      "📌 This clears all N marks of `<title>`, set by K listeners…" and clears nothing.
+      `!book unmark all <title> confirm` answers "📌 Cleared all N marks of `<title>`", and
+      `!book marks` then says there are none.
+- [ ] During the closing credits (or an intro), press ◀ to the last chapter's page and press 📌:
+      "📌 The narrator is not reading the ebook here…", and nothing is stored.
+- [ ] Shared: a second account plays the same recording (another server, or after the first
+      stops) with `!book text on`. After the first account marks, the second account's page shows
+      "marked" in its footer within a couple of seconds, and `!book text` for either says "📌 N sync
+      marks on this recording". Another narration of the same book shows no marks.
+- [ ] Text changed: relink the book to another copy of its ebook (`!book link <title> id:N`, or
+      edit the EPUB in Calibre). `!book marks` flags the old marks "not used (old ebook text)", and
+      pages no longer say "marked". Linking back brings them back.
+- [ ] `npm run logs -- --raw` after a 📌: the click and the page edit show no book text, and the bot
+      log has `Read-along: mark <8 hex> at N ms, word N.` with no words.
+
 **Nothing in the logs**
 
 - [ ] `npm run logs -- --raw`: every DM page and private page shows as `[book text not logged]`,

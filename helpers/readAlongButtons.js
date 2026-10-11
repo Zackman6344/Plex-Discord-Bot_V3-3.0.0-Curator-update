@@ -98,8 +98,10 @@ async function handle(interaction, bot, client, opts = {}) {
 			await say(interaction, opts, '❌ Unknown page button.');
 			return true;
 		}
+		// 📌 pins "now", and the deferUpdate below is a Discord round trip of its own.
+		const captured = id.act === 'mark' && typeof bot.readAlong.capture === 'function' ? bot.readAlong.capture(id.sid) : null;
 		await interaction.deferUpdate();
-		await bot.readAlong.onPageButton(interaction, id, { report: p => report(opts, p) });
+		await bot.readAlong.onPageButton(interaction, id, { report: p => report(opts, p), captured });
 	} catch (err) {
 		logger.error('Read-along button threw:', codeOf(err));
 		await say(interaction, opts, '❌ That did not work; check the bot log.');

@@ -1,16 +1,19 @@
 // helpers/bookTextStore.js
 //
-// The read-along's three small JSON files under data/book_text/:
+// The read-along's small JSON files under data/book_text/:
 //
 //   links.json    the ebook the owner tied to a work with `!book link` (or "off"), by work id
 //   readers.json  who turned `!book text on`, by Discord user id
 //   works.json    which cached text each work currently uses (a pointer to content-addressed
 //                 files in data/book_text/cache/, see helpers/bookTextSource.js)
+//   marks.json    the listeners' sync marks, by work id: shared by everyone who plays that
+//                 recording
 //
-// Links and pointers are looked up by work id and then by each of the work's aliases, so a
+// Links, pointers and marks are looked up by work id and then by each of the work's aliases, so a
 // catalog rebuild that renames a work keeps both. A pointer found through an alias is copied to
 // the new id; the cache files are named after the ebook, not the work, so nothing is renamed.
 
+const crypto = require('crypto');
 const path = require('path');
 const { createStore } = require('./jsonStore.js');
 
@@ -132,18 +135,103 @@ const readers = {
 	}
 };
 
-/** Test seam: forget all three in-memory copies so the next read comes off disk. */
+// Sync marks, shared by everyone who plays the recording: { [workId]: { marks: [...] } }. Each
+// mark is { id, ms, word, text, tag, rec, by, at }: an audio time, a global word index, the cache
+// base of the ebook text it was made against, the recording's fingerprint
+// (readAlongModel.recordingOf), who made it and when. No book text.
+const marksStore = store('PLEXBOT_BOOK_TEXT_MARKS_FILE', 'marks.json', 'marks', 'mark');
+
+const MARK_FIELDS = ['id', 'ms', 'word', 'text', 'tag', 'rec', 'by', 'at'];
+
+function cleanMark(m) {
+	if (!isObject(m)) return null;
+	const ms = Number(m.ms);
+	const word = Number(m.word);
+	if (!Number.isFinite(ms) || ms < 0 || !Number.isSafeInteger(word) || word < 0) return null;
+	if (typeof m.text !== 'string' || !m.text) return null;
+	const out = {};
+	for (const k of MARK_FIELDS) out[k] = m[k] === undefined ? null : m[k];
+	out.ms = Math.round(ms);
+	out.rec = typeof out.rec === 'string' && out.rec ? out.rec : null;
+	out.by = out.by === null ? null : String(out.by);
+	out.at = Number(out.at) || 0;
+	return out;
+}
+
+function marksEntry(work) {
+	const hit = find(marksStore, work);
+	const list = hit && Array.isArray(hit.value.marks) ? hit.value.marks.map(cleanMark).filter(Boolean) : [];
+	return { hit, list };
+}
+
+// Writes the list under the work's current id and drops the copies under its old ids, so a
+// rename never leaves two lists that drift apart.
+function writeMarks(work, list) {
+	const id = idOf(work);
+	if (!id) return false;
+	const all = marksStore.load();
+	for (const old of idsOf(work)) if (has(all, old)) delete all[old];
+	if (list.length) all[id] = { marks: list.map((m) => Object.assign({}, m)) };
+	return marksStore.persist();
+}
+
+const byTime = (a, b) => (a.ms - b.ms) || (a.at - b.at);
+
+const marks = {
+	/** @returns {object[]} the work's marks by audio time, every text version included */
+	list(work) {
+		return marksEntry(work).list.sort(byTime);
+	},
+	/**
+	 * Adds a mark, replacing the marks of the same text and recording it would duplicate: within
+	 * `nearMs` of audio, or on the same word.
+	 * @returns {{ ok: boolean, mark?: object, replaced: object[] }}
+	 */
+	add(work, mark, { nearMs = 20000 } = {}) {
+		const m = cleanMark(Object.assign({ id: crypto.randomBytes(4).toString('hex') }, mark));
+		if (!m || !idOf(work)) return { ok: false, replaced: [] };
+		const { list } = marksEntry(work);
+		const sameRec = (x) => !x.rec || !m.rec || x.rec === m.rec;
+		const near = (x) => x.text === m.text && sameRec(x) && (Math.abs(x.ms - m.ms) <= nearMs || x.word === m.word);
+		const replaced = list.filter(near);
+		const next = list.filter((x) => !near(x)).concat([m]).sort(byTime);
+		return { ok: writeMarks(work, next), mark: Object.assign({}, m), replaced };
+	},
+	/** @returns {{ ok: boolean, removed: object[] }} */
+	remove(work, ids) {
+		const drop = new Set((Array.isArray(ids) ? ids : [ids]).map(String));
+		const { list } = marksEntry(work);
+		const removed = list.filter((x) => drop.has(String(x.id)));
+		if (!removed.length) return { ok: true, removed };
+		return { ok: writeMarks(work, list.filter((x) => !drop.has(String(x.id)))), removed };
+	},
+	/** @returns {{ ok: boolean, removed: object[] }} every mark of the work, every text version */
+	clear(work) {
+		const { list } = marksEntry(work);
+		const all = marksStore.load();
+		const named = idsOf(work).some((id) => has(all, id));
+		if (!named) return { ok: true, removed: [] };
+		return { ok: writeMarks(work, []), removed: list };
+	},
+	all() {
+		return copy(Object.assign({}, marksStore.load())) || {};
+	}
+};
+
+/** Test seam: forget every in-memory copy so the next read comes off disk. */
 function reset() {
 	linksStore.reset();
 	readersStore.reset();
 	worksStore.reset();
+	marksStore.reset();
 }
 
 module.exports = {
 	links,
 	readers,
 	works,
+	marks,
 	reset,
-	files: { links: linksStore.file, readers: readersStore.file, works: worksStore.file },
-	healthy: () => linksStore.healthy() && readersStore.healthy() && worksStore.healthy()
+	files: { links: linksStore.file, readers: readersStore.file, works: worksStore.file, marks: marksStore.file },
+	healthy: () => linksStore.healthy() && readersStore.healthy() && worksStore.healthy() && marksStore.healthy()
 };

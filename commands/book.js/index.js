@@ -1,7 +1,7 @@
 // commands/book.js: /book and !book (alias !books), the audiobook and podcast player.
 //
 // This file holds the slash spec, autocomplete, the sub-help and the dispatch. The subcommands
-// live in play.js, controls.js, library.js, admin.js and text.js, each exporting
+// live in play.js, controls.js, library.js, admin.js, text.js and marks.js, each exporting
 // { names, run(ctx) }, and are required explicitly (not by a directory scan) so a stray file can
 // never become a command.
 //
@@ -19,6 +19,7 @@ const controls = require('./controls.js');
 const library = require('./library.js');
 const admin = require('./admin.js');
 const text = require('./text.js');
+const marks = require('./marks.js');
 
 const EPHEMERAL = 64;
 const NO_PINGS = { parse: [] };
@@ -33,7 +34,7 @@ const CONTENT_MAX = 2000;
 
 // No prototype: `!book constructor` would otherwise find Object and throw instead of answering.
 const HANDLERS = Object.create(null);
-for (const mod of [play, controls, library, admin, text]) {
+for (const mod of [play, controls, library, admin, text, marks]) {
 	for (const name of mod.names) HANDLERS[name] = mod;
 }
 
@@ -78,6 +79,10 @@ const SUBCOMMANDS = [
 	{ name: 'text', description: 'Read along: the book\'s text in your DMs, following the narration',
 		options: [{ name: 'mode', type: 'STRING', description: 'on, off or now (empty: status)',
 			choices: [{ name: 'on', value: 'on' }, { name: 'off', value: 'off' }, { name: 'now', value: 'now' }] }] },
+	{ name: 'marks', description: 'Read along: the sync marks set on a book with 📌',
+		options: [TITLE('Book (default the one playing)')] },
+	{ name: 'unmark', description: 'Remove your latest sync mark, a listed one, or (owner) all of a book\'s',
+		options: [{ name: 'which', type: 'STRING', description: 'A number from /book marks, or all confirm (owner)' }, TITLE('Book (default the one playing)')] },
 	{ name: 'link', description: 'Owner: tie a book to its ebook (Calibre id, ISBN, EPUB path, off, auto)',
 		options: [TITLE('Book', true), { name: 'ebook', type: 'STRING', description: 'Calibre id, ISBN, EPUB path, off or auto (empty: show)' }] },
 	{ name: 'rescan', description: 'Owner: re-read the audiobook library from Plex now' }
@@ -206,6 +211,8 @@ function helpEmbed(bot) {
 			`> \`${p}book text on\` / \`${p}book text off\` — The book's text in your DMs, a page at a time, turning with the narration. Approximate: chapter-level at best.\n` +
 			`> \`${p}book text\` — Is there text for your book, and where it comes from. \`${p}book text now\` sends the page again.\n` +
 			'> 📖 on the book card — The page right now, visible only to whoever pressed it: the listener, or anyone in the book\'s voice channel.\n' +
+			'> 📌 on your DM page — Press it as the narrator reaches the page\'s first words: the text snaps to the voice there, for everyone who plays that recording.\n' +
+			`> \`${p}book marks [title]\` / \`${p}book unmark [n]\` — List a book's marks; remove your latest or a listed one. \`${p}book unmark all [title] confirm\` (owner) clears a book.\n` +
 			`> \`${p}book link <title> <calibre id|isbn|path|off|auto>\` — Owner: tie a book to its ebook.\n\n` +
 			'**📖 YOUR BOOKS**\n' +
 			`> \`${p}book shelf\` — In progress and finished, with Resume buttons.\n` +
@@ -295,7 +302,7 @@ module.exports = {
 	name: 'book',
 	aliases: ['books'],
 	command: {
-		usage: '<play|pause|resume|stop|back|forward|goto|chapter|speed|sleep|now|shelf|library|stats|leaderboard|finish|forget|text|link|rescan>',
+		usage: '<play|pause|resume|stop|back|forward|goto|chapter|speed|sleep|now|shelf|library|stats|leaderboard|finish|forget|text|link|marks|unmark|rescan>',
 		description: 'Audiobooks and podcasts with a saved place per person. Type "!book ?" for more help.',
 		slash: {
 			description: 'Audiobooks and podcasts: play, resume, chapters, speed, sleep timer, your shelf',
