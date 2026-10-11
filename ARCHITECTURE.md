@@ -14,7 +14,7 @@ This is a Discord bot that wraps a Plex Media Server, ties in optional integrati
 | `app/`          | Process lifecycle, Discord client setup, the `Bot` class, message dispatch. |
 | `commands/`     | One file per Discord command. Auto-loaded by `commands/index.js`.            |
 | `commands/playlist.js/` | Sub-commands of `!playlist` (it's a directory named `*.js` — see Quirks). |
-| `commands/book.js/` | `/book` and `!book`: `index.js` holds the slash spec, autocomplete and dispatch, and requires `play.js`, `controls.js`, `library.js`, `admin.js` and `text.js` (the read-along's `text` and `link`) by name. Same directory trick as `playlist.js/`. |
+| `commands/book.js/` | `/book` and `!book`: `index.js` holds the slash spec, autocomplete and dispatch, and requires `play.js`, `controls.js`, `library.js`, `admin.js`, `text.js` (the read-along's `text` and `link`) and `marks.js` (its `marks` and `unmark`) by name. Same directory trick as `playlist.js/`. |
 | `helpers/`      | Shared utilities: API clients, Gemini wrapper, logger, health check, etc.    |
 | `config/`       | Config files (`config.js`, `keys.js`, `plex.js`) + `.example.js` templates.  |
 | `lang/`         | Localized message strings + the `String.prototype.format` polyfill.          |
@@ -181,7 +181,7 @@ Two signature styles coexist in the codebase:
 | `epubText.js`              | Pure EPUB to text, no packages: a zip reader that works from a file descriptor and reads only the entries it needs, the OPF, the nav or NCX table of contents, HTML to paragraphs, the DRM gate (font obfuscation passes), sections split at 20,000 words, and the byte-offset index of the cache. Runs only inside the parse child. |
 | `epubTextWorker.js`        | The parse child and its queue. Forks itself with `--epub-text-child` and sets the child to Below Normal priority; one parse at a time, single flight per cache base, 120 s timeout. The child writes `<base>.txt`, then `<base>.json` (or `<base>.fail.json`), and sends back counts only. `shutdown()` leaves the queue usable for `!restart`. |
 | `readAlongModel.js`        | Pure: chapter keys from track titles and table-of-contents labels, front, body and back matter, the anchor map from audio time to word and back, pages of about 180 words, and the "approximate" labels. |
-| `bookTextStore.js`         | The read-along's three small stores in `data/book_text/`: `links.json` (`!book link`), `readers.json` (who has the read-along on) and `works.json` (which cache files each work uses). Looked up by work id, then by alias. |
+| `bookTextStore.js`         | The read-along's four small stores in `data/book_text/`: `links.json` (`!book link`), `readers.json` (who has the read-along on), `works.json` (which cache files each work uses) and `marks.json` (the sync marks). Looked up by work id, then by alias. |
 | `calibreClient.js`         | GET-only client for Calibre's content server: library info, search, book metadata, and the EPUB download streamed to a file. Answers Digest logins, and Basic ones over https only; refuses redirects and any URL with a login in it, caps a download at 300 MB, and names only `host:port` in its errors. |
 | `bookTextSource.js`        | Finds a work's ebook (a link, then Calibre, then EPUBs beside the audio), fingerprints it, keeps the content-addressed cache, and hands out text handles that read one section at a time. Remembers failures (stable ones until a catalog rebuild or `!book link`, transient ones for 30 s), serves a cached copy while Calibre is closed, re-checks in the background, and runs `!book link` and its report. |
 | `readAlongCard.js`         | Pure: the DM and ephemeral page payloads, the no-text page and the stubs a page turns into. Every payload with book text carries the `bookpage:` row the command log redacts by, and no other payload does. |
@@ -299,6 +299,7 @@ All persistent runtime state lives under `data/`. The directory is created if mi
 | `data/book_text/links.json`       | `helpers/bookTextStore.js` (`!book link`: work id to Calibre id, EPUB path or off) |
 | `data/book_text/readers.json`     | `helpers/bookTextStore.js` (the per-user read-along preference: who ran `!book text on`, by Discord user id, kept across books and restarts until `!book text off`) |
 | `data/book_text/works.json`       | `helpers/bookTextStore.js` (which cache files each work uses, and the source they came from) |
+| `data/book_text/marks.json`       | `helpers/bookTextStore.js` (the read-along's sync marks set with 📌, by work id: audio time, word index, text version, Discord user id and time; no book text) |
 
 All four `book_*` files and the `.bak` are gitignored: the bookmarks are keyed by Discord user
 id, and the catalog and overrides describe your library. `data/book_text/` is gitignored as a
@@ -314,6 +315,7 @@ override, which the tests set to a pid-suffixed temp path before the first requi
 | `PLEXBOT_BOOK_TEXT_LINKS_FILE` | `data/book_text/links.json` |
 | `PLEXBOT_BOOK_TEXT_READERS_FILE` | `data/book_text/readers.json` |
 | `PLEXBOT_BOOK_TEXT_WORKS_FILE` | `data/book_text/works.json` |
+| `PLEXBOT_BOOK_TEXT_MARKS_FILE` | `data/book_text/marks.json` |
 
 Under the test runner without its env var, each book store is memory-only and the overrides
 file is never read, the same rule as every other `jsonStore` store, so the bot tests (`app/bot.js`
@@ -2190,6 +2192,84 @@ a minute of narration at 1x.
   re-parsed or relinked since) re-renders at the narration with "The text was updated". The
   no-text page's ids end in `:n`, and their word is where the text picks up: ▶ there shows that
   page and ◀ the one before it, or the last page when the narrated text has ended.
+
+**Sync marks** (📌, `bookpage:mark:d:…`). The listener's DM page has a second row with one button,
+📌 Narrator is here. Pressed as the narrator reaches the page's first word, it stores
+`{ id, ms, word, text, tag, rec, by, at }` in `data/book_text/marks.json` under the work id: the
+audio time, the page's first global word, the cache base of the text it was made against, the
+recording's fingerprint, who and when. No book text. The work id is the narrator edition, so a
+mark serves every listener of that recording and none of another narration. **The work id alone
+does not pin the recording**: a narration replaced in place keeps its folder's id, and so does the
+edition left after the other is removed. `rec` (`readAlongModel.recordingOf`) is the part count
+plus an FNV-1a hash of the part durations in whole seconds. A mark whose `rec` differs from the
+playing work's is left in the file and ignored, like a mark of another text; a mark with no `rec`
+counts as a match.
+
+- `helpers/readAlongButtons.js` asks the pager for `capture(sid)` before its `deferUpdate`, so the
+  position is the engine's at the moment the click arrived, not one round trip later. The pager
+  takes `MARK_LAG_MS` (700 ms of wall-clock time, so 1.4 s of audio at 2x) off it for hearing the
+  word, clicking and Discord's own delay.
+- A mark is refused with a note while the captured position, before the allowance, is in a track
+  with no ebook text (`readAlongModel.inNoText`: an intro, credits, or an omnibus book the ebook
+  lacks). Without this, a listener in the closing credits could press ◀ to the last chapter and
+  pin one of its pages: the estimate there is clamped to the last body word, so every page of that
+  chapter passed the nearness test.
+- A mark is refused with a note unless the book is playing and audible and the page is plausibly
+  near (`nearNarration`). **While a chapter-named track plays at the click
+  (`readAlongModel.spanAt`), the page's first word must lie inside that track's span.** The span is
+  taken at the click before the allowance, so a pin on a chapter's first page 0.4 s into its track
+  is taken although its ms falls in the chapter before. The 10-page escape does not apply there:
+  the chapter start is exact, and on The Once and Future King a pin 300 words into the next
+  chapter at 8.3 h dropped that boundary's track end and start and turned about 48 minutes into
+  'marked' pace. Where no chapter-named track plays (hour splits, pace stretches), the page must
+  be in the ebook section of the pace estimate or within 10 pages of the estimate. The model's
+  mark-wins rule below is unchanged; it still matters for hour splits and for marks already
+  stored.
+- A new mark within 20 s of audio, or on the same word, of a mark of the same text and recording
+  replaces it.
+- In the model, a mark inside a no-text track is pinned to that track's end only when it lies
+  within `NO_TEXT_MARK_SLACK_MS` (2.5 s) of it: the 700 ms allowance is 2.1 s of audio at 3x and
+  can carry a mark at a chapter's first word back into the intro before it. A mark deeper in is
+  dropped (listed in `map.dropped`, in neither `used` nor `overruled`). Pinned to the end of the
+  credits, it beat the last chapter's own track end at that moment and turned the rest of the
+  chapter from 'chapter' to 'pace'.
+- `textFor` passes the work's marks of the current cache base to `buildMap` as `extraAnchors`, and
+  rebuilds only the map when they change (the sections, the body and the cached pages stay). Marks
+  of another base are left in the file and ignored, so they return if that text does.
+- In the model, marks are resolved first: newest first, an older mark that disagrees with a kept
+  one is overruled. Two marks agree when one is later in both ms and word, or they are the same
+  point. **Then every automatic anchor that disagrees with a kept mark is dropped before the
+  longest chain is picked**, so the chain always holds every kept mark. An automatic anchor
+  agrees on the same terms, except that at the mark's own ms it may name a lower word: a jump
+  over unperformed text, which the map already draws. The same word at another ms would leave a
+  flat 'none' stretch beside the mark, a "no text" page a few seconds into a chapter whose first
+  words were marked. Dropped anchors and overruled marks are listed in `map.dropped`, and a map
+  built with marks carries `map.marks = { used, overruled }`.
+- A segment with a mark at either end has level `'marked'` (footer "marked"). Every other segment
+  is unchanged: on The Once and Future King's real map a synthetic mark in Book 1's chapter 7 split
+  the one chapter segment it fell in, and the other 146 segments and 1,945 per-minute probes
+  outside it were identical to the map without it.
+- After a mark the marker's page renders the marked page, following, with "📌 Marked at h:mm:ss"
+  in the footer for that render only. Every other open page of the recording that is following
+  playback goes through `onMove`, as if the engine had reported a move: a page the new map puts
+  behind the voice steps on, one the new map puts ahead of it jumps back, and the map's revision
+  is part of the render key, so the footer shows the new sync level. Re-timing the turn alone was
+  not enough, because a timed turn never goes back: a reader the mark left 8 pages ahead stayed
+  there for about 8 minutes. `!book unmark` calls `readAlong.marksChanged(work)` for the same
+  effect.
+- `!book marks` (`commands/book.js/marks.js`) lists audio time, the audio's own chapter title
+  (cut at 40 characters), who and when, and flags marks the map does not use (old ebook text,
+  another recording, or overruled). The lines stop at 1,850 characters and the rest are counted
+  in "…and N more", so Discord's 2,000-character cut never takes the instructions at the end.
+  Anyone removes their own; the owner removes any one, and only the owner clears a book
+  (`!book unmark all [title] confirm`; without `confirm` it says what it would clear). Before
+  reading `all` or a number as the keyword, `unmark` checks whether the whole text is a book's
+  title, so the owner's `!book unmark All Systems Red` removes their own latest mark instead of
+  clearing the book. A number still means a listed mark when that book has that many.
+- The 📖 page never offers 📌; a forged ephemeral one is refused for the listener and anyone in
+  the voice channel. Someone else's click on the listener's DM page never reaches the mark code
+  (the DM rules below). A 📌 click's only reply is a refusal note, and the page it edits carries
+  the `bookpage:` row, so the command log keeps it as `[book text not logged]`.
 
 **Opening a page.** `!book text on` stores the preference per user in
 `data/book_text/readers.json`, across books, sessions and restarts, until `!book text off` or ✖.

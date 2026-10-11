@@ -9,8 +9,9 @@
 //
 // The map is honest about what it knows: tracks named after a chapter pin that chapter
 // ('chapter' level), hour splits between known points are interpolated by word count ('pace'),
-// and intro/outro tracks carry no text ('none'). A later manual-marks feature only adds anchors
-// (`extraAnchors`), nothing else changes.
+// and intro/outro tracks carry no text ('none'). A listener's sync marks come in as
+// `extraAnchors`: each pins a page's first word to the moment it was heard, beats any automatic
+// anchor it disagrees with, and the stretches on either side of it are 'marked'.
 
 // Shared with helpers/epubText.js countWords: the cache's word counts and this module's word
 // offsets must agree exactly, or every page would drift from its index.
@@ -40,7 +41,7 @@ const TENS = { twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy:
 const ROMAN_RE = /^(?=[ivxlc])(c{0,3})(xc|xl|l?x{0,3})(ix|iv|v?i{0,3})$/i;
 const ROMAN_VALUES = { i: 1, v: 5, x: 10, l: 50, c: 100 };
 
-const LEVEL_LABELS = { chapter: 'chapter-level', pace: 'estimated from pace', none: 'no text' };
+const LEVEL_LABELS = { chapter: 'chapter-level', marked: 'marked', pace: 'estimated from pace', none: 'no text' };
 
 // Kind priority for the longest-chain pick: a hand-set mark beats a track name, which beats the
 // work's bare start and end.
@@ -49,6 +50,11 @@ const KIND_PRIORITY = { mark: 3, 'track-start': 2, 'track-end': 2, 'work-start':
 // before whatever starts there, so segment levels pair a track's own start and end.
 const KIND_RANK = { 'track-end': 0, 'work-end': 0, 'no-text': 1, mark: 1, 'track-start': 2, 'work-start': 2 };
 const CHAIN_WEIGHT = 10000;
+// The pager's 700 ms reaction allowance is wall-clock time, so at the top speed (3x) it carries a
+// mark at a chapter's first word 2.1 s of audio back into the intro before it. A mark deeper in a
+// no-text track was set while nothing from the ebook was being read, and pinning it to the track's
+// end would overrule the chapter that really ends there.
+const NO_TEXT_MARK_SLACK_MS = 2500;
 
 // An omnibus's first book often has no heading of its own: its title is the TOC label of a
 // section that also holds chapter 1. A bare title page is far shorter than any chapter.
@@ -487,6 +493,40 @@ function bookPlan(parts, sections, workTitle) {
 	};
 }
 
+// Two marks agree when one is later than the other in both ms and word, or they are the same
+// point. One word heard at two moments, or two words at one moment, cannot both be right.
+function strictlyOrdered(a, b) {
+	if (a.ms === b.ms && a.word === b.word) return true;
+	return (a.ms < b.ms && a.word < b.word) || (a.ms > b.ms && a.word > b.word);
+}
+
+// An automatic anchor x agrees with mark m on the same terms, with one allowance: at m's own ms
+// x may name a lower word. That is a jump over unperformed text, which the map already draws
+// (a track's end, then the mark's later word at the same moment). The same word at another ms
+// would draw a flat 'none' stretch beside the mark, a "no text" page in mid-chapter.
+function agreesWithMark(x, m) {
+	if (x.ms === m.ms) return x.word <= m.word;
+	return strictlyOrdered(x, m);
+}
+
+/**
+ * Marks that disagree with each other: the newest is kept (by `at`, then by list order), and any
+ * older mark that disagrees with one already kept is overruled. Works on any ms axis, so the
+ * marks list can show the same verdict the map uses.
+ * @returns {{ kept: object[], overruled: object[] }}
+ */
+function resolveMarks(list) {
+	const items = (Array.isArray(list) ? list : []).map((m, order) => ({ m, at: Number(m.at) || 0, order: m.order ?? order }));
+	items.sort((a, b) => (b.at - a.at) || (b.order - a.order));
+	const kept = [];
+	const overruled = [];
+	for (const { m } of items) {
+		if (kept.every((k) => strictlyOrdered(k, m))) kept.push(m);
+		else overruled.push(m);
+	}
+	return { kept, overruled };
+}
+
 function sortAnchors(list) {
 	return list.sort((a, b) => (a.ms - b.ms) || (a.word - b.word) || (KIND_RANK[a.kind] - KIND_RANK[b.kind]));
 }
@@ -639,23 +679,37 @@ function buildMap(work, index, { extraAnchors = [] } = {}) {
 	const workEnd = () => ({ kind: 'work-end', ms: totalEff, real: tl[lastText].realEnd, word: bodyEndWord, partIndex: lastText });
 	if (!matched(firstText)) effAnchors.push(workStart());
 	if (!matched(lastText)) effAnchors.push(workEnd());
-	for (const a of Array.isArray(extraAnchors) ? extraAnchors : []) {
-		const ms = Math.min(Math.max(0, Number(a.ms) || 0), totalMs);
+	const extras = Array.isArray(extraAnchors) ? extraAnchors : [];
+	const marks = [];
+	const outside = [];
+	extras.forEach((a, order) => {
+		let ms = Math.min(Math.max(0, Number(a.ms) || 0), totalMs);
 		const word = Math.min(Math.max(0, Math.round(Number(a.word) || 0)), totalWords);
 		let e = totalEff;
+		let away = false;
 		for (let i = 0; i < parts.length; i++) {
 			if (ms < tl[i].realEnd || i === parts.length - 1) {
+				if (noText[i] && tl[i].realEnd - ms > NO_TEXT_MARK_SLACK_MS) away = true;
+				// The reaction allowance can carry a mark at a chapter's first word back into the
+				// intro before it; the words start where the intro ends.
+				if (noText[i]) ms = tl[i].realEnd;
 				e = noText[i] ? tl[i].effStart : tl[i].effStart + Math.min(ms - tl[i].realStart, tl[i].effEnd - tl[i].effStart);
 				break;
 			}
 		}
-		effAnchors.push({ kind: 'mark', ms: Math.max(0, e), real: ms, word, partIndex: null });
-	}
-
-	const sorted = sortAnchors(effAnchors);
+		const m = { kind: 'mark', ms: Math.max(0, e), real: ms, word, partIndex: null, id: a.id ?? null, at: Number(a.at) || 0, order };
+		if (away) outside.push({ ...m, real: Math.min(Math.max(0, Number(a.ms) || 0), totalMs) });
+		else marks.push(m);
+	});
+	const { kept: keptMarks, overruled } = resolveMarks(marks);
+	// A mark is a person's ear against the page, so it beats every automatic anchor it disagrees
+	// with: those are dropped before the chain is picked, and the chain then always holds every
+	// kept mark (each anchor left sorts before or after each mark, in both ms and word).
+	const beaten = new Set(effAnchors.filter((x) => keptMarks.some((m) => !agreesWithMark(x, m))));
+	const sorted = sortAnchors([...effAnchors.filter((x) => !beaten.has(x)), ...keptMarks]);
 	const keep = longestChain(sorted);
 	const chain = sorted.filter((_, i) => keep.has(i));
-	const dropped = sorted.filter((_, i) => !keep.has(i)).map((a) => ({
+	const dropped = [...sorted.filter((_, i) => !keep.has(i)), ...beaten, ...overruled, ...outside].map((a) => ({
 		kind: a.kind, ms: a.real, word: a.word, partIndex: a.partIndex, section: a.section ?? null,
 	}));
 	// The map must cover the whole work even when the longest chain lost its first or last anchor.
@@ -690,6 +744,7 @@ function buildMap(work, index, { extraAnchors = [] } = {}) {
 		}
 		let level = 'pace';
 		if (a.word === b.word) level = 'none';
+		else if (a.kind === 'mark' || b.kind === 'mark') level = 'marked';
 		else if (a.kind === 'track-start' && b.kind === 'track-end' && a.span === b.span) level = 'chapter';
 		segments.push({ fromMs: a.ms, toMs: b.ms, fromWord: a.word, toWord: b.word, level });
 	}
@@ -714,6 +769,12 @@ function buildMap(work, index, { extraAnchors = [] } = {}) {
 		matchedMsShare: totalMs > 0 ? chapterMs / totalMs : 0,
 		dramatized: isDramatized(work),
 	};
+	if (extras.length) {
+		map.marks = {
+			used: keptMarks.map((m) => m.id),
+			overruled: overruled.map((m) => m.id),
+		};
+	}
 	// Only an omnibus carries this, so every other work's map stays exactly what it was.
 	if (bk) {
 		map.books = bk.audio.map((a) => {
@@ -734,6 +795,51 @@ function buildMap(work, index, { extraAnchors = [] } = {}) {
 function bookAt(map, ms) {
 	const list = (map && map.books) || [];
 	return list.find((b) => ms >= b.fromMs && (ms < b.toMs || (ms === b.toMs && ms === map.totalMs))) || null;
+}
+
+/** The words of the chapter-named track span playing at ms, or null between spans. */
+function spanAt(map, ms) {
+	const list = (map && map.anchors) || [];
+	let start = null;
+	for (const a of list) if (a.kind === 'track-start' && a.ms <= ms) start = a;
+	if (!start) return null;
+	const end = list.find((a) => a.kind === 'track-end' && a.span === start.span);
+	if (!end || !(ms < end.ms) || !(end.word > start.word)) return null;
+	return { fromWord: start.word, toWord: end.word };
+}
+
+/**
+ * A recording's fingerprint, kept on each mark: a narration that replaces another in the same
+ * folder keeps the work id but not its track lengths. Whole seconds, so a re-analysis that moves
+ * a duration by a few ms is still the same recording.
+ * @returns {string|null} null when the work carries no durations
+ */
+function recordingOf(work) {
+	const parts = Array.isArray(work && work.parts) ? work.parts : [];
+	const secs = parts.map((p) => Math.round(Math.max(0, Number(p && p.durationMs) || 0) / 1000));
+	if (!secs.some((x) => x > 0)) return null;
+	let h = 0x811c9dc5;
+	for (const ch of secs.join(',')) {
+		h ^= ch.charCodeAt(0);
+		h = Math.imul(h, 0x01000193) >>> 0;
+	}
+	return `${parts.length}-${h.toString(16).padStart(8, '0')}`;
+}
+
+/** A mark with no fingerprint (or a work with none) predates fingerprints and counts as a match. */
+function sameRecording(markRec, workRec) {
+	return !markRec || !workRec || markRec === workRec;
+}
+
+/** True while a track with no ebook text plays at ms: an intro, credits, a book the ebook lacks. */
+function inNoText(map, ms) {
+	const starts = new Map();
+	for (const a of (map && map.anchors) || []) {
+		if (a.kind !== 'no-text') continue;
+		if (!starts.has(a.partIndex)) starts.set(a.partIndex, a.ms);
+		else if (ms >= starts.get(a.partIndex) && ms < a.ms) return true;
+	}
+	return false;
 }
 
 function segmentAt(map, ms) {
@@ -891,6 +997,11 @@ module.exports = {
 	isNoTextPart,
 	classifySections,
 	buildMap,
+	resolveMarks,
+	spanAt,
+	inNoText,
+	recordingOf,
+	sameRecording,
 	msToWord,
 	wordToMs,
 	locate,

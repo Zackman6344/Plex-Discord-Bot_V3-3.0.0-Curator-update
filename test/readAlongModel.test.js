@@ -8,7 +8,9 @@
 // edition whose catalog edition is the narrator's name not labelled dramatized; pages that drop
 // or repeat a word. An omnibus whose chapter numbers restart in every book: Book 1's "Chapter 01"
 // sent to Book 2's chapter 1, Book 1's heading-plus-chapter-1 section taken for front matter, and
-// a recorded book the ebook lacks stretching the pace map over hours of audio.
+// a recorded book the ebook lacks stretching the pace map over hours of audio. A listener's sync
+// mark outvoted by the two track anchors it contradicts; a mark at a chapter's first word drawing
+// a "no text" stretch beside it; two marks that disagree both kept.
 //
 // Harness: the plain pure-function style of test/bookModel.test.js. Works and ebook indexes are
 // synthetic: section labels shaped like real tables of contents, track titles shaped like the
@@ -902,6 +904,173 @@ test('bookOfPart stops a worded book number at its separator and skips a book na
 	assert.equal(bookOfPart('04 Ch. 3 - Book 2 of Ash'), null);
 });
 
+// ---- sync marks ---------------------------------------------------------------------------------
+
+function fourChapters() {
+	const { index } = book([['1', 3000], ['2', 3000], ['3', 3000], ['4', 3000]]);
+	const w = work([['Chapter 1', 16 * MIN], ['Chapter 2', 16 * MIN], ['Chapter 3', 16 * MIN], ['Chapter 4', 16 * MIN]]);
+	return { index, w, ws: (i) => index.sections[i].wordStart };
+}
+
+test('a mark inside a chapter span pins its word and splits only that span into two marked stretches', () => {
+	const { index, w, ws } = fourChapters();
+	const plain = buildMap(w, index);
+	const mark = { id: 'm1', ms: partStart(w, 2) + 6 * MIN, word: ws(2) + 900, at: 1 };
+	const map = buildMap(w, index, { extraAnchors: [mark] });
+	assert.deepEqual(msToWord(map, mark.ms), { word: mark.word, level: 'marked', segmentIndex: msToWord(map, mark.ms).segmentIndex });
+	assert.deepEqual(map.segments.filter((s) => s.level === 'marked'), [
+		{ fromMs: partStart(w, 2), toMs: mark.ms, fromWord: ws(2), toWord: mark.word, level: 'marked' },
+		{ fromMs: mark.ms, toMs: partStart(w, 3), fromWord: mark.word, toWord: ws(3), level: 'marked' },
+	]);
+	assert.deepEqual(map.segments.filter((s) => s.level !== 'marked'), plain.segments.filter((s) => s.fromMs !== partStart(w, 2)));
+	assert.deepEqual(map.dropped, []);
+	assert.deepEqual(map.marks, { used: ['m1'], overruled: [] });
+	assert.equal(qualityAt(map, mark.ms + S).label, 'marked');
+	assert.deepEqual(model.spanAt(map, mark.ms), { fromWord: ws(2), toWord: ws(3) });
+	assert.equal(model.spanAt(plain, partStart(w, 4) - 1).toWord, ws(3) + 3000);
+});
+
+test('two agreeing marks inside one chapter both refine it into three marked stretches', () => {
+	const { index, w, ws } = fourChapters();
+	const plain = buildMap(w, index);
+	const first = { id: 'm1', ms: partStart(w, 2) + 4 * MIN, word: ws(2) + 600, at: 1 };
+	const second = { id: 'm2', ms: partStart(w, 2) + 11 * MIN, word: ws(2) + 2200, at: 2 };
+	const map = buildMap(w, index, { extraAnchors: [first, second] });
+	assert.deepEqual(map.segments.filter((s) => s.level === 'marked'), [
+		{ fromMs: partStart(w, 2), toMs: first.ms, fromWord: ws(2), toWord: first.word, level: 'marked' },
+		{ fromMs: first.ms, toMs: second.ms, fromWord: first.word, toWord: second.word, level: 'marked' },
+		{ fromMs: second.ms, toMs: partStart(w, 3), fromWord: second.word, toWord: ws(3), level: 'marked' },
+	]);
+	assert.deepEqual(map.marks.used.slice().sort(), ['m1', 'm2']);
+	assert.deepEqual(map.marks.overruled, []);
+	assert.equal(msToWord(map, first.ms).word, first.word);
+	assert.equal(msToWord(map, second.ms).word, second.word);
+	assert.deepEqual(map.dropped, []);
+	const boundary = (m) => m.anchors.filter((a) => (a.kind === 'track-end' || a.kind === 'track-start') && a.ms === partStart(w, 3));
+	assert.deepEqual(boundary(map), boundary(plain), 'chapter 3\'s end and chapter 4\'s start are kept');
+	assert.equal(boundary(map).length, 2);
+	assert.deepEqual(map.segments.filter((s) => s.level !== 'marked'), plain.segments.filter((s) => s.fromMs !== partStart(w, 2)));
+});
+
+test('a mark that contradicts automatic anchors wins: exactly the anchors it disagrees with are dropped', () => {
+	const { index, w, ws } = fourChapters();
+	// Chapter 2's track is still playing, but the listener hears a page of chapter 3. Two track
+	// anchors (chapter 2's end, chapter 3's start) outvoted the single mark before marks won.
+	const mark = { id: 'm1', ms: partStart(w, 1) + 12 * MIN, word: ws(2) + 300, at: 1 };
+	const map = buildMap(w, index, { extraAnchors: [mark] });
+	assert.deepEqual(map.dropped.map((d) => [d.kind, d.partIndex, d.word]), [['track-end', 1, ws(2)], ['track-start', 2, ws(2)]]);
+	assert.ok(map.anchors.some((a) => a.kind === 'mark' && a.ms === mark.ms && a.word === mark.word));
+	assert.equal(msToWord(map, mark.ms).word, mark.word);
+	const half = msToWord(map, mark.ms + (partStart(w, 3) - mark.ms) / 2);
+	assert.deepEqual([half.word, half.level], [Math.floor(mark.word + (ws(3) - mark.word) / 2), 'marked']);
+	assert.equal(msToWord(map, partStart(w, 0) + MIN).level, 'chapter', 'chapter 1 is untouched');
+	assert.equal(msToWord(map, partStart(w, 3) + MIN).level, 'chapter', 'chapter 4 is untouched');
+	for (let k = 1; k < map.anchors.length; k++) assert.ok(map.anchors[k].word >= map.anchors[k - 1].word);
+});
+
+test('a mark on a chapter\'s first word a few seconds into its track leaves no "no text" stretch', () => {
+	const { index, w, ws } = fourChapters();
+	const mark = { id: 'm1', ms: partStart(w, 2) + 3 * S, word: ws(2), at: 1 };
+	const map = buildMap(w, index, { extraAnchors: [mark] });
+	assert.deepEqual(map.dropped.map((d) => [d.kind, d.partIndex]), [['track-end', 1], ['track-start', 2]]);
+	assert.ok(!map.segments.some((s) => s.level === 'none'), JSON.stringify(map.segments));
+	assert.equal(msToWord(map, partStart(w, 2) + S).level, 'marked');
+	assert.equal(msToWord(map, mark.ms).word, ws(2));
+});
+
+test('a mark at a track boundary with a later word keeps the track anchors and draws a jump', () => {
+	const { index, w, ws } = fourChapters();
+	const mark = { id: 'm1', ms: partStart(w, 2), word: ws(2) + 500, at: 1 };
+	const map = buildMap(w, index, { extraAnchors: [mark] });
+	assert.deepEqual(map.dropped, []);
+	assert.ok(map.jumps.some((j) => j.ms === mark.ms && j.fromWord === ws(2) && j.toWord === mark.word));
+	assert.equal(msToWord(map, mark.ms).word, mark.word);
+});
+
+test('two marks that contradict each other keep the newer one, whatever their order in the list', () => {
+	const { index, w } = fourChapters();
+	const older = { id: 'old', ms: partStart(w, 1) + 4 * MIN, word: 4500, at: 1000 };
+	const newer = { id: 'new', ms: partStart(w, 1) + 8 * MIN, word: 4000, at: 2000 };
+	for (const list of [[older, newer], [newer, older]]) {
+		const map = buildMap(w, index, { extraAnchors: list });
+		assert.deepEqual(map.marks, { used: ['new'], overruled: ['old'] });
+		assert.equal(msToWord(map, newer.ms).word, 4000);
+		assert.ok(!map.anchors.some((a) => a.kind === 'mark' && a.word === 4500));
+		assert.ok(map.dropped.some((d) => d.kind === 'mark' && d.ms === older.ms));
+	}
+	const flipped = buildMap(w, index, { extraAnchors: [{ ...older, at: 3000 }, newer] });
+	assert.deepEqual(flipped.marks, { used: ['old'], overruled: ['new'] });
+	const agree = buildMap(w, index, { extraAnchors: [older, { ...newer, word: 4800 }] });
+	assert.deepEqual(agree.marks.used.sort(), ['new', 'old'], 'marks that agree are both kept');
+	const sameMoment = model.resolveMarks([{ id: 'a', ms: 5, word: 9, at: 1 }, { id: 'b', ms: 5, word: 7, at: 2 }]);
+	assert.deepEqual(sameMoment.overruled.map((m) => m.id), ['a'], 'two words at one moment');
+});
+
+test('a mark carried back into an intro by the reaction allowance pins the intro\'s end', () => {
+	const { index } = book([['1', 3000], ['2', 3000]]);
+	const w = work([['Chapter 1', 16 * MIN], ['Part Two Intro', MIN], ['Chapter 2', 16 * MIN]]);
+	const mark = { id: 'm1', ms: partStart(w, 2) - 400, word: index.sections[1].wordStart, at: 1 };
+	const map = buildMap(w, index, { extraAnchors: [mark] });
+	const pinned = map.anchors.find((a) => a.kind === 'mark');
+	assert.equal(pinned.ms, partStart(w, 2));
+	assert.equal(msToWord(map, partStart(w, 1) + 30 * S).level, 'none');
+	assert.equal(msToWord(map, partStart(w, 2)).word, index.sections[1].wordStart);
+});
+
+test('the reaction allowance at 3x still carries a mark into an intro; a mark further in is dropped', () => {
+	const { index } = book([['1', 3000], ['2', 3000]]);
+	const w = work([['Chapter 1', 16 * MIN], ['Part Two Intro', MIN], ['Chapter 2', 16 * MIN]]);
+	const plain = buildMap(w, index);
+	const word = index.sections[1].wordStart;
+	const near = buildMap(w, index, { extraAnchors: [{ id: 'm1', ms: partStart(w, 2) - 2100, word, at: 1 }] });
+	assert.deepEqual(near.marks.used, ['m1']);
+	assert.equal(near.anchors.find((a) => a.kind === 'mark').ms, partStart(w, 2));
+	const deep = buildMap(w, index, { extraAnchors: [{ id: 'm1', ms: partStart(w, 2) - 3 * S, word, at: 1 }] });
+	assert.deepEqual(deep.marks, { used: [], overruled: [] });
+	assert.deepEqual(deep.anchors, plain.anchors);
+});
+
+// The bug: a mark set while the closing credits played was clamped to the credits' end, where it
+// beat the last chapter's own track end, so the rest of that chapter dropped from 'chapter' to
+// 'pace' and following stopped at the marked page.
+test('a mark inside closing credits is dropped, not pinned to their end', () => {
+	const { index } = book([['1', 3000], ['2', 3000], ['3', 3000]]);
+	const w = work([['Chapter 1', 16 * MIN], ['Chapter 2', 16 * MIN], ['Chapter 3', 16 * MIN], ['Closing Credits', 2 * MIN]]);
+	const plain = buildMap(w, index);
+	const mark = { id: 'm1', ms: partStart(w, 3) + MIN - 700, word: index.sections[2].wordStart + 180, at: 1 };
+	const map = buildMap(w, index, { extraAnchors: [mark] });
+	assert.deepEqual(map.marks, { used: [], overruled: [] });
+	assert.deepEqual(map.dropped.map((d) => [d.kind, d.ms, d.word]), [['mark', mark.ms, mark.word]]);
+	assert.deepEqual(map.anchors, plain.anchors);
+	assert.deepEqual(map.segments, plain.segments);
+});
+
+test('a mark inside a recorded book the ebook lacks is dropped', () => {
+	const { index, w, map: plain } = omnibusFixture();
+	const book5 = w.parts.length - 3;
+	const mark = { id: 'm1', ms: partStart(w, book5 + 1) + 5 * MIN, word: index.sections[21].wordStart + 540, at: 1 };
+	const map = buildMap(w, index, { extraAnchors: [mark] });
+	assert.deepEqual(map.marks, { used: [], overruled: [] });
+	assert.deepEqual(map.anchors, plain.anchors);
+	assert.deepEqual(map.segments, plain.segments);
+});
+
+test('inNoText is true in an intro, credits or a recorded book the ebook lacks, and false in narrated text', () => {
+	const { w, map } = omnibusFixture();
+	const book5 = w.parts.length - 3;
+	assert.equal(model.inNoText(map, 0), true, 'book 1\'s intro');
+	assert.equal(model.inNoText(map, partStart(w, 1)), false, 'book 1\'s chapter 1 starts');
+	assert.equal(model.inNoText(map, partStart(w, book5) - 1), false, 'book 4\'s last second');
+	assert.equal(model.inNoText(map, partStart(w, book5)), true, 'book 5 starts');
+	assert.equal(model.inNoText(map, map.totalMs - 1), true);
+	const { index } = book([['1', 3000]]);
+	const credits = work([['Chapter 1', 16 * MIN], ['Closing Credits', 2 * MIN]]);
+	const m = buildMap(credits, index);
+	assert.equal(model.inNoText(m, 16 * MIN - 1), false);
+	assert.equal(model.inNoText(m, 16 * MIN + MIN), true);
+	assert.equal(model.inNoText(null, 0), false);
+});
+
 // c03f827 is the read-along's first release. A work without books on both sides must map exactly
 // as it did then, so every map built above is rebuilt with that commit's model and compared.
 const BASELINE = 'c03f827';
@@ -931,6 +1100,9 @@ test('every map without books is byte-for-byte what the first release built', (t
 		for (const args of built) {
 			const now = model.buildMap(...structuredClone(args));
 			if (now && now.books) continue;
+			// Sync marks changed what an extra anchor does on purpose (the 'marked' level, a mark
+			// beating the anchors it contradicts); the marks tests below pin that behaviour.
+			if (args[2] && Array.isArray(args[2].extraAnchors) && args[2].extraAnchors.length) continue;
 			const was = old.buildMap(...structuredClone(args));
 			const name = (args[0] && Array.isArray(args[0].parts) ? args[0].parts.map((p) => p.title) : []).join(' | ');
 			assert.equal(JSON.stringify(now), JSON.stringify(was), name);

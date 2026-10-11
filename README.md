@@ -495,9 +495,13 @@ folder listing) that decides whether the card shows 📖.
 | `!book text now` | Sends a fresh page at the bottom of your DMs. The old one becomes "📖 This page moved ↓". |
 | `!book text` | Whether it is on for you, where your book's text comes from, its word count, and how closely it lines up. |
 | `!book link <title> <ebook>` | Owner only: tie a book to its ebook by hand. Forms below. |
+| `!book marks [title]` | The sync marks set on a book with 📌 (default: the one playing). |
+| `!book unmark [n]` | Removes your latest mark on the book you are playing, or mark `n` of the list if it is yours. |
+| `!book unmark all [title] confirm` | Owner only: clears every mark of a book. Without `confirm` it says how many marks, from how many listeners, it would clear. |
 
-On `/`: `/book text mode:on` (or `off`, `now`, or no mode for the status) and
-`/book link title:<book> ebook:<id, ISBN, path, off or auto>`.
+On `/`: `/book text mode:on` (or `off`, `now`, or no mode for the status),
+`/book link title:<book> ebook:<id, ISBN, path, off or auto>`, `/book marks [title]` and
+`/book unmark [which:<n or all confirm>] [title]`.
 
 **The page.** One DM message, edited in place. Each page is about 180 words, roughly a minute of
 narration at 1x. Its buttons:
@@ -507,6 +511,7 @@ narration at 1x. Its buttons:
 - ↪ Play from here moves the audiobook to the start of the page you are reading, and resumes it if
   it was paused.
 - ✖ Off turns the read-along off.
+- 📌 Narrator is here, in a row of its own, sets a sync mark (below).
 
 Following never skips a page, even at 3x; it turns at most once every 12 seconds. When the book
 stops, the page says so and loses its buttons. The first time a book's text is used the bot reads
@@ -537,6 +542,35 @@ words you hear are not always the words on the page. Intro, credits and music tr
 for this part of the audio". In an omnibus whose tracks name the book ("Book 2 Title - Chapter
 01"), each chapter is matched inside its own book, and a recorded book the ebook leaves out says it
 is not in the ebook.
+
+**Sync marks.** When the page drifts from the voice, page to the words the narrator is reading and
+press 📌 as the voice reaches the first words of the page on screen. That moment is pinned to that
+page's first word, and the page snaps there. The footer says "📌 Marked at 1:23:45" once, and the
+stretches on either side of the mark say "marked" instead of "chapter-level" or "estimated from
+pace".
+
+- The bot takes 0.7 s off the moment you clicked, for the time it takes to hear the word, click
+  and reach Discord.
+- **A mark helps everyone who plays that recording**: their open pages move to it at once. Two
+  narrations of one book keep separate marks, and so does a narration that replaces another in the
+  same folder: the old one's marks are kept but not used.
+- While a track named after a chapter plays, a mark is refused on any page outside that chapter,
+  however near. On hour splits and other tracks that name no chapter, it is refused when the page
+  is outside the ebook chapter the bot estimates and more than 10 pages from that estimate. The
+  note asks you to page to where the narrator is first. A paused book refuses marks too, and so
+  does a track with no ebook text (an intro, the credits, or a book of an omnibus that the ebook
+  leaves out).
+- A second mark within 20 seconds of audio of another, or on the same page, replaces it.
+- A mark beats the bot's own chapter matching where the two disagree. Where two marks disagree,
+  the newer one is used.
+- Marks belong to one copy of the ebook's text. When the ebook changes (a new EPUB, a relink),
+  the old marks are kept but not used, and they apply again if that text comes back.
+- `!book marks` lists them with audio time, chapter, who and when, and never any book text.
+  Everyone can remove their own; the owner can remove any one and clear a whole book, which asks
+  for `confirm` first. A book whose title starts with "All" or is a number (`!book unmark 1984`)
+  is read as that title.
+
+Marks are kept in `data/book_text/marks.json` (gitignored).
 
 **Where the text comes from.** First match wins:
 
@@ -752,6 +786,8 @@ is playing.
 | `/book forget <title>` | Drop your place in a book. Asks first: a button on `/`, `!book forget <id> confirm` on `!`. |
 | `/book text [mode]` | The read-along: `on`, `off` or `now`; no mode shows its status. The text goes to your DMs. See **Reading along**. |
 | `/book link <title> [ebook]` | Owner only, and `ownerId` must be set: tie a book to its ebook (a Calibre id, an ISBN, an EPUB path, `off` or `auto`); no ebook shows what it uses now. |
+| `/book marks [title]` | The read-along's sync marks on a book (default: the one playing): audio time, chapter, who and when. See **Sync marks**. |
+| `/book unmark [which] [title]` | Remove your latest sync mark, or `which:3` for a listed one of yours. `which:all` is the owner's and says what it would clear; `which:all confirm` clears the book. |
 | `/book rescan` | Owner only (anyone while `ownerId` is blank, as with `/config`): re-read the library from Plex now and report what changed. |
 
 The card has Previous chapter, −30 s, Pause/Resume, +30 s and Next chapter, a speed button that

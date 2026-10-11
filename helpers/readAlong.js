@@ -40,6 +40,16 @@ const PREPARE_WAIT_MS = 1500;
 // How far the position may stray from where steady playback would have put it and still count
 // as the narration flowing on (a part boundary, a speed change) rather than a seek.
 const CONTINUITY_SLACK_MS = 2000;
+// Hearing the word, clicking and the Discord round trip put a 📌 click about half a second to a
+// second after the word began. Wall-clock time, so it is that much more audio at a higher speed.
+const MARK_LAG_MS = 700;
+// Where no chapter-named track is playing (hour splits, pace stretches), a 📌 counts only on a page
+// in the estimate's ebook section or within this many pages of the estimate. Further off, the
+// listener browsed there and the narrator is not.
+const MARK_NEAR_PAGES = 10;
+// A new mark this close (or on the same word) to one of the same recording and text is a second
+// try at the same spot, and replaces it.
+const MARK_REPLACE_MS = 20000;
 // Discord's "Unknown Message" (the user deleted the page) and "Cannot send messages to this user".
 const UNKNOWN_MESSAGE = 10008;
 const DM_CLOSED = 50007;
@@ -49,6 +59,10 @@ const NO_PINGS = { parse: [] };
 const STALE_TEXT = 'That book is no longer playing.';
 const DM_CLOSED_TEXT = 'I can\'t DM you (your DMs are closed to this server). Use the 📖 button on the book card instead; it shows the page only to you.';
 const NOT_LISTENING = 'You\'re not listening to a book right now.';
+const MARK_FAR_TEXT = '📌 That page is too far from where the narrator is. Page to where the narrator is, and press 📌 when the voice reaches the page\'s first words.';
+const MARK_CHAPTER_TEXT = '📌 That page is outside the chapter now playing. Press 📌 on a page of this chapter when the voice reaches its first words.';
+const MARK_NO_TEXT_TEXT = '📌 The narrator is not reading the ebook here (an intro, credits, or a part the ebook leaves out). Press 📌 when the voice reaches the first words of a page.';
+const MARK_NOT_PLAYING_TEXT = '📌 Marks need the book playing: press 📌 when the narrator reaches the first words of the page.';
 
 function codeOf(err) {
 	return (err && (err.code || err.name)) || 'error';
@@ -93,6 +107,7 @@ function createReadAlong(opts = {}) {
 	if (!books) throw new Error('createReadAlong needs the book director');
 	const client = opts.client || null;
 	const model = opts.model || require('./readAlongModel.js');
+	const { formatClock } = require('./bookModel.js');
 	const card = opts.card || require('./readAlongCard.js');
 	const store = opts.store || require('./bookTextStore.js');
 	const logger = opts.logger || require('./logger.js');
@@ -250,6 +265,24 @@ function createReadAlong(opts = {}) {
 		return Object.assign({}, s.work, { publisher: (s.work && s.work.publisher) || (cur && cur.publisher) || null });
 	}
 
+	// Marks are kept per recording under the catalog's current id and its aliases, so the
+	// catalog's copy of the work (renamed since the session started) is the key when it has one.
+	function workRef(s) {
+		let cur = null;
+		try { cur = catalog().work(s.workId); } catch (_) {}
+		return cur || s.work || s.workId;
+	}
+
+	// Only the marks made against this exact text and recording: a word index means nothing in
+	// another parse, and an audio time nothing in another narration filed under the same id.
+	function marksOf(s, base) {
+		if (!store.marks || typeof store.marks.list !== 'function') return [];
+		let list = [];
+		try { list = store.marks.list(workRef(s)) || []; } catch (_) {}
+		const rec = model.recordingOf(s.work);
+		return list.filter(m => m.text === base && model.sameRecording(m.rec, rec)).map(m => ({ id: m.id, ms: m.ms, word: m.word, at: m.at }));
+	}
+
 	async function textFor(s, { explicit = false } = {}) {
 		let res;
 		try {
@@ -261,10 +294,25 @@ function createReadAlong(opts = {}) {
 		if (!res || !res.ok) return { ok: false, code: res && res.code, text: (res && res.text) || 'There is no text for this book.' };
 		const h = res.handle;
 		let t = texts.get(s.workId);
+		const marks = marksOf(s, h.base);
+		const marksKey = marks.map(m => `${m.id}@${m.ms}=${m.word}`).join(',');
+		if (t && t.base === h.base && t.parts === s.work.parts && t.marksKey !== marksKey) {
+			// Marks move anchors only: the sections, the body and the cached pages stay as they are.
+			try {
+				const map = model.buildMap(mapWork(s), h.index, { extraAnchors: marks });
+				if (map) {
+					t.map = map;
+					t.marksKey = marksKey;
+					t.rev++;
+				}
+			} catch (err) {
+				logger.warn('Read-along could not line the text up with the audio:', codeOf(err));
+			}
+		}
 		if (!t || t.base !== h.base || t.parts !== s.work.parts) {
 			let map = null;
 			try {
-				map = model.buildMap(mapWork(s), h.index);
+				map = model.buildMap(mapWork(s), h.index, { extraAnchors: marks });
 			} catch (err) {
 				logger.warn('Read-along could not line the text up with the audio:', codeOf(err));
 			}
@@ -276,7 +324,7 @@ function createReadAlong(opts = {}) {
 				}
 			}
 			if (!map || !body.length) return { ok: false, code: 'no-body', text: 'This ebook has no chapters I can line up with the audio.' };
-			t = { base: h.base, tag: h.tag, handle: h, map, parts: s.work.parts, body, bodyPos: new Map(body.map((sec, i) => [sec, i])), pages: new Map() };
+			t = { base: h.base, tag: h.tag, handle: h, map, marksKey, rev: 0, parts: s.work.parts, body, bodyPos: new Map(body.map((sec, i) => [sec, i])), pages: new Map() };
 			texts.set(s.workId, t);
 		}
 		return { ok: true, t, stale: !!res.stale };
@@ -397,7 +445,7 @@ function createReadAlong(opts = {}) {
 		};
 	}
 
-	async function payloadFor(s, t, ref, { surface, mode, note = null, viewerId }) {
+	async function payloadFor(s, t, ref, { surface, mode, note = null, extra = null, viewerId }) {
 		const isListener = String(viewerId) === String(s.userId);
 		const bookTitle = titleOf(s);
 		if (ref.kind === 'none') {
@@ -426,6 +474,7 @@ function createReadAlong(opts = {}) {
 			dramatized: t.map.dramatized,
 			mode,
 			note,
+			extra,
 			isListener,
 			isPaused: s.state === 'paused'
 		}, edges(t, ref, pages)));
@@ -438,16 +487,18 @@ function createReadAlong(opts = {}) {
 		return s.state === 'paused' ? 'paused' : 'following';
 	}
 
-	function renderKey(s, t, ref, mode, note) {
-		return `${s.id}|${t.tag}|${ref.kind}|${ref.word}|${mode}|${note || ''}`;
+	// The map's revision is part of the key, so a mark (anyone's, on this recording) re-renders
+	// every open page of it on that page's next event, sync level and all.
+	function renderKey(s, t, ref, mode, note, extra = null) {
+		return `${s.id}|${t.tag}|${t.rev || 0}|${ref.kind}|${ref.word}|${mode}|${note || ''}|${extra || ''}`;
 	}
 
-	async function render(r, s, t, ref, mode, note = null) {
+	async function render(r, s, t, ref, mode, note = null, extra = null) {
 		r.shown = ref;
 		r.shownTag = t.tag;
-		const k = renderKey(s, t, ref, mode, note);
+		const k = renderKey(s, t, ref, mode, note, extra);
 		if (k === r.lastRenderKey) return false;
-		const payload = await payloadFor(s, t, ref, { surface: 'd', mode, note, viewerId: r.userId });
+		const payload = await payloadFor(s, t, ref, { surface: 'd', mode, note, extra, viewerId: r.userId });
 		if (r.dead) return false;
 		r.lastRenderKey = k;
 		await edit(r, payload);
@@ -897,6 +948,8 @@ function createReadAlong(opts = {}) {
 			: 'estimated from pace (no track is named after a chapter)';
 		const drama = t.map.dramatized ? '; dramatized edition, so the wording can differ from the audio' : '';
 		lines.push(`🔗 Sync: ${sync}. Approximate${drama}.`);
+		const used = t.map.marks ? t.map.marks.used.length : 0;
+		if (used) lines.push(`📌 ${used} sync mark${used === 1 ? '' : 's'} on this recording (\`${p}book marks\`).`);
 		const r = readers.get(uid);
 		if (r && !r.dead && r.sid === s.id && r.message) lines.push('📩 Your page is in your DMs.');
 		return lines.join('\n');
@@ -991,6 +1044,13 @@ function createReadAlong(opts = {}) {
 				: `📩 Following in DMs is for ${name}, the listener; the 📖 page is yours while you're in the voice channel.`, report);
 			return null;
 		}
+		// No ephemeral page offers 📌: a mark is set from the listener's own DM page.
+		if (id.act === 'mark') {
+			await followUp(interaction, listener
+				? `📌 Marks are set from your DM page (\`${prefix()}book text on\`).`
+				: `📌 Only ${esc(s.listenerName || 'the listener')}, the listener, can set marks.`, report);
+			return null;
+		}
 		const got = await textFor(s, { explicit: true });
 		if (!got.ok) return answer(interaction, card.noticePayload(`📖 ${got.text}`), report);
 		const t = got.t;
@@ -1029,7 +1089,119 @@ function createReadAlong(opts = {}) {
 		return answer(interaction, await payloadFor(s, t, ref, { surface: 'e', mode: 'snapshot', viewerId: uid }), report);
 	}
 
-	async function dmAct(r, s, id, interaction, report) {
+	// ---- 📌 sync marks ---------------------------------------------------------------------
+
+	function captureOf(s) {
+		return { sid: s.id, pos: books.position(s), state: s.state, audible: !!s.audible, speed: s.speed > 0 ? s.speed : 1 };
+	}
+
+	/** The engine's place when a 📌 click arrives, taken before anything is awaited. */
+	function capture(sid) {
+		const s = books.sessionById(sid);
+		return s && s.state !== 'ended' ? captureOf(s) : null;
+	}
+
+	// Pages between two pages in reading order, either way round; stops counting past limit.
+	async function pagesApart(t, a, b, limit) {
+		if (!a || !b || a.kind !== 'page' || b.kind !== 'page') return null;
+		const [lo, hi] = a.word <= b.word ? [a, b] : [b, a];
+		if (lo.sec === hi.sec) return hi.page - lo.page;
+		let n = (await pagesOf(t, lo.sec)).pages.length - lo.page;
+		for (const j of t.body) {
+			if (j <= lo.sec) continue;
+			if (j >= hi.sec) break;
+			n += (await pagesOf(t, j)).pages.length;
+			if (n > limit) return n;
+		}
+		return n + hi.page;
+	}
+
+	/**
+	 * Whether a 📌 on `page` is plausible for a click at `pos` (pinned at `ms`, the click less the
+	 * reaction allowance).
+	 * @returns {string|null} the refusal note, or null when the page is taken
+	 */
+	async function nearNarration(t, pos, ms, page) {
+		// A chapter-named track's start is exact, so a page outside its chapter is a misclick, however
+		// near; as a mark it would beat the next chapter's own track anchors. The click, not the
+		// allowance, says which chapter is playing: a pin on a chapter's first page a moment into its
+		// track has its ms in the chapter before.
+		const playing = model.spanAt(t.map, pos);
+		if (playing) return page.word >= playing.fromWord && page.word < playing.toWord ? null : MARK_CHAPTER_TEXT;
+		const est = model.msToWord(t.map, ms);
+		const loc = model.locate(t.map, est.word);
+		if (loc && loc.section === page.sec) return null;
+		const n = await pagesApart(t, await pageForWord(t, est.word), page, MARK_NEAR_PAGES);
+		return n !== null && n <= MARK_NEAR_PAGES ? null : MARK_FAR_TEXT;
+	}
+
+	function sameWork(s, workId) {
+		if (s.workId === workId) return true;
+		try {
+			const cur = catalog().work(s.workId);
+			return !!cur && cur.id === workId;
+		} catch (_) {
+			return false;
+		}
+	}
+
+	// Every other open page of the recording is handled as if the engine had reported a move: a
+	// timed turn never goes back, so a page the new map puts ahead of the voice needs the jump, and
+	// the render (the map's revision is in the render key) shows its sync level.
+	function refreshWork(workId, except = null) {
+		let list = [];
+		try { list = books.sessions() || []; } catch (_) {}
+		for (const r of readers.values()) {
+			if (r === except || r.dead || !r.message) continue;
+			const s = list.find(x => x.id === r.sid);
+			if (!s || !sameWork(s, workId)) continue;
+			serial(r, async () => {
+				if (!liveFor(r, s)) return;
+				const got = await textFor(s);
+				if (got.ok && r.follow && r.shown && s.state === 'playing') await onMove(r, s);
+			});
+		}
+	}
+
+	/** After `!book unmark`: the open pages of that recording pick up the map without the mark. */
+	function marksChanged(work) {
+		const id = typeof work === 'string' ? work : work && work.id;
+		if (!closed && id) refreshWork(id);
+	}
+
+	async function markHere(r, s, t, id, cap, interaction, report) {
+		const c = cap && cap.sid === s.id ? cap : captureOf(s);
+		if (c.state !== 'playing' || !c.audible) return followUp(interaction, MARK_NOT_PLAYING_TEXT, report);
+		// The click itself, not the allowance, says whether ebook text was being read: only the
+		// allowance may reach back into an intro.
+		if (model.inNoText(t.map, c.pos)) return followUp(interaction, MARK_NO_TEXT_TEXT, report);
+		const page = await pageForWord(t, id.word);
+		const ms = Math.max(0, Math.round(c.pos - MARK_LAG_MS * c.speed));
+		if (!page) return followUp(interaction, MARK_FAR_TEXT, report);
+		const refused = await nearNarration(t, c.pos, ms, page);
+		if (refused) return followUp(interaction, refused, report);
+		let res = null;
+		try {
+			res = store.marks.add(workRef(s), { ms, word: page.word, text: t.base, tag: t.tag, rec: model.recordingOf(s.work), by: r.userId, at: now() }, { nearMs: MARK_REPLACE_MS });
+		} catch (err) {
+			logger.warn('Read-along could not save a mark:', codeOf(err));
+		}
+		if (!res || !res.ok) return followUp(interaction, '📌 The mark could not be saved; check the bot log.', report);
+		logger.info(`Read-along: mark ${res.mark.id} at ${ms} ms, word ${page.word}${res.replaced.length ? `, replacing ${res.replaced.length}` : ''}.`);
+		const got = await textFor(s);
+		if (!got.ok) return textGone(r, got);
+		r.follow = true;
+		r.pin = null;
+		clearTurn(r);
+		clearCoalesce(r);
+		sample(r, s);
+		await render(r, s, got.t, page, modeOf(r, s), null, `📌 Marked at ${formatClock(ms, true)}`);
+		r.lastTurnAt = now();
+		schedule(r, s, got.t);
+		refreshWork(s.workId, r);
+	}
+
+	async function dmAct(r, s, id, interaction, report, cap = null) {
 		// Off needs no text, so a text that can no longer be opened (DRM, Calibre closed) never
 		// keeps it from working.
 		if (id.act === 'off') {
@@ -1049,6 +1221,10 @@ function createReadAlong(opts = {}) {
 			r.follow = true;
 			r.pin = null;
 			await jumpNow(r, s, { note: 'text-updated' });
+			return;
+		}
+		if (id.act === 'mark') {
+			await markHere(r, s, t, id, cap, interaction, report);
 			return;
 		}
 		const base = (await pageForWord(t, id.word)) || r.shown;
@@ -1085,7 +1261,7 @@ function createReadAlong(opts = {}) {
 	// The DM rules, in order (plan section 9): a click on any page that is not the reader's
 	// current one only turns THAT message into "moved"; the reader's own page acts; a stale page
 	// is adopted only when the user has no page and a book is playing; anything else is ended.
-	async function onDmButton(interaction, id, report) {
+	async function onDmButton(interaction, id, report, cap = null) {
 		const uid = String(interaction.user && interaction.user.id);
 		const clicked = interaction.message || null;
 		const clickedId = clicked && clicked.id;
@@ -1095,7 +1271,7 @@ function createReadAlong(opts = {}) {
 		const s = books.sessionById(id.sid);
 		const live = s && s.state !== 'ended' && String(s.userId) === uid ? s : null;
 		if (r && r.message && live && r.sid === live.id) {
-			await serial(r, () => dmAct(r, live, id, interaction, report));
+			await serial(r, () => dmAct(r, live, id, interaction, report, cap));
 			return null;
 		}
 		if (!(r && r.message) && id.act !== 'off') {
@@ -1119,12 +1295,13 @@ function createReadAlong(opts = {}) {
 	/**
 	 * A bookpage:* click, already acknowledged with deferUpdate by helpers/readAlongButtons.js.
 	 * @param {object} id the parsed customId (readAlongCard.parsePageId)
-	 * @param {{ report?: Function }} [o] called with every payload sent, for the command log
+	 * @param {{ report?: Function, captured?: object }} [o] report is called with every payload sent,
+	 *   for the command log; captured is capture(sid) taken as a 📌 click arrived
 	 */
-	async function onPageButton(interaction, id, { report = () => {} } = {}) {
+	async function onPageButton(interaction, id, { report = () => {}, captured = null } = {}) {
 		if (closed) return answer(interaction, card.noticePayload('Read-along is restarting; try again in a moment.'), report);
 		if (id.surface === 'e') return onEphemeralButton(interaction, id, report);
-		return onDmButton(interaction, id, report);
+		return onDmButton(interaction, id, report, id.act === 'mark' ? captured || capture(id.sid) : null);
 	}
 
 	// ---- wiring ----------------------------------------------------------------------------
@@ -1186,6 +1363,8 @@ function createReadAlong(opts = {}) {
 		statusOf,
 		ephemeralFor,
 		onPageButton,
+		capture,
+		marksChanged,
 		dm: sendDm,
 		source,
 		shutdown,
