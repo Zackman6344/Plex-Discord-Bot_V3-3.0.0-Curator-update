@@ -40,6 +40,10 @@ const SETTINGS = [
     { key: 'tautulliEnabled', label: 'Tautulli integration', group: 'Integrations', type: 'bool' },
     { key: 'tautulliUrl', label: 'Tautulli URL', group: 'Integrations', type: 'string', placeholder: 'http://localhost:8181' },
     { key: 'tautulliApiKey', label: 'Tautulli API key', group: 'Integrations', type: 'string', secret: true },
+    { key: 'calibreUrl', label: 'Calibre content server (blank = off)', group: 'Integrations', type: 'string', placeholder: 'http://127.0.0.1:8080' },
+    { key: 'calibreLibraryId', label: 'Calibre library id (blank = default)', group: 'Integrations', type: 'string', placeholder: 'Calibre_Library' },
+    { key: 'calibreUsername', label: 'Calibre username (only with a login)', group: 'Integrations', type: 'string' },
+    { key: 'calibrePassword', label: 'Calibre password', group: 'Integrations', type: 'string', secret: true },
 
     { key: 'archipelagoEnabled', label: 'Archipelago monitor', group: 'Archipelago', type: 'bool' },
     { key: 'archipelagoChannelId', label: 'Archipelago log channel', group: 'Archipelago', type: 'string', snowflake: true },
@@ -99,6 +103,8 @@ const SETTINGS = [
     },
     { key: 'audiobookIdleLeaveMinutes', label: 'Leave voice after idle (minutes)', group: 'Audiobooks', type: 'int', min: 1, max: 180 },
     { key: 'audiobookResumeRewindSeconds', label: 'Rewind on resume (seconds)', group: 'Audiobooks', type: 'int', min: 0, max: 120 },
+    { key: 'audiobookTextEnabled', label: 'Read-along (!book text, 📖)', group: 'Audiobooks', type: 'bool' },
+    { key: 'audiobookTextSidecars', label: 'Read EPUBs next to the audio', group: 'Audiobooks', type: 'bool' },
 
     // Both apply live through onChange (helpers/processPriority.js, helpers/voiceHealth.js).
     {
@@ -248,8 +254,21 @@ function validate(setting, raw) {
     if (setting.snowflake && !/^\d{17,20}$/.test(value)) {
         return { error: 'That does not look like a Discord ID (17-20 digits).' };
     }
-    if (setting.key === 'tautulliUrl' && !/^https?:\/\//i.test(value)) {
+    if ((setting.key === 'tautulliUrl' || setting.key === 'calibreUrl') && !/^https?:\/\//i.test(value)) {
         return { error: 'Must start with http:// or https://' };
+    }
+    if (setting.key === 'calibreUrl') {
+        // A login in the URL would be echoed by fetch's own error messages, password and all,
+        // so it is refused here, and the error never repeats the value it was given.
+        let parsed;
+        try {
+            parsed = new URL(value);
+        } catch (_) {
+            return { error: 'That is not a valid URL.' };
+        }
+        if (parsed.username || parsed.password) {
+            return { error: 'Put the login in calibreUsername and calibrePassword, not in the URL.' };
+        }
     }
     return { value };
 }

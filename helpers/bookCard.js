@@ -173,9 +173,12 @@ function buildCard(v) {
 		button(`book:fwd:${sid}`, '30 s', '⏩', STYLE.secondary, off),
 		button(`book:nextch:${sid}`, 'Next ch', '⏭️', STYLE.secondary, off)
 	]);
+	// The read-along's page is private (helpers/readAlongButtons.js answers it ephemerally), so the
+	// card itself only ever carries the button, never any of the book's text.
 	const settings = row([
 		button(`book:speed:${sid}`, `${v.speed}x`, '⚡', STYLE.secondary, off),
 		button(`book:sleep:${sid}`, sleepLabel(v), '🌙', STYLE.secondary, off),
+		v.text && v.text.button ? button(`bookread:${sid}`, 'Text', '📖', STYLE.secondary, off) : null,
 		button(`book:stop:${sid}`, 'Stop', '⏹️', STYLE.danger, false)
 	]);
 	return payload(embed(v, COLOR[state], lines, footer), [controls, settings]);

@@ -494,3 +494,49 @@ test('folderKey reads backslash paths the same as slash paths', () => {
 	);
 	assert.strictEqual(bookCatalog.folderKey(t('M:/Music/Avery Quill/1.The Ember Throne/The Ember Throne 2/03.mp3')), 'M:/Music/Avery Quill/1.The Ember Throne');
 });
+
+// The read-along looks for sidecar EPUBs beside the audio files, which neither part.file (a
+// basename) nor folderKey (a grouping key, here the book folder ABOVE the part folders) names.
+test('a work records the real folders its part files sit in', () => {
+	assert.deepStrictEqual(BASE.works['avery-quill/the-ember-throne'].dirs, [
+		'M:/Music/Avery Quill/1.The Ember Throne/The Ember Throne 1',
+		'M:/Music/Avery Quill/1.The Ember Throne/The Ember Throne 2',
+	]);
+	assert.strictEqual(BASE.works['avery-quill/the-ember-throne'].folderKey, 'M:/Music/Avery Quill/1.The Ember Throne');
+	assert.deepStrictEqual(BASE.works['corin-vale/the-long-tide'].dirs, [
+		'M:/Music/Corin Vale/The Long Tide [01]', 'M:/Music/Corin Vale/The Long Tide [02]', 'M:/Music/Corin Vale/The Long Tide [03]',
+	]);
+	for (const w of Object.values(BASE.works)) {
+		assert.ok(w.dirs.length > 0, w.id);
+		for (const d of w.dirs) assert.ok(!/\.(mp3|m4a|m4b|flac)$/i.test(d), `${w.id}: ${d}`);
+	}
+});
+
+test('folders keep the path as Plex wrote it: a POSIX path keeps its leading slash, a Windows one its backslashes', () => {
+	const lib = library();
+	for (const t of lib.tracks) {
+		const part = t.Media[0].Part[0];
+		part.file = part.file.startsWith('M:/Music/Corin Vale/')
+			? part.file.replace('M:/Music/', 'M:\\Music\\').replace(/\//g, '\\')
+			: part.file.replace(/^M:\/Music\//, '/srv/media/Music/');
+	}
+	const built = buildCatalog(lib).works;
+	assert.deepStrictEqual(built['avery-quill/the-iron-wake'].dirs, ['/srv/media/Music/Avery Quill/4.The Iron Wake']);
+	assert.deepStrictEqual(built['corin-vale/the-long-tide'].dirs, [
+		'M:\\Music\\Corin Vale\\The Long Tide [01]', 'M:\\Music\\Corin Vale\\The Long Tide [02]', 'M:\\Music\\Corin Vale\\The Long Tide [03]',
+	]);
+	const root = buildCatalog({ ...library(), tracks: library().tracks.map((t) => {
+		t.Media[0].Part[0].file = `/${t.Media[0].Part[0].file.split('/').pop()}`;
+		return t;
+	}) }).works;
+	assert.ok(Object.keys(root).length > 0);
+	for (const w of Object.values(root)) assert.deepStrictEqual(w.dirs, ['/'], w.id);
+});
+
+test('the publisher is kept apart from the edition, so a narrated GraphicAudio edition stays recognisable', () => {
+	const bells = BASE.works['avery-quill/the-copper-bells'];
+	assert.deepStrictEqual([bells.edition, bells.narrator, bells.publisher], ['Mara Lindqvist', 'Mara Lindqvist', 'GraphicAudio']);
+	assert.strictEqual(BASE.works['corin-vale/the-long-tide'].publisher, 'GraphicAudio');
+	assert.strictEqual(BASE.works['avery-quill/the-ember-throne'].publisher, null);
+	assert.strictEqual(BASE.works['r-j-ashdown/the-hollow-king'].publisher, null);
+});

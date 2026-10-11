@@ -123,3 +123,88 @@ test('logging can be switched off entirely', () => {
     // The kill switch is read at require time, so check the flag rather than re-importing.
     assert.strictEqual(process.env.PLEXBOT_COMMAND_LOG === '0', false, 'on by default in tests');
 });
+
+// ---- the read-along's private pages ----------------------------------------------------------
+// A DM page holds a page of a copyrighted book, sent to one person. The log keeps that it was
+// sent, never what it said; the bookpage: button row is how a payload is recognised.
+
+const PAGE_TEXT = 'quebec romeo sierra tango uniform victor whiskey';
+
+function rawPage() {
+    return {
+        content: 'The text was updated; this is where the narration is.',
+        embeds: [{ title: 'The Fake Book · Chapter 1', description: PAGE_TEXT, footer: { text: 'page 1 of 5' } }],
+        components: [{ type: 1, components: [{ type: 2, style: 2, custom_id: 'bookpage:next:d:a1b2c3:9f0c:0', label: 'Page' }] }]
+    };
+}
+
+test('a raw-JSON payload with a bookpage: row is recorded without its text', () => {
+    const summary = commandLog.summarise(rawPage());
+    assert.deepStrictEqual(summary, {
+        content: '[book text not logged]',
+        embeds: [{ title: '[book text not logged]', description: null, fields: 0 }],
+        components: 1
+    });
+});
+
+test('discord.js classes (a sent Message\'s rows and embeds, and builders) are recognised too', () => {
+    const { ActionRow, Embed, ActionRowBuilder, ButtonBuilder, EmbedBuilder } = require('discord.js');
+    const fromMessage = commandLog.payloadOfMessage({
+        content: '',
+        embeds: [new Embed({ title: 'Chapter 1', description: PAGE_TEXT })],
+        components: [new ActionRow({ type: 1, components: [{ type: 2, style: 2, custom_id: 'bookpage:now:d:a1b2c3:9f0c:5k', label: 'Now' }] })]
+    });
+    const built = {
+        embeds: [new EmbedBuilder().setTitle('Chapter 1').setDescription(PAGE_TEXT)],
+        components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('bookpage:prev:e:a1b2c3:9f0c:0').setLabel('Page').setStyle(2))]
+    };
+    for (const payload of [fromMessage, built]) {
+        assert.ok(commandLog.carriesPrivateText(payload));
+        assert.ok(!JSON.stringify(commandLog.summarise(payload)).includes('quebec'));
+    }
+});
+
+test('an ordinary payload, the book card included, is still kept as it was', () => {
+    const cardPayload = {
+        content: '',
+        embeds: [{ title: '📚 The Fake Book', description: 'Chapter 2 of 9' }],
+        components: [{ type: 1, components: [{ type: 2, style: 2, custom_id: 'bookread:a1b2c3', label: 'Text' }, { type: 2, style: 4, custom_id: 'book:stop:a1b2c3', label: 'Stop' }] }]
+    };
+    assert.strictEqual(commandLog.carriesPrivateText(cardPayload), false);
+    assert.deepStrictEqual(commandLog.summarise(cardPayload).embeds[0], { title: '📚 The Fake Book', description: 'Chapter 2 of 9', fields: 0 });
+    assert.strictEqual(commandLog.carriesPrivateText(null), false);
+    assert.strictEqual(commandLog.carriesPrivateText('bookpage:'), false);
+});
+
+test('a page reaches the day-file as a placeholder, and the page text never does', () => {
+    const id = commandLog.startInvocation({ command: 'book', path: 'button', args: 'bookpage:next:d:a1b2c3:9f0c:0' });
+    commandLog.recordOutput({ id, kind: 'interaction-reply', payload: rawPage() });
+    commandLog.recordOutput({ id, payload: 'an ordinary reply' });
+    const written = fs.readFileSync(pathMod.join(DIR, fs.readdirSync(DIR)[0]), 'utf8');
+    assert.match(written, /\[book text not logged\]/);
+    assert.match(written, /an ordinary reply/);
+    assert.ok(!written.includes('quebec'));
+    assert.ok(!written.includes('narration is'));
+});
+
+test('payloadOfMessage keeps exactly the fields the output recorder always took', () => {
+    const message = { content: 'c', embeds: ['e'], components: ['r'], author: { id: 'bot' }, channelId: 'x' };
+    assert.deepStrictEqual(commandLog.payloadOfMessage(message), { content: message.content, embeds: message.embeds, components: message.components });
+});
+
+test('the Calibre password is redacted like the other secrets', () => {
+    const config = require('../config/config.js');
+    const saved = config.calibrePassword;
+    config.calibrePassword = 'calibre-test-pass-4821';
+    try {
+        commandLog._reset();
+        const id = commandLog.startInvocation({ command: 'config', args: 'calibrePassword calibre-test-pass-4821' });
+        commandLog.recordOutput({ id, payload: 'set to calibre-test-pass-4821' });
+        const written = fs.readFileSync(pathMod.join(DIR, fs.readdirSync(DIR)[0]), 'utf8');
+        assert.ok(!written.includes('calibre-test-pass-4821'));
+        assert.match(written, /\[redacted\]/);
+    } finally {
+        config.calibrePassword = saved;
+        commandLog._reset();
+    }
+});

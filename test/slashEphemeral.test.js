@@ -1,10 +1,12 @@
 // app/music.js: the slash dispatcher's `ephemeral` (a value or a function of the interaction),
-// and the button router's order now that book:* buttons have a handler.
+// and the button router's order now that book:* and the read-along's bookread:/bookpage:
+// buttons have handlers.
 //
 // The bug: /book's ephemeral is a function, and `!!cmd.slash.ephemeral` reads any function as
 // true, so the leaderboard would be private; the failed-defer fallback reading it the same way
 // would post an ephemeral command's explanation publicly (or skip the public one); a throwing
-// function would take the dispatch down; a book:* click falling through to tagInference unanswered.
+// function would take the dispatch down; a book:* or bookpage:* click falling through to
+// tagInference unanswered; the read-along outliving a restart.
 //
 // Harness: the real module wired to a fake client (an EventEmitter) and a fake bot, as
 // app/utils.js wires them; the interactionCreate listener is called directly and awaited.
@@ -44,6 +46,7 @@ test.afterEach(() => {
 });
 test.after(() => {
 	bot.books.shutdown();
+	if (bot.readAlong) bot.readAlong.shutdown();
 	for (const f of fs.readdirSync(os.tmpdir())) {
 		if (f.startsWith(pathMod.basename(BASE))) {
 			try { fs.rmSync(pathMod.join(os.tmpdir(), f), { recursive: true, force: true }); } catch (_) {}
@@ -180,5 +183,44 @@ test('utils.stop shuts the books down before the music, and survives a throwing 
 		stop(fake, { destroy() { order.push(['client']); } });
 		assert.deepStrictEqual(order, [['books', 1], ['stop'], ['destroy'], ['client']]);
 		assert.deepStrictEqual(fake.songQueue, []);
+	}
+});
+
+test('read-along buttons are claimed after the book ones and never reach tagInference', async () => {
+	const withEdits = (id) => Object.assign(button(id), {
+		async deferUpdate() { this.calls.push(['deferUpdate']); },
+		async editReply(p) { this.calls.push(['editReply', p]); }
+	});
+	const page = withEdits('bookpage:next:d:abcdef:9f0c:0');
+	page.guild = null;
+	page.member = null;
+	await dispatch(page);
+	assert.deepStrictEqual(page.calls.map(c => c[0]), ['deferUpdate', 'editReply'], 'claimed by readAlongButtons: a page of a session that is gone is stubbed');
+	assert.deepStrictEqual(page.calls[1][1].components, []);
+	const read = withEdits('bookread:abcdef');
+	await dispatch(read);
+	assert.deepStrictEqual(read.calls.map(c => c[0]), ['deferReply', 'editReply']);
+	assert.deepStrictEqual(read.calls[0][1], { flags: EPHEMERAL });
+	assert.match(read.calls[1][1].content, /no longer playing/);
+});
+
+test('the read-along is attached at module init and hooked into the director', () => {
+	assert.ok(bot.readAlong && typeof bot.readAlong.turnOn === 'function');
+	assert.strictEqual(typeof bot.books.view, 'function');
+});
+
+test('utils.stop shuts the read-along down after the books, and survives it throwing', () => {
+	const { stop } = require('../app/utils.js');
+	for (const throws of [false, true]) {
+		const order = [];
+		const fake = {
+			songQueue: [],
+			books: { shutdown() { order.push('books'); } },
+			readAlong: { shutdown() { order.push('readAlong'); if (throws) throw new Error('boom'); } },
+			stop() { order.push('stop'); },
+			destroy() { order.push('destroy'); }
+		};
+		stop(fake, { destroy() { order.push('client'); } });
+		assert.deepStrictEqual(order, ['books', 'readAlong', 'stop', 'destroy', 'client']);
 	}
 });

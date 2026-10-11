@@ -381,17 +381,21 @@ test('the controls pass their arguments through', async () => {
 	assert.strictEqual(contentOf(calls[0]), 'Posted.');
 });
 
-test('with audiobooks off every subcommand says how to turn them on', async () => {
+// The bug: it named `/config`, which an owner who only uses prefix commands cannot run.
+test('with audiobooks off every subcommand says how to turn them on, with the prefix command', async () => {
 	config.audiobooksEnabled = false;
 	const w = world();
 	const ana = member(w, ANA, 'Ana');
+	const how = `Audiobooks are turned off. The bot owner can turn them on with \`${config.commandPrefix}config\`, under Audiobooks`;
 	for (const sub of ['play', 'shelf', 'leaderboard', 'rescan']) {
 		const r = recordingBooks();
 		const calls = await runSlash({ books: r.books }, w, ana, sub, {});
 		assert.deepStrictEqual(r.calls, [], `${sub} reached the engine`);
 		assert.strictEqual(calls.length, 1);
-		assert.match(contentOf(calls[0]), /Audiobooks are turned off\. The bot owner can turn them on with `\/config`/);
+		assert.ok(contentOf(calls[0]).includes(how), contentOf(calls[0]));
+		assert.ok(!contentOf(calls[0]).includes('/config'), sub);
 	}
+	assert.match(book._internal.offText('?'), /`\?config`/, 'a custom prefix');
 });
 
 // The bug: turning audiobooks off does not end a book that is playing, yet /book stop, pause and
@@ -783,4 +787,14 @@ test('the help embed fits with Archipelago and audiobooks on or off', async () =
 		}
 	}
 	assert.ok(lengths['true/true'] - lengths['true/false'] <= 160, 'one short line');
+});
+
+test('text and link are /book subcommands, in the usage line and the sub-help', () => {
+	const names = book._internal.SUBCOMMANDS.map(s => s.name);
+	assert.ok(names.includes('text') && names.includes('link'));
+	assert.ok(names.length <= 25);
+	assert.match(book.command.usage, /\|text\|link\|/);
+	const help = book._internal.helpEmbed({ config: { commandPrefix: '!' } }).data.description;
+	assert.match(help, /READ ALONG/);
+	assert.ok(!/\/config/.test(help));
 });

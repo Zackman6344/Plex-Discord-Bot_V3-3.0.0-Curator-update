@@ -144,9 +144,31 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 	const sessions = new Map();
 	const gateExplainedAt = new Map();
 	let closed = false;
+	// The read-along's two hooks (helpers/readAlong.js). Listeners are synchronous and cheap and
+	// never call back into the engine synchronously: notify() runs inside startAt and stop.
+	const changeListeners = new Set();
+	let textInfo = null;
 
 	function event(kind, detail) {
 		try { commandLog().recordEvent(kind, detail); } catch (_) {}
+	}
+
+	function notify(s, kind) {
+		for (const fn of changeListeners) {
+			try {
+				fn(s, kind);
+			} catch (err) {
+				logger.warn('Audiobook change listener failed:', (err && err.message) || err);
+			}
+		}
+	}
+
+	function textInfoOf(s) {
+		try {
+			return textInfo ? textInfo(s) : null;
+		} catch (_) {
+			return null;
+		}
 	}
 
 	function run(promise) {
@@ -353,6 +375,7 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 		s.kill = null;
 		clearTimer(s, 'chapter');
 		save(s, { force: true });
+		notify(s, 'moved');
 		const part = s.work.parts[partIndex];
 		// By identity, never by ordinal: a rebuild during the session can insert or reorder parts.
 		let key = null;
@@ -547,6 +570,7 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 		s.pauseDetail = detail || null;
 		s.pausedAt = now();
 		save(s, { force: true });
+		notify(s, 'paused');
 		armIdleLeave(s);
 		requestCardEdit(s);
 		return true;
@@ -619,6 +643,7 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 			if (sessions.get(s.guildId) === s) sessions.delete(s.guildId);
 		}
 		logger.info(`Audiobook session ${s.id} ended (${reason}) at ${bookModel.formatClock(s.parkedAbsMs)} in ${s.workId}.`);
+		notify(s, 'ended');
 		if (!quietCard) endCard(s);
 		maybeStartQueuedMusic(s, reason);
 		return s.parkedAbsMs;
@@ -806,7 +831,8 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 			nearEnd: bookModel.nearEnd(work, pos),
 			endReason: s.endReason,
 			endDetail: s.endDetail,
-			finished
+			finished,
+			text: textInfoOf(s)
 		};
 	}
 
@@ -838,6 +864,7 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 			clearTimer(s, 'buffering');
 			s.audible = true;
 			s.lastAudioAt = now();
+			notify(s, 'audible');
 			armChapterTimer(s);
 			armSleep(s);
 		});
@@ -980,6 +1007,7 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 			// Parked: move the place, spawn nothing.
 			s.parkedAbsMs = at;
 			save(s, { force: true });
+			notify(s, 'moved');
 		}
 		return result(true, 'ok', `${prefix} ${where(s, at)}`);
 	}
@@ -1003,6 +1031,7 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 		} else {
 			s.speed = x;
 			save(s, { force: true });
+			notify(s, 'moved');
 		}
 		return result(true, 'ok', `⚡ ${x}x`);
 	}
@@ -1330,6 +1359,7 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 		s.everPlayed = true;
 		armSaveTimer(s);
 		armCardRefresh(s);
+		notify(s, 'started');
 		run(startAt(s, s.anchorAbsMs));
 		editCard(s);
 		// Voice state changes during the join were ignored ('starting'), and none may follow.
@@ -1612,7 +1642,13 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 		forget,
 		repost,
 		noteCardUpdated,
-		shutdown
+		shutdown,
+		onChange: (fn) => {
+			changeListeners.add(fn);
+			return () => changeListeners.delete(fn);
+		},
+		setTextInfo: (fn) => { textInfo = typeof fn === 'function' ? fn : null; },
+		refreshCard: (s) => { if (s && sessions.get(s.guildId) === s) requestCardEdit(s); }
 	};
 }
 

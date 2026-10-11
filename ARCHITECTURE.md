@@ -14,7 +14,7 @@ This is a Discord bot that wraps a Plex Media Server, ties in optional integrati
 | `app/`          | Process lifecycle, Discord client setup, the `Bot` class, message dispatch. |
 | `commands/`     | One file per Discord command. Auto-loaded by `commands/index.js`.            |
 | `commands/playlist.js/` | Sub-commands of `!playlist` (it's a directory named `*.js` — see Quirks). |
-| `commands/book.js/` | `/book` and `!book`: `index.js` holds the slash spec, autocomplete and dispatch, and requires `play.js`, `controls.js`, `library.js` and `admin.js` by name. Same directory trick as `playlist.js/`. |
+| `commands/book.js/` | `/book` and `!book`: `index.js` holds the slash spec, autocomplete and dispatch, and requires `play.js`, `controls.js`, `library.js`, `admin.js` and `text.js` (the read-along's `text` and `link`) by name. Same directory trick as `playlist.js/`. |
 | `helpers/`      | Shared utilities: API clients, Gemini wrapper, logger, health check, etc.    |
 | `config/`       | Config files (`config.js`, `keys.js`, `plex.js`) + `.example.js` templates.  |
 | `lang/`         | Localized message strings + the `String.prototype.format` polyfill.          |
@@ -36,10 +36,11 @@ When you run `node index.js`:
 5. Calls `require('./music.js')(client, bot)`. This:
    - Requires `commands/` (the loader runs and logs `Loaded N commands (M aliases)`).
    - Creates the audiobook director, `bot.books = createBookDirector({ client, bot })` (`helpers/bookEngine.js`). This happens at module init rather than on ready, because the music gate and `utils.stop()`'s shutdown both need it before the gateway is up. It reads nothing and opens nothing until a book is played.
+   - Creates the read-along, `bot.readAlong = createReadAlong({ client, books: bot.books })` (`helpers/readAlong.js`), which subscribes to the director's change events and supplies the card's 📖. A failure there is logged and leaves it `null`, so no card shows 📖. It reads nothing until a book starts.
    - Registers the `clientReady` and `messageCreate` event handlers.
 6. Calls `client.login(keys.botToken)`. Discord login is async, so the next two steps run in the same tick, before the gateway answers.
 7. Installs `uncaughtException` / `unhandledRejection` handlers (log only, don't exit).
-8. Installs `SIGTERM` / `SIGINT` handlers for graceful shutdown. `utils.stop()` calls `bot.books.shutdown()` first, before the music queue is emptied: book saves are synchronous, and `process.exit` follows straight after.
+8. Installs `SIGTERM` / `SIGINT` handlers for graceful shutdown. `utils.stop()` calls `bot.books.shutdown()` first, before the music queue is emptied: book saves are synchronous, and `process.exit` follows straight after. `bot.readAlong.shutdown()` comes next, after the books; it also kills any running EPUB parse child. Each session's end queues the edit that turns its open read-along DM page into a stub. On `!restart` that edit goes out; on `SIGINT` or `SIGTERM` the process exits first, so the page keeps its text and buttons until it is clicked, and the click answers that the book is no longer playing (or adopts the page into a book playing then).
 9. On `clientReady` (Discord ready), `app/music.js` calls `startHealthMonitor(client)`, which runs an initial health check and schedules re-checks every 15 minutes.
 10. Still on `clientReady`, `app/music.js` calls `startEventServer(client)` (`helpers/eventServer.js`). When `config.eventServerEnabled` is true it opens a localhost-only HTTP listener that relays Kometa run + Playnite game-launch pushes to the broadcast channel; otherwise it logs "disabled" and no-ops.
 11. Then `app/music.js` calls `startGamePresence(client)` (`helpers/gamePresence.js`). When `config.gamePresenceEnabled` is true it subscribes to `presenceUpdate` and broadcasts games the owner starts (detected via Discord activity). No-op otherwise. The `GuildPresences` intent it needs is added in `app/utils.js` only when the flag is on, so the default keeps login working.
@@ -132,7 +133,7 @@ Two signature styles coexist in the codebase:
 | `interactionAdapter.js`    | Wraps a Discord `ChatInputCommandInteraction` to look like a `Message` so existing command process functions work unchanged against slash commands. First `.reply()` / `.channel.send()` routes through `interaction.editReply()`; subsequent calls use the real channel. See "Slash commands" below. |
 | `aiErrorHandler.js`        | `handleAIError(err, statusMsg, defaultMsg)` for AI commands; replies with an inferred reason (503 / 429 / bad key / 404 / network / SyntaxError) or the command-specific fallback. Also exports `inferReason(err)` as a pure function. |
 | `clueCache.js`             | Persistent XML clue cache for AI minigames. `getOrGenerate(media, minigame, fn, model)` checks `data/clues/<slug>-<year>.xml` first; on miss runs `fn` and appends the result as a new variant. Multiple variants per (media, minigame) accumulate; lookups pick one at random. See "AI clue cache" section below. |
-| `commandLog.js`            | Structured JSONL record of every command invocation, its outcome and the bot's replies, in `data/logs/commands-<date>.jsonl`. Secrets redacted, kept indefinitely, `npm run logs` reads it back. |
+| `commandLog.js`            | Structured JSONL record of every command invocation, its outcome and the bot's replies, in `data/logs/commands-<date>.jsonl`. Secrets redacted, kept indefinitely, `npm run logs` reads it back. A payload carrying a read-along page (any `bookpage:` button) is recorded as `[book text not logged]`. |
 | `selection.js`             | The probabilistic bits of queue assembly: `discoveryQuota()` (stochastic rounding, so a percentage setting behaves at small queue sizes) and `weightedShuffle()` (stronger tag matches surface near the front without being guaranteed a slot). Pure, with an injectable RNG. |
 | `plexTags.js`              | Plex mood/genre/style vocabulary + server-side tag filtering. Plex never returns Mood/Style inline on a track in a *section listing* — only `/library/metadata/<key>` carries them — so tag search must go through the section's tag filters. Exports `getVocabulary()`, `fetchTracksByTags()`, `fetchTracksByRatingKeys()`, `countTracks()`, `sampleRandomTracks()`. |
 | `tagSidecar.js`            | Local store of **approved, AI-inferred** track tags filling the gap where Plex has none (~70% of tracks here). Plex always wins per dimension; an inferred dimension Plex later fills is marked `supersededAt` rather than deleted. Atomic writes, persisted pending proposals, and the `discoveryPercent` / `repeatMemory` tuning. Writes `data/inferred_tags.json`. Never writes to Plex. |
@@ -174,9 +175,18 @@ Two signature styles coexist in the codebase:
 | `bookAudio.js`             | The ffmpeg arguments for a book part (input `-ss` before `-i`, reconnect flags, `atempo` off 1x, Ogg Opus out) and the environment with every proxy variable removed. Pure. |
 | `partProxy.js`             | Loopback HTTP proxy between ffmpeg and Plex, so the Plex token never appears on a command line. `127.0.0.1`, random port, a 128-bit path secret per boot, GET and HEAD of `/library/parts/...` only, Host header checked. `probe(partKey)` checks a key with a one-byte range request. Started lazily on the first book play. |
 | `bookResource.js`          | One part as an `AudioResource`: spawns ffmpeg-static with the cleaned environment, wraps its stdout as `StreamType.OggOpus`, and SIGKILLs it when voice closes the stream. A spawn failure logs, records `book-stream-error`, and ends the stream. |
-| `bookEngine.js`            | The audiobook player. `createBookDirector({ client, bot })` returns `bot.books`: one session per guild with its own AudioPlayer and voice join, controls, saves, sleep and chapter timers, the runPlayback gate (`blocksMusic`), the generic-command delegation (`routeGeneric`), the card lifecycle and `shutdown()`. Every dependency is injectable for tests. See "Audiobooks and podcasts". |
-| `bookCard.js`              | The public book card as raw embed and component JSON, rendered from the engine's `view()`. Pure, no discord.js, so a renderer fault cannot reach playback. |
+| `bookEngine.js`            | The audiobook player. `createBookDirector({ client, bot })` returns `bot.books`: one session per guild with its own AudioPlayer and voice join, controls, saves, sleep and chapter timers, the runPlayback gate (`blocksMusic`), the generic-command delegation (`routeGeneric`), the card lifecycle and `shutdown()`. Every dependency is injectable for tests. Three hooks serve the read-along: `onChange(fn)`, `setTextInfo(fn)` and `refreshCard(s)`. See "Audiobooks and podcasts". |
+| `bookCard.js`              | The public book card as raw embed and component JSON, rendered from the engine's `view()`. Pure, no discord.js, so a renderer fault cannot reach playback. Shows 📖 Text when `view().text.button` is set, and never any book text. |
 | `bookButtons.js`           | The `book:*` button namespace. A control click runs the engine action and answers with `interaction.update`, which acks and edits the card in one call. A stale card (its session id is not the live one) has its buttons stripped. |
+| `epubText.js`              | Pure EPUB to text, no packages: a zip reader that works from a file descriptor and reads only the entries it needs, the OPF, the nav or NCX table of contents, HTML to paragraphs, the DRM gate (font obfuscation passes), sections split at 20,000 words, and the byte-offset index of the cache. Runs only inside the parse child. |
+| `epubTextWorker.js`        | The parse child and its queue. Forks itself with `--epub-text-child` and sets the child to Below Normal priority; one parse at a time, single flight per cache base, 120 s timeout. The child writes `<base>.txt`, then `<base>.json` (or `<base>.fail.json`), and sends back counts only. `shutdown()` leaves the queue usable for `!restart`. |
+| `readAlongModel.js`        | Pure: chapter keys from track titles and table-of-contents labels, front, body and back matter, the anchor map from audio time to word and back, pages of about 180 words, and the "approximate" labels. |
+| `bookTextStore.js`         | The read-along's three small stores in `data/book_text/`: `links.json` (`!book link`), `readers.json` (who has the read-along on) and `works.json` (which cache files each work uses). Looked up by work id, then by alias. |
+| `calibreClient.js`         | GET-only client for Calibre's content server: library info, search, book metadata, and the EPUB download streamed to a file. Answers Digest logins, and Basic ones over https only; refuses redirects and any URL with a login in it, caps a download at 300 MB, and names only `host:port` in its errors. |
+| `bookTextSource.js`        | Finds a work's ebook (a link, then Calibre, then EPUBs beside the audio), fingerprints it, keeps the content-addressed cache, and hands out text handles that read one section at a time. Remembers failures (stable ones until a catalog rebuild or `!book link`, transient ones for 30 s), serves a cached copy while Calibre is closed, re-checks in the background, and runs `!book link` and its report. |
+| `readAlongCard.js`         | Pure: the DM and ephemeral page payloads, the no-text page and the stubs a page turns into. Every payload with book text carries the `bookpage:` row the command log redacts by, and no other payload does. |
+| `readAlong.js`             | The pager: one DM page per listener, edited as the narration advances and never skipping a page; the 📖 ephemeral; `!book text` on, off, now and its status reply; the one closed-DMs line per session. Hooks into the engine through `onChange` and `setTextInfo`. |
+| `readAlongButtons.js`      | The `bookread:<sid>` (📖) and `bookpage:*` buttons. Acknowledges each click at once; 📖 answers the listener, and anyone in the book's voice channel at the time of the click. |
 | `processPriority.js`       | Sets the bot process to `above_normal` (default) or `normal` priority from `config.processPriority`, and again whenever `/config` changes it. Never throws; a refused raise warns once. |
 | `voiceHealth.js`           | The opt-in voice-health sampler behind `!voicehealth`: per-packet send gaps, source underruns, connection and networking changes, event-loop delay, CPU, memory and GC, rolled into one record per active minute in `data/logs/voice-<date>.jsonl`. Every hook returns on its first line while `config.voiceHealthEnabled` is off. |
 | `voiceHealthFormat.js`     | Renders a `voiceHealth.snapshot()` as one Discord message inside 2,000 characters, dropping the oldest minutes first. |
@@ -189,7 +199,7 @@ Three files in `config/`. The two with secrets are **gitignored**; templates are
 
 | File                   | Tracked? | What it holds                                                              |
 | ---------------------- | -------- | -------------------------------------------------------------------------- |
-| `config/config.js`     | yes      | Feature flags + display strings: `commandPrefix`, `listenChannel`, `playlistsDir`, `serverName`, `ownerId`, `launchRoleId`, `playniteEnabled`, `tautulliEnabled` + `tautulliApiKey` + `tautulliUrl`, `language`, `youtube_quality`, the broadcast block (`broadcastChannelId`, `eventServerEnabled`, `eventServerPort`, `eventServerToken`, `broadcastKometa`, `broadcastGameLaunch`), `archipelagoEnabled` + `archipelagoBatchSeconds`, `archipelagoInstallDir` + `archipelagoPython` for `!ap next`, the six audiobook settings and the two voice settings (tables below). |
+| `config/config.js`     | yes      | Feature flags + display strings: `commandPrefix`, `listenChannel`, `playlistsDir`, `serverName`, `ownerId`, `launchRoleId`, `playniteEnabled`, `tautulliEnabled` + `tautulliApiKey` + `tautulliUrl`, `language`, `youtube_quality`, the broadcast block (`broadcastChannelId`, `eventServerEnabled`, `eventServerPort`, `eventServerToken`, `broadcastKometa`, `broadcastGameLaunch`), `archipelagoEnabled` + `archipelagoBatchSeconds`, `archipelagoInstallDir` + `archipelagoPython` for `!ap next`, the six audiobook settings, the six read-along settings (four of them for Calibre) and the two voice settings (tables below). |
 | `config/keys.js`       | **no**   | `botToken` (Discord) + `geminiApiKey` (Gemini). Copy from `keys.example.js`. |
 | `config/plex.js`       | **no**   | Plex `hostname`, `port`, `https`, `token` (the bot's default user), `homeOwnerToken` (optional, only for cross-account playlist features), `managedUser`, `options`. Copy from `plex.example.js`. |
 
@@ -215,6 +225,19 @@ out-of-range value cannot break playback.
 | `audiobookIdleLeaveMinutes` | int 1–180 | `10` | How long a paused or abandoned book keeps the voice channel. |
 | `audiobookResumeRewindSeconds` | int 0–120 | `10` | Rewind on resume after more than 5 minutes away, three times this after a day. 0 resumes exactly. |
 
+**Read-along settings.** The first two are under `/config` → Audiobooks, the four Calibre ones
+under Integrations. All are read at call time, and the Calibre client is rebuilt whenever any of
+the four Calibre values changes, so none needs a restart.
+
+| Key | Type | Default | What it does |
+| --- | ---- | ------- | ------------ |
+| `audiobookTextEnabled` | bool | `true` | `!book text`, `!book link` and the card's 📖. Nothing is downloaded or parsed until someone uses it; the only background work is the read-only probe when a book starts (a Calibre search and a folder listing). Off: the commands refuse, no card shows 📖, and an open DM page says so on its next event. |
+| `audiobookTextSidecars` | bool | `true` | Also look for `.epub` files in the folders that hold a book's audio. |
+| `calibreUrl` | string | `'http://127.0.0.1:8080'` | Calibre's content server. Blank turns Calibre off. Must be http(s); a URL with a login in it is refused by `/config` and again by the client, and the refusal never repeats the value. |
+| `calibreLibraryId` | string | `''` | Blank uses the server's default library (`/ajax/library-info`). |
+| `calibreUsername` | string | `''` | Only when Calibre's "Require username and password" is on. |
+| `calibrePassword` | string, secret | `''` | Masked in `/config` like `tautulliApiKey`, and redacted from the command log. |
+
 **Voice settings** (`/config` → Voice). Both apply at once through `configStore.onChange`.
 
 | Key | Type | Default | What it does |
@@ -226,7 +249,10 @@ The constants behind the audiobook engine are code, not settings: the 5 s natura
 retry, three early ends in 2 minutes before parking, the 20 s Buffering watchdog, the proxy's 15 s
 header timeout and 5 s probe timeout, the hourly library check and bookmark backup, the 120 s
 "Mark finished" window, the 24 h catalog age, the 120 s card refresh, 1.5 s card-edit coalescing
-and the 30 s gate-explanation limit.
+and the 30 s gate-explanation limit. So are the read-along's: 180-word pages of at most 1,400
+characters, 12 s between page turns, 1.5 s jump coalescing, 1.5 s before a DM says "Preparing",
+the 30 s transient memo, the 10-minute background re-check, the 120 s parse timeout, and the
+300 MB EPUB limit.
 
 ---
 
@@ -267,20 +293,33 @@ All persistent runtime state lives under `data/`. The directory is created if mi
 | `data/book_bookmarks.json.bak`    | `helpers/jsonStore.js` (hourly copy of the bookmarks, written only from a file that decodes; loaded in place of a damaged main file) |
 | `data/book_overrides.json`        | **You.** Hand-edited catalog corrections, read only by `helpers/bookCatalogStore.js`. Never written by the bot. Format under "Audiobooks and podcasts". |
 | `data/logs/voice-<date>.jsonl`    | `helpers/voiceHealth.js` (only while `voiceHealthEnabled` is on) |
+| `data/book_text/cache/<base>.txt`, `.json` | `helpers/epubTextWorker.js` (the parse child): an ebook's extracted text and its section index, named by a hash of the source fingerprint. Read by `helpers/bookTextSource.js`, whose start-up sweep deletes files no work points at |
+| `data/book_text/cache/<base>.fail.json` | `helpers/epubTextWorker.js` (an ebook that could not be read: DRM, damaged, too large; deleted after 30 days or by `!book link`) |
+| `data/book_text/cache/<base>.download.tmp` | `helpers/calibreClient.js` (a Calibre download in flight, deleted after its parse) |
+| `data/book_text/links.json`       | `helpers/bookTextStore.js` (`!book link`: work id to Calibre id, EPUB path or off) |
+| `data/book_text/readers.json`     | `helpers/bookTextStore.js` (the per-user read-along preference: who ran `!book text on`, by Discord user id, kept across books and restarts until `!book text off`) |
+| `data/book_text/works.json`       | `helpers/bookTextStore.js` (which cache files each work uses, and the source they came from) |
 
 All four `book_*` files and the `.bak` are gitignored: the bookmarks are keyed by Discord user
-id, and the catalog and overrides describe your library. Each has an env override, which the
-tests set to a pid-suffixed temp path before the first require:
+id, and the catalog and overrides describe your library. `data/book_text/` is gitignored as a
+whole: it holds text extracted from your own ebooks, user ids and local paths. Each has an env
+override, which the tests set to a pid-suffixed temp path before the first require:
 
 | Env var | Default path |
 | ------- | ------------ |
 | `PLEXBOT_BOOK_CATALOG_FILE` | `data/book_catalog.json` |
 | `PLEXBOT_BOOK_BOOKMARKS_FILE` | `data/book_bookmarks.json` (the backup is always `<that>.bak`) |
 | `PLEXBOT_BOOK_OVERRIDES_FILE` | `data/book_overrides.json` |
+| `PLEXBOT_BOOK_TEXT_DIR` | `data/book_text` (the cache goes in its `cache/` folder) |
+| `PLEXBOT_BOOK_TEXT_LINKS_FILE` | `data/book_text/links.json` |
+| `PLEXBOT_BOOK_TEXT_READERS_FILE` | `data/book_text/readers.json` |
+| `PLEXBOT_BOOK_TEXT_WORKS_FILE` | `data/book_text/works.json` |
 
 Under the test runner without its env var, each book store is memory-only and the overrides
 file is never read, the same rule as every other `jsonStore` store, so the bot tests (`app/bot.js`
 now asks the catalog whether a track is a book) never see the real catalog or the real overrides.
+The read-along's text source goes further: under the runner without `PLEXBOT_BOOK_TEXT_DIR` it
+refuses to read or write any cache at all and reports the read-along as off.
 Outside the runner the stores write to their real
 paths, so an ad-hoc `node -e` check against them should set the env vars first.
 
@@ -1647,8 +1686,9 @@ interaction reply, so it stays editable after the 15-minute interaction token ex
 edited on every state change and every 120 s while playing, at most once per 1.5 s with a
 trailing edit. Row 1: previous chapter, back 30 s, Pause/Resume, forward 30 s, next chapter.
 Row 2: speed (cycles 1, 1.1, 1.25, 1.5, 1.75, 2), sleep (cycles off, 15, 30, 60 min, end of
-chapter), Stop. Every live-card custom id is `book:<action>:<sessionId>`; a click on a card from
-an earlier session gets its buttons stripped and an ephemeral "That card is from an earlier
+chapter), 📖 Text (`bookread:<sessionId>`, only when the read-along found an ebook; see "Read-along
+(Calibre and sidecar ebooks)"), Stop. Every other live-card custom id is
+`book:<action>:<sessionId>`; a click on one of those from an earlier session gets its buttons stripped and an ephemeral "That card is from an earlier
 session." The ended card carries `book:resume:<workId>`, `book:shelf` and, when the listener
 stopped within 120 s of the end, `book:finish:<workId>:<listenerUserId>` ("Mark finished",
 listener only; the user id is in the custom id because an ended card has no live session to say
@@ -1748,7 +1788,10 @@ Everything else is music, and the near misses of 2 h or more are listed by `/boo
 two narrations collide. Part order is natural sort; several numbered volumes poured into one
 folder are untangled by chapter numbers and marked low confidence, and a `partOrder` override is
 the fix. Sample clips under 5 minutes are dropped from playback but stay in the index, so they
-never reach music. `RULES_VERSION` (1 today) forces a rebuild when the rules change.
+never reach music. `RULES_VERSION` forces a rebuild when the rules change. It is 2 today: 2 added
+each work's `dirs` (the distinct folders of its part files) and `publisher` for the read-along, so
+the first start after that change rebuilds the catalog once (`bookLibrary.doCheck` returns `why:
+'rules changed'`).
 
 **Chapters.** Only mp4, m4a and m4b parts, and parts over 2 h, are asked for chapters
 (`/library/metadata/<rk>?includeChapters=1`), cached by `trackRatingKey:sizeBytes`. A list is kept
@@ -1949,6 +1992,277 @@ was not re-checked after the build, because the build had no Plex access.
 Never filtered: `helpers/plexResolve.js` (key repair), `!identify`'s global-mode ownership check,
 and the book suite itself.
 
+### Read-along (Calibre and sidecar ebooks)
+
+`!book text on` sends the listener the book's text in a DM: one message, edited in place and
+turned as the narration advances. The card's 📖 shows the same page privately to the listener, or to
+anyone in the book's voice channel. There
+is no speech recognition: the text follows the audio by chapter-named tracks and by reading pace,
+and every page says it is approximate. Built and unit-tested offline: 250 tests were added for it
+(228 in 11 new files, 22 in 8 existing ones), and `npm test` passed 1,462 of 1,462 in 93 files on
+2026-10-10. Calibre is always a fake in the tests (a local `http.createServer` in the client's own
+tests, an injected object elsewhere), and every ebook is generated. **It has not met a live Discord, a live Calibre or a real ebook through the bot yet**;
+Phase 9 of `BUGTESTING.md` is that pass.
+
+On the reference library 5 of 21 works have an ebook (179 of 473 hours), all dramatized editions:
+two in Calibre and three as EPUBs beside their audio.
+
+**Where the text comes from** (`helpers/bookTextSource.js`), first hit wins:
+
+1. A link the owner set with `!book link`: a Calibre id (an ISBN is resolved to one), an EPUB
+   path, or `off`.
+2. The pointer left by the last successful open (`data/book_text/works.json`), re-checked against
+   its own source.
+3. Calibre's content server, when `calibreUrl` is set. GET only, five endpoints:
+   `/ajax/library-info`, `/ajax/search/<lib>`, `/ajax/books/<lib>`, `/ajax/book/<id>/<lib>` and
+   `/get/EPUB/<id>/<lib>`. It searches by the author's surname and reads the hits in one batch. A
+   book with an EPUB is accepted when its title scores 0.8 or more (Jaccard of the significant
+   words), or when its series words and series index match the work's series and sequence and the
+   author matches. The Final Empire reaches Calibre #299, titled "Mistborn" there, through the
+   series rule, because the catalog files it as Mistborn #1. Two equal best scores are `ambiguous`,
+   and nothing is linked.
+4. EPUBs in the folders that hold the work's audio (`audiobookTextSidecars`), read
+   non-recursively from `work.dirs`. Each file name is scored against the title with the series
+   words, numbers and stop words removed; 0.6 or more, and unique, wins. Words of Radiance's folders
+   hold the book (score 1.0) and a Pocket Companion to two books (about 0.3), and only the book is
+   taken. The same file in two part folders counts once.
+
+Calibre comes before the sidecars because the Calibre copy is the one the user curates.
+
+**The trap: `part.file` is a basename.** The catalog kept only file names, and `folderKey` is a
+grouping key that need not exist on disk. Rhythm of War's EPUB sits in its `part 1/` and `part 3/`
+folders, which no guess from the key reaches. The fix: `buildCatalog` records each work's
+distinct part folders as `work.dirs`, and its `publisher` apart from `edition` (which holds the
+narrator's name when there is one, and so hid GraphicAudio from the "dramatized" label).
+`RULES_VERSION` went to 2 for it. Every source entry point re-reads `catalog().work(id)`, so a
+session that started before the rebuild still sees the new fields.
+
+**What is remembered, and for how long.**
+
+- Stable failures (`no-ebook`, `ambiguous`, `drm`, `parse-error`, `too-large`, `off`) are kept in
+  memory until the catalog is rebuilt or `!book link` touches the work.
+- Transient ones (Calibre unreachable, login refused, Calibre off, a bad URL, a timeout, a crashed
+  parse) are kept for 30 s.
+- Only background callers (the card's probe) honour that memo. Anything a person does
+  (`!book text`, 📖, a page button) asks again, so "open Calibre and try again" works at once.
+- With Calibre closed the answer is never "no ebook", only "Calibre isn't answering", and a text
+  read earlier is served from its cache, marked stale.
+- An open text handle is returned at once and re-checked in the background every 10 minutes; a
+  changed ebook parses into new files and is swapped in afterwards (`onChange`). After a restart a
+  valid cache pointer is served the same way, so the first page never waits on Calibre's 5 s
+  metadata timeout.
+
+**The content-addressed cache** (`data/book_text/cache/`). Files are named
+`sha1(extractor version + '|' + fingerprint)`, cut to 16 hex characters; the work plays no part
+in the name:
+
+- `<base>.txt`: the text, sections in reading order.
+- `<base>.json`: the index (each section's label, word count and byte range), written after the
+  `.txt`, so it marks a complete pair.
+- `<base>.fail.json`: a parse that failed because of the file (DRM, damaged, too large). A
+  known-bad 115 MB file is then not re-read after every restart; `!book link` deletes it.
+- `<base>.download.tmp`: a Calibre download in flight, deleted after its parse.
+
+A Calibre fingerprint is `calibre:<library>:<id>:<epub size>:<epub mtime>`, from the book's
+`format_metadata.epub`; a file's is `file:<path>:<size>:<mtimeMs>`. **The trap: Calibre's
+`last_modified` moves on every tag, rating or cover edit**, which would re-download and re-parse
+an unchanged EPUB, and the downloaded size is no fingerprint either, because Calibre embeds its
+metadata on the way out (3,801,114 bytes served for an EPUB stored at 3,801,014). The EPUB's own
+size and mtime move only when the file does. What follows from content addressing, all intended:
+a re-parse writes new files while a page opened earlier keeps reading its own; two narrations
+linked to one ebook share one parse and one pair of files; which files a work uses is only a
+pointer in `works.json`. Unreferenced files are deleted by a sweep that each source runs once,
+before it queues its first parse, so it never deletes under a handle that source opened.
+`!restart` builds a new source in the same process while the old one's download or parse may
+still be running, so downloads and parses in flight are tracked per cache directory for the whole
+process: the sweep skips any base with one, and the new source waits on it instead of starting a
+second download to the same temp file. Fail records go after 30 days.
+
+**Parsing in a Below Normal child** (`helpers/epubText.js`, `helpers/epubTextWorker.js`). The
+EPUB reader is in-house, with no new package. It works from a file descriptor: the end record,
+then the central directory, then only the entries it needs, so a 50 MB stored image is never read
+(the recording-fs test reads under 64 KB of that book in total). DEFLATE output is capped at 64 MB
+per entry and 128 MB for all the documents a parse reads together, and the extracted text at
+32 MB, counted as each document is read. A book over any of these is refused as too large with a
+fail record. Checking the text only once every section was in memory let a 5 MB EPUB of 30
+highly compressible 36 MB chapters run the child out of memory after 20–28 s, which counted as
+a crash and was retried on every open. Markup is stripped by `indexOf` scans, and the remaining
+regexes only see text up to the last `>`: a lazy regex rescans to the end of the document from
+every opener with no close, and a 3 KB EPUB of 300,000 unclosed `<!--` held the child at full CPU
+until its 120 s timeout. It now parses in 237 ms. The table of contents comes from the
+nav, else the NCX, else the spine; sections over 20,000 words are split at paragraphs. An EPUB
+with `META-INF/rights.xml`, `sinf.xml`, or an `encryption.xml` naming anything other than font
+obfuscation is refused as DRM; Oathbringer's font-only obfuscation passes.
+
+The parse runs in `child_process.fork(helpers/epubTextWorker.js, ['--epub-text-child'])` with
+`--max-old-space-size=768`, one at a time, and the bot sets the child to
+`PRIORITY_BELOW_NORMAL` straight after the fork. The child writes the files and sends back
+counts only, so the main thread never holds the book text during a parse. A parse that runs past
+120 s is killed; `shutdown()` kills the running child, fails the queued jobs and leaves the queue
+usable for `!restart`.
+
+**The trap: a worker thread is the wrong kind of off-thread here.** Process Lasso's ProBalance
+demotes whichever *process* is busy. A worker thread at full CPU makes the bot's own `node.exe`
+the busy process and drags its 20 ms voice timer down with it. A child process is demoted on its
+own, and the bot demotes it first.
+
+Measured on a synthetic 114.5 MB EPUB (five 23 MB images, half stored and half deflated, and 120
+chapters of 3,000 words), two runs each:
+
+| Run | Wall | Max event-loop delay | Longest synchronous block |
+| --- | ---- | -------------------- | ------------------------- |
+| Idle baseline | 2,000 ms | 5.3 ms | 4.7 ms |
+| `epubTextWorker.parseEpub` | 242–275 ms | 5.1–6.5 ms | 24.2–25.3 ms |
+| `bookTextSource.open` of a sidecar, first time | 261–279 ms | 17.0–18.4 ms | 15.7–17.4 ms |
+| Reading the largest section | 2–4 ms | | 0.5 ms |
+| Open after a restart (cache hit) | 3–5 ms | | 0.5–1.0 ms |
+
+The child parsed the book in 118–151 ms. The one block over 20 ms is `fork()` itself, which is
+synchronous on Windows: 21.7 ms on the first call, 10.7–11.6 ms after. It happens once per first
+parse of an ebook, never per page, and was accepted. In the pager, paginating a 20,000-word
+section takes about 4.7 ms (a typical chapter under 1 ms) and building the anchor map 3–4.5 ms
+cold for an 83-part work. `test/readAlongIntegration.test.js` keeps this true in `npm test`: it
+runs a 50 MB EPUB through the production wiring, from `!book text on` to the first DM page, up to
+three times as separate first parses, and fails when every attempt stalls the event loop for 50 ms
+or more (contention from the other test files can cause a single spike). In one full-suite run, with every test file
+competing for the CPU, the longest stall was 42.8 ms.
+
+**Lining the text up with the audio** (`helpers/readAlongModel.js`, pure).
+
+- Track titles give chapter keys: "Chapter 12", "18 Chatper 12" (keyword typos within an edit
+  distance of 1, or 2 for "chapter"), "Chapter Twelve", "Chapter XII", "Interlude I-4",
+  "Prologue", "Epilogue", "The Way of Kings (Grahpic Audio) - Chapter 44". A leading number is a
+  track number, and "Part 01" or "Hour 3" is never a key. Table-of-contents labels give the same
+  keys.
+- Front and back matter (cover, contents, acknowledgements, a next-book preview with its own
+  "Chapter One") lie outside the body. "Ars Arcanum", "Endnote", "Postscript" and "Afterword"
+  join the body only when a track performs them.
+- Anchors: each chapter-named track's start and end pin to its section's first and last word, and
+  consecutive tracks with the same key ("Chapter 12", "Chapter 12 (cont.)") form one span. Intro,
+  outro and credits tracks are flat: the text does not move. Between anchors the position is
+  interpolated by word count. Anchors out of order are dropped (the longest chain that never goes
+  back in the text is kept) and listed in `map.dropped`.
+- Omnibus books restart their chapter numbers, so "Chapter 01" alone would match the first book's
+  chapter 1 every time. When the track titles name at least two books ("Book 2 Title - Chapter
+  01") and the TOC's chapter numbers restart under a new heading, recorded books pair with
+  ebook books by number, a title match moving the pairing on (an ebook that lacks a book), and each
+  chapter matches only inside its own book. A heading section that holds a chapter's worth of text
+  before "2" is that book's chapter 1, and a recorded book the ebook lacks is cut out of the time
+  axis like an intro. Only such maps carry `map.books`; every other work's map is unchanged.
+
+So the map is chapter-level where tracks are named after chapters, and estimated from pace across
+hour-split stretches. Measured on The Way of Kings: 70 of its 83 tracks are named after chapters
+(78% of the running time), and inside such a track positioning by proportion is off by about ±9%,
+about 3 minutes in a 30-minute chapter, because narration ran 140–197 words a minute from chapter
+to chapter (median 173). Across hour splits the whole-work pace is off by 11.7 minutes on average
+and 19.8 at worst. The page never prints a number it cannot back: the footer says "≈
+Approximate" and "chapter-level" or "estimated from pace", and "dramatized edition" when the
+publisher, edition or narrator names GraphicAudio, a dramatization or a full cast, because a
+dramatized script does not match the book word for word.
+
+**Following** (`helpers/readAlong.js`). A page is about 180 words (1,400 characters at most), about
+a minute of narration at 1x.
+
+- The engine reports `started`, `moved` (seek, chapter, speed, part advance, resume, a parked
+  jump), `paused`, `audible` and `ended` through `bot.books.onChange`. Listeners only record: the
+  engine notifies from inside `startAt` and `stop`, so the work happens later on each reader's own
+  promise chain. Between events the pager costs one timer per reader.
+- A timed turn fires when the narration should reach the word after the page on screen, and shows
+  the next page in reading order, never the estimate itself. **Following never skips a page.**
+  Turns are at least 12 s apart; a page lasts about 60 s at 1x and 20 s at 3x, so the gap only
+  spaces out very short pages (a 20-word chapter tail), which then catch up one page per turn. A
+  test plays two sections at 1x, 1.5x, 2x and 3x and sees every page once, in order.
+- An engine move within two pages steps at most one page. Anything further is a deliberate jump,
+  coalesced to one edit per 1.5 s, that goes straight to the estimate.
+- ◀ and ▶ browse and stop following; 📍 Now follows again. ↪ Play from here sends the book to the
+  page's first word with a `goto`, after a `resume` when paused (a parked `goto` only moves the
+  place, and the `goto`'s own start supersedes the resume's rewind). It pins that page until the
+  narration passes its end, so rounding never puts the previous page back up. The pin, the page
+  and the follow flag are set before the engine call, because `startAt` notifies synchronously
+  inside it. ✖ Off turns the preference off.
+- Paused, the page says "⏸ paused" and no timer runs. The session ending edits the page into a
+  stub with no text and no buttons.
+- `!book text now` sends a fresh page at the bottom of the DM and turns the old one into "📖 This
+  page moved ↓". A click on an older page turns only that message into the same stub, so two pages
+  never fight over one reader.
+- Button ids are `bookpage:<act>:<d|e>:<session id>:<tag>:<first word, base 36>`, where the tag is
+  the first 4 hex characters of the cache base. A click whose tag no longer matches (the ebook was
+  re-parsed or relinked since) re-renders at the narration with "The text was updated". The
+  no-text page's ids end in `:n`, and their word is where the text picks up: ▶ there shows that
+  page and ◀ the one before it, or the last page when the narrated text has ended.
+
+**Opening a page.** `!book text on` stores the preference per user in
+`data/book_text/readers.json`, across books, sessions and restarts, until `!book text off` or ✖.
+With a book playing the page opens at once; otherwise the next book opens one. On each `started`
+event a background probe (a Calibre search and a folder listing; no download, no parse) decides
+the card's 📖: shown only for `ready` (a cached text) or `available` (a source found, not read
+yet), so the 16 works with no ebook never show a button that leads nowhere. When the probe finds
+one and the listener's preference is on, the DM page opens by itself. A text that is not cached
+gets 1.5 s; after that the DM says "⏳ Preparing the text of `<title>` (first time only)…" and is
+edited into the page when the parse finishes.
+
+**Privacy.** Book text goes to the listener, and to whoever is in the book's voice channel and
+presses 📖, and nowhere else.
+
+- DMs and ephemeral replies only. The card carries the 📖 button and never any text.
+- 📖 is for the listener anywhere and for anyone whose current voice channel is the book's
+  (`s.voiceChannelId`, which follows the bot when it is moved). Anyone else gets an ephemeral
+  "🔊 Join <#channel> to read along." with no ping and no text, and the text is never opened for
+  them. `readAlong.readerAccess` decides it, from the guild's voice-state cache (what the gateway
+  keeps current) with the interaction member's own `voice` as the fallback, since an uncached
+  guild hands over a raw API member with none.
+- The check runs again on every ◀ ▶ 📍 of an ephemeral page (`onEphemeralButton`), so a member who
+  left the voice channel gets their page replaced by the same refusal and no new text.
+- Someone other than the listener gets a page rendered with `isListener: false`: ◀ ▶ 📍 and no ↪
+  or 📩. A forged ↪ or 📩 from them is refused by the pager before it reaches anything; the engine's
+  `canControl` refuses a goto from anyone but the listener as well. DM follow-along
+  (`!book text on`, automatic DM pages, `bookpage:*:d:*`) stays the listener's alone.
+- DMs closed (Discord error 50007): `!book text on` answers with the reason and points at 📖. On an
+  automatic open the bot posts one line in the card's channel instead, at most once per session,
+  with no text and `allowedMentions: { parse: [] }`.
+- **The trap: the command log records DMs.** The bot's own `messageCreate` recorder fires for DM
+  sends too, and kept 400 characters of content and 200 of each embed description. The fix is
+  central: `commandLog.summarise` records any payload carrying a `bookpage:` component as
+  `[book text not logged]`, and the renderer guarantees that every payload with text carries that
+  row (tested). `commandLog.payloadOfMessage` is the one function both `app/music.js` and the
+  integration test call, so the test runs the code that records a real DM send, on real discord.js
+  `Message` classes, with a positive control (the log is live and holds the placeholder) and a
+  negative one (an ordinary reply is kept verbatim).
+- Logger lines carry ids, codes, counts and timings only, for example `Read-along: read the ebook
+  for cache 5d9348fd5c994bbe: 4 sections, 1928 words in 17 ms.`
+- `!book link <book>` typed in a guild channel names Calibre ids and file basenames only, and
+  sends the full paths to the owner by DM.
+
+**Calibre and local files.**
+
+- GET only. The bot never writes to the Calibre library and never reads its folder or
+  `metadata.db`.
+- **The trap: `fetch` echoes credentials in a URL into its error message** ("Request cannot be
+  constructed from a URL that includes credentials: http://u:pw@…"). A `calibreUrl` with a login in
+  it is refused by `/config` and again by the client before any request, and no error names more
+  than `host:port`. The login goes in `calibreUsername` and `calibrePassword`. On a 401 the client
+  answers Digest (MD5 or SHA-256, `qop=auth`), and Basic only over https. Calibre itself asks for
+  Digest over plain HTTP and Basic only over https, so a Basic challenge over http is most likely
+  another program on a free port 8080 asking for the password in clear text; the client refuses
+  it without sending the login and says so. It refuses redirects, so credentials never follow one.
+- Downloads stream to a temp file and stop at 300 MB (the declared length, then the streamed
+  count) or 120 s; metadata calls time out after 5 s.
+- `!book link` refuses a typed network path before any `stat`: `\\host\share`, `//host/share`,
+  `\\?\` and `\\.\` paths, because touching a UNC path makes Windows open an SMB session to that
+  host and send the bot account's NTLM hash. The check reads the string only, so a mapped drive
+  letter or a link on a local drive that points at a share is followed like any local path;
+  telling those apart needs a native `GetDriveType` call. `ownerId` must be set: unlike `/book rescan`
+  there is no "anyone while it is blank" fallback, since the command reads files on this PC.
+
+**Engine and card seams.** The engine knows nothing about text. It gained `onChange(fn)`,
+`setTextInfo(fn)` (its result becomes `view().text`, which `bookCard` reads for 📖) and
+`refreshCard(s)`. `bookread:<sessionId>` and `bookpage:*` are their own button namespaces, routed
+after `book:*` and before tag inference in `app/music.js`, so `bookButtons` never claims them.
+
+**Not built (phase 1 stops here):** speech recognition or manual sync marks (the map already
+accepts extra anchors), MOBI and AZW3, covers, a web reader, and a highlighted sentence that moves
+with the voice.
+
 ### Failure modes
 
 | Scenario | Handling |
@@ -1976,6 +2290,16 @@ and the book suite itself.
 | Old card clicked | buttons stripped, ephemeral note |
 | Autocomplete before a catalog exists | one explanatory choice; never calls Plex |
 | Two bot copies | the single-instance lock refuses the second; without it two engines would double-save |
+| Read-along: Calibre closed, text cached | the cached copy; `!book text` adds "(a cached copy: the source isn't answering)" |
+| Read-along: Calibre closed, nothing cached | "Calibre isn't answering. Open the Calibre app once…"; never "no ebook"; sidecars are still searched |
+| Read-along: Calibre asks for a login | "Calibre asked for a login; set calibreUsername and calibrePassword with `!config` → Integrations" |
+| Read-along: DRM, a damaged EPUB, over 300 MB | refused with the reason, a fail record, not re-read until the file changes or `!book link` |
+| Read-along: parse child hangs or crashes | killed at 120 s; reported as transient, so a person's retry runs at once and a background one after 30 s |
+| Read-along: DMs closed | the command says so and points at 📖; an automatic open posts one quiet line per session |
+| Read-along: the DM page deleted (10008) | reader dropped for that session, preference kept |
+| Read-along: an older DM page clicked | that message becomes "📖 This page moved ↓"; the current page is untouched |
+| Read-along: ebook re-parsed or relinked while a page is open | new cache files, old ones untouched; the open page re-renders at the narration with "The text was updated", and so does a click on a button drawn from the old text |
+| Read-along: `audiobookTextEnabled` turned off live | commands refuse, the next card edit drops 📖, open pages say so on their next event |
 
 **Not built (phase 2):** a "stop the music and start my book" takeover button, stashing and
 restoring the music queue, a sleep fade-out, "next in series", book volume (an ffmpeg `volume=`
@@ -2093,15 +2417,17 @@ swallow it.
 
 ## Testing
 
-`npm test` runs Node's built-in test runner (`node --test test/*.test.js`): 1,173 tests in 80 files on 2026-10-09, all passing, in about 25 s. They don't make network calls. Tests will fail if `config/keys.js` or `config/plex.js` are missing; copy them from the `.example.js` files first.
+`npm test` runs Node's built-in test runner (`node --test test/*.test.js`): 1,462 tests in 93 files on 2026-10-10, all passing, in about 30 s. They don't make network calls. Tests will fail if `config/keys.js` or `config/plex.js` are missing; copy them from the `.example.js` files first.
 
 Every test that touches a store or a log points it at a pid-suffixed `os.tmpdir()` path through its env var (`PLEXBOT_LOG_DIR`, `PLEXBOT_BOOK_CATALOG_FILE` and the rest) before the first require, and never writes `data/`. `test/bookResourceFfmpeg.test.js` runs the real ffmpeg-static through the real proxy on a generated 20 s WAV (about 1 s); the engine tests run a real `AudioPlayer` on injected Opus-silence resources, so they inject timers rather than mocking the global ones, which would freeze the player's 20 ms cycle.
+
+The read-along tests add `PLEXBOT_BOOK_TEXT_DIR` and its three `PLEXBOT_BOOK_TEXT_*_FILE` stores to that list. `test/epubTextWorker.test.js` and `test/readAlongIntegration.test.js` fork real parse children; every EPUB is generated by `test/helpers/epubFixture.js` from NATO-alphabet words, and Calibre is always a fake (a local `http.createServer` in `test/calibreClient.test.js`, an injected object elsewhere), never the real server.
 
 ---
 
 ## Quirks worth knowing
 
-- **`commands/playlist.js/` is a directory** with `.js` in its name, not a file. The auto-loader's regex (`/\.js$/`) matches the directory name, and Node resolves the `require()` to `commands/playlist.js/index.js`. Clever but surprising; rename later if it becomes confusing. `commands/book.js/` does the same, and its `index.js` requires its four subcommand files by name, so a stray file dropped in that directory never becomes a command.
+- **`commands/playlist.js/` is a directory** with `.js` in its name. The auto-loader's regex (`/\.js$/`) matches the directory name, and Node resolves the `require()` to `commands/playlist.js/index.js`. Clever but surprising; rename later if it becomes confusing. `commands/book.js/` does the same, and its `index.js` requires its five subcommand files by name, so a stray file dropped in that directory never becomes a command.
 - **The `Bot` class instantiates its own `PlexAPI`** in `app/bot.js`, separate from `helpers/plexClient.js`'s shared instance. Two TCP connection pools to the same Plex server. Legacy from before the helper existed; could be unified later.
 - **`iceName` was a typo** in the Bot class's PlexAPI options — fixed in this iteration to `deviceName`. The Bot now identifies itself correctly to Plex.
 - **`!youtube` works in two modes**: a URL plays directly; anything else hits `@distube/ytsr` for search and plays the top video result.
@@ -2181,6 +2507,12 @@ failed to spawn or its stream errored) and `book-save-failed` (a bookmark write 
 once per failure streak, with `Audiobook bookmarks are being saved again.` in the bot log on
 recovery).
 
+The read-along keeps book text out of both sinks. `commandLog.summarise` records any payload
+carrying a `bookpage:` component as `[book text not logged]`, which covers DM sends seen by the
+`messageCreate` recorder, ephemeral replies and button reports alike, and `calibrePassword` joins
+the redacted secrets. Its bot-log lines carry ids, codes, counts and timings only. See
+"Read-along (Calibre and sidecar ebooks)".
+
 Wiring lives in `app/music.js`. Invocations are logged in all three dispatch paths — prefix, slash
 and button. Output is captured once, in a `messageCreate` listener filtered to the bot's own
 messages, rather than at the couple of hundred call sites that produce it; each is correlated to
@@ -2230,6 +2562,8 @@ them as a transcript, with `--errors`, `--command=`, `--user=`, `--since=`, `--n
 | Audiobooks and podcasts          | `commands/book.js/`, the card's `book:*` buttons | `helpers/bookEngine.js` (player), `bookModel.js`, `bookmarks.js`, `bookCard.js`, `bookButtons.js` |
 | Audiobook catalog                | `helpers/bookLibrary.js` (Plex), `/book rescan` | `helpers/bookCatalog.js`, `bookCatalogStore.js`; `data/book_overrides.json` |
 | Book audio from Plex             | `helpers/bookResource.js`            | `helpers/partProxy.js`, `bookAudio.js`, ffmpeg-static         |
+| Read-along (book text in DMs)    | `commands/book.js/text.js` (`!book text`), the card's 📖 (`bookread:*`) | `helpers/readAlong.js` (pager), `readAlongModel.js`, `readAlongCard.js`, `readAlongButtons.js`; hooks in `bookEngine.js` |
+| Ebook sources and the text cache | `!book link`, `helpers/bookTextSource.js` | `helpers/calibreClient.js`, `bookTextStore.js`, `epubTextWorker.js` (parse child), `epubText.js`; `data/book_text/` |
 | Books kept out of music          | every music picker, search and Hitster | `helpers/longForm.js`; the Plex fragment in `plexTags.js` and `commands/list.js` |
 | Music and books sharing voice    | `app/bot.js` `runPlayback` gate, `musicBusy()` | `helpers/voiceClaims.js`, `bookEngine.blocksMusic` / `routeGeneric` |
 | Voice-health log                 | `commands/voicehealth.js`            | `helpers/voiceHealth.js`, `voiceHealthFormat.js`; hooks in `app/bot.js` and `bookEngine.js` |

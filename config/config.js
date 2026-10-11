@@ -35,6 +35,18 @@ const defaults = {
   'tautulliApiKey'  : '',
   'tautulliUrl'     : '',
 
+  // Calibre content server, read by the audiobook read-along (`!book text`) to find a book's
+  // ebook. GET requests only; the bot never writes to the Calibre library. The server runs only
+  // while the Calibre app is open; once a book's text has been read it is kept in data/book_text/,
+  // so it keeps working with Calibre closed. Blank turns Calibre off.
+  // Never put a login in the URL (http://user:pass@...): it would be refused, because a URL ends
+  // up in error messages. Use calibreUsername and calibrePassword, only if you turn on Calibre's
+  // "Require username and password".
+  'calibreUrl'       : 'http://127.0.0.1:8080',
+  'calibreLibraryId' : '',   // blank = the server's default library
+  'calibreUsername'  : '',
+  'calibrePassword'  : '',
+
   // --- Automated broadcasts (Kometa runs + Playnite game launches) ---
   // Discord channel IDs the bot posts to. Kometa runs and game launches each have their own
   // channel; broadcastChannelId is the fallback used for whichever you leave blank. All blank =
@@ -189,6 +201,13 @@ const defaults = {
   // Seconds to rewind when resuming after more than 5 minutes away (three times this after a
   // day), so the listener hears the end of the last sentence again. 0 resumes exactly.
   'audiobookResumeRewindSeconds' : 10,
+  // Read-along: `!book text on` sends the listener the book's text in DMs, a page at a time,
+  // turning with the narration, and a 📖 card button shows the page privately. Nothing is
+  // downloaded or parsed until someone uses it; the only background work is a read-only check
+  // when a book starts (a Calibre search and a folder listing) that decides whether 📖 shows.
+  'audiobookTextEnabled' : true,
+  // Also look for .epub files in the folders that hold a book's audio files.
+  'audiobookTextSidecars' : true,
 
   // --- Voice (the Voice page of /config) ---
   // Priority of the bot process. Above normal stops a game, VR stream or Plex transcode on this PC

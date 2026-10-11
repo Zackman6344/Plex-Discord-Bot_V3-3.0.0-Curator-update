@@ -80,6 +80,40 @@ test('validate: tautulliUrl must be http(s)', () => {
     assert.ok(store.validate(url, 'localhost:8181').error);
 });
 
+// fetch quotes a URL's userinfo, password included, in its own error messages, so a Calibre
+// login typed into the URL would reach the log the first time Calibre was closed.
+test('calibreUrl refuses a login in the URL without echoing it, and allows blank', () => {
+    const url = store.getSetting('calibreUrl');
+    assert.strictEqual(store.validate(url, 'http://127.0.0.1:8080').value, 'http://127.0.0.1:8080');
+    assert.strictEqual(store.validate(url, 'https://books.example.test/calibre').value, 'https://books.example.test/calibre');
+    assert.strictEqual(store.validate(url, '').value, '');
+    for (const bad of ['http://reader:s3cret-pass@127.0.0.1:8080', 'http://reader@127.0.0.1:8080', 'http://:s3cret-pass@127.0.0.1:8080']) {
+        const res = store.validate(url, bad);
+        assert.strictEqual(res.error, 'Put the login in calibreUsername and calibrePassword, not in the URL.');
+        assert.ok(!JSON.stringify(res).includes('s3cret-pass') && !JSON.stringify(res).includes('reader'));
+    }
+    assert.ok(store.validate(url, '127.0.0.1:8080').error);
+    assert.ok(store.validate(url, 'http://').error);
+});
+
+test('the calibre password is a secret and the read-along settings default safe', () => {
+    const config = require('../config/config.js');
+    assert.strictEqual(store.getSetting('calibrePassword').secret, true);
+    assert.strictEqual(store.formatValue(store.getSetting('calibrePassword'), 'open sesame'), '••• set');
+    assert.ok(!store.getSetting('calibreUsername').secret);
+    for (const key of ['audiobookTextEnabled', 'audiobookTextSidecars']) {
+        assert.strictEqual(store.getSetting(key).group, 'Audiobooks');
+        assert.strictEqual(store.getSetting(key).type, 'bool');
+    }
+    for (const key of ['calibreUrl', 'calibreLibraryId', 'calibreUsername', 'calibrePassword']) {
+        assert.strictEqual(store.getSetting(key).group, 'Integrations');
+        assert.ok(Object.prototype.hasOwnProperty.call(config, key), `${key} has a config.js default`);
+    }
+    assert.strictEqual(config.calibreUrl === '' || store.validate(store.getSetting('calibreUrl'), config.calibreUrl).value === config.calibreUrl, true);
+    assert.strictEqual(typeof config.audiobookTextEnabled, 'boolean');
+    assert.strictEqual(typeof config.audiobookTextSidecars, 'boolean');
+});
+
 test('formatValue masks secrets and renders bools/choices', () => {
     assert.strictEqual(store.formatValue(store.getSetting('eventServerToken'), 'hunter2'), '••• set');
     assert.strictEqual(store.formatValue(store.getSetting('eventServerToken'), ''), '— not set');
