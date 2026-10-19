@@ -417,6 +417,11 @@ order it is unsure of.
   album. A stray `Disc 2` of a rap album under the top of the music library once joined the whole
   library folder, picked up a loose audiobook file lying there, and showed up as a book called
   "Music"; that can no longer happen.
+- **Loose single-file books.** Several `.m4b` or `.m4a` books lying in one folder become one book
+  each when their album tags, or failing that file names like `Author - #2 Title`, name different
+  books. Names that differ only by a part marker (`Part 2`, `(2 of 6)`, `[01]`, `Disc 2`) or an
+  edition marker (`(Unabridged)`, `(Dramatized Adaptation)`) count as one book, and edition
+  markers are left off the title shown.
 
 **Where a book's details come from.** Each title, author, narrator, publisher and series is taken
 from the first of these that has it:

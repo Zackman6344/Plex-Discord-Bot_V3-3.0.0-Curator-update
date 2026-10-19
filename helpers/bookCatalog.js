@@ -15,8 +15,11 @@
 // RULES_VERSION goes up whenever a change here would build a different catalog from the same
 // listing, so a stored catalog built under older rules is rebuilt. Version 3 added the disc-folder
 // guard, genre classing, the music split, tag metadata and the duration-weighted alias share.
+// Version 4 splits a folder of loose single-file books by each file's own tags, never takes
+// "Various Artists" for an author, drops edition markers from titles and hands a split work's id
+// to the book that held its first part.
 
-const RULES_VERSION = 3;
+const RULES_VERSION = 4;
 
 const MIN = 60 * 1000;
 const HOUR = 60 * MIN;
@@ -59,6 +62,13 @@ const CORP_WORD_RE = /\b(?:llc|inc|ltd|entertainment|publishing|publishers?|pres
 // The publisher test of rules version 2. Ids depend on it (the collision suffix falls back to the
 // publisher), so the wider publisherOf() must not reach the id.
 const LEGACY_PUBLISHER_RE = /^(graphic\s*audio|grahpic\s*audio)(,?\s*llc)?$/i;
+
+// Placeholders Plex and taggers put in an artist field when a file names nobody in particular.
+const VARIOUS_RE = /^(?:various(?:\s+artists?)?|v\.?\s?a\.?|unknown(?:\s+artist)?|\[unknown(?:\s+artist)?\])$/i;
+
+function isVarious(name) {
+	return VARIOUS_RE.test(String(name || '').trim());
+}
 
 /** The canonical house name when the text names an audiobook publisher, else null. */
 function publisherOf(text) {
@@ -631,14 +641,133 @@ function orderParts(kind, key, ts) {
 	return { parts: [...kept].sort((a, b) => natural(relPath(a, key), relPath(b, key))), method: 'path-natural' };
 }
 
+// How a recording was made, not who made it: never a title word, a narrator or an edition name.
+const EDITION_MARKER = String.raw`(?:dramati[sz]ed(?:\s+adaptation)?|unabridged|abridged|full[- ]cast(?:\s+(?:dramati[sz]ation|production|recording))?|audio\s*drama)`;
+const EDITION_TAIL_RE = new RegExp(String.raw`\s*[(\[]\s*${EDITION_MARKER}\s*[)\]]\s*$`, 'i');
+const EDITION_ONLY_RE = new RegExp(String.raw`^\s*${EDITION_MARKER}\s*$`, 'i');
+
 function cleanTitle(raw) {
 	let s = String(raw || '');
 	s = s.replace(/^\s*\d{4}\s*-\s*/, '');                 // "1990 - Title"
 	s = s.replace(/\s+\d+\s*mb\s*$/i, '');                  // "... 541mb"
 	s = s.replace(/^\s*\d+(\.\d+)?\s*[.\-_]\s*/, '');       // "1.Title", "05 - "
+	s = s.replace(EDITION_TAIL_RE, '');                     // "[Unabridged]"
 	s = s.replace(/\s*\([^)]*\)\s*$/, '');                  // "(Narrator)": kept as the edition instead
 	s = stripPartMarker(s);
 	return s.replace(/\s+/g, ' ').trim();
+}
+
+// Several numbered files of one book carry one album tag apart from these, so only what is left
+// tells two books apart: "Ledger 4 - Low Sun (2 of 6)" and "Ledger [04] Low Sun [03]" are one.
+// A store subtitle ("Low Sun: The Ledger, Book 4", "Low Sun: A Novel") and a lone part letter
+// ("Low Sun A") go too, since one book's parts spell its tag both with and without them.
+const PART_WORD = String.raw`(?:\d+|[ivx]+|one|two|three|four|five|six|seven|eight|nine|ten)`;
+const BOOK_TAIL_RES = [
+	/\s*:\s*[^:]+?,\s*(?:book|volume|vol\.?)\s*\d+(?:\.\d+)?\s*$/i,
+	/\s*[:,]\s*a\s+novel\s*$/i,
+	new RegExp(String.raw`\s*[-,:]?\s*\(?\s*\b(?:part|pt\.?|book|vol(?:ume)?\.?)\s*${PART_WORD}\s+of\s+${PART_WORD}\s*\)?\s*$`, 'i'),
+	new RegExp(String.raw`\s*[-,:]?\s*\b(?:part|pt\.?)\s+${PART_WORD}\s*$`, 'i'),
+	/\s*[-,]\s*\d+\s+of\s+\d+\s*$/i,
+	/\s*[(\[]\s*(?:part\s*)?\d+\s*of\s*\d+\s*[)\]]\s*$/i,
+	/\s*\[\s*\d+(?:\s*-\s*\d+)?\s*\]\s*$/,
+	/\s*[-,:]?\s*\b(?:part|pt\.?|disc|disk|cd|vol(?:ume)?\.?)\s*\d+\s*$/i,
+	/\s+[A-Z]\s*$/,
+	/\s+\d{1,2}\s*$/,
+	/\s*\([^)]*\)\s*$/,
+];
+
+function stripBookTail(raw) {
+	let s = String(raw || '').replace(/\s+/g, ' ').trim();
+	for (let prev = null; prev !== s;) {
+		prev = s;
+		s = s.replace(EDITION_TAIL_RE, '').trim();
+		for (const re of BOOK_TAIL_RES) s = s.replace(re, '').trim();
+	}
+	return s;
+}
+
+/** The book an album tag or a file name names, reduced to compare equal across its parts. */
+function bookIdentity(raw) {
+	const s = stripBookTail(raw);
+	return norm(stripBookTail(parseSeriesTitle(s).title)) || norm(s);
+}
+
+// "Author - #2 Title (Publisher)" or "#2 Title": the shape of a loose single-file book's name.
+const NUMBERED_NAME_RE = /^(?:(.+?)\s+-\s+)?#\s*(\d+(?:\.\d+)?)\s*[-:.]?\s+(.+?)\s*$/;
+
+function numberedName(text) {
+	const m = String(text || '').replace(/\.[a-z0-9]{2,4}$/i, '').trim().match(NUMBERED_NAME_RE);
+	if (!m) return null;
+	const name = m[3].replace(/\s*\([^)]*\)\s*$/, '').trim();
+	return name ? { author: m[1] ? m[1].trim() : null, number: +m[2], name } : null;
+}
+
+function trackNumberOf(value) {
+	const m = String(value || '').match(/^\s*(\d{1,3})(?:\s*\/\s*\d+)?\s*$/);
+	return m && +m[1] > 0 ? +m[1] : null;
+}
+
+// Only a folder of mp4 files can be a set of loose single-file books. Long mp3 files are podcast
+// episodes, lectures or a book's parts, which name themselves "#N Title" or tag each file with its
+// own album just as books do; and the chapter marks an mp3 carries are timed points, not a book's
+// own chapters. Anything else, or more members than a series has, is never read one by one.
+const SINGLE_FILE = Object.freeze({ minFiles: 2, maxFiles: 40, minMs: 15 * MIN });
+
+function mayHoldSingleFileBooks(ts) {
+	const kept = ts.filter((t) => !isSample(t));
+	if (kept.length < SINGLE_FILE.minFiles || kept.length > SINGLE_FILE.maxFiles) return false;
+	return kept.every((t) => (t.duration || 0) >= SINGLE_FILE.minMs && /mp4|m4a|m4b/.test(containerOf(t)));
+}
+
+/**
+ * The book one file belongs to: its own album tag, else a "#N Title" file name or track title.
+ * @returns {{ key: string, name: string, source: 'tag'|'folder', number: number|null,
+ *   numberSource: string|null, author: string|null } | null}
+ */
+function bookOfTrack(t, tg = {}) {
+	const own = numberedName(segmentsOf(t).pop()) || numberedName(t.title);
+	const tagNumber = trackNumberOf(tg.track);
+	const number = tagNumber ?? (own ? own.number : null);
+	const numberSource = tagNumber !== null ? 'tag' : (own ? 'folder' : null);
+	const author = own ? own.author : null;
+	if (nonEmpty(tg.album)) {
+		const key = bookIdentity(tg.album);
+		if (key) return { key, name: tg.album.trim(), source: 'tag', number, numberSource, author };
+	}
+	if (own) {
+		const key = bookIdentity(own.name);
+		if (key) return { key, name: own.name, source: 'folder', number, numberSource, author };
+	}
+	return null;
+}
+
+/**
+ * A classified folder group cut into one piece per book, when its files name two books or more.
+ * Every member must name its book: a file that says nothing could belong to any of them, and a
+ * build with tags still pending splits once they land.
+ * @returns {Array<{ book: object, ts: object[] }>|null}
+ */
+function bookPieces(ts, tagsOfTrack) {
+	if (!mayHoldSingleFileBooks(ts)) return null;
+	// An episode's album tag is its own title, so a podcast in mp4 files looks like a box set.
+	if (ts.some((t) => /\bpodcasts?\b/i.test(String((tagsOfTrack(t) || {}).genre || '')))) return null;
+	const ordered = [...ts].sort((a, b) => natural(segmentsOf(a).join('/'), segmentsOf(b).join('/')));
+	const pieces = new Map();
+	const samples = [];
+	for (const t of ordered) {
+		if (isSample(t)) { samples.push(t); continue; }
+		const b = bookOfTrack(t, tagsOfTrack(t));
+		if (!b) return null;
+		const piece = pieces.get(b.key);
+		if (!piece) { pieces.set(b.key, { book: { ...b }, ts: [t] }); continue; }
+		piece.ts.push(t);
+		if (piece.book.number === null && b.number !== null) Object.assign(piece.book, { number: b.number, numberSource: b.numberSource });
+		if (!piece.book.author && b.author) piece.book.author = b.author;
+	}
+	if (pieces.size < 2) return null;
+	const list = [...pieces.values()];
+	list[0].ts.push(...samples);
+	return list;
 }
 
 function parenOf(raw) {
@@ -670,45 +799,55 @@ function consensus(readings) {
 	return [...tally.values()].sort((a, b) => b.weight - a.weight)[0] || null;
 }
 
-const AUTHOR_SOURCE = { artist: 'plex-artist', 'tag-artist': 'tag', comment: 'tag', copyright: 'tag', folder: 'folder' };
+const AUTHOR_SOURCE = { artist: 'plex-artist', 'tag-artist': 'tag', comment: 'tag', copyright: 'tag', file: 'folder', folder: 'folder' };
 
 /**
  * What a group is called. Besides the display fields it returns idEdition, the collision suffix
  * input exactly as rules version 2 derived it, so tag data can never change an existing id.
  * Doubts are structured and carry names only, never a folder path.
+ * @param {object|null} [book] for one book cut out of a folder of single-file books: its name,
+ *   number and author as its own files give them (bookOfTrack), which beat every album title
+ * @param {(t: object) => object} [tagsOfTrack] a file's own tags, which such a book is read from
  */
-function describe(key, ts, albumsByKey, titleCounts, tagsOf = () => ({}), roots = new Set()) {
+function describe(key, ts, albumsByKey, titleCounts, tagsOf = () => ({}), roots = new Set(), book = null, tagsOfTrack = () => ({})) {
 	const albumKeys = [...new Set(ts.map(albumOf))];
 	const albums = albumKeys.map((k) => albumsByKey.get(k)).filter(Boolean);
-	const baseKey = key.replace(/#album:[^/]+$/, '');
+	const baseKey = key.replace(/(?:#(?:album|book):[^/#]+)+$/, '');
 	// A group carved out by an album include override or a split has no folder of its own to be
 	// named after.
 	const carved = key.startsWith('album:') || baseKey !== key;
 	const weightOf = (a) => ts.filter((t) => albumOf(t) === String(a.ratingKey)).length;
 	const mainAlbum = [...albums].sort((a, b) => weightOf(b) - weightOf(a))[0] || null;
-	const rawLeaf = carved && mainAlbum ? mainAlbum.title : baseKey.split('/').pop();
+	const rawLeaf = book ? book.name : (carved && mainAlbum ? mainAlbum.title : baseKey.split('/').pop());
 	// "Music", "Disc 2", a drive or a library root names where files live, not what they are.
 	const genericLeaf = !carved && (isGenericName(cleanTitle(rawLeaf)) || roots.has(baseKey.toLowerCase()));
 	const leaf = genericLeaf && mainAlbum ? mainAlbum.title : rawLeaf;
-	const leafSource = carved || (genericLeaf && mainAlbum) ? 'album' : 'folder';
-	const tagList = albumKeys.map((k) => tagsOf(k) || {});
+	const leafSource = book ? book.source : (carved || (genericLeaf && mainAlbum) ? 'album' : 'folder');
+	// The album a loose book sits in can be Plex's guess for several files, so its sample says
+	// nothing about this one.
+	const tagList = book ? ts.map((t) => tagsOfTrack(t) || {}) : albumKeys.map((k) => tagsOf(k) || {});
 	const doubts = [];
 
 	const artists = ts.map((t) => splitArtist(t.grandparentTitle));
 	const authorVotes = {};
-	for (const a of artists) if (a.author) { const n = stripFeat(a.author); authorVotes[n] = (authorVotes[n] || 0) + 1; }
+	for (const a of artists) if (a.author && !isVarious(a.author)) { const n = stripFeat(a.author); authorVotes[n] = (authorVotes[n] || 0) + 1; }
 	const ranked = Object.entries(authorVotes).sort((a, b) => b[1] - a[1]);
 	if (new Set(ranked.map(([n]) => norm(n))).size > 1) doubts.push({ code: 'mixed-artists', artists: ranked.map(([name, tracks]) => ({ name, tracks })) });
 	let author = ranked[0] ? ranked[0][0] : null;
 	let authorSource = author ? 'artist' : null;
 	if (!author) {
 		for (const tg of tagList) {
-			const fromTag = [tg.artist, tg.album_artist].map((x) => splitArtist(x).author).find((x) => x && !publisherOf(x));
+			const fromTag = [tg.artist, tg.album_artist].map((x) => splitArtist(x).author).find((x) => x && !publisherOf(x) && !isVarious(x));
 			const byComment = authorFromComment(tg.comment);
 			const byCopyright = authorFromCopyright(tg.copyright);
 			const found = fromTag ? ['tag-artist', stripFeat(fromTag)] : byComment ? ['comment', byComment] : byCopyright ? ['copyright', byCopyright] : null;
 			if (found) { [authorSource, author] = found; break; }
 		}
+	}
+	if (!author) {
+		const fromFile = [book && book.author, ...ts.map((t) => { const n = numberedName(segmentsOf(t).pop()); return n && n.author; })]
+			.map((x) => personName(x)).find(Boolean);
+		if (fromFile) { author = fromFile; authorSource = 'file'; }
 	}
 	if (!author && rootChild(ts[0])) { author = rootChild(ts[0]); authorSource = 'folder'; }
 	if (!author) doubts.push({ code: 'no-author' });
@@ -729,7 +868,7 @@ function describe(key, ts, albumsByKey, titleCounts, tagsOf = () => ({}), roots 
 	const albumTitleUsable = singleAlbum && unique(singleAlbum);
 
 	// Series and number: album titles first (only titles no other work shares), the folder second.
-	const readings = albums.filter(unique).map((a) => ({ ...parseSeriesTitle(a.title), weight: weightOf(a) }));
+	const readings = book ? [] : albums.filter(unique).map((a) => ({ ...parseSeriesTitle(a.title), weight: weightOf(a) }));
 	const strongAlbum = consensus(readings.filter((r) => r.series && !r.weak));
 	const weakAlbum = consensus(readings.filter((r) => r.series && r.weak));
 	const keySegs = baseKey.split('/').slice(-3).filter((s) => !isGenericName(s));
@@ -739,7 +878,8 @@ function describe(key, ts, albumsByKey, titleCounts, tagsOf = () => ({}), roots 
 
 	let rawTitle;
 	let titleSource = 'album';
-	if ((folderIsAuthor || genericLeaf) && singleAlbum) rawTitle = singleAlbum.title;
+	if (book) { rawTitle = book.name; titleSource = book.source; }
+	else if ((folderIsAuthor || genericLeaf) && singleAlbum) rawTitle = singleAlbum.title;
 	else if (albumTitleUsable) rawTitle = singleAlbum.title;
 	else if (strongAlbum && covered >= 0.5) rawTitle = strongAlbum.title;
 	else { rawTitle = leaf; titleSource = leafSource; }
@@ -788,6 +928,15 @@ function describe(key, ts, albumsByKey, titleCounts, tagsOf = () => ({}), roots 
 		seriesSource = series ? 'album' : null;
 		sequenceSource = leafSource;
 	}
+	// A loose book's number with no series beside it waits for buildCatalog to find the series on
+	// a sibling cut from the same folder.
+	let numberOnly = false;
+	if (book && book.number !== null && sequence === null) {
+		sequence = book.number;
+		sequenceSource = book.numberSource;
+		if (series) seriesWeak = false;
+		else numberOnly = true;
+	}
 
 	const evidence = ts.flatMap((t) => [t.title, segmentsOf(t).pop()]);
 	let title = cleanTitle(rawTitle) || cleanTitle(leaf);
@@ -802,12 +951,14 @@ function describe(key, ts, albumsByKey, titleCounts, tagsOf = () => ({}), roots 
 
 	const parens = [
 		...(!genericLeaf ? [{ raw: leaf, source: leafSource }] : []),
-		...albums.map((a) => ({ raw: a.title, source: 'album' })),
-	].map((p) => ({ ...p, value: parenOf(p.raw) })).filter((p) => p.value);
+		...(book ? [] : albums.map((a) => ({ raw: a.title, source: 'album' }))),
+	].map((p) => ({ ...p, value: parenOf(p.raw) })).filter((p) => p.value && !EDITION_ONLY_RE.test(p.value));
 	const paren = parens[0] || null;
 	const edition = (paren && paren.value) || publisher || null;
 	const editionSource = paren ? paren.source : (publisher ? publisherSource : null);
-	const idEdition = parenOf(rawLeaf) || albums.map((a) => parenOf(a.title)).find(Boolean) || legacyPublisher || null;
+	const idEdition = book
+		? (paren && paren.value) || legacyPublisher || null
+		: parenOf(rawLeaf) || albums.map((a) => parenOf(a.title)).find(Boolean) || legacyPublisher || null;
 
 	let narrator = null, narratorSource = null;
 	if (paren) {
@@ -822,7 +973,7 @@ function describe(key, ts, albumsByKey, titleCounts, tagsOf = () => ({}), roots 
 
 	const titleWithoutWeakSeries = weakFull ? smartTitle(restoreApostrophes(cleanTitle(weakFull), evidence)) : title;
 	return {
-		title, titleWithoutWeakSeries, author, authorSource, series, sequence, seriesWeak, edition, idEdition, publisher, narrator,
+		title, titleWithoutWeakSeries, author, authorSource, series, sequence, seriesWeak, numberOnly, edition, idEdition, publisher, narrator,
 		albums, doubts,
 		sources: {
 			title: titleSource,
@@ -971,12 +1122,36 @@ function shareOf(parts, keyOf, keys) {
 	return Math.max(byCount, byTime);
 }
 
+const HEIR_KEYS = [
+	[(p) => String(p.trackRatingKey), (c) => c.rks],
+	[(p) => (p.sizeBytes ? `${String(p.file || '').toLowerCase()}#${p.sizeBytes}` : null), (c) => c.sized],
+	[(p) => (p.file ? String(p.file).toLowerCase() : null), (c) => c.names],
+];
+
+// One old work a rule change cut into several books: no new work holds half of it, yet together
+// they hold most of it. The old work was named after the book of its first part, so that book
+// inherits the id and every alias, and a bookmark saved under any of them still opens.
+function splitHeir(parts, keyed) {
+	const first = [...parts].sort((a, b) => (Number(a.ordinal) || 0) - (Number(b.ordinal) || 0))[0];
+	for (const [keyOf, setOf] of HEIR_KEYS) {
+		const holders = keyed.filter((c) => parts.some((p) => { const k = keyOf(p); return k !== null && setOf(c).has(k); }));
+		if (holders.length < 2) continue;
+		const union = new Set(holders.flatMap((c) => [...setOf(c)]));
+		if (shareOf(parts, keyOf, union) < 0.5) continue;
+		const k = keyOf(first);
+		const heirs = k === null ? [] : holders.filter((c) => setOf(c).has(k));
+		return heirs.length === 1 ? heirs[0].w : null;
+	}
+	return null;
+}
+
 /**
  * Carries ids forward across a rebuild. A work whose id changed (a renamed folder, a corrected
  * title) is found again by its tracks, and its old id becomes an alias, so bookmarks saved under
  * it still resolve. Matching tries track ratingKeys, then basename plus size, then basename alone;
  * at least half the old parts, or half the old listening time, must match, and a tie between
- * candidates matches nothing (two narrations of one book share every basename).
+ * candidates matches nothing (two narrations of one book share every basename). A work split into
+ * several, none holding half of it, goes to the one holding its first part.
  * @returns {{ works: Object<string, object>, moved: Object<string, string> }} new works with
  *   aliases filled, and old id to new id for every work that moved
  */
@@ -1016,6 +1191,7 @@ function matchAliases(oldWorks, newWorks) {
 			(c) => shareOf(parts, (p) => (p.file ? String(p.file).toLowerCase() : null), c.names),
 		];
 		let target = null;
+		let tied = false;
 		for (const score of tiers) {
 			const ranked = keyed
 				.map((c) => ({ c, s: score(c) }))
@@ -1023,10 +1199,11 @@ function matchAliases(oldWorks, newWorks) {
 				.sort((a, b) => b.s - a.s || Number(b.c.isNew) - Number(a.c.isNew));
 			if (!ranked.length) continue;
 			const [best, second] = ranked;
-			if (second && second.s === best.s && second.c.isNew === best.c.isNew) break;
+			if (second && second.s === best.s && second.c.isNew === best.c.isNew) { tied = true; break; }
 			target = best.c.w;
 			break;
 		}
+		if (!target && !tied) target = splitHeir(parts, keyed);
 		if (!target) continue;
 		for (const a of [o.id, ...(o.aliases || [])]) {
 			if (a !== target.id && !newById.has(a) && !target.aliases.includes(a)) target.aliases.push(a);
@@ -1199,15 +1376,25 @@ function partFrom(t, ordinal, chapters) {
  * @param {object} [input.overrides] the hand-edited overrides file
  * @param {Object<string, {tags: object}>} [input.tags] embedded tags of one sampled file per
  *   album, keyed by album ratingKey (bookTags.read().byAlbum)
+ * @param {Object<string, {tags: object}>} [input.trackTags] embedded tags by track ratingKey
+ *   (bookTags.read().byTrack): every file of a group that may hold single-file books
  * @param {string[]} [input.roots] the music sections' folders
  * @returns {{ works: Object<string, object>, rejected: object[], splits: object[], index: object,
  *   notes: string[] }} splits: one { folderKey, album, albumTitle, tracks, reason } per music
  *   album taken out of a book's folder group
  */
-function buildCatalog({ albums = [], tracks = [], chapters = {}, overrides = {}, tags = {}, roots = [] } = {}) {
+function buildCatalog({ albums = [], tracks = [], chapters = {}, overrides = {}, tags = {}, trackTags = {}, roots = [] } = {}) {
 	const ov = cleanOverrides(overrides);
 	const albumsByKey = new Map(albums.map((a) => [String(a.ratingKey), a]));
 	const tagsOf = (k) => { const e = own(tags, String(k)); return (isObject(e) && isObject(e.tags) && e.tags) || {}; };
+	const albumSize = new Map();
+	for (const t of tracks) albumSize.set(albumOf(t), (albumSize.get(albumOf(t)) || 0) + 1);
+	// An album of one file was sampled on that very file.
+	const tagsOfTrack = (t) => {
+		const e = own(trackTags, String(t.ratingKey));
+		if (isObject(e) && isObject(e.tags)) return e.tags;
+		return albumSize.get(albumOf(t)) === 1 ? tagsOf(albumOf(t)) : {};
+	};
 	const classCache = new Map();
 	const albumClass = (k) => {
 		if (!classCache.has(k)) {
@@ -1248,11 +1435,12 @@ function buildCatalog({ albums = [], tracks = [], chapters = {}, overrides = {},
 	});
 	const queue = [...groups].map(([key, ts]) => ({ key, ts, first: true }));
 	while (queue.length) {
-		const { key, ts, first } = queue.shift();
+		const { key, ts, first, book = null, parentCls = null } = queue.shift();
 		const stats = groupStats(key, ts, albumsByKey, albumClass);
 		if (exclude.has(matchKey(key))) { reject(key, stats, 'excluded by override'); continue; }
 		const wanted = forced.has(key) || include.has(matchKey(key)) || ts.some((t) => include.has(matchKey(folderKey(t))));
-		const cls = classify(stats) || (wanted ? { kind: 'book', rule: 'override' } : null);
+		// A single-file book cut from a classified folder stays a book however short it is.
+		const cls = parentCls || classify(stats) || (wanted ? { kind: 'book', rule: 'override' } : null);
 		// Only once per group and never on an album the owner included by hand; each piece is
 		// classified again on its own.
 		const off = cls && first && !forced.has(key) ? musicAlbumsToSplit(ts, albumClass) : [];
@@ -1267,7 +1455,12 @@ function buildCatalog({ albums = [], tracks = [], chapters = {}, overrides = {},
 			}
 			continue;
 		}
-		if (cls) candidates.push({ key, ts, stats, cls });
+		const pieces = cls && cls.kind === 'book' && !book && !forced.has(key) ? bookPieces(ts, tagsOfTrack) : null;
+		if (pieces) {
+			for (const p of pieces) queue.push({ key: `${key}#book:${slug(p.book.key)}`, ts: p.ts, first: false, book: { ...p.book, of: pieces.length, baseKey: key }, parentCls: cls });
+			continue;
+		}
+		if (cls) candidates.push({ key, ts, stats, cls, book });
 		else if (stats.maxMs >= 15 * MIN || stats.totalMs >= 3 * HOUR) reject(key, stats, stats.totalMs < DETECT.minTotalMs ? 'under 2 h' : (musicVetoed(stats) ? 'music genre' : 'no long-form signal'));
 	}
 
@@ -1288,8 +1481,9 @@ function buildCatalog({ albums = [], tracks = [], chapters = {}, overrides = {},
 
 	const idEditionOf = new Map();
 	const sourcesOf = new Map();
+	const bookOf = new Map();
 	const works = candidates.map((c) => {
-		const d = describe(c.key, c.ts, albumsByKey, titleCounts, tagsOf, rootKeys);
+		const d = describe(c.key, c.ts, albumsByKey, titleCounts, tagsOf, rootKeys, c.book, tagsOfTrack);
 		const musicAlbums = d.albums.filter((a) => albumClass(String(a.ratingKey)) === 'music');
 		if (musicAlbums.length) d.doubts.push({ code: 'music-genre', albums: musicAlbums.map((a) => a.title) });
 		const splitOff = splits.filter((sp) => sp.folderKey === c.key);
@@ -1312,6 +1506,7 @@ function buildCatalog({ albums = [], tracks = [], chapters = {}, overrides = {},
 		const otherAlbumTracks = d.albums.some((a) => (tracksByAlbum.get(String(a.ratingKey)) || []).some((t) => !mine.has(t)));
 		if (otherAlbumTracks) workNotes.push('shares a Plex album with another work');
 		if (method === 'interleaved-volumes') workNotes.push('several numbered volumes share one folder; the order is rebuilt from chapter numbers and is worth one check, or a partOrder override');
+		if (c.book) workNotes.push(`one of ${c.book.of} books in one folder, told apart by ${c.book.source === 'tag' ? 'their album tags' : 'their file names'}`);
 		const kept = new Set(parts);
 		const droppedTracks = c.ts.filter((t) => !kept.has(t));
 		if (droppedTracks.length) workNotes.push(`${droppedTracks.length} sample clip(s) dropped`);
@@ -1364,8 +1559,32 @@ function buildCatalog({ albums = [], tracks = [], chapters = {}, overrides = {},
 		};
 		idEditionOf.set(w, d.idEdition);
 		sourcesOf.set(w, podcastSeries ? { ...d.sources, series: d.author ? d.sources.author : null } : d.sources);
+		if (c.book) bookOf.set(w, { baseKey: c.book.baseKey, numberOnly: d.numberOnly });
 		return w;
 	});
+
+	// Books cut from one folder, by one author, where one names its series and the rest only carry
+	// a number ("#2 Title", a track tag): the numbered ones are the same series.
+	const siblings = new Map();
+	for (const [w, b] of bookOf) {
+		const k = `${b.baseKey}\n${norm(w.author)}`;
+		if (!siblings.has(k)) siblings.set(k, []);
+		siblings.get(k).push(w);
+	}
+	for (const group of siblings.values()) {
+		const named = group.filter((w) => w.series && !w.seriesWeak);
+		const names = new Set(named.map((w) => norm(w.series)));
+		for (const w of group) {
+			if (!bookOf.get(w).numberOnly) continue;
+			if (names.size === 1) {
+				w.series = named[0].series;
+				sourcesOf.set(w, { ...sourcesOf.get(w), series: sourcesOf.get(named[0]).series });
+			} else {
+				w.sequence = null;
+				sourcesOf.set(w, { ...sourcesOf.get(w), sequence: null });
+			}
+		}
+	}
 
 	// "Series: Title" without a number names a series only when another work names it with one,
 	// or a number turned up elsewhere: "Something: A Brief History" is a subtitle.
@@ -1415,18 +1634,26 @@ function buildCatalog({ albums = [], tracks = [], chapters = {}, overrides = {},
  * The files whose embedded tags are worth reading: one per Plex album (its first non-sample track
  * by disc and index), only for albums inside a folder group long enough to be a book (2 h in
  * all, or a track of 15 min). Grouped exactly as buildCatalog groups, so a stray disc folder is
- * judged on its own.
+ * judged on its own. A group that may hold several single-file books has every other member file
+ * listed after the album samples, without an album: Plex can file several books as one album,
+ * and only each file's own tags tell them apart.
  * @param {object[]} tracks
  * @param {{ roots?: string[] }} [ctx]
- * @returns {Array<{ album: string, track: string, file: string, sizeBytes: number|null }>}
+ * @returns {Array<{ album?: string, track: string, file: string, sizeBytes: number|null }>}
  */
 function tagSamples(tracks = [], { roots = [] } = {}) {
 	const want = new Set();
+	const perFileGroups = [];
 	for (const ts of groupTracks(tracks, { roots }).values()) {
 		const total = ts.reduce((s, t) => s + (t.duration || 0), 0);
 		const max = ts.reduce((m, t) => Math.max(m, t.duration || 0), 0);
-		if (total >= DETECT.minTotalMs || max >= DETECT.medianLongMs) for (const t of ts) want.add(albumOf(t));
+		if (total < DETECT.minTotalMs && max < DETECT.medianLongMs) continue;
+		for (const t of ts) want.add(albumOf(t));
+		if (mayHoldSingleFileBooks(ts)) perFileGroups.push(ts.filter((t) => !isSample(t)));
 	}
+	// Smallest groups first: a handful of loose books is read before a 35-part book whose parts
+	// all name the same album, should the first build's tag budget run out.
+	const perFile = perFileGroups.sort((a, b) => a.length - b.length).flat();
 	const byAlbum = new Map();
 	for (const t of tracks) {
 		const a = albumOf(t);
@@ -1441,6 +1668,13 @@ function tagSamples(tracks = [], { roots = [] } = {}) {
 		const p = partOf(t);
 		if (!p.file) continue;
 		out.push({ album, track: String(t.ratingKey), file: String(p.file), sizeBytes: p.size || null });
+	}
+	const listed = new Set(out.map((s) => s.track));
+	for (const t of perFile) {
+		const p = partOf(t);
+		if (!p.file || listed.has(String(t.ratingKey))) continue;
+		listed.add(String(t.ratingKey));
+		out.push({ track: String(t.ratingKey), file: String(p.file), sizeBytes: p.size || null });
 	}
 	return out;
 }
@@ -1478,4 +1712,7 @@ module.exports = {
 	authorFromCopyright,
 	authorFromComment,
 	narratorFromComment,
+	isVarious,
+	bookIdentity,
+	numberedName,
 };

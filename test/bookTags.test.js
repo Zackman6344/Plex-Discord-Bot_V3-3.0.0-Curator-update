@@ -1,4 +1,5 @@
-// helpers/bookTags.js: reading embedded tags of one sampled file per album, for the catalog.
+// helpers/bookTags.js: reading embedded tags of one sampled file per album, and of every file of
+// a folder that may hold single-file books, for the catalog.
 //
 // The bug: the catalog only saw Plex's listing, where a GraphicAudio file's artist is the
 // publisher and its author appears only in the copyright tag, and genres that tell a 3-hour mix
@@ -236,7 +237,7 @@ test('a file ffmpeg cannot open is not spawned for again until it changes or 30 
 	r = await tags.read([job]);
 	await r.settled;
 	assert.deepStrictEqual([ffmpeg.calls.length, r.failed, r.byAlbum], [1, 1, {}], 'remembered for 29 days');
-	assert.deepStrictEqual(tags.cached([job]), { byAlbum: {} }, 'a failure is never served as tags');
+	assert.deepStrictEqual(tags.cached([job]), { byAlbum: {}, byTrack: {} }, 'a failure is never served as tags');
 
 	clock.now += 2 * DAY;
 	await (await tags.read([job])).settled;
@@ -396,14 +397,14 @@ test('a cache hit refreshes its last-seen time at most once a day', async () => 
 
 test('cached answers from the cache alone, with no stat and no spawn', async () => {
 	const { tags, ffmpeg, stat } = setup();
-	assert.deepStrictEqual(tags.cached(JOBS), { byAlbum: {} });
+	assert.deepStrictEqual(tags.cached(JOBS), { byAlbum: {}, byTrack: {} });
 	await (await tags.read(JOBS)).settled;
 	const before = [ffmpeg.calls.length, stat.calls];
 	const out = tags.cached([...JOBS, { album: '3', file: 'N:/a.m4b', sizeBytes: 999 }]);
 	assert.deepStrictEqual(Object.keys(out.byAlbum).sort(), ['1', '2'], 'a different size is a different file');
 	assert.strictEqual(out.byAlbum['2'].tags.title, 'Cold Iron');
 	assert.deepStrictEqual([ffmpeg.calls.length, stat.calls], before);
-	assert.deepStrictEqual(tags.cached(null), { byAlbum: {} });
+	assert.deepStrictEqual(tags.cached(null), { byAlbum: {}, byTrack: {} });
 });
 
 test('the default store writes only to the file PLEXBOT_BOOK_TAGS_FILE names', async () => {
@@ -416,4 +417,27 @@ test('the default store writes only to the file PLEXBOT_BOOK_TAGS_FILE names', a
 	assert.deepStrictEqual(Object.keys(saved.tags['n:/a.m4b|100|1000'].tags).sort(), ['album', 'artist', 'comment', 'copyright', 'genre', 'title']);
 	assert.strictEqual(typeof bookTags.read, 'function');
 	assert.strictEqual(typeof bookTags.cached, 'function');
+});
+
+// The bug (rules version 4): tags were read from one file per Plex album, and Plex had filed four
+// loose single-file books as one album, so the four shared one file's tags and one title. Each
+// such file is now read for itself, keyed by its track, and its track number is kept.
+
+function numbered(file) {
+	const n = (file.match(/#(\d)/) || [])[1] || '1';
+	return banner(file, `    track           : ${n}/5`).replace(/album {11}: [^\r\n]*/, `album           : Book ${n}`);
+}
+
+test('a file read for itself lands under its track only, beside the album samples', async () => {
+	const files = { 'N:/a.m4b': { size: 100, mtimeMs: 1000 }, 'N:/#2.m4b': { size: 2, mtimeMs: 2 }, 'N:/#3.m4b': { size: 3, mtimeMs: 3 } };
+	const { tags, ffmpeg } = setup({ files, ffmpeg: fakeFfmpeg({ transcript: numbered }) });
+	const jobs = [JOBS[0], { track: '12', file: 'N:/#2.m4b', sizeBytes: 2 }, { track: '13', file: 'N:/#3.m4b', sizeBytes: 3 }, { file: 'N:/nobody.m4b' }];
+	const r = await tags.read(jobs);
+	await r.settled;
+	assert.deepStrictEqual(Object.keys(r.byAlbum), ['1'], 'a per-file read never stands in for an album sample');
+	assert.deepStrictEqual(Object.keys(r.byTrack).sort(), ['11', '12', '13']);
+	assert.deepStrictEqual(['11', '12', '13'].map((k) => [r.byTrack[k].tags.album, r.byTrack[k].tags.track]), [['Book 1', '1/5'], ['Book 2', '2/5'], ['Book 3', '3/5']]);
+	assert.strictEqual(ffmpeg.calls.length, 3, 'a job naming neither an album nor a track is skipped');
+	assert.deepStrictEqual(Object.keys(tags.cached(jobs).byTrack).sort(), ['11', '12', '13']);
+	assert.deepStrictEqual(Object.keys(tags.cached(jobs).byAlbum), ['1']);
 });

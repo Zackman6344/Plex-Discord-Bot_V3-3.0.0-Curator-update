@@ -1794,8 +1794,9 @@ unit-tested offline: `npm test` passed 1,727 of 1,727 on 2026-10-16, 201 more th
 and `npm run check:slash` is clean. Three scratch gates ran the real modules against a read-only
 snapshot of the live library (17,570 tracks, 1,721 albums, 21 books and a podcast) with every
 store on temp files, real ffmpeg reading the real files' tags, and the saved Audible answers
-served through a stubbed `fetch`. **None of it has run in the live bot yet**; Phase 10 of
-`BUGTESTING.md` is the checklist that does.
+served through a stubbed `fetch`. It went live on 2026-10-19 (`cc991c7`): the first rebuild logged
+22 works, 925 parts and 1 renamed, and the saved place in the old 'Music' work resolved to
+`martha-wells/all-systems-red`. Phase 10 of `BUGTESTING.md` is the checklist for the Discord side.
 
 **The disc-folder guard.** `folderKey` folds a leaf such as `Disc 2` into its parent.
 `groupTracks(tracks, { roots })` keeps the fold only when the parent is a book's own folder: it
@@ -1851,6 +1852,17 @@ piece's key is `<folderKey>#album:<ratingKey>`. Groups that stay music are never
 rejected list does not fill with pieces. Dropped from the prototype as a closed question: a split
 of a "lone long file of its own album", which never fired on the live library once guarded and
 broke "a podcast with one album per episode keeps episode order".
+
+**Loose single-file books (rules version 4).** A classified group of 2 to 40 `.m4a`/`.m4b` files
+of at least 15 min each has every file's tags read (same cache, reader and budget), and
+`bookPieces` makes one `<folderKey>#book:<slug>` work per book when every file names a book (its
+album tag, else a `#N Title` or `Author - #N Title (Publisher)` file name) and at least two names
+differ once `bookIdentity` has stripped part markers (`(2 of 6)`, `[01]`, `Part One`, `Disc 2`,
+`Book 2 of 3`), edition markers, a `Series N:` prefix, case and punctuation; long mp3s and files
+tagged Podcast are never split, and the old id and its aliases go to the new work holding the old
+first part. The trap: Murderbot #2 to #5 dropped as loose `.m4b` files beside #1 in the section's
+top folder, Plex filed four of them under #1's album title, and the catalog built one five-part
+"All Systems Red" by "Various Artists", a name that `isVarious()` now keeps out of every author vote.
 
 Everything else is music, and the near misses of 2 h or more are listed by `/book rescan` as
 "long groups not taken as books". Ids are slugs, `author/title`, with `~<edition>` added only when
