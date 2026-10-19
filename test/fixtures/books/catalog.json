@@ -1,7 +1,7 @@
 {
 	"meta": {
 		"builtAt": 1760000000000,
-		"rulesVersion": 2,
+		"rulesVersion": 3,
 		"sections": {
 			"1": {
 				"scannedAt": 1760000000,
@@ -22,6 +22,8 @@
 			"publisher": "GraphicAudio",
 			"series": null,
 			"sequence": null,
+			"authorSource": "folder",
+			"doubts": [],
 			"confidence": "low",
 			"aliases": [],
 			"totalMs": 17460000,
@@ -202,18 +204,38 @@
 					"container": "mp3"
 				}
 			],
-			"dropped": []
+			"dropped": [],
+			"detected": {
+				"title": "The Glass Road",
+				"author": "Avery Quill",
+				"narrator": null,
+				"edition": "GraphicAudio",
+				"publisher": "GraphicAudio",
+				"series": null,
+				"sequence": null,
+				"sources": {
+					"title": "album",
+					"author": "folder",
+					"narrator": null,
+					"edition": "plex-artist",
+					"publisher": "plex-artist",
+					"series": null,
+					"sequence": null
+				}
+			}
 		},
 		"avery-quill/the-ember-throne": {
 			"id": "avery-quill/the-ember-throne",
 			"kind": "book",
 			"title": "The Ember Throne",
 			"author": "Avery Quill",
-			"narrator": "Mara Lindqvist",
+			"narrator": null,
 			"edition": "Mara Lindqvist",
 			"publisher": null,
 			"series": "Ashfall",
 			"sequence": 1,
+			"authorSource": "artist",
+			"doubts": [],
 			"confidence": "high",
 			"aliases": [],
 			"totalMs": 14880000,
@@ -271,18 +293,38 @@
 					"container": "mp3"
 				}
 			],
-			"dropped": []
+			"dropped": [],
+			"detected": {
+				"title": "The Ember Throne",
+				"author": "Avery Quill",
+				"narrator": null,
+				"edition": "Mara Lindqvist",
+				"publisher": null,
+				"series": "Ashfall",
+				"sequence": 1,
+				"sources": {
+					"title": "folder",
+					"author": "plex-artist",
+					"narrator": null,
+					"edition": "album",
+					"publisher": null,
+					"series": "album",
+					"sequence": "folder"
+				}
+			}
 		},
 		"avery-quill/the-salt-crown": {
 			"id": "avery-quill/the-salt-crown",
 			"kind": "book",
 			"title": "The Salt Crown",
 			"author": "Avery Quill",
-			"narrator": "Mara Lindqvist",
+			"narrator": null,
 			"edition": "Mara Lindqvist",
 			"publisher": null,
 			"series": "Ashfall",
 			"sequence": 2,
+			"authorSource": "artist",
+			"doubts": [],
 			"confidence": "high",
 			"aliases": [],
 			"totalMs": 14880000,
@@ -340,18 +382,38 @@
 					"container": "mp3"
 				}
 			],
-			"dropped": []
+			"dropped": [],
+			"detected": {
+				"title": "The Salt Crown",
+				"author": "Avery Quill",
+				"narrator": null,
+				"edition": "Mara Lindqvist",
+				"publisher": null,
+				"series": "Ashfall",
+				"sequence": 2,
+				"sources": {
+					"title": "folder",
+					"author": "plex-artist",
+					"narrator": null,
+					"edition": "album",
+					"publisher": null,
+					"series": "album",
+					"sequence": "folder"
+				}
+			}
 		},
 		"avery-quill/the-last-lantern": {
 			"id": "avery-quill/the-last-lantern",
 			"kind": "book",
 			"title": "The Last Lantern",
 			"author": "Avery Quill",
-			"narrator": "Mara Lindqvist",
+			"narrator": null,
 			"edition": "Mara Lindqvist",
 			"publisher": null,
 			"series": "Ashfall",
 			"sequence": 3,
+			"authorSource": "artist",
+			"doubts": [],
 			"confidence": "high",
 			"aliases": [],
 			"totalMs": 11340000,
@@ -397,18 +459,38 @@
 					"container": "mp3"
 				}
 			],
-			"dropped": []
+			"dropped": [],
+			"detected": {
+				"title": "The Last Lantern",
+				"author": "Avery Quill",
+				"narrator": null,
+				"edition": "Mara Lindqvist",
+				"publisher": null,
+				"series": "Ashfall",
+				"sequence": 3,
+				"sources": {
+					"title": "folder",
+					"author": "plex-artist",
+					"narrator": null,
+					"edition": "album",
+					"publisher": null,
+					"series": "album",
+					"sequence": "folder"
+				}
+			}
 		},
 		"avery-quill/the-iron-wake": {
 			"id": "avery-quill/the-iron-wake",
 			"kind": "book",
 			"title": "The Iron Wake",
 			"author": "Avery Quill",
-			"narrator": "Mara Lindqvist",
+			"narrator": null,
 			"edition": "Mara Lindqvist",
 			"publisher": null,
 			"series": "Ashfall",
 			"sequence": 4,
+			"authorSource": "artist",
+			"doubts": [],
 			"confidence": "high",
 			"aliases": [],
 			"totalMs": 12060000,
@@ -463,18 +545,38 @@
 					"albumRatingKey": "1004",
 					"partKey": "/library/parts/50015/1700000000/Sample.mp3"
 				}
-			]
+			],
+			"detected": {
+				"title": "The Iron Wake",
+				"author": "Avery Quill",
+				"narrator": null,
+				"edition": "Mara Lindqvist",
+				"publisher": null,
+				"series": "Ashfall",
+				"sequence": 4,
+				"sources": {
+					"title": "folder",
+					"author": "plex-artist",
+					"narrator": null,
+					"edition": "album",
+					"publisher": null,
+					"series": "album",
+					"sequence": "folder"
+				}
+			}
 		},
 		"avery-quill/shadows-of-glass": {
 			"id": "avery-quill/shadows-of-glass",
 			"kind": "book",
 			"title": "Shadows of Glass",
 			"author": "Avery Quill",
-			"narrator": "Mara Lindqvist",
+			"narrator": null,
 			"edition": "Mara Lindqvist",
 			"publisher": null,
 			"series": "Ashfall",
 			"sequence": 5,
+			"authorSource": "artist",
+			"doubts": [],
 			"confidence": "high",
 			"aliases": [],
 			"totalMs": 12780000,
@@ -520,18 +622,38 @@
 					"container": "mp3"
 				}
 			],
-			"dropped": []
+			"dropped": [],
+			"detected": {
+				"title": "Shadows of Glass",
+				"author": "Avery Quill",
+				"narrator": null,
+				"edition": "Mara Lindqvist",
+				"publisher": null,
+				"series": "Ashfall",
+				"sequence": 5,
+				"sources": {
+					"title": "folder",
+					"author": "plex-artist",
+					"narrator": null,
+					"edition": "album",
+					"publisher": null,
+					"series": "album",
+					"sequence": "folder"
+				}
+			}
 		},
 		"avery-quill/the-copper-bells": {
 			"id": "avery-quill/the-copper-bells",
 			"kind": "book",
 			"title": "The Copper Bells",
 			"author": "Avery Quill",
-			"narrator": "Mara Lindqvist",
+			"narrator": null,
 			"edition": "Mara Lindqvist",
 			"publisher": "GraphicAudio",
 			"series": "Ashfall",
 			"sequence": 6,
+			"authorSource": "artist",
+			"doubts": [],
 			"confidence": "medium",
 			"aliases": [],
 			"totalMs": 15840000,
@@ -592,18 +714,38 @@
 					"container": "mp3"
 				}
 			],
-			"dropped": []
+			"dropped": [],
+			"detected": {
+				"title": "The Copper Bells",
+				"author": "Avery Quill",
+				"narrator": null,
+				"edition": "Mara Lindqvist",
+				"publisher": "GraphicAudio",
+				"series": "Ashfall",
+				"sequence": 6,
+				"sources": {
+					"title": "folder",
+					"author": "plex-artist",
+					"narrator": null,
+					"edition": "album",
+					"publisher": "plex-artist",
+					"series": "album",
+					"sequence": "folder"
+				}
+			}
 		},
 		"avery-quill/ashfall-collected-tales": {
 			"id": "avery-quill/ashfall-collected-tales",
 			"kind": "book",
 			"title": "Ashfall - Collected Tales",
 			"author": "Avery Quill",
-			"narrator": "Mara Lindqvist",
+			"narrator": null,
 			"edition": "Mara Lindqvist",
 			"publisher": null,
 			"series": "Ashfall",
 			"sequence": 7,
+			"authorSource": "artist",
+			"doubts": [],
 			"confidence": "medium",
 			"aliases": [],
 			"totalMs": 8280000,
@@ -662,7 +804,25 @@
 					"container": "mp3"
 				}
 			],
-			"dropped": []
+			"dropped": [],
+			"detected": {
+				"title": "Ashfall - Collected Tales",
+				"author": "Avery Quill",
+				"narrator": null,
+				"edition": "Mara Lindqvist",
+				"publisher": null,
+				"series": "Ashfall",
+				"sequence": 7,
+				"sources": {
+					"title": "folder",
+					"author": "plex-artist",
+					"narrator": null,
+					"edition": "album",
+					"publisher": null,
+					"series": "album",
+					"sequence": "folder"
+				}
+			}
 		},
 		"corin-vale/the-long-tide": {
 			"id": "corin-vale/the-long-tide",
@@ -674,6 +834,8 @@
 			"publisher": "GraphicAudio",
 			"series": null,
 			"sequence": null,
+			"authorSource": "artist",
+			"doubts": [],
 			"confidence": "medium",
 			"aliases": [],
 			"totalMs": 32940000,
@@ -763,7 +925,25 @@
 					]
 				}
 			],
-			"dropped": []
+			"dropped": [],
+			"detected": {
+				"title": "The Long Tide",
+				"author": "Corin Vale",
+				"narrator": null,
+				"edition": "GraphicAudio",
+				"publisher": "GraphicAudio",
+				"series": null,
+				"sequence": null,
+				"sources": {
+					"title": "folder",
+					"author": "plex-artist",
+					"narrator": null,
+					"edition": "plex-artist",
+					"publisher": "plex-artist",
+					"series": null,
+					"sequence": null
+				}
+			}
 		},
 		"ilse-moreau/the-far-shore~harlow": {
 			"id": "ilse-moreau/the-far-shore~harlow",
@@ -775,6 +955,8 @@
 			"publisher": null,
 			"series": null,
 			"sequence": null,
+			"authorSource": "artist",
+			"doubts": [],
 			"confidence": "high",
 			"aliases": [],
 			"totalMs": 9600000,
@@ -875,7 +1057,25 @@
 					"container": "mp3"
 				}
 			],
-			"dropped": []
+			"dropped": [],
+			"detected": {
+				"title": "The Far Shore",
+				"author": "Ilse Moreau",
+				"narrator": "Harlow",
+				"edition": "Harlow",
+				"publisher": null,
+				"series": null,
+				"sequence": null,
+				"sources": {
+					"title": "folder",
+					"author": "plex-artist",
+					"narrator": "folder",
+					"edition": "folder",
+					"publisher": null,
+					"series": null,
+					"sequence": null
+				}
+			}
 		},
 		"ilse-moreau/the-far-shore~penrose": {
 			"id": "ilse-moreau/the-far-shore~penrose",
@@ -887,6 +1087,8 @@
 			"publisher": null,
 			"series": null,
 			"sequence": null,
+			"authorSource": "artist",
+			"doubts": [],
 			"confidence": "high",
 			"aliases": [],
 			"totalMs": 8160000,
@@ -987,7 +1189,25 @@
 					"container": "mp3"
 				}
 			],
-			"dropped": []
+			"dropped": [],
+			"detected": {
+				"title": "The Far Shore",
+				"author": "Ilse Moreau",
+				"narrator": "Penrose",
+				"edition": "Penrose",
+				"publisher": null,
+				"series": null,
+				"sequence": null,
+				"sources": {
+					"title": "folder",
+					"author": "plex-artist",
+					"narrator": "folder",
+					"edition": "folder",
+					"publisher": null,
+					"series": null,
+					"sequence": null
+				}
+			}
 		},
 		"ilse-moreau/the-glass-sea": {
 			"id": "ilse-moreau/the-glass-sea",
@@ -999,6 +1219,8 @@
 			"publisher": null,
 			"series": null,
 			"sequence": null,
+			"authorSource": "artist",
+			"doubts": [],
 			"confidence": "high",
 			"aliases": [],
 			"totalMs": 11760000,
@@ -1066,7 +1288,25 @@
 					"container": "mp3"
 				}
 			],
-			"dropped": []
+			"dropped": [],
+			"detected": {
+				"title": "The Glass Sea",
+				"author": "Ilse Moreau",
+				"narrator": "Various",
+				"edition": "Various",
+				"publisher": null,
+				"series": null,
+				"sequence": null,
+				"sources": {
+					"title": "album",
+					"author": "plex-artist",
+					"narrator": "folder",
+					"edition": "folder",
+					"publisher": null,
+					"series": null,
+					"sequence": null
+				}
+			}
 		},
 		"ilse-moreau/the-night-gate~harlow": {
 			"id": "ilse-moreau/the-night-gate~harlow",
@@ -1078,6 +1318,8 @@
 			"publisher": null,
 			"series": null,
 			"sequence": null,
+			"authorSource": "artist",
+			"doubts": [],
 			"confidence": "high",
 			"aliases": [],
 			"totalMs": 13764000,
@@ -1112,7 +1354,25 @@
 					"container": "mp3"
 				}
 			],
-			"dropped": []
+			"dropped": [],
+			"detected": {
+				"title": "The Night Gate",
+				"author": "Ilse Moreau",
+				"narrator": "Harlow",
+				"edition": "Harlow",
+				"publisher": null,
+				"series": null,
+				"sequence": null,
+				"sources": {
+					"title": "folder",
+					"author": "plex-artist",
+					"narrator": "folder",
+					"edition": "folder",
+					"publisher": null,
+					"series": null,
+					"sequence": null
+				}
+			}
 		},
 		"ilse-moreau/the-night-gate~penrose": {
 			"id": "ilse-moreau/the-night-gate~penrose",
@@ -1124,6 +1384,8 @@
 			"publisher": null,
 			"series": null,
 			"sequence": null,
+			"authorSource": "artist",
+			"doubts": [],
 			"confidence": "high",
 			"aliases": [],
 			"totalMs": 13902000,
@@ -1158,7 +1420,25 @@
 					"container": "mp3"
 				}
 			],
-			"dropped": []
+			"dropped": [],
+			"detected": {
+				"title": "The Night Gate",
+				"author": "Ilse Moreau",
+				"narrator": "Penrose",
+				"edition": "Penrose",
+				"publisher": null,
+				"series": null,
+				"sequence": null,
+				"sources": {
+					"title": "folder",
+					"author": "plex-artist",
+					"narrator": "folder",
+					"edition": "folder",
+					"publisher": null,
+					"series": null,
+					"sequence": null
+				}
+			}
 		},
 		"lantern-hollow/the-tin-valley": {
 			"id": "lantern-hollow/the-tin-valley",
@@ -1170,6 +1450,8 @@
 			"publisher": null,
 			"series": "Lantern Hollow",
 			"sequence": null,
+			"authorSource": "artist",
+			"doubts": [],
 			"confidence": "medium",
 			"aliases": [],
 			"totalMs": 40320000,
@@ -1273,7 +1555,25 @@
 					"container": "mp3"
 				}
 			],
-			"dropped": []
+			"dropped": [],
+			"detected": {
+				"title": "The Tin Valley",
+				"author": "Lantern Hollow",
+				"narrator": null,
+				"edition": null,
+				"publisher": null,
+				"series": "Lantern Hollow",
+				"sequence": null,
+				"sources": {
+					"title": "album",
+					"author": "plex-artist",
+					"narrator": null,
+					"edition": null,
+					"publisher": null,
+					"series": "plex-artist",
+					"sequence": null
+				}
+			}
 		},
 		"r-j-ashdown/the-hollow-king": {
 			"id": "r-j-ashdown/the-hollow-king",
@@ -1285,6 +1585,8 @@
 			"publisher": null,
 			"series": null,
 			"sequence": null,
+			"authorSource": "artist",
+			"doubts": [],
 			"confidence": "medium",
 			"aliases": [],
 			"totalMs": 12000000,
@@ -1686,7 +1988,25 @@
 					"container": "mp3"
 				}
 			],
-			"dropped": []
+			"dropped": [],
+			"detected": {
+				"title": "The Hollow King",
+				"author": "R.J. Ashdown",
+				"narrator": "Tomas Brandt",
+				"edition": "Tomas Brandt",
+				"publisher": null,
+				"series": null,
+				"sequence": null,
+				"sources": {
+					"title": "album",
+					"author": "plex-artist",
+					"narrator": "folder",
+					"edition": "folder",
+					"publisher": null,
+					"series": null,
+					"sequence": null
+				}
+			}
 		}
 	},
 	"rejected": [

@@ -1,0 +1,76 @@
+{
+	"products": [
+		{
+			"asin": "B00HWF0MHW",
+			"title": "Words of Radiance",
+			"subtitle": "Book Two of the Stormlight Archive",
+			"authors": [
+				{
+					"name": "Brandon Sanderson"
+				}
+			],
+			"narrators": [
+				{
+					"name": "Michael Kramer"
+				},
+				{
+					"name": "Kate Reading"
+				}
+			],
+			"publisher_name": "Macmillan Audio",
+			"runtime_length_min": 2895,
+			"release_date": "2014-03-04",
+			"language": "english",
+			"format_type": "unabridged",
+			"content_delivery_type": "MultiPartBook",
+			"publication_name": "The Stormlight Archive",
+			"series": [
+				{
+					"title": "The Cosmere"
+				},
+				{
+					"title": "The Stormlight Archive",
+					"sequence": "2"
+				}
+			]
+		},
+		{
+			"asin": "8417347909",
+			"title": "Palabras radiantes [Radiant Words]",
+			"subtitle": "El Archivo de las Tormentas 2 [The Archive of Storms 2]",
+			"authors": [
+				{
+					"name": "Brandon Sanderson"
+				},
+				{
+					"name": "Rafael Mar\u00edn Trechera - translator"
+				}
+			],
+			"narrators": [
+				{
+					"name": "Francesc Belda"
+				},
+				{
+					"name": "Esther Solans"
+				}
+			],
+			"publisher_name": "Penguin Random House Audio",
+			"runtime_length_min": 2946,
+			"release_date": "2021-06-24",
+			"language": "spanish",
+			"format_type": "unabridged",
+			"content_delivery_type": "MultiPartBook",
+			"publication_name": "The Cosmere (Spanish Edition)",
+			"series": [
+				{
+					"title": "The Cosmere (Spanish Edition)"
+				},
+				{
+					"title": "El Archivo de las Tormentas",
+					"sequence": "2"
+				}
+			]
+		}
+	],
+	"total_results": 2
+}

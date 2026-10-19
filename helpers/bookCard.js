@@ -73,9 +73,18 @@ function head(v) {
 	return b ? [b, ''] : [];
 }
 
+// The engine's label (helpers/bookChapterLabel.js) says what the track names; a view without one
+// still renders, with the slot numbers.
 function chapterLine(v) {
-	if (!v.chapter) return null;
-	return `**Chapter ${v.chapter.index} of ${v.chapter.count}** · ${esc(v.chapter.title)}`;
+	const c = v.chapter;
+	if (!c) return null;
+	if (!c.short) return `**Chapter ${c.index} of ${c.count}** · ${esc(c.title)}`;
+	return c.detail ? `**${esc(c.short)}** · ${esc(c.detail)}` : `**${esc(c.short)}**`;
+}
+
+function shortChapter(v) {
+	const c = v.chapter;
+	return c.short ? esc(c.short) : `Ch ${c.index} of ${c.count}`;
 }
 
 function sleepLine(v) {
@@ -202,7 +211,7 @@ function endedCard(v) {
 	const lines = head(v);
 	lines.push(endLine(v));
 	if (v.endReason !== 'forgotten' && v.endReason !== 'finished' && v.endReason !== 'failed-file') {
-		const ch = v.chapter ? ` (Ch ${v.chapter.index} of ${v.chapter.count})` : '';
+		const ch = v.chapter ? ` (${shortChapter(v)})` : '';
 		lines.push(`Saved at ${clock(v, v.positionMs)}${ch} of ${clock(v, v.totalMs)}.`);
 	}
 	lines.push(saveWarning(v));

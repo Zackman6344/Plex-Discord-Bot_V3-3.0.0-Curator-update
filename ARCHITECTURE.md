@@ -168,8 +168,12 @@ Two signature styles coexist in the codebase:
 | `voiceClaims.js`           | Which feature holds a guild's voice apart from the music queue: a Hitster game or an audiobook. Each registers a predicate over its own live state (`register(owner, guildId => label \| null)`), so there is no flag to forget to release; `holder(guildId, { ignore })` asks. A predicate that throws counts as free. Same pattern as `channelClaims.js`. |
 | `bookModel.js`             | The arithmetic of a book, pure: where an absolute millisecond falls among a work's parts, its chapters, where a bookmark lands after a rebuild (`resolveBookmark`), how the end of a part's stream is read (`classifyPartEnd`), where `/book play` starts (`resumeStart`), the resume rewind, and the speed, sleep and `goto` inputs. Uses the sum of the part durations, never the work's stored `totalMs`. |
 | `bookCatalog.js`           | Turns a Plex music listing into the long-form catalog, pure: which tracks are parts of a book or podcast, which work each belongs to, in what order they play, the overrides, the alias match after a rebuild, and the membership index. Works are built from folders on disk first and Plex albums second. `RULES_VERSION` goes up whenever a rule change would build a different catalog from the same listing. |
-| `bookCatalogStore.js`      | The current catalog in memory and in `data/book_catalog.json`, plus the read of `data/book_overrides.json`. Lazy (nothing at require time), atomic `replace()`, `findWorks(text)`, `partKeyFor(workId, { trackRatingKey, file })` by identity, and the memoised `index()` of track, album, artist and part-id Sets that the music exclusion reads. No Plex. |
-| `bookLibrary.js`           | The Plex side of the catalog: full listing and build (single flight), chapter probes, the hourly library signature check, the once-an-hour freshness check from `/book play`, and part-key repair through the track's own ratingKey. Never `/search`. |
+| `bookCatalogStore.js`      | The current catalog in memory and in `data/book_catalog.json`, plus `data/book_overrides.json`: `readOverrides()`, and `editOverrides(mutator)`, the one writer, for `!book edit` (raw read, refuses a file that does not parse, `.bak` then `.tmp` and a rename). `metadataContext()` gathers the overrides, the lookup cache and the Calibre pointers; `refreshMetadata()` lays them over the stored works again in milliseconds. Lazy (nothing at require time), atomic `replace()`, `findWorks(text)`, `partKeyFor(workId, { trackRatingKey, file })` by identity, and the memoised `index()` of track, album, artist and part-id Sets that the music exclusion reads. No Plex. |
+| `bookLibrary.js`           | The Plex side of the catalog: full listing and build (single flight, plus `after: 'current'` to queue exactly one more), the section folders (`meta.roots`), the embedded-tag read with its 45 s budget, chapter probes, the metadata layers applied before `replace()`, the online lookup batch queued after a build, the hourly library signature check, the once-an-hour freshness check from `/book play`, and part-key repair through the track's own ratingKey. Never `/search`. |
+| `bookTags.js`              | Embedded tags of one sample file per long album, for the catalog: `ffmpeg -i` in a child process at Below Normal, at most 2 at once, a 13-key whitelist capped at 300 characters, cached in `data/book_tags.json` by path, size and mtime (failed opens cached too). `read(list, { budgetMs })` never throws and leaves late reads finishing in the background. |
+| `bookMetadata.js`          | Which value each displayed field of a work shows and where it came from (`sources`): overrides, author-level overrides, detection, then Calibre and online filling blanks only, with the guarded title case fix. Pure; never touches an id, alias, folder key or part. |
+| `bookLookup.js`            | The opt-in online lookup: Audible's catalog search, one request a second, title and author only, cached in `data/book_lookup.json`. Matches an edition by runtime or a book by series agreement, and only proposes: `compare()` labels each field and `bookMetadata` decides. Off unless `audiobookOnlineLookup`. |
+| `bookChapterLabel.js`      | The card's chapter words ("Book 4 · Chapter 7", "Episode 3 of 8", "Part 13 of 31 · Section 1 of 6") from the track or embedded chapter title, through the read-along's own parsers. Pure; the slot numbers `/book chapter` jumps by are unchanged. |
 | `longForm.js`              | Keeps catalogued books and podcasts out of music. `enabled()`, `isLongFormTrack/Album/Artist/Entry`, `partition(list)` into `{ music, books }`, the Plex-side exclusion fragment (`plexExclusion()`, `withExclusion(url)`), and the "📚 Also in your books" redirect lines. |
 | `bookmarks.js`             | Each listener's place in each work, in `data/book_bookmarks.json` (durable store, hourly `.bak`), and the stats and leaderboard derived from it. `record()` writes only when the place or the listening time moved by a second or more; a failed write keeps memory, flips `healthy()` and records `book-save-failed` once per failure streak. |
 | `bookAudio.js`             | The ffmpeg arguments for a book part (input `-ss` before `-i`, reconnect flags, `atempo` off 1x, Ogg Opus out) and the environment with every proxy variable removed. Pure. |
@@ -224,6 +228,8 @@ out-of-range value cannot break playback.
 | `audiobookDefaultSpeed` | choice `0.75` `0.9` `1` `1.1` `1.25` `1.5` `1.75` `2` | `'1'` | Speed for a listener's first book; after that each listener keeps their last speed. Stored as a string because it is a menu choice. |
 | `audiobookIdleLeaveMinutes` | int 1–180 | `10` | How long a paused or abandoned book keeps the voice channel. |
 | `audiobookResumeRewindSeconds` | int 0–120 | `10` | Rewind on resume after more than 5 minutes away, three times this after a day. 0 resumes exactly. |
+| `audiobookOnlineLookup` | bool | `false` | After each catalog rebuild, ask Audible's unofficial catalog search for every eligible book's series, number, narrators and publisher, sending the title and author only. The answers fill blanks and nothing else. The panel shows a warning line saying what is sent. Read on every call. See "Online lookup". |
+| `audiobookLookupRegion` | choice `us` `ca` `uk` `au` `fr` `de` `jp` `it` `in` `es` | `'us'` | Which Audible store to ask (`api.audible.<tld>`), which also sets the language a candidate must be in. Changing it changes every work's query key, so the next batch asks again. |
 
 **Read-along settings.** The first two are under `/config` → Audiobooks, the four Calibre ones
 under Integrations. All are read at call time, and the Calibre client is rebuilt whenever any of
@@ -291,7 +297,10 @@ All persistent runtime state lives under `data/`. The directory is created if mi
 | `data/book_catalog.json`          | `helpers/bookCatalogStore.js` (the audiobook and podcast catalog built from the Plex music library: works, parts, file names, Plex keys, rejected folders, the chapter cache and the membership index; about 340 KB on a 21-work library; rebuilt from Plex whenever it is missing or damaged) |
 | `data/book_bookmarks.json`        | `helpers/bookmarks.js` (each listener's place, speed and listening time per work, keyed `<discordUserId>::<workId>`) |
 | `data/book_bookmarks.json.bak`    | `helpers/jsonStore.js` (hourly copy of the bookmarks, written only from a file that decodes; loaded in place of a damaged main file) |
-| `data/book_overrides.json`        | **You.** Hand-edited catalog corrections, read only by `helpers/bookCatalogStore.js`. Never written by the bot. Format under "Audiobooks and podcasts". |
+| `data/book_overrides.json`        | **You**, by hand or through `!book edit`: catalog corrections. Read by `helpers/bookCatalogStore.js` `readOverrides()`; written only by its `editOverrides()`, which refuses a file that does not parse. Format under "Audiobooks and podcasts". |
+| `data/book_overrides.json.bak`    | `helpers/bookCatalogStore.js` (`editOverrides()`: the text from just before the latest `!book edit` write; one copy, overwritten each time. A `.tmp` beside it exists only during a write) |
+| `data/book_tags.json`             | `helpers/bookTags.js` (the embedded tags of each sampled audiobook file, keyed `<lower-cased path>\|<size>\|<mtime>`, plus `{ failed: true }` entries for files ffmpeg could not open; entries unseen for 30 days are pruned) |
+| `data/book_lookup.json`           | `helpers/bookLookup.js` (the online lookup's answer per work id: query key, outcome, the picked factual fields, fetch time; only while `audiobookOnlineLookup` has been on) |
 | `data/logs/voice-<date>.jsonl`    | `helpers/voiceHealth.js` (only while `voiceHealthEnabled` is on) |
 | `data/book_text/cache/<base>.txt`, `.json` | `helpers/epubTextWorker.js` (the parse child): an ebook's extracted text and its section index, named by a hash of the source fingerprint. Read by `helpers/bookTextSource.js`, whose start-up sweep deletes files no work points at |
 | `data/book_text/cache/<base>.fail.json` | `helpers/epubTextWorker.js` (an ebook that could not be read: DRM, damaged, too large; deleted after 30 days or by `!book link`) |
@@ -301,8 +310,9 @@ All persistent runtime state lives under `data/`. The directory is created if mi
 | `data/book_text/works.json`       | `helpers/bookTextStore.js` (which cache files each work uses, and the source they came from) |
 | `data/book_text/marks.json`       | `helpers/bookTextStore.js` (the read-along's sync marks set with 📌, by work id: audio time, word index, text version, Discord user id and time; no book text) |
 
-All four `book_*` files and the `.bak` are gitignored: the bookmarks are keyed by Discord user
-id, and the catalog and overrides describe your library. `data/book_text/` is gitignored as a
+The catalog, bookmarks, bookmark `.bak`, overrides (with its `.bak` and `.tmp`), tag cache and
+lookup cache files are gitignored, each on its own line: the bookmarks are keyed by Discord user
+id, the tag cache by local file paths, and the rest describe your library. `data/book_text/` is gitignored as a
 whole: it holds text extracted from your own ebooks, user ids and local paths. Each has an env
 override, which the tests set to a pid-suffixed temp path before the first require:
 
@@ -310,7 +320,9 @@ override, which the tests set to a pid-suffixed temp path before the first requi
 | ------- | ------------ |
 | `PLEXBOT_BOOK_CATALOG_FILE` | `data/book_catalog.json` |
 | `PLEXBOT_BOOK_BOOKMARKS_FILE` | `data/book_bookmarks.json` (the backup is always `<that>.bak`) |
-| `PLEXBOT_BOOK_OVERRIDES_FILE` | `data/book_overrides.json` |
+| `PLEXBOT_BOOK_OVERRIDES_FILE` | `data/book_overrides.json` (the backup and temp file are always `<that>.bak` and `<that>.tmp`) |
+| `PLEXBOT_BOOK_TAGS_FILE` | `data/book_tags.json` |
+| `PLEXBOT_BOOK_LOOKUP_FILE` | `data/book_lookup.json` |
 | `PLEXBOT_BOOK_TEXT_DIR` | `data/book_text` (the cache goes in its `cache/` folder) |
 | `PLEXBOT_BOOK_TEXT_LINKS_FILE` | `data/book_text/links.json` |
 | `PLEXBOT_BOOK_TEXT_READERS_FILE` | `data/book_text/readers.json` |
@@ -318,7 +330,7 @@ override, which the tests set to a pid-suffixed temp path before the first requi
 | `PLEXBOT_BOOK_TEXT_MARKS_FILE` | `data/book_text/marks.json` |
 
 Under the test runner without its env var, each book store is memory-only and the overrides
-file is never read, the same rule as every other `jsonStore` store, so the bot tests (`app/bot.js`
+file is never read or written (`editOverrides` answers "off limits"), the same rule as every other `jsonStore` store, so the bot tests (`app/bot.js`
 now asks the catalog whether a track is a book) never see the real catalog or the real overrides.
 The read-along's text source goes further: under the runner without `PLEXBOT_BOOK_TEXT_DIR` it
 refuses to read or write any cache at all and reports the read-along as off.
@@ -382,7 +394,7 @@ A `10062 Unknown interaction` on a *fast* defer means the event reached the bot 
 
 **The adapter contract** (`helpers/interactionAdapter.js`): `message.content` is rebuilt in prefix form (`!name args`) rather than set to the bare argument string, because several commands parse arguments as `content.split(' ').slice(1)` and would otherwise lose the first one. The first call to `message.reply(...)` or `message.channel.send(...)` routes through `interaction.editReply(...)`, which appears in chat as the bot's response to the slash command. Subsequent calls go through the real `interaction.channel.send(...)`. That means commands like `!trivia` (which post a "Loading..." status, then edit it, then post game messages) work unchanged: the initial `channel.send` becomes the slash command's primary response, then the game's follow-up messages are normal channel posts.
 
-**Coverage:** every command in `commands/` declares a `slash` block. The loader picks up 56 command entries (54 files plus the `playlist.js/` and `book.js/` directories) and logs `Loaded 56 commands (4 aliases)`; the aliases `?`, `plextest`, `archipelago` and `books` are prefix-only, so 56 slash commands register. Subcommand sets include `/playlist`, `/request`, `/hitster`, `/library`, `/list`, `/tags`, `/ap`, `/book`, `/voicehealth` and the game commands. `npm run check:slash` validates the whole set against Discord's rules without booting the bot: 56 commands, 26,163 bytes of registration payload, the largest `/ap` at 2,783 of 4,000 characters, and `/book` at 1,572.
+**Coverage:** every command in `commands/` declares a `slash` block. The loader picks up 56 command entries (54 files plus the `playlist.js/` and `book.js/` directories) and logs `Loaded 56 commands (4 aliases)`; the aliases `?`, `plextest`, `archipelago` and `books` are prefix-only, so 56 slash commands register. Subcommand sets include `/playlist`, `/request`, `/hitster`, `/library`, `/list`, `/tags`, `/ap`, `/book`, `/voicehealth` and the game commands. `npm run check:slash` validates the whole set against Discord's rules without booting the bot: 56 commands, 28,352 bytes of registration payload, the largest `/ap` at 2,783 of 4,000 characters, and `/book` at 2,560 with 23 subcommands (measured 2026-10-16, after `/book edit` and its ten field choices). `test/validateSlash.test.js` warns early when `/book` reaches 2,700, well inside Discord's 4,000.
 
 `scripts/validate-slash.js` exports `validate(commands)` so its rules are tested (`test/validateSlash.test.js`). Beyond names, descriptions, option counts and required-before-optional, it checks:
 
@@ -1773,32 +1785,137 @@ On a hand-ripped library a Plex album is not a book. Several books share one alb
 album holds the second half of one book and the whole of another, one book is spread over several
 albums under several artist spellings, and numbered volumes are poured into one flat folder. What
 does line up is the folder on disk, so `helpers/bookCatalog.js` groups tracks by folder first
-(a trailing `Part 2`, `Disc 3`, `[01]` or `(1 of 6)` on a folder is folded into its parent) and
-uses Plex albums second.
+(a trailing `Part 2`, `Disc 3`, `[01]` or `(1 of 6)` on a folder is folded into its parent, under
+the guard below) and uses Plex albums second.
 
-A folder group becomes a work when it holds at least 2 h of audio and one of these holds:
+**Status of rules version 3** (the disc-folder guard, genres, the split, embedded tags, the
+metadata layers, the online lookup, `!book edit` and the card's chapter labels). Built and
+unit-tested offline: `npm test` passed 1,727 of 1,727 on 2026-10-16, 201 more than at `bad7656`,
+and `npm run check:slash` is clean. Three scratch gates ran the real modules against a read-only
+snapshot of the live library (17,570 tracks, 1,721 albums, 21 books and a podcast) with every
+store on temp files, real ffmpeg reading the real files' tags, and the saved Audible answers
+served through a stubbed `fetch`. **None of it has run in the live bot yet**; Phase 10 of
+`BUGTESTING.md` is the checklist that does.
 
-| Kind | Rule |
-| ---- | ---- |
-| podcast | at least half its tracks carry an episode number, and the median track is 20 min or longer |
-| book | the median track is 15 min or longer |
-| book | a name signal (GraphicAudio, unabridged, audiobook, narrated, "read by") and at least 3 h |
-| book | at least 80% mono at 96 kbps or less, 20 or more tracks, and at least 3 h |
+**The disc-folder guard.** `folderKey` folds a leaf such as `Disc 2` into its parent.
+`groupTracks(tracks, { roots })` keeps the fold only when the parent is a book's own folder: it
+holds loose files and they include this track's Plex album, or it holds no loose files and is
+neither a music section's folder nor a bare drive. Otherwise the group key is the track's own
+folder. `roots` are the sections' `Location[].path` from `/library/sections`, stored as
+`meta.roots` and compared case-insensitively with slashes normalised.
+
+The trap it closes: a stray `Disc 2` of a rap album sat under a section's top folder, beside a
+loose GraphicAudio `.m4b` of another album. The fold made the top folder the group key, and the
+two came out as one 12-part work called "Music" by the rapper (`tyler-the-creator/music`), with a
+live bookmark in it. Plex had filed them as separate albums all along. On the live library the
+guard changes only that case among works; two "Untagged and Not working" music buckets lose their
+disc subfolders (64 to 52 tracks, 411 to 396) and stay music. The sibling-folder merge (one album
+spread over sibling folders nothing else uses) is unchanged.
+
+**Genres.** `genreClass(genres)` is `'book'` when any genre matches `BOOK_GENRE_RE` (audiobook,
+abook, podcast, audio drama, radio play, radio drama or radio theatre, full cast, narrat...), else `'music'`
+when any is a music genre, else null. A genre is split on `/ ; , | >` and ` - `, and a segment is
+music when the whole of it matches `MUSIC_SEGMENT_RE`: music words (about 60, from rock to
+chiptune) and style modifiers ("Hard", "Progressive", "Death"), ending in a music word, with an
+optional trailing "Music". A loose word match took "Space Opera", "Fairy Tales, Folk Tales &
+Myths", "Classical Studies" and "Haunted House" for music and vetoed those books. On the live
+snapshot the segment rule classes 566 of the 568 genre strings as before, and builds the same
+catalog. A book
+genre wins inside one tag ("Audiobook - Sci Fi - Dan Simmons"); "Fantasy", "Game", "Comedy" and
+"Spoken Word" are neutral. An album's class combines its Plex `Genre[]` with the embedded `genre`
+tag of its sampled file, cached per build, and `groupStats` adds `bookShare` and `musicShare`, the
+share of a group's tracks on book and on music albums. On the live library 19 of 21 books carry an
+audiobook genre.
+
+A folder group becomes a work when it holds at least 2 h of audio, the veto does not apply, and
+one of these holds, checked in this order:
+
+| Kind | Rule (`detectedBy`) |
+| ---- | ------------------- |
+| music | **veto**: at least half its tracks on music albums and none on a book album. Decided before every rule below, so an hour-long mix stays music; a long one is rejected with the reason `music genre` |
+| podcast | `episodes`: at least half its tracks carry an episode number, and the median track is 20 min or longer |
+| book | `median`: the median track is 15 min or longer |
+| book | `genre`: at least half its tracks on book albums |
+| book | `name-signal`: GraphicAudio, unabridged, audiobook, narrated or "read by" in a name, and at least 3 h |
+| book | `mono-low-bitrate`: at least 80% mono at 96 kbps or less, 20 or more tracks, and at least 3 h |
+
+Only `median` and `episodes` give high confidence. T. H. White's omnibus moved from `name-signal`
+to `genre`, still medium.
+
+**The music split.** A group that classified as a book or podcast, and was not an album the owner
+included by hand, has its music albums split off when at least one album in it is not music. Each
+piece, and what is left, is classified again on its own, and the split runs once per group.
+Splits are returned as `splits` (`{ folderKey, album, albumTitle, tracks, reason: 'music-genre' }`),
+kept in the stored catalog, reported by `/book rescan`, and the book carries a `split` doubt. A
+piece's key is `<folderKey>#album:<ratingKey>`. Groups that stay music are never split, so the
+rejected list does not fill with pieces. Dropped from the prototype as a closed question: a split
+of a "lone long file of its own album", which never fired on the live library once guarded and
+broke "a podcast with one album per episode keeps episode order".
 
 Everything else is music, and the near misses of 2 h or more are listed by `/book rescan` as
-"long groups not taken as books". Ids are slugs, `author/title`, with `~narrator` added only when
-two narrations collide. Part order is natural sort; several numbered volumes poured into one
-folder are untangled by chapter numbers and marked low confidence, and a `partOrder` override is
-the fix. Sample clips under 5 minutes are dropped from playback but stay in the index, so they
-never reach music. `RULES_VERSION` forces a rebuild when the rules change. It is 2 today: 2 added
-each work's `dirs` (the distinct folders of its part files) and `publisher` for the read-along, so
-the first start after that change rebuilds the catalog once (`bookLibrary.doCheck` returns `why:
-'rules changed'`).
+"long groups not taken as books". Ids are slugs, `author/title`, with `~<edition>` added only when
+two works collide. Part order is natural sort; several numbered volumes poured into one folder are
+untangled by chapter numbers and marked low confidence, and a `partOrder` override is the fix.
+Sample clips under 5 minutes are dropped from playback but stay in the index, so they never reach
+music.
+
+**What detection reads** (`describe`):
+
+- **Author:** the Plex artist votes (with `feat.`, `ft.`, `featuring`, `with` and `x` stripped),
+  then a tag `artist` or `album_artist` that is a person, then "Written by" or "By :" in
+  `comment`, then a person's name in `copyright` (lines naming a company, "..., LLC", are
+  rejected), then the author folder below `Music`. `publisherOf` knows 20 audiobook houses with
+  corporate suffixes stripped, so "Graphic Audio LLC." matches, and a publisher is never the
+  author. The source is kept as `authorSource`: `artist`, `tag-artist`, `comment`, `copyright`,
+  `folder` or null.
+- **Generic names** never become a title: Music, Media, Audio, Audiobooks, Books, Podcasts,
+  Library, Downloads, Untagged..., Unknown..., Various..., Disc/CD/Part/Vol/Side followed by
+  nothing, a number, or a space and one letter or a roman numeral, a bare drive and any section
+  folder. The main album's title is used instead. "Partials", "Volition" and "Discworld" are
+  titles.
+- **Series and number:** `parseSeriesTitle` reads `Series N: Title`, `Series [NN] Title [k]`,
+  `Series, Book N - Title` or `Series #N: Title`, a numberless `Series: Title`, and `Title (k of
+  n)`. Album titles no other work shares come first, weighted by tracks (so the seven identically
+  named Mistborn albums are ignored), then the last three folder names. A numberless `Series:
+  Title` names a series only when another work names it with a number or a folder supplies one;
+  otherwise the whole text stays the title ("Sapiens: A Brief History"). The Stormlight-code and
+  `1.Title` rules of version 2 stay as fallbacks.
+- **Title case:** `smartTitle` puts small words in lower case except first, last and after a
+  colon or dash, leaves acronyms, roman numerals, mixed-case words and words with digits alone,
+  capitalises an all-lower-case title and leaves an all-capitals one as it is.
+  `restoreApostrophes` puts an apostrophe back only when a track or file name spells the word with
+  it beside the same neighbouring word, so a chapter "The King's Road" cannot touch "The Way of
+  Kings".
+- **Narrator:** the folder or album bracket, unless the bracket is cut short (`...` or `…`) or
+  names a publisher; with no bracket, a single-person `narrator` tag or "Narrated by" / "Read by"
+  in `comment`. A comma, `&`, "and", an ellipsis, "cast", "various" or "ensemble" makes it a cast,
+  which is no narrator (`CAST_RE`). The bracket still shows as the edition: all seven Mistborn
+  works show edition "Terence Aselford" (the first name of a cut-short GraphicAudio cast) and no
+  narrator. "Various" in a folder bracket (Hyperion) is still shown as the narrator.
+- **Publisher:** a publisher artist, then tag `album_artist`, `artist`, `composer` or `publisher`,
+  then a `graphicaudio.net` comment or a GraphicAudio file name. Kept apart from `edition`.
+
+**Frozen id inputs.** Tag data must not move an existing id. The collision suffix keeps its
+version 2 input exactly: the folder's or an album's bracket, else the old GraphicAudio test on the
+artist and file names, else the folder key. A publisher learned from tags therefore never turns
+`~bevine` into `~graphicaudio`, and the Mistborn edition above is one of these inputs.
+`smartTitle` and `restoreApostrophes` change only case and apostrophes, which `norm` drops, so
+the slug cannot change; a test pins it over a fixed list. Online, Calibre and `!book edit` values
+never reach an id, a folder key, the grouping or the part order.
+
+**What each work records** beyond version 2: `authorSource`; `doubts`, structured and never
+holding a path (`{ code: 'mixed-artists', artists: [{ name, tracks }] }`, `music-genre` with album
+titles, `generic-folder` with the leaf name, or null for a bare drive, and an album count,
+`generic-title`, `no-author`, and `split` with album titles, null for an untitled album rather
+than its ratingKey); `detected`, the title, author, narrator, edition, publisher, series and
+sequence as detection found them before any override, with `sources` (`folder`, `album`, `tag`,
+`plex-artist`); and `sources`, filled by the metadata layer below.
 
 **Chapters.** Only mp4, m4a and m4b parts, and parts over 2 h, are asked for chapters
 (`/library/metadata/<rk>?includeChapters=1`), cached by `trackRatingKey:sizeBytes`. A list is kept
 only with 2 or more entries whose end is after their start; the 5-minute "Marker N" point lists
-seen on mp3s are dropped. A part without embedded chapters is one chapter.
+seen on mp3s are dropped. A part without embedded chapters is one chapter; "Chapter labels on the
+card" below covers what the card calls it.
 
 **Refresh.** A full listing costs about 17 s and 25 MB, so it runs only when something says the
 library changed: no catalog yet, the rules changed, the build is over a day old, or a music
@@ -1810,24 +1927,62 @@ refuses while any music section is `refreshing`, even when forced, because a mid
 miss folders and leak books into music, and an empty listing or a build with no works never
 replaces a catalog that has some (an unmounted drive) unless forced. If a rebuild fails the last
 catalog stays in use and `/book play` adds "(The library list may be stale: the last refresh
-failed.)".
+failed.)". `rebuild()` is single flight; `rebuild({ after: 'current' })` is for a caller that
+changed something a running build read too early (the overrides, the tag cache): exactly one more
+build follows the running one, and every such call made meanwhile shares it.
 
-After a rebuild, `matchAliases` maps old ids to new ones by `trackRatingKey` or a basename
-overlap of at least 50%, records them in `aliases`, and a bookmark found under an alias is re-keyed
-to the new id when it is next read. A running session keeps its snapshot of the work and looks its
-part keys up by identity in the new catalog.
+After a rebuild, `matchAliases` maps old ids to new ones by `trackRatingKey`, then basename plus
+size, then basename, records them in `aliases`, and a bookmark found under an alias is re-keyed to
+the new id when it is next read. A running session keeps its snapshot of the work and looks its
+part keys up by identity in the new catalog. **The match needs half the old work, by parts or by
+listening time, whichever share is larger** (`shareOf`). The bogus "Music" work's 12 parts were
+11 short instrumentals and the one Murderbot file, which held 80% of its time; with a count-only
+share the live bookmark 1:08:33 into it would have been orphaned. With it,
+`tyler-the-creator/music` is an alias of `martha-wells/all-systems-red` and the bookmark resumes at
+the same place. The tier order and the tie rule (two narrations sharing basenames match nothing)
+are unchanged.
 
-**Overrides** (`data/book_overrides.json`, hand-edited, read only). Read with `readFileSync` and
-`JSON.parse` on each build. A parse error is logged, ignored, kept in `meta.overridesError` and
-reported by `/book rescan`.
+**`RULES_VERSION` is 3.** Version 2 added each work's `dirs` (the distinct folders of its part
+files) and `publisher` for the read-along; version 3 added the guard, genres and the veto, the
+split, tag metadata, the frozen id inputs and the duration-weighted share. The first start after
+an update to a new version rebuilds the catalog once (`bookLibrary.doCheck` returns `why: 'rules
+changed'`). On the live snapshot, the first version 3 build changed:
+
+| Work | Change |
+| ---- | ------ |
+| `tyler-the-creator/music` | gone. Its id is an alias of the new `martha-wells/all-systems-red`: "All Systems Red", Martha Wells (from the copyright tag), The Murderbot Diaries #1, GraphicAudio, 1 part with 3 embedded chapters, `median`, high confidence. It is the build's one rename: live, the start-up build makes it (its log line ends "1 renamed"), so a `/book rescan` afterwards lists no rename. |
+| its 11 instrumental tracks | back in music |
+| the 7 Mistborn works | narrator "Terence Aselford" to none, edition kept; The Alloy of Law also gains publisher GraphicAudio |
+| `brandon-sanderson/words-of-radiance` | title "Words Of Radiance" to "Words of Radiance" |
+| `t-h-white/the-once-and-future-king` | title "The Once And Future King" to "The Once and Future King"; `detectedBy` `genre` |
+| `worlds-beyond-number/the-childrens-adventure` | title "The Childrens Adventure" to "The Children's Adventure", same id |
+| every work | new fields `authorSource`, `doubts`, `detected`, `sources` |
+| the rejected list | 5 long music groups now give the reason `music genre`; 2 lose their disc subfolders |
+
+The gates checked, through the real `createLibrary().rebuild()`: 21 of 21 ids with identical part
+order, 0 tracks newly catalogued, exactly the 11 instrumentals removed, album and artist keys
+otherwise identical, both live bookmarks resolving, and a second build renaming nothing. Without
+tags the Murderbot work comes out as `untitled/all-systems-red` with a `no-author` doubt, and the
+next tagged build renames it again through an alias; the 45 s tag wait exists to skip that step.
+
+**Overrides** (`data/book_overrides.json`). Read with `readFileSync` and `JSON.parse` (a UTF-8 byte
+order mark is stripped first) on each build and by every metadata refresh. A parse error is
+logged, ignored by the build, kept in `meta.overridesError` and reported by `/book rescan`; while
+it lasts, `refreshMetadata()` changes nothing and `editOverrides()` refuses to write, so a hand
+edit with a typo is never overwritten. The one writer is `editOverrides(mutator)`, for
+`!book edit`: it reads the file raw (never through `readOverrides`, whose widened include and
+exclude keys must not be written back), hands it to the mutator, writes the previous text to
+`<file>.bak` and the new one to `<file>.tmp` (both fsynced), renames the `.tmp` over the file, and
+creates the file when it is missing. An edit that changes nothing leaves the file and its
+formatting alone. Its errors are path-free, ready for a public reply.
 
 ```json
 {
 	"authors": { "<author-slug>": { "series": "Series Name", "order": { "first title": 1, "second-title": 2 } } },
 	"works": {
 		"<detected id>": {
-			"title": "", "series": "", "sequence": 2.5, "narrator": "", "edition": "",
-			"partOrder": ["01 file.mp3", "02 file.mp3"], "exclude": true, "pinId": "stable/id"
+			"title": "", "author": "", "series": "", "sequence": 2.5, "narrator": "", "edition": "", "publisher": "",
+			"partOrder": ["01 file.mp3", "02 file.mp3"], "exclude": true, "folderKey": "<the work's folderKey>", "pinId": "stable/id"
 		}
 	},
 	"include": ["<folderKey or albumRatingKey>"],
@@ -1838,14 +1993,27 @@ reported by `/book rescan`.
 
 - `works` entries are keyed by the **detected** id, which is computed before overrides apply, so a
   `title` or `pinId` override cannot stop its own entry from matching on the next build. `pinId`
-  gives the work a stable id and keeps the detected id as an alias. Empty strings are ignored;
-  `null` clears `series`, `narrator`, `edition` or `sequence`. A partial `partOrder` puts the
-  listed files first and keeps the rest after them in their old order.
-- `authors.<slug>.order` matches titles by slug, so `"the fall of x"` and `"the-fall-of-x"` both
-  work. Without `order`, `series` fills only works that have none.
+  gives the work a stable id and keeps the detected id as an alias. The metadata layer also finds
+  an entry under each alias, and merges several field by field, current id first. Empty strings
+  are ignored; `null` means none for every metadata field except `title` and `author`. A partial
+  `partOrder` puts the listed files first and keeps the rest after them in their old order.
+- **Ids that move.** A rule change, a late tag or a renamed folder can change the detected id, and
+  `applyOverrides` reads `exclude`, `partOrder` and `pinId` by that id alone. So `doRebuild`
+  builds once, matches the old catalog to it, and `carryOverrides` copies those three keys from
+  any entry under an old id or alias of the same work onto the new detected id, in memory only;
+  the second build uses the result. Each carry is a rebuild note ("overrides for X (pinId) now
+  apply to Y"), and every note is logged at warn on every build, the automatic ones included. An
+  exclude with a `folderKey` holds by folder whatever the id; a hand-written exclude without one,
+  under an id the old catalog does not know, cannot be carried and is reported as not detected.
+- `authors.<slug>` is keyed by the slug of the **detected** author, so an author changed by an
+  edit keeps its entry. `order` matches titles by slug, so `"the fall of x"` and `"the-fall-of-x"`
+  both work. Without `order`, `series` fills only works that have none. The build's
+  `applyOverrides` honours only the exact slug key; the display also accepts a hand-written key
+  that slugs the same, and `!book edit` folds such a key into the slug key.
 - `include` and `exclude` take a folder key exactly as `/book rescan`'s rejected list prints it, or a
   work's `folderKey` (slash direction and case ignored), or an album ratingKey. The rejected list
-  prints a key from below the music root (or its last two folders), so the drive and the folders
+  prints a key from below its music section's folder (`meta.roots`; a catalog from before version 3
+  falls back to below a folder named Music, or its last two folders), so the drive and the folders
   above it stay out of the channel; `bookCatalogStore.readOverrides` widens such a short key to
   the one full key from the last build that ends with it. A short key that fits two folders is
   left as typed (and logged), so it needs the full path. For a box set merged
@@ -1854,6 +2022,323 @@ reported by `/book rescan`.
 - `podcastArtists` is additive. The artists of every detected podcast are already excluded from
   music at artist level, so a new episode album stays out of music before any rebuild sees it; this
   only adds artists the detector missed.
+
+### Embedded tags (`helpers/bookTags.js`)
+
+A GraphicAudio file names its publisher as the artist and its author only in the copyright tag,
+and genres tell a 3-hour mix from a book. Plex's listing carries neither, so a build reads the
+tags of one file per long album.
+
+- **Sampling.** `bookCatalog.tagSamples(tracks, { roots })` takes each Plex album's first
+  non-sample track by disc and index, for albums inside a folder group, grouped exactly as the
+  build groups, of 2 h or more or with a track of 15 min or more: 225 albums on the live library.
+- **Reading.** `execFile(ffmpeg-static, ['-hide_banner', '-nostdin', '-i', file])` with
+  `windowsHide`, a 20 s timeout and a 4 MB buffer. ffmpeg exits non-zero because no output is
+  named, so success is an `Input #0` block in stderr; its `Metadata:` lines are parsed with
+  continuation lines joined, and chapter lines are counted. Each child is set to Below Normal
+  right after spawn (a refusal is warned once and the child runs at Normal), because CPU
+  contention is a measured cause of voice stutter. The event loop never waits on a read.
+- **At most 2 children at once across every read**, so a rescan started while an earlier read's
+  leftovers run cannot double them, and a file already being read is shared, not read twice.
+- **Whitelist:** `album`, `album_artist`, `artist`, `composer`, `genre`, `copyright`, `comment`,
+  `narrator`, `publisher`, `title`, `date`, `asin`, `audible_asin`, each value capped at 300
+  characters. Descriptions, lyrics and synopses are never stored. Of `comment`, usually the
+  publisher's summary in a ripped audiobook, only the lines the catalog reads survive (`written
+  by`, `by :`, `narrated by`, `read by`, `graphicaudio.net`), each from where that phrase starts
+  and cut to 120 characters; a comment with none of them is dropped. On the live snapshot that
+  kept 11 of 567 comments and built the same catalog.
+- **Cache** `data/book_tags.json` (`PLEXBOT_BOOK_TAGS_FILE`, memory-only under the test runner),
+  keyed `<lower-cased path>|<size>|<rounded mtimeMs>` from `fs.promises.stat`. A hit refreshes its
+  last-seen time at most once a day, so a warm build does not rewrite the file, and entries unseen
+  for 30 days are pruned when it is written.
+- **Failures.** A file ffmpeg ran on and could not open is cached as `{ failed: true }` for that
+  size and mtime and tried again after 30 days or when the file changes. Two live files hit this:
+  Japanese drama CD files whose paths are 284 characters, which ffmpeg-static 4.4.1 cannot open
+  even with the `\\?\` prefix while `fs.stat` succeeds; before the negative entry, every build
+  spent 2 spawns on them. A stat failure (an unmounted drive, a path that is not local to the
+  bot), a timeout or a spawn error uses the newest good entry for that file at any size or mtime,
+  and is retried next build. There is no fallback to reading over Plex in this round.
+- **Budget.** `read()` resolves when every job is done or `budgetMs` has passed, whichever is
+  first, and never throws. `bookLibrary` gives it 45 s (`TAG_BUDGET_MS`) on every build; warm
+  builds read the cache in milliseconds, so only the first version 3 build, or one after many new
+  albums, waits. Measured cold on the live library: 12.5 s for 225 albums, 223 read and 2 failed.
+  Reads still running when the budget ends finish in the background; when they added entries,
+  `scheduleTagRebuild()` runs one more build after any build already running (`after: 'current'`),
+  at most one per 10 minutes (one inside that gap is deferred to its end rather than dropped,
+  since nothing else would rebuild for a day), and none while audiobooks are off.
+
+### Metadata layers (`helpers/bookMetadata.js`)
+
+`resolve(work, layers)` decides every displayed `title`, `author`, `narrator`, `edition`,
+`publisher`, `series` and `sequence`, starting from `work.detected` and recording where each came
+from in `work.sources`. It never touches `id`, `aliases`, `folderKey`, `parts`, `kind` or
+`confidence`. Per field, highest first:
+
+| Rank | Source | `sources` | Rule |
+| ---- | ------ | --------- | ---- |
+| 1 | the work's override, `works[<id or alias>]` | `override` | Always wins. `null` means none, except for `title` and `author`. |
+| 2 | the author's override with an `order`, `authors[slug(detected author)]` | `override` | Sets the series and number of each title its `order` names, matched by slug against the detected title. |
+| 3 | detection: tags, then Plex, then the folder | `tag`, `plex`, `folder` | As described above; `album` and `plex-artist` are shown as `plex`. |
+| 4 | the author's override without an `order` | `override` | A series for that author's books that have none. |
+| 5 | Calibre: the read-along pointer's `meta` | `calibre` | **Fills blanks only**: title, author (several joined with " & "), series, and the series index only beside Calibre's own series name. |
+| 6 | the online lookup's cache entry | `online` | **Fills blanks only**, through `bookLookup.compare()`: title, series, number, narrator, publisher. |
+
+A field the owner set, even to none, is locked and never filled from below. **The one change
+Calibre or online may make to an existing value is a guarded case fix of the title**, only when
+the title's source is `tag`, `plex` or `folder` and `caseFix(local, candidate)` holds: the two are
+equal by `bookLookup.caseKey` (case, accents, spacing and punctuation ignored), the candidate has a
+lower-case letter, and `bookCatalog.smartTitle(candidate) === candidate`. The lower-case condition
+is stricter than the plain `smartTitle` test, because `smartTitle` returns an all-capitals title
+unchanged and "WORDS OF THE TIDE" would otherwise replace "Words of the Tide". Tests pin both
+directions: "Words Of The Tide" becomes "Words of the Tide", and never the reverse.
+
+Calibre ranks below detection because Calibre titles can be worse than the folder's: the live
+record #350 is titled "The once and future king", and #299 "Mistborn" is The Final Empire. Either
+would have replaced a good title. A pointer counts whether it came from `!book link` or from the
+automatic match, and a stale pointer under an old link is ignored (`pointerUsable`).
+
+Online only fills because online and local disagree in ways that are not mistakes: Edgedancer is
+#0.5 locally and 2.5 on Audible, and Audible spells "Murderbot Diaries" without "The".
+`compare()` labels each proposed field `none`, `fill`, `same`, `case-fix`, `equivalent` or
+`differs`, and `resolve` applies `fill` and the guarded `case-fix` only. A number fills only beside
+its own series: next to another series it is `differs`, as with the owner's "Hyperion Cantos"
+against Audible's "Hyperion". No online narrator is applied when Audible says "full cast" (more
+than three names), or when the work's edition is a cut-short cast list (edition set, narrator
+null, edition not a publisher), or an Audible answer could name one member of the Mistborn cast.
+
+Where it runs:
+
+- **Inside every build.** `bookLibrary` reads `store.metadataContext()` after the build's last
+  await, right before `replace()`, and stores `resolveWith(work, ctx)` for every work, so a new
+  catalog shows the owner's edits and the Calibre and online fills at once, and a
+  `refreshMetadata()` straight after a build changes nothing. With the overrides file broken
+  (`ctx.error`), the build keeps `applyOverrides`' result rather than resolving without the
+  owner's edits.
+- **`refreshMetadata()`** re-resolves the stored works with no Plex call, persists only when a
+  field or a source changed, and refuses while the overrides file is broken. It runs after every
+  `!book edit`, after a lookup batch that changed an entry, and after `!book edit <work> lookup`.
+- `layersFor` asks the lookup with the work as it stands without the online layer, because the
+  cache entry's query key comes from that title and author.
+- A successful `!book link` calls `refreshMetadata()` too (commands/book.js/text.js `doLink`), so a
+  new Calibre fill shows at once.
+
+### Online lookup (`helpers/bookLookup.js`)
+
+Off unless `audiobookOnlineLookup`. Only proposes: it never writes a catalog field. Measured with
+the live library's saved Audible answers through a stubbed `fetch`, inside a real build: 21
+requests in 20.7 s, 4 edition matches, 2 book matches, 15 not found, 1 skipped (the podcast), the
+build itself returning in under 600 ms without waiting. Nothing was replaced; 4 blanks were filled
+(publisher Audible Studios on two Hyperion recordings, and series "Once and Future King" and
+publisher Naxos AudioBooks on T. H. White). The bot has never sent a live request.
+
+**The request.**
+
+```
+GET https://api.audible.<tld>/1.0/catalog/products?title=<t>&author=<a>&num_results=10
+    &products_sort_by=Relevance&response_groups=contributors,product_attrs,product_desc,product_extended_attrs,series
+```
+
+- TLD by `audiobookLookupRegion`: us `com`, ca `ca`, uk `co.uk`, au `com.au`, fr `fr`, de `de`, jp
+  `co.jp`, it `it`, in `in`, es `es`. The region also sets the language a candidate must be in.
+- Headers `User-Agent: Plex-Discord-Bot-BookCatalog/<package.json version>` and
+  `Accept: application/json`; `redirect: 'error'`; `AbortSignal.timeout(10000)`; a body over 2 MB
+  is refused.
+- **Sent:** the title with bracketed edition markers and a leading local series name removed, and
+  the author with initials spaced ("T.H. White" becomes "T. H. White", which the store finds more
+  of). **Never sent:** paths, Plex ids, work ids, Discord ids, user names, the narrator.
+- A 200 with `products: []` is "not found", not an error. 429 or 503: wait `Retry-After` (seconds
+  or an HTTP date, capped at 60 s, 5 s when absent), retry once, then `rate-limited`.
+- The endpoint is the unofficial one the Audible app, Audiobookshelf and the Plex Audnexus agent
+  use: no account, no key and no published terms or limits (the only terms found are an archived
+  2014 copy that restricts data mining). Hence opt-in, cached, title and author only, one request
+  a second. Audnexus is not queried; a tag ASIN is kept in the cache entry as `tagAsin` for later.
+
+**Eligibility,** checked before any request, the reason kept: `kind` is `book` (`not-a-book`, so
+podcasts never), no open doubts (`doubtful`; `bookCatalog.openDoubts`, the same test the rescan's
+doubt lines use, leaves out `split` and every doubt on a work whose title or author the owner set),
+an author (`no-author`) that is not a publisher (`publisher-author`), a title
+(`no-title`), not excluded (`excluded`), and not all of title, series and narrator set by the
+owner (`locked`). Skipped works are counted but never written to the cache, so a work that is
+ineligible for a while keeps a good cached answer.
+
+**Matching** (`matchProducts`, pure):
+
+1. **Candidates:** the region's language, not abridged, a `SinglePartBook` or `MultiPartBook`,
+   released by today, an author matching by letters only (a "- translator" credit is ignored, and
+   a comma does not split a name, so "Tyler, The Creator" stays one), and a title equal by
+   `normTitle` (lower case, accents folded, `&` as "and", brackets and a matching series prefix
+   dropped, punctuation and a leading "the" dropped), or at least 92% similar by Levenshtein when
+   the local title is over 12 characters. A candidate with " & " or a trailing number ("Hyperion
+   & Endymion 4") is rejected unless the local title has one too. More than 3 distinct titles
+   left gives none (`too-many-works`).
+2. **Edition:** runtime within `max(3%, 10 min)` of the local total, widened to 10% when a local
+   narrator surname is among its narrators or the publisher matches. The closest wins; two within
+   1% of each other with different narrators downgrade to a book match. Supplies title, series,
+   position, narrators (up to 3 joined with ", ", more is "full cast"), publisher, ASIN and
+   runtime.
+3. **Book:** no edition passed, and every candidate agrees on series and position (the `series[]`
+   entry named like `publication_name`, else the only one with a position; a universe entry with
+   no position is skipped). Supplies title, series and position only.
+4. **None** otherwise (`no-results`, `no-candidates`, `disagree`).
+
+A position that is not one number (`1-5`) is an omnibus: the series fills with no number.
+
+**Cache** `data/book_lookup.json` (`PLEXBOT_BOOK_LOOKUP_FILE`, memory-only under the runner), one
+entry per work id: `{ queryKey, region, fetchedAt, outcome, reason, asin, fields }`, the fields
+being only the picked factual ones. `queryKey` is a SHA-1 of the region, the normalised title and
+the normalised authors, so a case-only title fix keeps it and a real change of title, author or
+region forces a fresh lookup. The series prefix is deliberately left in the key, or a series
+filled by a lower layer would change it every time.
+
+| Outcome | Kept for |
+| ------- | -------- |
+| `edition`, `book` | 180 days |
+| `none` | 30 days |
+| `error` | 1 day. An error on a work that already holds a good answer for the same query keeps that answer and adds `failedAt` and `lastError`, with the same 1-day backoff. |
+
+Entries are found by id, then by alias; `get()` copies one found under an old id to the new id.
+`get()` returns nothing while the setting is off, so turning it off hides every online fill at
+the next refresh or build without deleting the cache.
+
+**Queue.** `refresh(works, { force })` makes one request at a time, at least 1 s apart, stops
+after 3 failures in a row (the rest come back `deferred`, with `stopped: true`), and is single
+flight: a call while a batch runs gets that batch's promise. `bookLibrary` queues a batch after
+every build while the setting is on and never awaits it. One batch runs at a time and at most one
+waits behind it, since a batch reads the whole stored catalog when it starts; a manual relookup
+already running is waited out first. A batch that changed any entry calls `refreshMetadata()`.
+`library.onlineBatch(report)` hands `!book rescan` the batch its own build queued, which it waits
+on for up to 60 s. Every failure falls back to the lower layers, with a warn log naming only the
+title and author.
+
+**Known gap.** `refresh()` reads only `opts.force`, and the shared `instance()` is built with
+`overrideOf = () => null`, so the `{ overrideOf }` `bookLibrary` passes is ignored and the
+`locked` and `excluded` reasons never fire live. Excluded works are not in the catalog anyway; the
+only effect is that a work whose title, series and narrator are all owner-set is still looked up,
+where only a blank publisher could fill.
+
+### Owner edits: `!book edit` (`commands/book.js/edit.js`)
+
+`!book edit` and `/book edit` write `book_overrides.json` through `editOverrides(mutator)`, then
+call `refreshMetadata()`, so a metadata edit shows in the reply with no rebuild. Owner only, and
+unlike `/book rescan` there is no bootstrap: with `ownerId` blank it refuses.
+
+| Form | Writes |
+| ---- | ------ |
+| `<work>` (no field) | nothing; shows each field with its source ("your edit", "your author-wide edit", "file tags", "Plex", "folder name", "Calibre", "online"), the doubts, and the other recordings of the title |
+| `title`, `author`, `narrator`, `publisher <value>` | that key; `narrator none` and `publisher none` write `null` |
+| `series <name> [n]` | `series`, and `sequence`: the number, `null` for a range such as `1-5`, or removed when no number is given so the detected one shows. `series none` writes both as `null`. |
+| `author-series <name> [n]` | `authors[slug(detected author)] = { series, order: { <detected title>: n } }`, merged across calls; no number renames the series and keeps the order; a range is refused, since an order needs one number |
+| `clear <title\|author\|narrator\|publisher\|series\|author-series\|all>` | removes the key so the field falls back one layer; `all` removes the seven metadata keys and keeps `exclude`, `partOrder` and `pinId`; `author-series` removes the author entry |
+| `exclude` / `include` | `exclude: true` and `folderKey`, or removes both; then a forced rebuild queued behind any running one |
+| `lookup` | nothing; `refresh(targets, { force: true, overrideOf })`, then a refresh |
+
+- **Where an edit lands.** `works[<current id>]`, or the detected id a `pinId` sits on, since
+  `applyOverrides` reads entries by the detected id. The same fields are removed from entries under
+  the work's other ids, because `resolve` merges them and an older one would show through a
+  cleared field.
+- **Title and series reach every recording** with the same normalised title and author (both
+  narrations of The Fall of Hyperion), and the reply names them. `author`, `narrator`,
+  `publisher`, `exclude`, `include` and `clear all` need one recording; for a title with several
+  and no exact id the reply lists the ids.
+- **A whole series.** One `author-series` command per book builds the order. Checked on the live
+  snapshot: four commands ("Hyperion ... 1" to "The Rise of Endymion ... 4") left only
+  `authors["dan-simmons"] = { series: "Hyperion Cantos", order: { Hyperion: 1, "The Fall of
+  Hyperion": 2, Endymion: 3, "The Rise of Endymion": 4 } }` in the file; all 7 Dan Simmons works
+  showed Hyperion Cantos #1–4 at once with source `override`; no id and no other work changed;
+  and a rebuild afterwards renamed nothing and kept the edit. A hand-written author key that slugs
+  the same is folded into the slug key. A work's own `series` edit still wins, and the reply lists
+  such works.
+- **`exclude` and `include`** call `rebuild({ force: true, after: 'current' })`, so exactly one
+  build follows any build already running. `exclude` writes the work's `folderKey` beside
+  `exclude: true` (`applyOverrides` honours either), and `include` removes both. `include` also accepts the id of an excluded work, matched against the `works` keys
+  with `exclude: true`, since the work is no longer in the catalog. The exclude reply counts the
+  listeners in the current guild with a place saved (left out in a DM, because `bookmarks.js` has
+  no "all marks of a work" lookup); the places are kept.
+- **`lookup`** answers "the online lookup is off" without the setting, waits up to 60 s for a
+  running batch (`waitForBatch`; every build starts one), passes each work's override as
+  `overrideOf`, and otherwise names per recording what was filled, or why it was skipped
+  (`SKIP_REASONS`).
+- **Parsing.** Unquoted, the work is the text before the earliest field word whose arguments parse
+  and whose leading text names a work, an exact title or id first and then any match, so "The
+  Narrator Wars narrator X" edits that book rather than a book matching "The". A quoted first token
+  is always the work. The slash form takes `value` whole and `position` apart, so
+  `/book edit field:series value:Area 51` is a series called "Area 51". The doubt line's fix hint,
+  `!book edit <id> exclude`, parses as written.
+- Replies name works by title and id only, never a folder or the file's path, and
+  `editOverrides`' errors are path-free.
+- The show form's doubt line uses `admin.js`'s exported `doubtReason`, the rescan's path-free
+  wording. Its series line names one source when the series and its number both come from the
+  author-wide entry ("your author-wide edit").
+
+### The rescan reply
+
+`rescanText` (`commands/book.js/admin.js`) keeps its old lines and adds, after the part-order
+line:
+
+- `⚠️ Doubtful groups, catalogued anyway (N):`, then up to 5 lines of the form
+  `• **Title** (`id`): <reasons>. Fix: `!book edit <id> exclude`, or a title or author edit.`, then
+  "and N more". Wording per code: `mixed-artists` "tracks by A (11) and B (1)"; `music-genre`
+  "music genre on <album titles>"; `generic-folder` "folder name "<leaf>" is generic and spans N
+  albums", or "its folder is the top of a drive"; `generic-title` "the title "<t>" looks like a
+  folder name"; `no-author` "no author found". A `split` doubt is left to the split line, and a
+  code added later is skipped rather than printed raw. **A work whose title or author the owner
+  set (`sources.title` or `sources.author` is `override`) is no longer listed**, since the fix
+  hint offers exactly that edit and the warning would otherwise repeat on every rescan. An
+  author-level series or a Calibre title does not silence it.
+- `✂️ Music split off a book folder (N): <album> (N tracks) from **<book>** ... Plex tags it as
+  music, so it stays in the music library.`, from `report.splits`. An album with no title is "an
+  untitled album", never its ratingKey.
+- `🌐 Online lookup: ...`: counts of edition matches, book matches, not found, already looked up,
+  skipped and failed, plus "Stopped after failures in a row" when it stopped. Then
+  `🌐 Filled in online (N): ...` for works in this batch's `changed` list whose `sources` say
+  `online`, so a fill from an earlier rescan is not repeated. After the 60 s wait the batch
+  reports `{ pending: true }`, printed as "Online lookups are still running". Nothing online is
+  printed while the setting is off. There are no "replaced" lines, because nothing online
+  replaces a value.
+- The long-groups line passes each key through `shownKey(key, meta.roots)`, which strips the
+  longest matching section folder, falls back to the version 2 rule (below a folder named Music)
+  for a catalog without `meta.roots`, and drops split pieces, which the split line already names.
+- Never printed: full folder keys, drive letters, Plex ids, the overrides file's path. A test
+  checks every line for drive letters, backslashes and root paths.
+
+The start message is "about 20 s, up to a minute the first time after an update", plus "Then it
+looks books up online, up to a minute more." while the setting is on.
+
+Known and unchanged from `bad7656`: the long-groups line lists keys relative to their section, so
+two sections can both show as `Music/Music/music-uploads`.
+
+### Chapter labels on the card
+
+`bookModel.chapters()` makes every part without embedded chapters one chapter, so the card used to
+print a file index: "Chapter 240 of 319" on The Once and Future King, whose track says Book 4,
+Chapter 7. `helpers/bookChapterLabel.js` `chapterLabel(work, ch, chs, { map, ms })` reads the track
+or embedded chapter title with the read-along's own parsers (`readAlongModel.labelKey`, `partKey`,
+`bookOfPart`) and returns `{ label, short, detail }`:
+
+| Case | Label |
+| ---- | ----- |
+| embedded chapter with a recognisable name | "Chapter 21", "Prologue", "Interlude 3" |
+| embedded chapter with a GraphicAudio code title | "Part 13 of 31 · Section 1 of 6" (Oathbringer), "Section 2 of 3" (All Systems Red) |
+| podcast | "Episode 3 of 8" |
+| a track naming a book | "Book 4 · Chapter 7 · The Candle in the Wind" |
+| a track naming a chapter | "Chapter 21" (70 of the 83 tracks of The Way of Kings) |
+| otherwise | "Part 7 of 19", with the track title after it when that adds anything |
+
+The track title is dropped when it only repeats the label, the work title or series with the slot
+number ("07.The Final Empire", "Fall of Hyperion 46: Epilogue"), or the words every track title of
+the work shares (the podcast's "WBN WWW Childrens Adventure"). `short`, the label without its free
+text, is what the one-line forms use: the ended card, the jump and goto replies, the resume text,
+the shelf and the "can't find the file" message. The card bolds `short` and puts the detail after
+it in plain text. `/book chapter` and its autocomplete keep the slot numbers and show
+"240 · Book 4 · Chapter 7 · The Candle in the Wind", so the number to type stays visible.
+
+When the read-along already holds a map for the work and the title names no chapter, the map's
+section fills in ("Part 7 of 19 · Chapter 12"), by its key only, never the ebook's heading text,
+because the card is public. `readAlong.cardInfo` hands the map over only when it is already in
+memory: a card render never opens a text, and the engine strips the map from `view().text`.
+`where()` (the jump and goto replies) never uses the map. A label that throws falls back to the
+slot numbers and is logged once per work. Pure and cheap, since it runs on every card render on
+the main thread.
 
 ### Bookmarks and what counts as finished
 
@@ -2073,7 +2558,11 @@ metadata on the way out (3,801,114 bytes served for an EPUB stored at 3,801,014)
 size and mtime move only when the file does. What follows from content addressing, all intended:
 a re-parse writes new files while a page opened earlier keeps reading its own; two narrations
 linked to one ebook share one parse and one pair of files; which files a work uses is only a
-pointer in `works.json`. Unreferenced files are deleted by a sweep that each source runs once,
+pointer in `works.json`. A Calibre pointer also keeps the record's title, authors, series and
+series index as `meta` (Calibre's "Unknown" placeholders dropped, each value capped at 300
+characters), refreshed when a background re-check finds the metadata changed but not the EPUB; the
+catalog's metadata layer uses it to fill blanks (see "Metadata layers"), and it never reaches an
+id. Unreferenced files are deleted by a sweep that each source runs once,
 before it queues its first parse, so it never deletes under a handle that source opened.
 `!restart` builds a new source in the same process while the old one's download or parse may
 still be running, so downloads and parses in flight are tracked per cache directory for the whole
@@ -2640,7 +3129,9 @@ them as a transcript, with `--errors`, `--command=`, `--user=`, `--since=`, `--n
 | Broadcasts (Kometa + game launch) | `helpers/eventServer.js` (inbound)  | `helpers/broadcast.js`; `scripts/` (autostart + Playnite hook) |
 | In-Discord config wizard         | `commands/config.js`                 | `helpers/configStore.js`; `config/config.js` overrides layer |
 | Audiobooks and podcasts          | `commands/book.js/`, the card's `book:*` buttons | `helpers/bookEngine.js` (player), `bookModel.js`, `bookmarks.js`, `bookCard.js`, `bookButtons.js` |
-| Audiobook catalog                | `helpers/bookLibrary.js` (Plex), `/book rescan` | `helpers/bookCatalog.js`, `bookCatalogStore.js`; `data/book_overrides.json` |
+| Audiobook catalog                | `helpers/bookLibrary.js` (Plex), `/book rescan` | `helpers/bookCatalog.js`, `bookTags.js` (ffmpeg children), `bookCatalogStore.js`; `data/book_overrides.json`, `data/book_tags.json` |
+| Book metadata and owner edits    | `!book edit` (`commands/book.js/edit.js`), every build | `helpers/bookMetadata.js`, `bookLookup.js` (opt-in, Audible); `data/book_lookup.json` |
+| Chapter words on the card        | `helpers/bookEngine.js` `view()`, `/book chapter` | `helpers/bookChapterLabel.js`, `readAlongModel.js` |
 | Book audio from Plex             | `helpers/bookResource.js`            | `helpers/partProxy.js`, `bookAudio.js`, ffmpeg-static         |
 | Read-along (book text in DMs)    | `commands/book.js/text.js` (`!book text`), the card's 📖 (`bookread:*`) | `helpers/readAlong.js` (pager), `readAlongModel.js`, `readAlongCard.js`, `readAlongButtons.js`; hooks in `bookEngine.js` |
 | Ebook sources and the text cache | `!book link`, `helpers/bookTextSource.js` | `helpers/calibreClient.js`, `bookTextStore.js`, `epubTextWorker.js` (parse child), `epubText.js`; `data/book_text/` |

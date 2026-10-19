@@ -8,7 +8,9 @@
 // one ebook twice. Calibre closed reported as "no ebook" and remembered, so opening Calibre does
 // not help. A known-bad file re-read after every restart. A slow Calibre delaying every page.
 // A `!book link` path like \\host\share\x.epub that makes Windows send the bot account's NTLM
-// hash to that host before anything checks it.
+// hash to that host before anything checks it. A Calibre pointer that drops the book's own title
+// and series, so the catalog keeps showing folder spellings for a book the owner curated in
+// Calibre, or that downloads the EPUB again to learn a renamed title.
 //
 // Harness: the real bookTextStore on pid-suffixed temp files (env set before the first require),
 // a temp book_text dir per test, a fake catalog with a settable meta().builtAt, a fake Calibre
@@ -866,4 +868,73 @@ test('nothing is written outside the book_text dir, and nothing near Calibre\'s 
 	assert.ok(writes.length > 0, 'the spy saw the cache writes (positive control)');
 	for (const c of writes) assert.ok(c.arg.startsWith(h.dir), `${c.name} ${c.arg}`);
 	assert.ok(!spy.calls.some((c) => c.arg.includes('Calibre Library')));
+});
+
+// --- Calibre metadata on the pointer ---------------------------------------------------------------
+
+test('a Calibre pointer keeps the book\'s title, authors and series for the catalog', async () => {
+	const h = make({ books: { 11: cbook({ title: 'The Lantern Road: A Novel', authors: ['Avery Quill', 'Corin Vale'], series: 'Ashfall', series_index: 1 }) } });
+	assert.ok((await h.source.open(work(), { explicit: true })).ok);
+	const ptr = store.works.all()['avery-quill/the-lantern-road'];
+	assert.deepStrictEqual(ptr.meta, { title: 'The Lantern Road: A Novel', authors: ['Avery Quill', 'Corin Vale'], series: 'Ashfall', seriesIndex: 1 });
+	assert.deepStrictEqual(bookTextSource.calibreMetaOf(ptr, store.links.get(work())), ptr.meta);
+});
+
+test('Calibre\'s placeholders and its default series index of 1 are no metadata', () => {
+	assert.deepStrictEqual(bookTextSource.calibreMetaFrom({ title: 'Unknown', authors: ['Unknown', ' Avery Quill '], series: null, series_index: 1 }),
+		{ title: null, authors: ['Avery Quill'], series: null, seriesIndex: null });
+	assert.deepStrictEqual(bookTextSource.calibreMetaFrom({ title: 'X', authors: 'Avery Quill', series: 'Ashfall', series_index: '1.5' }),
+		{ title: 'X', authors: [], series: 'Ashfall', seriesIndex: 1.5 });
+	assert.strictEqual(bookTextSource.calibreMetaFrom(null), null);
+});
+
+test('a title edited in Calibre reaches the pointer without a download or a parse', async () => {
+	const h = make({ books: { 11: cbook() } });
+	await h.source.open(work(), { explicit: true });
+	const changes = [];
+	h.source.onChange((id) => changes.push(id));
+	h.client.data[11].title = 'The Lantern Road (Revised)';
+	h.client.data[11].series = 'Ashfall';
+	h.clock.t += REVALIDATE_MS;
+	await h.source.open(work());
+	await until(() => (store.works.all()['avery-quill/the-lantern-road'].meta || {}).title === 'The Lantern Road (Revised)', 'the pointer\'s metadata');
+	assert.deepStrictEqual(store.works.all()['avery-quill/the-lantern-road'].meta, { title: 'The Lantern Road (Revised)', authors: ['Avery Quill'], series: 'Ashfall', seriesIndex: 1 });
+	assert.strictEqual(h.parse.calls.length, 1);
+	assert.strictEqual(h.client.calls.download.length, 1);
+	assert.deepStrictEqual(changes, [], 'the text did not change, so no listener is told');
+});
+
+test('linking a Calibre id stores its metadata, and a text served from the cache keeps it', async () => {
+	const h = make({ books: { 11: cbook(), 12: cbook({ title: 'The Ember Throne', series: 'Ashfall', series_index: 1, format_metadata: { epub: { size: 77, mtime: '2026-02-02T00:00:00+00:00' } } }) } });
+	const res = await h.source.link(work(), { type: 'calibre', id: 12 }, { by: '1' });
+	assert.ok(res.ok, res.text);
+	assert.deepStrictEqual(store.works.all()['avery-quill/the-lantern-road'].meta, { title: 'The Ember Throne', authors: ['Avery Quill'], series: 'Ashfall', seriesIndex: 1 });
+
+	const restarted = make({ books: {}, client: h.client, dir: h.dir });
+	h.client.reachable = false;
+	assert.ok((await restarted.source.open(work(), { explicit: true })).ok);
+	assert.strictEqual(store.works.all()['avery-quill/the-lantern-road'].meta.title, 'The Ember Throne');
+});
+
+test('only a usable Calibre pointer gives metadata', () => {
+	const meta = { title: 'T', authors: ['A'], series: null, seriesIndex: null };
+	const calibre = { base: 'abcd', via: 'auto', fingerprint: 'f', source: { type: 'calibre', id: 11 }, meta };
+	assert.deepStrictEqual(bookTextSource.calibreMetaOf(calibre, null), meta);
+	assert.notStrictEqual(bookTextSource.calibreMetaOf(calibre, null), meta, 'a copy');
+	assert.deepStrictEqual(bookTextSource.calibreMetaOf(calibre, { type: 'calibre', id: 11 }), meta);
+	assert.strictEqual(bookTextSource.calibreMetaOf(calibre, { type: 'calibre', id: 12 }), null, 'recorded under another book');
+	assert.strictEqual(bookTextSource.calibreMetaOf(calibre, { type: 'off' }), null);
+	assert.strictEqual(bookTextSource.calibreMetaOf(Object.assign({}, calibre, { via: 'link' }), null), null, 'a link the owner cleared');
+	assert.strictEqual(bookTextSource.calibreMetaOf({ base: 'abcd', via: 'sidecar', source: { type: 'file', path: 'M:/x.epub' }, meta }, null), null);
+	assert.strictEqual(bookTextSource.calibreMetaOf(Object.assign({}, calibre, { meta: undefined }), null), null);
+	assert.strictEqual(bookTextSource.calibreMetaOf(null, null), null);
+});
+
+test('a sidecar pointer carries no metadata', async () => {
+	const audio = tmpDir('audio');
+	sidecar(audio, 'The Lantern Road.epub');
+	const w = work({ dirs: [audio] });
+	const h = make({ works: [w], calibre: false });
+	assert.ok((await h.source.open(w, { explicit: true })).ok);
+	assert.strictEqual('meta' in store.works.all()[w.id], false);
 });

@@ -29,11 +29,18 @@
 # book_catalog.json is the audiobook catalog built from your Plex library: titles, paths, keys.
 # book_bookmarks.json is each listener's place in each book, keyed by Discord user ID; the
 # .bak beside it is the hourly backup of the same data.
-# book_overrides.json is your hand-edited catalog corrections.
+# book_overrides.json is your hand-edited catalog corrections; !book edit keeps the previous text
+# in the .bak beside it and writes through a .tmp.
+# book_tags.json is keyed by the absolute local path of each audiobook file it read.
+# book_lookup.json is the online lookup's answers about your books.
 /data/book_catalog.json
 /data/book_bookmarks.json
 /data/book_bookmarks.json.bak
 /data/book_overrides.json
+/data/book_overrides.json.bak
+/data/book_overrides.json.tmp
+/data/book_tags.json
+/data/book_lookup.json
 # book_text/ is the read-along's cache of each linked ebook's extracted text (copyrighted, from
 # your own library), the ebook links you set with !book link, and who turned the read-along on.
 /data/book_text/

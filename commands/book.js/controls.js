@@ -2,6 +2,7 @@
 // the engine, which checks who may do what (plan 3.11) and refuses while it is still joining.
 
 const bookModel = require('../../helpers/bookModel.js');
+const { chapterLabel } = require('../../helpers/bookChapterLabel.js');
 
 const CONTROL = {
 	pause: 'pause',
@@ -28,6 +29,16 @@ function clip(text) {
 	return s.length > TITLE_MAX ? s.slice(0, TITLE_MAX - 1) + '…' : s;
 }
 
+// The number before it stays the slot `/book chapter <n>` jumps to; a title the label parser trips
+// on falls back to the raw title rather than costing the reply.
+function labelText(work, c, chs) {
+	try {
+		return chapterLabel(work, c, chs).label;
+	} catch (_) {
+		return c.title;
+	}
+}
+
 function chapterList(ctx) {
 	const s = ctx.bot.books.session(ctx.guildId);
 	if (!s) return 'No book is playing in this server.';
@@ -37,7 +48,7 @@ function chapterList(ctx) {
 	const from = Math.max(0, Math.min(at - 4, chs.length - 10));
 	const lines = chs.slice(from, from + 10).map((c) => {
 		const mark = current && c.number === current.number ? '▶' : '•';
-		return `${mark} ${c.number} · ${clip(c.title)} (${bookModel.formatSpan(c.endMs - c.startMs)})`;
+		return `${mark} ${c.number} · ${clip(labelText(s.work, c, chs))} (${bookModel.formatSpan(c.endMs - c.startMs)})`;
 	});
 	return `**${s.work.title}**: ${chs.length} chapter${chs.length === 1 ? '' : 's'}. \`/book chapter <n>\` jumps.\n${lines.join('\n')}`;
 }

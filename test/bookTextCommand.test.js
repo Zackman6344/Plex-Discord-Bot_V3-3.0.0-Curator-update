@@ -219,6 +219,18 @@ test('"!book link Final Empire 299" links that work to Calibre #299 and echoes i
 	assert.match(out, /Linked The Final Empire to Calibre #299/);
 });
 
+// The bug (review): a new link changed which Calibre book fills the blanks, but the catalog kept
+// the old fills until the next rebuild.
+test('a successful link lays the metadata over the catalog again, and a refused one does not', async (t) => {
+	const refreshed = t.mock.method(catalog, 'refreshMetadata', () => ({ ok: true }));
+	const h = harness();
+	await run(h, OWNER, 'link Final Empire 299');
+	assert.strictEqual(refreshed.mock.callCount(), 1);
+	h.source.link = async () => ({ ok: false, code: 'not-found', text: 'No such book.' });
+	await run(h, OWNER, 'link Final Empire 300');
+	assert.strictEqual(refreshed.mock.callCount(), 1);
+});
+
 test('a quoted title or an explicit target always links', async () => {
 	const h = harness();
 	await run(h, OWNER, 'link "Fahrenheit 451" id:12');

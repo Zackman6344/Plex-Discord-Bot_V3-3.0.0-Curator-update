@@ -812,7 +812,7 @@ test('a dead part key is repaired through repairPartKey and a missing file ends 
 	await until(() => s.state === 'ended', 'the second part failing', 4000);
 
 	assert.strictEqual(s.endReason, 'failed-file');
-	assert.match(s.endDetail, /can't find the file for Ch 2/);
+	assert.match(s.endDetail, /can't find the file for Part 2 of 3 \(/);
 	assert.strictEqual(mark(SHORT).absoluteMs, 1000);
 });
 

@@ -114,6 +114,32 @@ test('the calibre password is a secret and the read-along settings default safe'
     assert.strictEqual(typeof config.audiobookTextSidecars, 'boolean');
 });
 
+test('the online book lookup settings land in the Audiobooks group, off and on the US store by default', () => {
+    const config = require('../config/config.js');
+    const on = store.getSetting('audiobookOnlineLookup');
+    const region = store.getSetting('audiobookLookupRegion');
+    assert.strictEqual(on.group, 'Audiobooks');
+    assert.strictEqual(on.type, 'bool');
+    assert.match(on.warn, /title and author/);
+    assert.match(on.warn, /unofficial/);
+    // A batch follows every catalog rebuild, not only a rescan (review finding).
+    assert.match(on.warn, /every catalog rebuild/);
+    assert.doesNotMatch(on.warn, /after a rescan/);
+    assert.strictEqual(region.group, 'Audiobooks');
+    assert.strictEqual(region.type, 'choice');
+    assert.deepStrictEqual(region.choices.map((c) => c.value), Object.keys(require('../helpers/bookLookup.js').REGIONS));
+    assert.ok(store.validate(region, 'uk').value === 'uk');
+    assert.ok(store.validate(region, 'mars').error);
+    for (const key of ['audiobookOnlineLookup', 'audiobookLookupRegion']) {
+        assert.ok(Object.prototype.hasOwnProperty.call(config, key), `${key} has a config.js default`);
+    }
+    const overridesFile = path.join(__dirname, '..', 'data', 'config.overrides.json');
+    if (!fs.existsSync(overridesFile)) {
+        assert.strictEqual(config.audiobookOnlineLookup, false);
+        assert.strictEqual(config.audiobookLookupRegion, 'us');
+    }
+});
+
 test('formatValue masks secrets and renders bools/choices', () => {
     assert.strictEqual(store.formatValue(store.getSetting('eventServerToken'), 'hunter2'), '••• set');
     assert.strictEqual(store.formatValue(store.getSetting('eventServerToken'), ''), '— not set');

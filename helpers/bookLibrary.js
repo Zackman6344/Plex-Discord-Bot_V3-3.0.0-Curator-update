@@ -12,6 +12,18 @@
 // Never /search: a title search picks among duplicates (the same artist and title exist many
 // times over across narrations and re-rips), and a key repaired to the wrong file plays the
 // wrong book. Repair goes through the track's own ratingKey and checks the file basename.
+//
+// A build waits for embedded tags (helpers/bookTags.js) up to TAG_BUDGET_MS. Without them a
+// GraphicAudio book has no author and comes out as "untitled/<title>", to be renamed on the next
+// build; warm builds read from the cache in milliseconds, so only the first build of a large
+// library, about 30 s, ever waits for long. Reads still running when the budget ends finish in the
+// background and trigger one more build.
+//
+// Displayed metadata goes through helpers/bookMetadata.js before the catalog is replaced, so a
+// build shows the owner's edits, Calibre's and the online lookup's fills at once instead of the
+// raw detection until the next refresh. With the online lookup on, every build queues a lookup
+// batch afterwards; it is never awaited here (21 books take up to half a minute at one request a
+// second), and its fills reach the catalog through refreshMetadata() when it finishes.
 
 const logger = require('./logger.js');
 const bookCatalog = require('./bookCatalog.js');
@@ -21,6 +33,9 @@ const CHECK_INTERVAL_MS = HOUR;
 const PLAY_CHECK_MIN_GAP_MS = HOUR;
 const MAX_CATALOG_AGE_MS = 24 * HOUR;
 const REPAIR_REBUILD_MIN_GAP_MS = 10 * 60 * 1000;
+const TAG_BUDGET_MS = 45 * 1000;
+const TAG_CONCURRENCY = 2;
+const TAG_REBUILD_MIN_GAP_MS = 10 * 60 * 1000;
 
 function metadataOf(res) {
 	return (res && res.MediaContainer && Array.isArray(res.MediaContainer.Metadata)) ? res.MediaContainer.Metadata : [];
@@ -34,6 +49,17 @@ function messageOf(err) {
 	return redact(err && err.message ? err.message : err);
 }
 
+/** The folders of the music sections, which the catalog never treats as a book's folder. */
+function rootsOf(sections) {
+	const out = [];
+	for (const s of sections || []) {
+		for (const loc of Array.isArray(s && s.Location) ? s.Location : []) {
+			if (loc && typeof loc.path === 'string' && loc.path && !out.includes(loc.path)) out.push(loc.path);
+		}
+	}
+	return out;
+}
+
 /**
  * @param {object} [deps]
  * @param {(path: string) => Promise<any>} [deps.query] a Plex GET; the shared client by default,
@@ -43,20 +69,39 @@ function messageOf(err) {
  * @param {() => number} [deps.now]
  * @param {Function} [deps.setInterval]
  * @param {Function} [deps.clearInterval]
+ * @param {{ read: Function }} [deps.tags] the embedded tag reader (helpers/bookTags.js)
+ * @param {Function} [deps.setTimeout] for a tag rebuild that has to wait out its rate limit
+ * @param {Function} [deps.clearTimeout]
+ * @param {{ refresh: Function }} [deps.lookup] the online lookup (bookLookup.instance())
+ * @param {{ resolveWith: Function, overrideFor: Function }} [deps.metadata] helpers/bookMetadata.js
  */
 function createLibrary(deps = {}) {
 	const query = deps.query || ((p) => require('./plexClient.js').getPlex().query(p));
 	const store = deps.store || require('./bookCatalogStore.js');
 	const getConfig = deps.getConfig || (() => require('../config/config.js'));
+	const tagReader = () => deps.tags || require('./bookTags.js');
+	const lookupOf = () => deps.lookup || require('./bookLookup.js').instance();
+	const metadataLayer = () => deps.metadata || require('./bookMetadata.js');
 	const now = deps.now || Date.now;
 	const setTimer = deps.setInterval || setInterval;
 	const clearTimer = deps.clearInterval || clearInterval;
+	const later = deps.setTimeout || setTimeout;
+	const cancelLater = deps.clearTimeout || clearTimeout;
 
 	let building = null;
+	let queued = null;
+	let queuedForce = false;
+	let lookupTail = Promise.resolve();
+	let lookupWaiting = null;
+	// The lookup batch each build queued, keyed by its report, so a rescan waits for its own batch
+	// and never for one an earlier build left behind.
+	const batchOf = new WeakMap();
 	let checking = null;
 	let lastError = null;
 	let lastPlayCheckAt = -Infinity;
 	let lastRepairRebuildAt = -Infinity;
+	let lastTagRebuildAt = -Infinity;
+	let tagRebuildTimer = null;
 	let timer = null;
 
 	function enabled() {
@@ -65,6 +110,71 @@ function createLibrary(deps = {}) {
 		} catch (_) {
 			return false;
 		}
+	}
+
+	function onlineOn() {
+		try {
+			return getConfig().audiobookOnlineLookup === true;
+		} catch (_) {
+			return false;
+		}
+	}
+
+	// Read here, after the last await of the build and right before replace(), so an edit written
+	// while the build listed Plex is already in what replace() stores. A broken overrides file
+	// keeps applyOverrides' result: resolving without the owner's edits would undo every one of
+	// them on screen until the file is fixed.
+	function resolveMetadata(works) {
+		if (typeof store.metadataContext !== 'function') return works;
+		try {
+			const ctx = store.metadataContext();
+			if (!ctx || ctx.error) return works;
+			const meta = metadataLayer();
+			const out = {};
+			for (const [id, w] of Object.entries(works)) out[id] = meta.resolveWith(w, ctx);
+			return out;
+		} catch (err) {
+			logger.warn('Audiobook metadata could not be applied to the new catalog; showing what detection found:', messageOf(err));
+			return works;
+		}
+	}
+
+	async function runLookup() {
+		const lookup = lookupOf();
+		// The catalog as it stands when the batch starts, so the works carry the titles get() will
+		// be asked with, including a refresh that ran while the batch waited its turn.
+		const works = Object.values((store.load() || {}).works || {});
+		let overrides = {};
+		try {
+			overrides = store.readOverrides().overrides || {};
+		} catch (_) {}
+		const meta = metadataLayer();
+		const overrideOf = (w) => meta.overrideFor(w, overrides);
+		// A batch started elsewhere (a manual relookup) would hand back its own summary for its own
+		// works; wait it out, then ask about this catalog.
+		if (typeof lookup.isRunning === 'function' && lookup.isRunning()) await lookup.refresh([]);
+		const summary = await lookup.refresh(works, { overrideOf });
+		if (summary && Array.isArray(summary.changed) && summary.changed.length && typeof store.refreshMetadata === 'function') {
+			const r = store.refreshMetadata();
+			if (r && !r.ok) logger.warn(`Audiobook online details were looked up but not applied: ${r.error}`);
+		}
+		return summary || null;
+	}
+
+	// One batch at a time, and at most one waiting behind it: a batch looks at the whole catalog
+	// when it starts, so a second waiting one would ask the same questions again.
+	function queueLookup() {
+		if (lookupWaiting) return lookupWaiting;
+		const job = lookupTail.then(() => {
+			lookupWaiting = null;
+			return runLookup();
+		}).catch((err) => {
+			logger.warn('Audiobook online lookup failed:', messageOf(err));
+			return null;
+		});
+		lookupWaiting = job;
+		lookupTail = job;
+		return job;
 	}
 
 	async function artistSections() {
@@ -143,30 +253,55 @@ function createLibrary(deps = {}) {
 			return { ok: false, skipped: 'empty-listing' };
 		}
 
-		const { overrides, error: overridesError } = store.readOverrides();
-		const first = bookCatalog.buildCatalog({ albums, tracks, overrides });
+		const roots = rootsOf(sections);
+		const samples = bookCatalog.tagSamples(tracks, { roots });
+		const tagRead = await tagReader().read(samples, { budgetMs: TAG_BUDGET_MS, concurrency: TAG_CONCURRENCY });
+		const tags = (tagRead && tagRead.byAlbum) || {};
+		if (tagRead && tagRead.pending > 0 && tagRead.settled) {
+			logger.info(`Audiobook tag reads still running after ${TAG_BUDGET_MS / 1000} s (${tagRead.pending} left); the catalog is rebuilt once they finish.`);
+			tagRead.settled.then((r) => { if (r && r.added > 0) scheduleTagRebuild(); }, () => {});
+		}
+
+		const { overrides: written, error: overridesError } = store.readOverrides();
+		const first = bookCatalog.buildCatalog({ albums, tracks, overrides: written, tags, roots });
+		// The file is never rewritten for this, so the old catalog's ids and aliases carry an entry
+		// forward on every build.
+		const carry = bookCatalog.carryOverrides(written, oldWorks, first.works, bookCatalog.matchAliases(oldWorks, first.works).moved);
+		const overrides = carry.overrides;
 		const tracksByKey = new Map(tracks.map((t) => [String(t.ratingKey), t]));
 		const chapterCache = {};
 		const chapters = {};
 		for (const w of Object.values(first.works)) {
 			Object.assign(chapters, await probeChapters(w, tracksByKey, oldChapterCache, chapterCache));
 		}
-		const built = bookCatalog.buildCatalog({ albums, tracks, chapters, overrides });
-		const { works, moved } = bookCatalog.matchAliases(oldWorks, built.works);
+		const built = bookCatalog.buildCatalog({ albums, tracks, chapters, overrides, tags, roots });
+		const matched = bookCatalog.matchAliases(oldWorks, built.works);
+		const moved = matched.moved;
 
-		if (!Object.keys(works).length && oldCount && !force) {
+		if (!Object.keys(matched.works).length && oldCount && !force) {
 			return { ok: false, skipped: 'no-works' };
 		}
 
+		const notes = [
+			...carry.carried.map((c) => `overrides for ${c.from} (${c.fields.join(', ')}) now apply to ${c.to}, the id detection gives it now`),
+			...built.notes,
+		];
+		// Every build, the automatic ones included: an override that stopped applying would otherwise
+		// be told only in the reply to a manual rescan.
+		for (const note of notes) logger.warn(`Audiobook overrides: ${note}`);
+
+		const works = resolveMetadata(matched.works);
 		const persisted = store.replace({
 			meta: {
 				builtAt: now(),
 				rulesVersion: bookCatalog.RULES_VERSION,
 				sections: signature,
 				overridesError: overridesError || null,
+				roots,
 			},
 			works,
 			rejected: built.rejected,
+			splits: built.splits,
 			chapterCache,
 			index: built.index,
 		});
@@ -186,7 +321,10 @@ function createLibrary(deps = {}) {
 			removed: [...oldIds].filter((id) => !works[id] && !movedFrom.has(id)),
 			moved,
 			rejected: built.rejected.length,
-			notes: built.notes,
+			splits: built.splits,
+			doubtful: list.filter((w) => Array.isArray(w.doubts) && w.doubts.length).map((w) => ({ id: w.id, doubts: w.doubts.length })),
+			tags: { sampled: samples.length, pending: (tagRead && tagRead.pending) || 0, failed: (tagRead && tagRead.failed) || 0 },
+			notes,
 			overridesError: overridesError || null,
 			persisted,
 		};
@@ -194,6 +332,7 @@ function createLibrary(deps = {}) {
 			(report.added.length ? `, added ${report.added.length}` : '') +
 			(report.removed.length ? `, removed ${report.removed.length}` : '') +
 			(Object.keys(moved).length ? `, ${Object.keys(moved).length} renamed` : ''));
+		if (onlineOn()) batchOf.set(report, queueLookup());
 		return report;
 	}
 
@@ -201,10 +340,28 @@ function createLibrary(deps = {}) {
 	 * Lists the library and replaces the catalog. One build at a time: a second call while one
 	 * runs gets the same promise. Never throws.
 	 * @returns {Promise<object>} { ok: true, works, books, podcasts, parts, totalMs, added,
-	 *   removed, moved, rejected, notes, overridesError, persisted } or { ok: false, skipped }
-	 *   or { ok: false, error }
+	 *   removed, moved, rejected, splits, doubtful, tags, notes, overridesError, persisted } or
+	 *   { ok: false, skipped } or { ok: false, error }. splits: music albums taken out of a
+	 *   book's folder; doubtful: { id, doubts } per work with doubts; tags: { sampled, pending,
+	 *   failed } from the tag read
+	 * @param {{ force?: boolean, after?: 'current' }} [opts] after 'current': when a build is
+	 *   already running, the caller changed something that build read too early (overrides, the
+	 *   tag cache), so exactly one more build follows it; every such call made meanwhile shares it
 	 */
-	function rebuild({ force = false } = {}) {
+	function rebuild({ force = false, after } = {}) {
+		if (building && after === 'current') {
+			queuedForce = queuedForce || force;
+			if (!queued) {
+				const next = () => {
+					const f = queuedForce;
+					queued = null;
+					queuedForce = false;
+					return rebuild({ force: f });
+				};
+				queued = building.then(next, next);
+			}
+			return queued;
+		}
 		if (building) return building;
 		building = (async () => {
 			try {
@@ -291,6 +448,8 @@ function createLibrary(deps = {}) {
 	function stop() {
 		if (timer) clearTimer(timer);
 		timer = null;
+		if (tagRebuildTimer) cancelLater(tagRebuildTimer);
+		tagRebuildTimer = null;
 	}
 
 	function scheduleRebuild() {
@@ -298,6 +457,23 @@ function createLibrary(deps = {}) {
 		lastRepairRebuildAt = now();
 		rebuild().catch(() => {});
 		return true;
+	}
+
+	// Tags that arrived after a build gave up waiting. Waits out a build already running (it read
+	// the older cache), and at most one such rebuild per 10 minutes; a later one is deferred to the
+	// end of that gap rather than dropped, since nothing else would rebuild for a day.
+	function scheduleTagRebuild() {
+		if (tagRebuildTimer) return;
+		const wait = lastTagRebuildAt + TAG_REBUILD_MIN_GAP_MS - now();
+		const go = () => {
+			tagRebuildTimer = null;
+			if (!enabled()) return;
+			lastTagRebuildAt = now();
+			rebuild({ after: 'current' }).catch(() => {});
+		};
+		if (wait <= 0) return go();
+		tagRebuildTimer = later(go, wait);
+		if (tagRebuildTimer && typeof tagRebuildTimer.unref === 'function') tagRebuildTimer.unref();
 	}
 
 	/**
@@ -338,11 +514,24 @@ function createLibrary(deps = {}) {
 		return lastError ? 'error' : 'empty';
 	}
 
+	/**
+	 * The online lookup batch a build queued, for `!book rescan` to wait on. Resolves to
+	 * bookLookup's refresh() summary, after its fills are in the catalog, or null when the batch
+	 * failed. Never rejects.
+	 * @param {object} report what rebuild() resolved to
+	 * @returns {Promise<object|null>|null} null when that build queued none (the setting is off,
+	 *   or the build did not replace the catalog)
+	 */
+	function onlineBatch(report) {
+		return (report && typeof report === 'object' && batchOf.get(report)) || null;
+	}
+
 	return {
 		start,
 		stop,
 		ensureFresh,
 		rebuild,
+		onlineBatch,
 		repairPartKey,
 		status,
 		lastError: () => lastError,

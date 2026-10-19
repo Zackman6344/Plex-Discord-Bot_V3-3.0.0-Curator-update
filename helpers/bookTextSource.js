@@ -17,7 +17,9 @@
 // the work. So a changed ebook parses into NEW files while a handle opened earlier keeps reading
 // its own, two narrator editions of one ebook share one parse, and which files a work uses is
 // only a pointer in data/book_text/works.json. Old files are deleted by a sweep when the process
-// starts, never while a handle might be reading them.
+// starts, never while a handle might be reading them. A Calibre pointer also keeps the book's
+// title, authors and series (`meta`), which the catalog shows above tags and folder names
+// (helpers/bookMetadata.js); they never reach a work id.
 //
 // What is remembered in memory, and for how long, is the subtle part:
 //   - A handle, once opened, is returned at once and re-checked in the background every 10
@@ -217,6 +219,43 @@ function samePath(a, b) {
 	return process.platform === 'win32' ? n(a).toLowerCase() === n(b).toLowerCase() : n(a) === n(b);
 }
 
+// A pointer recorded under one link must not answer for another: after `!book link` names a
+// different book, or `auto` clears a link, the old text is no longer this work's.
+function pointerUsable(ptr, link) {
+	if (!isObject(ptr) || !isObject(ptr.source) || typeof ptr.base !== 'string') return false;
+	if (link && link.type === 'calibre') return ptr.source.type === 'calibre' && Number(ptr.source.id) === Number(link.id);
+	if (link && link.type === 'file') return ptr.source.type === 'file' && samePath(ptr.source.path, link.path);
+	if (link) return false;
+	return ptr.via !== 'link';
+}
+
+const META_MAX = 300;
+
+/**
+ * The catalog fields of a Calibre book record, kept on the text pointer so the catalog's metadata
+ * layer can show the owner's curated title, authors and series without asking Calibre. Calibre's
+ * "Unknown" placeholders are no value, and its default series index of 1 counts only beside a
+ * series name.
+ */
+function calibreMetaFrom(book) {
+	if (!isObject(book)) return null;
+	const text = (v) => (typeof v === 'string' && v.trim() && !/^unknown$/i.test(v.trim()) ? v.trim().slice(0, META_MAX) : null);
+	const series = text(book.series);
+	const index = Number(book.series_index);
+	return {
+		title: text(book.title),
+		authors: (Array.isArray(book.authors) ? book.authors : []).map(text).filter(Boolean).slice(0, 10),
+		series,
+		seriesIndex: series && book.series_index !== null && book.series_index !== '' && Number.isFinite(index) ? index : null
+	};
+}
+
+/** The Calibre meta of a work's text pointer, or null when the pointer is not a usable Calibre one. */
+function calibreMetaOf(ptr, link) {
+	if (!pointerUsable(ptr, link) || ptr.source.type !== 'calibre' || !isObject(ptr.meta)) return null;
+	return JSON.parse(JSON.stringify(ptr.meta));
+}
+
 function failCodeOf(code) {
 	if (code === 'drm') return 'drm';
 	if (code === 'too-large') return 'too-large';
@@ -352,16 +391,6 @@ function createBookTextSource(deps = {}) {
 		}
 	}
 
-	// A pointer recorded under one link must not answer for another: after `!book link` names a
-	// different book, or `auto` clears a link, the old text is no longer this work's.
-	function pointerUsable(ptr, link) {
-		if (!isObject(ptr) || !isObject(ptr.source) || typeof ptr.base !== 'string') return false;
-		if (link && link.type === 'calibre') return ptr.source.type === 'calibre' && Number(ptr.source.id) === Number(link.id);
-		if (link && link.type === 'file') return ptr.source.type === 'file' && samePath(ptr.source.path, link.path);
-		if (link) return false;
-		return ptr.via !== 'link';
-	}
-
 	function safe(fn, fallback = null) {
 		try {
 			return fn();
@@ -458,18 +487,25 @@ function createBookTextSource(deps = {}) {
 		};
 	}
 
-	function setPointer(work, base, source, via) {
+	// `meta` is the Calibre book's catalog fields when this call has the record in hand; undefined
+	// keeps what the pointer already holds for the same book (a text served from the cache).
+	function setPointer(work, base, source, via, meta) {
 		const prev = safe(() => store.works.peek(work.id));
-		if (prev && prev.base === base && prev.via === via && prev.fingerprint === source.fingerprint) return;
-		store.works.set(work.id, { base, fingerprint: source.fingerprint, via, source, at: now() });
+		const sameBook = prev && isObject(prev.source) && prev.source.type === 'calibre' && source.type === 'calibre' && Number(prev.source.id) === Number(source.id);
+		const nextMeta = source.type !== 'calibre' ? null : (meta !== undefined ? meta : (sameBook && isObject(prev.meta) ? prev.meta : null));
+		if (prev && prev.base === base && prev.via === via && prev.fingerprint === source.fingerprint
+			&& JSON.stringify(isObject(prev.meta) ? prev.meta : null) === JSON.stringify(nextMeta)) return;
+		const entry = { base, fingerprint: source.fingerprint, via, source, at: now() };
+		if (isObject(nextMeta)) entry.meta = nextMeta;
+		store.works.set(work.id, entry);
 	}
 
-	function install(work, base, index, source, via, { stale = false, checkedAt = now() } = {}) {
+	function install(work, base, index, source, via, { stale = false, checkedAt = now(), meta } = {}) {
 		const entry = { handle: makeHandle(work.id, base, index, source, via), checkedAt, stale, revalidating: false };
 		handles.set(work.id, entry);
 		memo.delete(work.id);
 		probes.delete(work.id);
-		setPointer(work, base, source, via);
+		setPointer(work, base, source, via, meta);
 		return entry;
 	}
 
@@ -502,7 +538,8 @@ function createBookTextSource(deps = {}) {
 				epubSize: own ? fm.size : null, epubMtime: own ? fm.mtime : null, fingerprint
 			},
 			via,
-			title: typeof book.title === 'string' ? book.title : null
+			title: typeof book.title === 'string' ? book.title : null,
+			meta: calibreMetaFrom(book)
 		};
 	}
 
@@ -709,7 +746,7 @@ function createBookTextSource(deps = {}) {
 			}
 			if (cached.index) {
 				if (generation(id) !== gen || closed) return { ok: true, handle: makeHandle(id, base, cached.index, r.source, r.via), stale: false };
-				const entry = install(work, base, cached.index, r.source, r.via);
+				const entry = install(work, base, cached.index, r.source, r.via, { meta: r.meta });
 				return { ok: true, handle: entry.handle, stale: false };
 			}
 			if (cached.fail) outcome = { code: cached.fail };
@@ -742,12 +779,17 @@ function createBookTextSource(deps = {}) {
 			return;
 		}
 		entry.stale = false;
-		if (r.source.fingerprint === entry.handle.fingerprint) return;
+		if (r.source.fingerprint === entry.handle.fingerprint) {
+			// A title or series edited in Calibre leaves the EPUB alone, so only the pointer's copy
+			// of the metadata changes; nothing is downloaded or parsed.
+			if (r.meta !== undefined && r.via === entry.handle.via) setPointer(work, entry.handle.base, r.source, r.via, r.meta);
+			return;
+		}
 		const base = cacheBase(r.source.fingerprint, VERSION);
 		let cached = await readCache(base, r.source.fingerprint);
 		if (!cached.index && !cached.fail) cached = await materialize(base, r.source);
 		if (!current() || !cached.index) return;
-		install(work, base, cached.index, r.source, r.via);
+		install(work, base, cached.index, r.source, r.via, { meta: r.meta });
 		emit(work.id);
 	}
 
@@ -1074,6 +1116,9 @@ module.exports = {
 	localPathProblem,
 	calibreScore,
 	sidecarScore,
+	pointerUsable,
+	calibreMetaFrom,
+	calibreMetaOf,
 	MAX_EPUB_BYTES,
 	TRANSIENT_TTL_MS,
 	REVALIDATE_MS

@@ -1,7 +1,9 @@
 // helpers/bookCatalogStore.js
 //
 // The current long-form catalog, in memory and in data/book_catalog.json. No Plex here: the
-// library module builds a catalog and hands it to replace(); everything else only reads.
+// library module builds a catalog and hands it to replace(); refreshMetadata() lays the display
+// fields over the stored works again (helpers/bookMetadata.js) after an edit, without a rebuild;
+// everything else only reads. editOverrides() is the one writer of the hand-edited overrides file.
 //
 // Nothing is read at require time. Music pickers ask this store whether a track is a book, and
 // app/bot.js is required by tests that must never see the real catalog; jsonStore keeps the
@@ -17,6 +19,7 @@ const path = require('path');
 const { createStore } = require('./jsonStore.js');
 const logger = require('./logger.js');
 const bookCatalog = require('./bookCatalog.js');
+const bookMetadata = require('./bookMetadata.js');
 
 const OVERRIDES_ENV = 'PLEXBOT_BOOK_OVERRIDES_FILE';
 const OVERRIDES_DEFAULT = path.join(__dirname, '..', 'data', 'book_overrides.json');
@@ -39,6 +42,7 @@ function shape(raw) {
 		meta: isObject(c.meta) ? c.meta : {},
 		works,
 		rejected: Array.isArray(c.rejected) ? c.rejected : [],
+		splits: Array.isArray(c.splits) ? c.splits : [],
 		chapterCache: isObject(c.chapterCache) ? c.chapterCache : {},
 		index: {
 			trackKeys: list(index.trackKeys),
@@ -64,7 +68,7 @@ const store = createStore({
 let derived = null;
 const shaped = new WeakSet();
 
-/** @returns {object} the whole catalog: meta, works, rejected, chapterCache, index */
+/** @returns {object} the whole catalog: meta, works, rejected, splits, chapterCache, index */
 function load() {
 	const c = store.load();
 	// jsonStore hands back a bare {} without calling migrate when the file is missing, has no
@@ -255,10 +259,8 @@ function widenOverrides(parsed) {
  * @returns {{ overrides: object, error: string|null }}
  */
 function readOverrides() {
-	const file = process.env[OVERRIDES_ENV] || OVERRIDES_DEFAULT;
-	// The real file says which folders are books; a test reading it would pass or fail by what is
-	// on this machine's disk, so under the runner the env var is required, as in jsonStore.
-	if (process.env.NODE_TEST_CONTEXT && !process.env[OVERRIDES_ENV]) return { overrides: {}, error: null };
+	const file = overridesFile();
+	if (overridesOffLimits()) return { overrides: {}, error: null };
 	let text;
 	try {
 		text = fs.readFileSync(file, 'utf8');
@@ -267,20 +269,168 @@ function readOverrides() {
 		logger.warn(`Could not read the Audiobook overrides file ${file}:`, err.message);
 		return { overrides: {}, error: err.code || 'unreadable' };
 	}
+	const r = parseOverrides(text, file, 'Ignoring');
+	if (r.error) return { overrides: {}, error: r.error };
+	return { overrides: widenOverrides(r.parsed), error: null };
+}
+
+function overridesFile() {
+	return process.env[OVERRIDES_ENV] || OVERRIDES_DEFAULT;
+}
+
+// The real file says which folders are books; a test reading it would pass or fail by what is on
+// this machine's disk, and a test writing it would change the owner's edits, so under the runner
+// the env var is required, as in jsonStore.
+function overridesOffLimits() {
+	return !!process.env.NODE_TEST_CONTEXT && !process.env[OVERRIDES_ENV];
+}
+
+// Notepad saves UTF-8 with a byte order mark, which JSON.parse refuses.
+function stripBom(text) {
+	return text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
+}
+
+function parseOverrides(text, file, verb) {
 	let parsed;
 	try {
-		parsed = JSON.parse(text);
+		parsed = JSON.parse(stripBom(text));
 	} catch (err) {
-		logger.warn(`Ignoring the Audiobook overrides file ${file}: ${err.message}`);
+		logger.warn(`${verb} the Audiobook overrides file ${file}: ${err.message}`);
 		const at = /\(line \d+ column \d+\)/.exec(err.message);
-		return { overrides: {}, error: `the file is not valid JSON${at ? ` ${at[0]}` : ''}` };
+		return { error: `the file is not valid JSON${at ? ` ${at[0]}` : ''}` };
 	}
 	if (!isObject(parsed)) {
 		const error = 'the file must hold a JSON object';
-		logger.warn(`Ignoring the Audiobook overrides file ${file}: ${error}`);
-		return { overrides: {}, error };
+		logger.warn(`${verb} the Audiobook overrides file ${file}: ${error}`);
+		return { error };
 	}
-	return { overrides: widenOverrides(parsed), error: null };
+	return { parsed, error: null };
+}
+
+function writeSynced(target, text) {
+	const fd = fs.openSync(target, 'w');
+	try {
+		fs.writeFileSync(fd, text);
+		fs.fsyncSync(fd);
+	} finally {
+		fs.closeSync(fd);
+	}
+}
+
+/**
+ * Changes the overrides file, for `!book edit`. The file is read raw (never through
+ * readOverrides, whose widened include and exclude keys must not be written back) and handed to
+ * `mutator`, which changes it in place or returns a replacement object, or returns false to write
+ * nothing. A file that is not valid JSON is refused rather than replaced, so a hand edit with a
+ * typo is never lost. The previous text goes to `<file>.bak`, the new text to `<file>.tmp`, which
+ * is then renamed over the file, so a crash mid-write leaves the old file whole. The reported
+ * error can reach a public reply, so it never carries the file's path or text; the log does.
+ * @param {(overrides: object) => (object|false|void)} mutator
+ * @returns {{ ok: boolean, changed: boolean, overrides?: object, error: string|null }}
+ */
+function editOverrides(mutator) {
+	if (overridesOffLimits()) return { ok: false, changed: false, error: 'the overrides file is off limits under the test runner' };
+	const file = overridesFile();
+	let before = null;
+	try {
+		before = fs.readFileSync(file, 'utf8');
+	} catch (err) {
+		if (err.code !== 'ENOENT') {
+			logger.warn(`Could not read the Audiobook overrides file ${file}:`, err.message);
+			return { ok: false, changed: false, error: err.code || 'unreadable' };
+		}
+	}
+	let obj = {};
+	if (before !== null && stripBom(before).trim() !== '') {
+		const r = parseOverrides(before, file, 'Not changing');
+		if (r.error) return { ok: false, changed: false, error: r.error };
+		obj = r.parsed;
+	}
+	const snapshot = JSON.stringify(obj);
+	let next;
+	try {
+		const result = mutator(obj);
+		if (result === false) return { ok: true, changed: false, overrides: obj, error: null };
+		next = result === undefined ? obj : result;
+	} catch (err) {
+		logger.warn(`Not changing the Audiobook overrides file ${file}: the edit failed: ${err && err.message}`);
+		return { ok: false, changed: false, error: 'the edit could not be applied' };
+	}
+	if (!isObject(next)) return { ok: false, changed: false, error: 'the edit must leave a JSON object' };
+	// An edit that changes nothing leaves the owner's own formatting alone.
+	if (before !== null && JSON.stringify(next) === snapshot) return { ok: true, changed: false, overrides: next, error: null };
+	const tmp = `${file}.tmp`;
+	try {
+		fs.mkdirSync(path.dirname(file), { recursive: true });
+		if (before !== null) writeSynced(`${file}.bak`, before);
+		writeSynced(tmp, `${JSON.stringify(next, null, 2)}\n`);
+		fs.renameSync(tmp, file);
+	} catch (err) {
+		logger.error(`Could not write the Audiobook overrides file ${file}:`, err.message);
+		try { fs.rmSync(tmp, { force: true }); } catch (_) { /* nothing to clean up */ }
+		return { ok: false, changed: false, error: 'the file could not be written' };
+	}
+	return { ok: true, changed: true, overrides: next, error: null };
+}
+
+function optional(load) {
+	try {
+		return load();
+	} catch (err) {
+		logger.warn('Audiobook metadata: a source is unavailable:', err && err.message);
+		return null;
+	}
+}
+
+/**
+ * What the metadata layer reads beside the catalog: the overrides file, the online lookup's cache
+ * (empty while the setting is off) and the Calibre book behind each read-along pointer. Exported
+ * so a fresh build can be resolved with the same layers before replace().
+ * @param {object} [deps] test seams; each omitted one is the real module
+ * @param {object} [deps.overrides] the parsed overrides, instead of reading the file
+ * @param {{ get: (work: object) => object|null }|null} [deps.lookup]
+ * @param {object|null} [deps.textStore] bookTextStore's shape: works.peek, links.get
+ * @param {(pointer: object|null, link: object|null) => object|null} [deps.calibreMeta]
+ */
+function metadataContext(deps = {}) {
+	const read = Object.prototype.hasOwnProperty.call(deps, 'overrides') ? { overrides: deps.overrides || {}, error: null } : readOverrides();
+	const lookup = deps.lookup !== undefined ? deps.lookup : optional(() => require('./bookLookup.js').instance());
+	const textStore = deps.textStore !== undefined ? deps.textStore : optional(() => require('./bookTextStore.js'));
+	const calibreMeta = deps.calibreMeta || optional(() => require('./bookTextSource.js').calibreMetaOf);
+	return {
+		error: read.error,
+		overrides: read.overrides,
+		calibreOf: (w) => (textStore && calibreMeta ? calibreMeta(textStore.works.peek(w), textStore.links.get(w)) : null),
+		onlineOf: (w) => (lookup && typeof lookup.get === 'function' ? lookup.get(w) : null),
+	};
+}
+
+/**
+ * Lays the metadata sources over every stored work again and saves the catalog when anything a
+ * reader sees changed. No Plex: it runs after an edit, a finished lookup batch or a new Calibre
+ * link, and takes milliseconds.
+ * @param {object} [deps] as metadataContext
+ * @returns {{ ok: boolean, changed: string[], error: string|null }}
+ */
+function refreshMetadata(deps = {}) {
+	const ctx = metadataContext(deps);
+	// Without the owner's edits every edited field would fall back to detection until the file is
+	// fixed, so a broken file changes nothing.
+	if (ctx.error) return { ok: false, changed: [], error: ctx.error };
+	const c = load();
+	const changed = [];
+	for (const key of Object.keys(c.works)) {
+		const w = c.works[key];
+		if (!isObject(w)) continue;
+		const next = bookMetadata.resolveWith(w, ctx);
+		if (!bookMetadata.differs(w, next)) continue;
+		c.works[key] = next;
+		changed.push(w.id);
+	}
+	if (!changed.length) return { ok: true, changed, error: null };
+	derived = null;
+	const ok = store.persist();
+	return { ok, changed, error: ok ? null : 'the catalog could not be saved' };
 }
 
 /** Test seam: forget the in-memory catalog so the next read comes off disk. */
@@ -301,6 +451,9 @@ module.exports = {
 	index,
 	meta,
 	readOverrides,
+	editOverrides,
+	metadataContext,
+	refreshMetadata,
 	reset,
 	healthy: () => store.healthy(),
 };

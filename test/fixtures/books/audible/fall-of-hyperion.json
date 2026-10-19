@@ -1,0 +1,32 @@
+{
+	"products": [
+		{
+			"asin": "B002V5D34W",
+			"title": "The Fall of Hyperion",
+			"authors": [
+				{
+					"name": "Dan Simmons"
+				}
+			],
+			"narrators": [
+				{
+					"name": "Victor Bevine"
+				}
+			],
+			"publisher_name": "Audible Studios",
+			"runtime_length_min": 1305,
+			"release_date": "2008-12-22",
+			"language": "english",
+			"format_type": "unabridged",
+			"content_delivery_type": "MultiPartBook",
+			"publication_name": "Hyperion",
+			"series": [
+				{
+					"title": "Hyperion",
+					"sequence": "2"
+				}
+			]
+		}
+	],
+	"total_results": 1
+}

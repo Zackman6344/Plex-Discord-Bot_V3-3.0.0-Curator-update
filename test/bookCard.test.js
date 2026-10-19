@@ -4,7 +4,8 @@
 // over its limits), so the edit fails and the card freezes; a "Mark finished" button offered far
 // from the end, which ends a 37-hour book 11 minutes early; a sleep button that steps from the
 // remaining minutes instead of the chosen ones; a title with * or _ that turns the card into
-// italics soup; a ping from the listener mention.
+// italics soup; a ping from the listener mention. A chapter line that counts files: "Chapter 240
+// of 319" on an omnibus whose track says Book 4, Chapter 7.
 //
 // Harness: pure, no Discord. Views are built by hand in the shape bookEngine.js view() returns,
 // with nearEnd taken from bookModel.nearEnd so the 120 s rule is the real one.
@@ -14,6 +15,7 @@ const assert = require('node:assert');
 
 const bookCard = require('../helpers/bookCard.js');
 const bookModel = require('../helpers/bookModel.js');
+const { chapterLabel } = require('../helpers/bookChapterLabel.js');
 
 const T0 = 1791500000000;
 const USER = '100000000000000001';
@@ -45,7 +47,7 @@ function view(over = {}) {
 		fraction: pos / total,
 		remainingMs: total - pos,
 		remainingAtSpeedMs: (total - pos) / 1.25,
-		chapter: { index: 2, count: 4, title: 'Part 2', startMs: 3900000, endMs: 7800000, endsAt: T0 + 600000 },
+		chapter: { index: 2, count: 4, title: 'Part 2', label: 'Part 2 of 4', short: 'Part 2 of 4', detail: null, startMs: 3900000, endMs: 7800000, endsAt: T0 + 600000 },
 		partIndex: 1,
 		partCount: 4,
 		speed: 1.25,
@@ -106,7 +108,7 @@ test('the playing card has two rows of controls, every id carrying the session',
 	assert.strictEqual(buttons(p).find(b => b.custom_id.startsWith('book:stop:')).style, 4, 'Stop is red');
 	assert.strictEqual(buttons(p).find(b => b.custom_id.startsWith('book:speed:')).label, '1.25x');
 	const d = p.embeds[0].description;
-	assert.match(d, /\*\*Chapter 2 of 4\*\* · Part 2/);
+	assert.match(d, /\*\*Part 2 of 4\*\*\n/);
 	assert.match(d, /1:30:00 \/ 4:08:00 · 2 h 06 m left at 1\.25x/);
 	assert.match(d, new RegExp(`Chapter ends <t:${Math.round((T0 + 600000) / 1000)}:R>`));
 	assert.match(d, new RegExp(`🎧 <@${USER}> in 🔊 Lounge`), 'the listener is a mention, sent with no pings');
@@ -198,7 +200,7 @@ test('the ended card names the reason and where the place was saved', () => {
 			assert.doesNotMatch(p.embeds[0].description, /Saved at/);
 		} else {
 			assert.ok(ids(p).includes(`book:resume:${WORK.id}`), `${reason}: Resume`);
-			assert.match(p.embeds[0].description, /Saved at 1:30:00 \(Ch 2 of 4\) of 4:08:00\./);
+			assert.match(p.embeds[0].description, /Saved at 1:30:00 \(Part 2 of 4\) of 4:08:00\./);
 		}
 	}
 	const failed = bookCard.endedCard(view({ state: 'ended', endReason: 'failed-file', endDetail: 'Plex can\'t find the file for Ch 2 (it may have moved). Your place is saved; try again in a minute.' }));
@@ -250,6 +252,45 @@ test('marking finished drops only that button and says so', () => {
 	assert.match(p.embeds[0].description, /🎉 Marked finished\.$/);
 	assert.match(p.embeds[0].description, /⏹ Stopped/, 'the rest of the card is kept');
 	assert.deepStrictEqual(bookCard.finishedOnCard({}), { embeds: [], components: [], allowedMentions: { parse: [] } });
+});
+
+// ---- the chapter line ----------------------------------------------------------------------------
+
+const OMNIBUS = {
+	id: 'avery-quill/the-iron-crowns',
+	kind: 'book',
+	title: 'The Iron Crowns',
+	parts: [
+		'1-01 Book 1  The Salt Road - Intro',
+		'1-02 Book 1  The Salt Road - Chapter 01a',
+		'4-09 Book 4  The *Lantern* Hour - Chapter 07a'
+	].map((title, i) => ({ ordinal: i + 1, title, durationMs: 600000 }))
+};
+
+function omnibusView(i, over = {}) {
+	const chs = bookModel.chapters(OMNIBUS);
+	const l = chapterLabel(OMNIBUS, chs[i], chs);
+	return view(Object.assign({
+		chapter: { index: chs[i].number, count: chs.length, title: chs[i].title, label: l.label, short: l.short, detail: l.detail, startMs: chs[i].startMs, endMs: chs[i].endMs, endsAt: null }
+	}, over));
+}
+
+test('the card names the book and chapter the track names, bold, with the book title after it', () => {
+	const d = bookCard.buildCard(omnibusView(2)).embeds[0].description;
+	assert.match(d, /\*\*Book 4 · Chapter 7\*\* · The \\\*Lantern\\\* Hour\n/, 'the title is escaped, the label bold');
+	assert.doesNotMatch(d, /Chapter 3 of 3|4-09/, 'neither the file count nor the raw track title');
+	assert.match(bookCard.buildCard(omnibusView(0)).embeds[0].description, /\*\*Book 1\*\* · The Salt Road\n/);
+});
+
+test('the ended card saves at the label without its title', () => {
+	const p = bookCard.endedCard(omnibusView(2, { state: 'ended', endReason: 'explicit' }));
+	assert.match(p.embeds[0].description, /Saved at 1:30:00 \(Book 4 · Chapter 7\) of 4:08:00\./);
+});
+
+test('a view without a label keeps the slot numbers', () => {
+	const bare = { index: 2, count: 4, title: 'Part 2', startMs: 3900000, endMs: 7800000, endsAt: null };
+	assert.match(bookCard.buildCard(view({ chapter: bare })).embeds[0].description, /\*\*Chapter 2 of 4\*\* · Part 2/);
+	assert.match(bookCard.endedCard(view({ chapter: bare, state: 'ended', endReason: 'explicit' })).embeds[0].description, /\(Ch 2 of 4\)/);
 });
 
 // ---- the read-along's 📖 -----------------------------------------------------------------------
