@@ -697,6 +697,10 @@ function createReadAlong(opts = {}) {
 		const st = s ? statusOf(s) : 'unknown';
 		const button = (st === 'ready' || st === 'available') && !(s.work && s.work.kind === 'podcast');
 		if (s && s.id) cardShown.set(s.id, button);
+		// Only a map already in memory: a card render must never open a text. It lets the card name
+		// chapters for a book split into hour-long files.
+		const t = s ? texts.get(s.workId) : null;
+		if (t && t.map && s.work && t.parts === s.work.parts) return { button, map: t.map };
 		return { button };
 	}
 

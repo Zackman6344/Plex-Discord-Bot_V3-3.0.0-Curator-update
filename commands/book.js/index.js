@@ -1,7 +1,7 @@
 // commands/book.js: /book and !book (alias !books), the audiobook and podcast player.
 //
 // This file holds the slash spec, autocomplete, the sub-help and the dispatch. The subcommands
-// live in play.js, controls.js, library.js, admin.js, text.js and marks.js, each exporting
+// live in play.js, controls.js, library.js, admin.js, text.js, marks.js and edit.js, each exporting
 // { names, run(ctx) }, and are required explicitly (not by a directory scan) so a stray file can
 // never become a command.
 //
@@ -13,6 +13,7 @@ const { EmbedBuilder } = require('discord.js');
 const config = require('../../config/config.js');
 const logger = require('../../helpers/logger.js');
 const bookModel = require('../../helpers/bookModel.js');
+const { chapterLabel } = require('../../helpers/bookChapterLabel.js');
 
 const play = require('./play.js');
 const controls = require('./controls.js');
@@ -20,6 +21,7 @@ const library = require('./library.js');
 const admin = require('./admin.js');
 const text = require('./text.js');
 const marks = require('./marks.js');
+const edit = require('./edit.js');
 
 const EPHEMERAL = 64;
 const NO_PINGS = { parse: [] };
@@ -34,7 +36,7 @@ const CONTENT_MAX = 2000;
 
 // No prototype: `!book constructor` would otherwise find Object and throw instead of answering.
 const HANDLERS = Object.create(null);
-for (const mod of [play, controls, library, admin, text, marks]) {
+for (const mod of [play, controls, library, admin, text, marks, edit]) {
 	for (const name of mod.names) HANDLERS[name] = mod;
 }
 
@@ -43,6 +45,12 @@ const SLEEP_CHOICES = [5, 10, 15, 20, 30, 45, 60, 90].map(m => ({ name: `${m} mi
 	.concat([{ name: 'End of this chapter', value: 'chapter' }, { name: 'Off', value: 'off' }]);
 const SECONDS_CHOICES = [[10, '10 s'], [15, '15 s'], [30, '30 s'], [60, '1 min'], [120, '2 min'], [300, '5 min'], [600, '10 min']]
 	.map(([value, name]) => ({ name, value }));
+
+const EDIT_FIELD_CHOICES = [
+	['title', 'title'], ['author', 'author'], ['narrator', 'narrator'], ['publisher', 'publisher'],
+	['series (this title)', 'series'], ['series (all the author\'s books)', 'author-series'],
+	['clear an edit', 'clear'], ['exclude from the catalog', 'exclude'], ['include again', 'include'], ['look up online', 'lookup']
+].map(([name, value]) => ({ name, value }));
 
 const TITLE = (description, required = false) => ({ name: 'title', type: 'STRING', description, required, autocomplete: true });
 
@@ -85,7 +93,12 @@ const SUBCOMMANDS = [
 		options: [{ name: 'which', type: 'STRING', description: 'A number from /book marks, or all confirm (owner)' }, TITLE('Book (default the one playing)')] },
 	{ name: 'link', description: 'Owner: tie a book to its ebook (Calibre id, ISBN, EPUB path, off, auto)',
 		options: [TITLE('Book', true), { name: 'ebook', type: 'STRING', description: 'Calibre id, ISBN, EPUB path, off or auto (empty: show)' }] },
-	{ name: 'rescan', description: 'Owner: re-read the audiobook library from Plex now' }
+	{ name: 'rescan', description: 'Owner: re-read the audiobook library from Plex now' },
+	{ name: 'edit', description: 'Owner: fix a book\'s title, author, narrator or series (your edit wins)',
+		options: [TITLE('Book', true),
+			{ name: 'field', type: 'STRING', description: 'What to change (empty: show where each detail came from)', choices: EDIT_FIELD_CHOICES },
+			{ name: 'value', type: 'STRING', description: 'The new value, or none; for clear, the detail to clear' },
+			{ name: 'position', type: 'STRING', description: 'Number in the series, like 2 or 0.5 (series only)' }] }
 ];
 
 function fences(text) {
@@ -219,7 +232,8 @@ function helpEmbed(bot) {
 			`> \`${p}book library [filter]\` — Every book and podcast the bot knows.\n` +
 			`> \`${p}book stats [@user]\` / \`${p}book leaderboard\` — Hours listened.\n` +
 			`> \`${p}book finish [title]\` / \`${p}book forget [title] confirm\` — Mark finished, or drop your place.\n` +
-			`> \`${p}book rescan\` — Owner: re-read the library from Plex.`
+			`> \`${p}book rescan\` — Owner: re-read the library from Plex.\n` +
+			`> \`${p}book edit <title> [detail value]\` — Owner: fix a title, author, narrator or series, or take a book out. \`${p}book edit\` lists the forms.`
 		);
 }
 
@@ -271,15 +285,24 @@ function chapterChoices(bot, guildId, typed) {
 	if (!chs.length) return [];
 	const current = bookModel.chapterAt(s.work, bot.books.position(s));
 	const t = String(typed || '').trim();
+	// The number stays first because it is what /book chapter jumps to; the label says what the
+	// track names ("240 · Book 4 · Chapter 7"), where a slot number alone counts files.
+	const labelOf = (c) => {
+		try {
+			return chapterLabel(s.work, c, chs).label || c.title;
+		} catch (_) {
+			return c.title;
+		}
+	};
 	let list = chs;
 	let centre = current ? current.number : 1;
 	if (/^\d+$/.test(t)) centre = Number(t);
-	else if (t) list = chs.filter(c => norm(c.title).includes(norm(t)));
+	else if (t) list = chs.filter(c => norm(c.title).includes(norm(t)) || norm(labelOf(c)).includes(norm(t)));
 	const at = Math.max(0, list.findIndex(c => c.number >= centre));
 	const from = Math.max(0, Math.min(at - Math.floor(MAX_CHOICES / 2), list.length - MAX_CHOICES));
 	return list.slice(from, from + MAX_CHOICES).map(c => {
 		const mark = current && c.number === current.number ? '▶ ' : '';
-		return choice(`${mark}${c.number} · ${c.title} (${bookModel.formatSpan(c.endMs - c.startMs)})`, c.number);
+		return choice(`${mark}${c.number} · ${labelOf(c)} (${bookModel.formatSpan(c.endMs - c.startMs)})`, c.number);
 	});
 }
 
@@ -302,7 +325,7 @@ module.exports = {
 	name: 'book',
 	aliases: ['books'],
 	command: {
-		usage: '<play|pause|resume|stop|back|forward|goto|chapter|speed|sleep|now|shelf|library|stats|leaderboard|finish|forget|text|link|marks|unmark|rescan>',
+		usage: '<play|pause|resume|stop|back|forward|goto|chapter|speed|sleep|now|shelf|library|stats|leaderboard|finish|forget|text|link|marks|unmark|rescan|edit>',
 		description: 'Audiobooks and podcasts with a saved place per person. Type "!book ?" for more help.',
 		slash: {
 			description: 'Audiobooks and podcasts: play, resume, chapters, speed, sleep timer, your shelf',

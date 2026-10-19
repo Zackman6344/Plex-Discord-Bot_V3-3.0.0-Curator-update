@@ -1,0 +1,62 @@
+{
+	"1010": {
+		"tags": {
+			"album": "The Glass Road",
+			"artist": "GraphicAudio",
+			"copyright": "Copyright 2019 Avery Quill. All rights reserved.",
+			"comment": "graphicaudio.net",
+			"genre": "Audio Drama"
+		},
+		"chapters": 0,
+		"at": 0
+	},
+	"1040": {
+		"tags": {
+			"album": "The Hollow King",
+			"artist": "R.J. Ashdown",
+			"genre": "Audiobook - Fantasy",
+			"narrator": "Tomas Brandt"
+		},
+		"chapters": 0,
+		"at": 0
+	},
+	"1060": {
+		"tags": {
+			"title": "Night Drive Mix",
+			"artist": "Sam Drift",
+			"genre": "Lo-Fi Hip Hop"
+		},
+		"chapters": 0,
+		"at": 0
+	},
+	"1070": {
+		"tags": {
+			"album": "well.",
+			"artist": "Theo Bramble",
+			"genre": "Comedy"
+		},
+		"chapters": 0,
+		"at": 0
+	},
+	"3001": {
+		"tags": {
+			"album": "Night Shift + Instrumentals",
+			"artist": "Kid Ferro",
+			"genre": "Hip-Hop/Rap"
+		},
+		"chapters": 0,
+		"at": 0
+	},
+	"3002": {
+		"tags": {
+			"album": "The Rust Ledger 1: Cold Iron",
+			"artist": "Graphic Audio LLC.",
+			"album_artist": "Graphic Audio LLC.",
+			"copyright": "Copyright 2018 by Wren Halloway, published under license",
+			"comment": "Visit graphicaudio.net for more",
+			"genre": "Audiobook"
+		},
+		"chapters": 3,
+		"at": 0
+	}
+}

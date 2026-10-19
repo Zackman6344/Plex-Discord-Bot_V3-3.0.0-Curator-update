@@ -105,6 +105,25 @@ const SETTINGS = [
     { key: 'audiobookResumeRewindSeconds', label: 'Rewind on resume (seconds)', group: 'Audiobooks', type: 'int', min: 0, max: 120 },
     { key: 'audiobookTextEnabled', label: 'Read-along (!book text, 📖)', group: 'Audiobooks', type: 'bool' },
     { key: 'audiobookTextSidecars', label: 'Read EPUBs next to the audio', group: 'Audiobooks', type: 'bool' },
+    {
+        key: 'audiobookOnlineLookup', label: 'Look up series and narrators online', group: 'Audiobooks', type: 'bool',
+        warn: 'Sends each book\'s title and author to Audible\'s unofficial catalog search after every catalog rebuild: at start-up or hourly when the library changed, on a rescan, and after an exclude or include edit.',
+    },
+    {
+        key: 'audiobookLookupRegion', label: 'Online lookup store', group: 'Audiobooks', type: 'choice',
+        choices: [
+            { label: 'Audible US', value: 'us' },
+            { label: 'Audible Canada', value: 'ca' },
+            { label: 'Audible UK', value: 'uk' },
+            { label: 'Audible Australia', value: 'au' },
+            { label: 'Audible France', value: 'fr' },
+            { label: 'Audible Germany', value: 'de' },
+            { label: 'Audible Japan', value: 'jp' },
+            { label: 'Audible Italy', value: 'it' },
+            { label: 'Audible India', value: 'in' },
+            { label: 'Audible Spain', value: 'es' },
+        ],
+    },
 
     // Both apply live through onChange (helpers/processPriority.js, helpers/voiceHealth.js).
     {

@@ -2,6 +2,7 @@
 // store. Nothing here touches Plex or voice.
 
 const bookModel = require('../../helpers/bookModel.js');
+const { chapterLabel } = require('../../helpers/bookChapterLabel.js');
 const { renderBoard } = require('../../helpers/leaderboard.js');
 const { esc } = require('../../helpers/bookCard.js');
 
@@ -39,6 +40,16 @@ function edition(work) {
 	return work && work.edition ? ` (${esc(work.edition)})` : '';
 }
 
+// The short form: the shelf line has room for where you are, not for the track's own title.
+function chapterShort(work, ch) {
+	const chs = bookModel.chapters(work);
+	try {
+		return chapterLabel(work, ch, chs).short;
+	} catch (_) {
+		return `Ch ${ch.number} of ${chs.length}`;
+	}
+}
+
 function listeningLine(mark, work, status) {
 	const title = `**${esc(work ? work.title : mark.title)}**${edition(work)}`;
 	if (status === 'missing') return `⚠️ ${title} · not in the library any more; your place is kept`;
@@ -48,7 +59,7 @@ function listeningLine(mark, work, status) {
 	const speed = bookModel.SPEEDS.includes(mark.speed) ? mark.speed : 1;
 	const bits = [`${total > 0 ? Math.floor((abs / total) * 100) : 0}%`];
 	const ch = bookModel.chapterAt(work, abs);
-	if (ch) bits.push(`Ch ${ch.number} of ${bookModel.chapters(work).length}`);
+	if (ch) bits.push(chapterShort(work, ch));
 	bits.push(`${bookModel.formatSpan((total - abs) / speed)} left${speed !== 1 ? ` at ${speed}x` : ''}`);
 	if (Number.isFinite(mark.lastListenedAt)) bits.push(`<t:${sec(mark.lastListenedAt)}:R>`);
 	return `▶ ${title} · ${bits.join(' · ')}`;
@@ -116,6 +127,8 @@ function buildShelf(userId, given = {}) {
 }
 
 function seqOf(work) {
+	// Number(null) is 0, which listed a series with no number as "#null" and first in its group.
+	if (work.sequence === null || work.sequence === undefined || work.sequence === '') return Infinity;
 	const n = Number(work.sequence);
 	return Number.isFinite(n) ? n : Infinity;
 }

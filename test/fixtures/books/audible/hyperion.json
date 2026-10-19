@@ -1,0 +1,292 @@
+{
+	"products": [
+		{
+			"asin": "B002V5BLIW",
+			"title": "Hyperion",
+			"authors": [
+				{
+					"name": "Dan Simmons"
+				}
+			],
+			"narrators": [
+				{
+					"name": "Marc Vietor"
+				},
+				{
+					"name": "Allyson Johnson"
+				},
+				{
+					"name": "Kevin Pariseau"
+				},
+				{
+					"name": "Jay Snyder"
+				},
+				{
+					"name": "Victor Bevine"
+				}
+			],
+			"publisher_name": "Audible Studios",
+			"runtime_length_min": 1244,
+			"release_date": "2008-12-22",
+			"language": "english",
+			"format_type": "unabridged",
+			"content_delivery_type": "MultiPartBook",
+			"publication_name": "Hyperion",
+			"series": [
+				{
+					"title": "Hyperion",
+					"sequence": "1"
+				}
+			]
+		},
+		{
+			"asin": "B002V5D34W",
+			"title": "The Fall of Hyperion",
+			"authors": [
+				{
+					"name": "Dan Simmons"
+				}
+			],
+			"narrators": [
+				{
+					"name": "Victor Bevine"
+				}
+			],
+			"publisher_name": "Audible Studios",
+			"runtime_length_min": 1305,
+			"release_date": "2008-12-22",
+			"language": "english",
+			"format_type": "unabridged",
+			"content_delivery_type": "MultiPartBook",
+			"publication_name": "Hyperion",
+			"series": [
+				{
+					"title": "Hyperion",
+					"sequence": "2"
+				}
+			]
+		},
+		{
+			"asin": "B002UZDVW2",
+			"title": "The Rise of Endymion",
+			"authors": [
+				{
+					"name": "Dan Simmons"
+				}
+			],
+			"narrators": [
+				{
+					"name": "Victor Bevine"
+				}
+			],
+			"publisher_name": "Audible Studios",
+			"runtime_length_min": 1787,
+			"release_date": "2009-01-20",
+			"language": "english",
+			"format_type": "unabridged",
+			"content_delivery_type": "MultiPartBook",
+			"publication_name": "Hyperion",
+			"series": [
+				{
+					"title": "Hyperion",
+					"sequence": "4"
+				}
+			]
+		},
+		{
+			"asin": "B002V0PW3W",
+			"title": "Endymion",
+			"authors": [
+				{
+					"name": "Dan Simmons"
+				}
+			],
+			"narrators": [
+				{
+					"name": "Victor Bevine"
+				}
+			],
+			"publisher_name": "Audible Studios",
+			"runtime_length_min": 1397,
+			"release_date": "2009-01-20",
+			"language": "english",
+			"format_type": "unabridged",
+			"content_delivery_type": "MultiPartBook",
+			"publication_name": "Hyperion",
+			"series": [
+				{
+					"title": "Hyperion",
+					"sequence": "3"
+				}
+			]
+		},
+		{
+			"asin": "B0DZK83QHQ",
+			"title": "El ascenso de Endymion (Los cantos de Hyperion 4)",
+			"subtitle": "Los cantos de Hyperion 4",
+			"authors": [
+				{
+					"name": "Dan Simmons"
+				},
+				{
+					"name": "Carlos Gardini"
+				}
+			],
+			"narrators": [
+				{
+					"name": "Jordi Nogales"
+				}
+			],
+			"publisher_name": "Penguin Random House Audio",
+			"runtime_length_min": 1605,
+			"release_date": "2025-03-06",
+			"language": "spanish",
+			"format_type": "unabridged",
+			"content_delivery_type": "MultiPartBook",
+			"publication_name": "Los cantos de Hyperion",
+			"series": [
+				{
+					"title": "Los cantos de Hyperion",
+					"sequence": "4"
+				}
+			]
+		},
+		{
+			"asin": "B0DM2P7PB2",
+			"title": "La ca\u00edda de Hyperion (Los cantos de Hyperion 2)",
+			"subtitle": "Los cantos de Hyperion 2 [The Chants of Hyperion, Book 2]",
+			"authors": [
+				{
+					"name": "Dan Simmons"
+				},
+				{
+					"name": "Carlos Gardini"
+				}
+			],
+			"narrators": [
+				{
+					"name": "Jordi Nogales"
+				}
+			],
+			"publisher_name": "Penguin Random House Audio",
+			"runtime_length_min": 1151,
+			"release_date": "2024-12-05",
+			"language": "spanish",
+			"format_type": "unabridged",
+			"content_delivery_type": "MultiPartBook",
+			"publication_name": "Los cantos de Hyperion",
+			"series": [
+				{
+					"title": "Los cantos de Hyperion",
+					"sequence": "2"
+				}
+			]
+		},
+		{
+			"asin": "B0D6S1FVHV",
+			"title": "Hyperion (Los cantos de Hyperion 1)",
+			"authors": [
+				{
+					"name": "Dan Simmons"
+				},
+				{
+					"name": "Carlos Gardini"
+				}
+			],
+			"narrators": [
+				{
+					"name": "Jordi Nogales"
+				}
+			],
+			"publisher_name": "Penguin Random House Audio",
+			"runtime_length_min": 1077,
+			"release_date": "2024-09-19",
+			"language": "spanish",
+			"format_type": "unabridged",
+			"content_delivery_type": "MultiPartBook",
+			"publication_name": "Los cantos de Hyperion",
+			"series": [
+				{
+					"title": "Los cantos de Hyperion",
+					"sequence": "1"
+				}
+			]
+		},
+		{
+			"asin": "B0DRDMSM13",
+			"title": "Endymion (Los cantos de Hyperion 3)",
+			"subtitle": "Los cantos de Hyperion 3 [Hyperion Cantos, Book 3]",
+			"authors": [
+				{
+					"name": "Dan Simmons"
+				},
+				{
+					"name": "Carlos Gardini - translator"
+				}
+			],
+			"narrators": [
+				{
+					"name": "Jordi Nogales"
+				}
+			],
+			"publisher_name": "Penguin Random House Audio",
+			"runtime_length_min": 1212,
+			"release_date": "2024-12-26",
+			"language": "spanish",
+			"format_type": "unabridged",
+			"content_delivery_type": "MultiPartBook",
+			"publication_name": "Los cantos de Hyperion",
+			"series": [
+				{
+					"title": "Los cantos de Hyperion",
+					"sequence": "3"
+				}
+			]
+		},
+		{
+			"asin": "B00TW3GNCU",
+			"title": "Hyperion & Endymion 4",
+			"authors": [
+				{
+					"name": "Dan Simmons"
+				}
+			],
+			"narrators": [
+				{
+					"name": "Detlef Bierstedt"
+				}
+			],
+			"publisher_name": "Audible Studios",
+			"runtime_length_min": 670,
+			"release_date": "2008-06-16",
+			"language": "german",
+			"format_type": "unabridged",
+			"content_delivery_type": "MultiPartBook",
+			"publication_name": "Hyperion & Endymion",
+			"series": []
+		},
+		{
+			"asin": "B00TW378DI",
+			"title": "Hyperion & Endymion 5",
+			"authors": [
+				{
+					"name": "Dan Simmons"
+				}
+			],
+			"narrators": [
+				{
+					"name": "Detlef Bierstedt"
+				}
+			],
+			"publisher_name": "Audible Studios",
+			"runtime_length_min": 813,
+			"release_date": "2008-07-18",
+			"language": "german",
+			"format_type": "unabridged",
+			"content_delivery_type": "MultiPartBook",
+			"publication_name": "Hyperion & Endymion",
+			"series": []
+		}
+	],
+	"total_results": 20
+}

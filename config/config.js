@@ -208,6 +208,19 @@ const defaults = {
   'audiobookTextEnabled' : true,
   // Also look for .epub files in the folders that hold a book's audio files.
   'audiobookTextSidecars' : true,
+  // Look up each book's series, series number, narrators and title spelling online after every
+  // catalog rebuild (at start-up or hourly when the library changed, on a rescan, and after an
+  // exclude or include edit).
+  // Off by default. When on, the bot sends each book's title and author, and nothing else, to
+  // Audible's public catalog search: one request per book at most once a second, cached for
+  // months. The endpoint is the unofficial one Audiobookshelf and the Plex Audnexus agent use, with
+  // no account or key. Online details only fill gaps: apart from fixing a title's capitals or
+  // punctuation, they never replace a title, series or narrator from your edits, a linked ebook,
+  // the files' tags, Plex or the folders.
+  'audiobookOnlineLookup' : false,
+  // Which Audible store to ask; also picks the language a match must be in. One of 'us' 'ca'
+  // 'uk' 'au' 'fr' 'de' 'jp' 'it' 'in' 'es'.
+  'audiobookLookupRegion' : 'us',
 
   // --- Voice (the Voice page of /config) ---
   // Priority of the bot process. Above normal stops a game, VR stream or Plex transcode on this PC

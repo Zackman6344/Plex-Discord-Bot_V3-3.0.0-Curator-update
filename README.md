@@ -147,6 +147,8 @@ module.exports = {
   'audiobookResumeRewindSeconds' : 10,     // rewind after 5+ min away, 3x after a day (0-120)
   'audiobookTextEnabled'         : true,   // !book text and the card's 📖 (see "Reading along")
   'audiobookTextSidecars'        : true,   // also look for .epub files next to a book's audio
+  'audiobookOnlineLookup'        : false,  // fill blank series, narrators and publishers from Audible (see "Looking books up online")
+  'audiobookLookupRegion'        : 'us',   // which Audible store: 'us' 'ca' 'uk' 'au' 'fr' 'de' 'jp' 'it' 'in' 'es'
 
   // Voice (see "If voice audio stutters"). Both editable from /config → Voice, both live.
   'processPriority'    : 'above_normal',   // or 'normal' if a game running beside the bot suffers
@@ -387,18 +389,108 @@ list is under **Command Directory** below.
 enable **Audiobooks and podcasts (/book)**. No restart. The first `/book play` or `/book library`
 after that (or the next boot) reads your music library once in the background (about 20 seconds
 on a large library) to work out which albums are books; until that finishes, `/book play` says it
-is still reading. After that it checks Plex for changes once an
+is still reading. The first read also opens one file of every long album to read its tags, which
+can add up to 45 seconds once; later reads take them from a cache. After that it checks Plex for changes once an
 hour, so a book you add shows up within the hour, and `/book rescan` (owner only) re-reads it on
 demand.
 
 **What counts as a book.** The bot looks at folders on disk rather than Plex albums, because a
 hand-ripped library rarely lines up album-for-book. A folder of at least 2 hours becomes a book
-when its tracks are long (a median of 15 minutes or more), when its name says so ("unabridged",
-"audiobook", "read by", GraphicAudio), or when it is a long run of low-bitrate mono files. A folder
-whose tracks are mostly numbered episodes of 20 minutes or more is a podcast. Hour-long music mixes
-stay music: nothing is decided by track length alone. `/book library` shows what it found, and
-`/book rescan` also names the five longest folders of 2 hours or more that it left as music, so you
-can pull one in, and the books whose part order it is unsure of.
+when its tracks are long (a median of 15 minutes or more), when at least half its tracks are on
+albums with an audiobook genre, when its name says so ("unabridged", "audiobook", "read by", GraphicAudio), or
+when it is a long run of low-bitrate mono files. A folder whose tracks are mostly numbered episodes
+of 20 minutes or more is a podcast. Hour-long music mixes stay music: nothing is decided by track
+length alone. `/book library` shows what it found, and `/book rescan` also names the five longest
+folders of 2 hours or more that it left as music, so you can pull one in, and the books whose part
+order it is unsure of.
+
+- **Genres.** An album counts as a book album when its Plex genre or the genre tag in its files
+  says audiobook, podcast, audio drama, radio play or full cast. It counts as music when it names
+  a music genre (rock, rap, soundtrack, lo-fi and so on) and no book genre. A music genre has to
+  be the whole entry ("Alternative Rock", "Pop/Rock"), so "Space Opera", "Folk Tales" and
+  "Haunted House" are not music. "Fantasy", "Comedy" and "Spoken Word" decide nothing. **A folder with at least half its tracks on music albums, and
+  none on a book album, stays music however long its tracks are.**
+- **A music album inside a book's folder is split off** and stays in the music library, and
+  `/book rescan` names it.
+- **`Disc 2` folders.** A `Disc 2`, `Part 2` or `[01]` folder joins the folder above it only when
+  that folder is the book's own: it holds no loose files, or its loose files are the same Plex
+  album. A stray `Disc 2` of a rap album under the top of the music library once joined the whole
+  library folder, picked up a loose audiobook file lying there, and showed up as a book called
+  "Music"; that can no longer happen.
+
+**Where a book's details come from.** Each title, author, narrator, publisher and series is taken
+from the first of these that has it:
+
+1. Your own edits (`!book edit` below, or `data/book_overrides.json` by hand), for one book or,
+   with numbers, for all of an author's books.
+2. The tags inside the files, then Plex's album and artist, then the folder names.
+3. The Calibre book the read-along found for it, then the optional online lookup. **These two
+   only fill a detail every source above left blank.**
+
+An author-wide series with no numbers sits between 2 and 3: it names that author's books that
+have no series of their own. A few rules decide what detection reads:
+
+- A GraphicAudio file names the publisher as its artist. A publisher is never shown as the
+  author: the author then comes from a "Written by" comment or the copyright tag.
+- A title taken from a folder gets proper capitals ("Words Of Radiance" shows as "Words of
+  Radiance"), and an apostrophe the folder name lost comes back when a track or file name spells
+  it ("The Children's Adventure"). Only capitals and apostrophes change, so the book's id does not.
+- **A cast list is not a narrator.** A bracket that is cut short with "..." (the GraphicAudio
+  Mistborn albums), or a tag that lists several names, "full cast" or "various", gives no
+  narrator. The bracket text still shows as the edition. "Various" in a folder name is still
+  shown, as before.
+- Calibre and the online lookup may fix a title's capitals, and only when their title is the same
+  once case and punctuation are ignored, is itself properly capitalised and has a lower-case
+  letter. An online "Words Of Radiance" never replaces "Words of Radiance", and a Calibre record
+  titled "The once and future king", or one titled "Mistborn" that holds The Final Empire, changes
+  nothing.
+
+None of these sources ever changes a book's id, so bookmarks, read-along links and sync marks stay
+where they are.
+
+**Looking books up online (optional).** Off by default. With `audiobookOnlineLookup` on (`/config`
+→ Audiobooks), each catalog rebuild is followed by a lookup on Audible's catalog search of every
+book not asked about recently, to fill a blank series, series number, narrator or publisher.
+
+- **What leaves this PC:** the book's title (with edition brackets and a leading series name
+  removed) and the author's name, in an HTTPS request to `api.audible.com`, or the store
+  `audiobookLookupRegion` picks. Never a file path, a Plex or Discord id, the narrator or anything
+  about who listens.
+- The endpoint is the unofficial one the Audible app, Audiobookshelf and the Plex Audnexus agent
+  use. It needs no account or key and publishes no terms or limits, so the bot asks politely: one
+  request at a time, at least a second apart, a 10 s timeout, a "slow down" answer honoured once,
+  and it stops after 3 failures in a row.
+- Answers are cached in `data/book_lookup.json`: a match for 180 days, "not found" for 30, a
+  failure for 1. A book is asked again sooner when its title or author changes, or with
+  `!book edit <book> lookup`.
+- **Never looked up:** podcasts, books `/book rescan` lists as doubtful, books with no author, and
+  books whose author is a publisher's name.
+- A match is either this recording (an Audible edition whose running time agrees to within 3% or
+  10 minutes, whichever is more) or only the book (every candidate agrees on the series and
+  number). Only an edition match can supply a narrator or publisher, and more than three narrators
+  is a full cast, which fills no narrator.
+- **Online details only fill blanks.** Edgedancer stays "The Stormlight Archive #0.5" although
+  Audible says 2.5, and "The Murderbot Diaries" is not shortened to Audible's "Murderbot Diaries".
+- `/book rescan` waits up to a minute for the lookups and reports them. A rebuild started any
+  other way (the hourly check, a new book) runs them in the background.
+
+**What `/book rescan` reports.** It starts with "about 20 s, up to a minute the first time after an
+update" (plus a minute for the online lookup when that is on), then lists works, parts, hours,
+additions, removals and renames ("bookmarks follow"), and:
+
+- `⚠️ Doubtful groups, catalogued anyway`: books whose grouping looks wrong, each with the reason
+  (tracks by several artists, a music genre on one of its albums, a generic folder name such as
+  "Music" spread over several albums, a title that looks like a folder name, no author found) and
+  the fix, `!book edit <id> exclude` or a title or author edit. A doubtful book is still
+  catalogued and playable, and is not looked up online. **Once you set its title or author by
+  hand it is not warned about again, and the online lookup takes it too.**
+- `✂️ Music split off a book folder`: music albums taken out of a book's folder, with their track
+  counts and the book they came from.
+- `🌐 Online lookup`, when it is on: how many books matched an edition or a book, were not found,
+  were already looked up, were skipped or failed, then the blanks this rescan filled. "Online
+  lookups are still running" means the minute ran out; they finish in the background.
+- `🗂 Long groups not taken as books`, as before. Each folder is shown from below its music
+  section's own folder, so the drive and the folders above it stay out of the channel.
 
 **Books stay out of music.** While `audiobooksExcludeFromMusic` is on (the default), catalogued
 books and podcasts never come up in `!random`, `!mood`, `/vibe`, `/sonic`, Hitster, `/quotethebard`,
@@ -439,8 +531,55 @@ never finishes it for you. Playing a finished book starts it again; playing a po
 caught up on starts at its first new episode. A podcast plays in episode order, and a new season
 added to the same folder that numbers its episodes from 1 again plays after the season before it.
 
-**Fixing the catalog by hand.** Create `data/book_overrides.json` (the bot only ever reads it) to
-correct series, order, titles or what counts as a book. Every key is optional:
+**Fixing a book's details from Discord: `!book edit`.** Owner only, and `ownerId` must be set:
+unlike `/book rescan` there is no bootstrap mode while it is blank. Edits are written to
+`data/book_overrides.json` and show at once, with no rescan, except `exclude` and `include`, which
+rebuild the catalog. `!book edit` on its own lists the forms.
+
+| Command | What it does |
+| ------- | ------------ |
+| `!book edit Hyperion` | Each detail and where it came from (your edit, your author-wide edit, file tags, Plex, folder name, Calibre, online), and any doubts. |
+| `!book edit <book> title <text>` | Sets the title. `author`, `narrator` and `publisher` work the same way. |
+| `!book edit dan-simmons/hyperion narrator none` | Explicitly no narrator, where the folder name says "Various". `publisher none` works too. |
+| `!book edit The Fall of Hyperion series Hyperion Cantos 2` | This title's series and number. The number can be `2`, `0.5` or `#2`; a range such as `1-5` is kept as no number, and leaving the number out keeps the detected one. `series none` means no series. Quote a name that ends in a number: `series "Area 51"`. |
+| `!book edit Hyperion author-series Hyperion Cantos 1` | One series for all of the author's books, numbered one book per command (below). |
+| `!book edit <book> clear series` | Drops your edit, so the detail shows what the next source gives. Also `title`, `author`, `narrator`, `publisher`, `author-series`, or `all`, which keeps an exclude, a part order and a pinned id. |
+| `!book edit <book> exclude` | Takes the book out of the catalog and gives its tracks back to music. Rebuilds the catalog (about 20 s). Saved places are kept, and the reply counts the listeners in this server who have one. |
+| `!book edit <id> include` | Brings an excluded book back, by the id the exclude reply gave. Rebuilds too. |
+| `!book edit <book> lookup` | Asks the online lookup about this book again now. Needs `audiobookOnlineLookup` on. While a batch of lookups runs it waits for that batch, up to a minute. |
+
+- `<book>` is a title, part of one, or an id from `/book library`. Unquoted, the book's name ends at
+  the first detail word (`title`, `series`, `clear`, `exclude` and the rest) whose text before it
+  names a book, preferring an exact title. Quote a title to be certain: `!book edit "The
+  Narrator" narrator Sam Reader`.
+- **Title and series edits reach every recording of a title** (both narrations of The Fall of
+  Hyperion), and the reply names them. `author`, `narrator`, `publisher`, `clear all`, `exclude`
+  and `include` change one recording, so for a title with two they ask for the id.
+- **A whole series (`author-series`).** Run it once per book, each with its number:
+
+  ```
+  !book edit Hyperion author-series Hyperion Cantos 1
+  !book edit The Fall of Hyperion author-series Hyperion Cantos 2
+  !book edit Endymion author-series Hyperion Cantos 3
+  !book edit The Rise of Endymion author-series Hyperion Cantos 4
+  ```
+
+  Each command adds its book to one entry for the author, `authors["dan-simmons"]` in the
+  overrides file, and keeps the numbers already there, so after the fourth all seven Dan Simmons
+  recordings show Hyperion Cantos #1–4. Without a number it renames the series and keeps the
+  numbers. A book's own `series` edit still wins over it. `clear author-series` removes the whole
+  entry.
+- An edit is never replaced by tags, Plex, folders, Calibre or the online lookup, and never
+  changes a book's id. An edit made before a book was renamed still applies after.
+- A broken overrides file is refused, never overwritten: "book_overrides.json: the file is not
+  valid JSON (line N column M), so nothing was changed."
+- On `/`: `/book edit title:<book> field:<detail> value:<value> position:<number>`. `value` is
+  taken whole, so `field:series value:Area 51` needs no quotes and the number goes in `position`.
+  With no `field` it shows the details.
+
+**Fixing the catalog by hand.** `!book edit` writes `data/book_overrides.json` for you, and you can
+also edit it yourself to correct series, order, titles or what counts as a book. Every key is
+optional:
 
 ```json
 {
@@ -459,9 +598,16 @@ correct series, order, titles or what counts as a book. Every key is optional:
 ```
 
 - `works` is keyed by the id `/book library` shows (`author/title`). `partOrder` lists file names
-  in play order; files you leave out keep their order after the listed ones. `title`, `series`,
-  `sequence`, `narrator` and `edition` override what was detected, `exclude: true` drops the work,
-  and `pinId` gives it an id that survives a folder rename.
+  in play order; files you leave out keep their order after the listed ones. `title`, `author`,
+  `series`, `sequence`, `narrator`, `edition` and `publisher` override every other source (`null`
+  means none, except for `title` and `author`), `exclude: true` drops the work, and `pinId` gives
+  it an id that survives a folder rename. A detail set under a book's old id still applies after
+  a rename. `partOrder`, `exclude` and `pinId` are read under the id detection gives now; one
+  written under an id the catalog still knows as the book's alias is carried to the new id at
+  every rebuild, and the file is left as you wrote it. `!book edit <book> exclude` also writes the
+  book's `folderKey`, so that exclude holds whatever id the book gets. A hand-written exclude
+  under an id the catalog no longer knows stops applying, and every rebuild logs "overrides name a
+  work that was not detected" for it.
 - `include` and `exclude` take a folder exactly as `/book rescan` prints it (slash direction and
   case do not matter), or a Plex album ratingKey. For a box set spread over sibling folders, use
   the parent folder.
@@ -469,16 +615,25 @@ correct series, order, titles or what counts as a book. Every key is optional:
   artists the detector missed. A detected podcast's artist is already kept out, so a new episode
   album stays out of music before the next rescan sees it.
 - `authors` sets a series for every book by that author, with `order` giving each title its
-  number.
+  number. The key is the author as detected, in id form (`dan-simmons`). Without `order`, the
+  series only names that author's books that have none.
 
 Run `/book rescan` after editing it. A typo in the JSON is logged and reported by `/book rescan`,
-and the file is ignored until it parses.
+and the file is ignored until it parses; `!book edit` refuses to touch it meanwhile, so a hand edit
+is never lost. A file saved with a byte order mark (Notepad's UTF-8) reads fine. Every `!book edit`
+write keeps the previous text in `book_overrides.json.bak` and replaces the file in one step, so a
+crash mid-write leaves the old file whole.
 
 **Files.** `data/book_catalog.json` is the catalog (rebuilt from Plex if you delete it).
 `data/book_bookmarks.json` holds everyone's places, keyed by Discord user ID, with an hourly backup
 beside it in `book_bookmarks.json.bak` that the bot loads automatically if the main file is ever
 found damaged. Both, and the overrides file, are gitignored. If a bookmark write fails, the card
 shows a warning and the command log gets a `book-save-failed` line (`npm run logs -- --raw`).
+`data/book_tags.json` caches the tags read from the files, keyed by each file's path, size and
+date, so only new or changed files are opened again; a file that cannot be opened is remembered
+too and tried again after 30 days or when it changes. `data/book_lookup.json` holds the online
+answers. Both are gitignored, as are `book_overrides.json.bak` and the `.tmp` an edit writes
+through; the tag cache is keyed by file paths on this PC.
 
 ### 📜 Reading along: the book's text in your DMs
 
@@ -725,6 +880,7 @@ A few take a required option, because they can't do anything without one:
 | `/book speed` | `rate:`, picked from the list (0.75x to 3x) |
 | `/book sleep` | `after:`, minutes from the list, `End of this chapter`, or `Off` |
 | `/book forget` | `title:`, then a confirm button |
+| `/book edit` | `title:`, the book; with no `field:` it shows where each detail came from |
 
 Run `npm run check:slash` after editing any command's `slash` block. Registration is
 all-or-nothing, so a single malformed spec makes *every* slash command disappear at once.
@@ -774,7 +930,7 @@ is playing.
 | `/book pause` / `resume` / `stop` | Stop saves your place and leaves voice, and starts any music queued during the book. |
 | `/book back [seconds]` / `forward [seconds]` | Jump 10 s to 10 min from the list (default 30 s), across part boundaries. Prefix takes any length, such as `90`, `1:30` or `2m`, and `!book rewind` / `!book fwd`. |
 | `/book goto <time>` | `1:23:45` from the start, or `+5m` / `-90` from here. |
-| `/book chapter [number]` | Jump to a chapter; no number lists the chapters around the current one. Prefix also has `!book next` / `!book prev`. |
+| `/book chapter [number]` | Jump to a chapter; no number lists the chapters around the current one, each named the way the card names it ("240 · Book 4 · Chapter 7 · The Candle in the Wind"), with the number to type first. Prefix also has `!book next` / `!book prev`. |
 | `/book speed <rate>` | 0.75x to 3x, pitch kept. Saved per book; a new book starts at your last speed. |
 | `/book sleep <after>` | Stop after 5–90 minutes of listening (prefix: any whole number of minutes up to 1440), or at the end of the chapter, or `off`. Paused time does not count. |
 | `/book now` | Post the book card again at the bottom of the channel. |
@@ -788,12 +944,20 @@ is playing.
 | `/book link <title> [ebook]` | Owner only, and `ownerId` must be set: tie a book to its ebook (a Calibre id, an ISBN, an EPUB path, `off` or `auto`); no ebook shows what it uses now. |
 | `/book marks [title]` | The read-along's sync marks on a book (default: the one playing): audio time, chapter, who and when. See **Sync marks**. |
 | `/book unmark [which] [title]` | Remove your latest sync mark, or `which:3` for a listed one of yours. `which:all` is the owner's and says what it would clear; `which:all confirm` clears the book. |
-| `/book rescan` | Owner only (anyone while `ownerId` is blank, as with `/config`): re-read the library from Plex now and report what changed. |
+| `/book rescan` | Owner only (anyone while `ownerId` is blank, as with `/config`): re-read the library from Plex now and report what changed, doubtful groups, music split off book folders and the online lookup. See **What `/book rescan` reports**. |
+| `/book edit <title> [field] [value] [position]` | Owner only, and `ownerId` must be set: fix a book's title, author, narrator, publisher or series, name a whole series, take a book out of the catalog or bring it back, or look it up online again. No field shows where each detail came from. See **Fixing a book's details from Discord**. |
 
 The card has Previous chapter, −30 s, Pause/Resume, +30 s and Next chapter, a speed button that
 cycles 1x–2x, a sleep button that cycles off, 15, 30, 60 minutes and end of chapter, 📖 Text (only
 on a book whose ebook was found; the listener's private page), and Stop. A
 card from an earlier session loses its buttons when clicked; `/book now` shows the current one.
+
+The card's chapter line says what the track itself names: "Book 4 · Chapter 7 · The Candle in the
+Wind" in an omnibus, "Chapter 21" or "Prologue" where a track is a chapter, "Part 13 of 31 ·
+Section 1 of 6" for GraphicAudio's coded chapters, "Episode 3 of 8" in a podcast, and "Part 7 of
+19" with the track's title after it when that adds anything. It used to count files ("Chapter 240
+of 319"). The shelf, the jump and resume replies and the "can't find the file" message use the
+same words, and `/book chapter <n>` still jumps by the same numbers.
 
 ### 🍿 Plex & Media Utilities
 

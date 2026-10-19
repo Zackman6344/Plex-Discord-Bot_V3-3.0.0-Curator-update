@@ -4,6 +4,8 @@ Practical pass for this bot. Phase 0 is the `/play` symptom specifically; Phases
 repeatable sweep to run after any change that touches dispatch, commands, or deps. Phases 7, 8
 and 9 are the first live pass of the audiobook suite, of the voice-health log and process
 priority, and of the audiobook read-along, none of which has met a real voice channel yet.
+Phase 10 is the first live pass of the catalog's rules version 3: embedded tags, book metadata,
+`!book edit`, the optional online lookup and the card's chapter words.
 
 The bot now persists its own logs to `data/logs/`, so a failure you didn't happen to be watching
 is still there afterwards:
@@ -525,6 +527,125 @@ has set one yet.
       it is busy, and an ffmpeg spawned meanwhile inherits Below normal. Exclude `node.exe` and
       `ffmpeg.exe` from ProBalance. The parse child needs nothing more: the bot already runs it at
       Below normal.
+
+## Phase 10: Catalog accuracy and book metadata (live)
+
+Built and unit-tested offline (`npm test` 1,727 of 1,727 on 2026-10-16), and checked by scratch
+gates against a read-only snapshot of this library with every store on temp files. None of it has
+run in the live bot. The first start after the update rebuilds the catalog once (rules version 3).
+Run everything as the owner with prefix commands, and keep the bot log open for "Audiobook tag
+reads still running" and "Online book lookup ... failed".
+
+**The first rebuild**
+
+- [ ] Before updating, `!book shelf` as the listener with a place in the old "Music" work (1:08:33
+      into All Systems Red) shows it there. Note the time.
+- [ ] Start the bot. The start-up check rebuilds the catalog, and that build makes the one rename:
+      its log line reads "Audiobook catalog rebuilt: 22 works (21 books, 1 podcasts), N parts, 1
+      renamed". If the tag reads ran past 45 s the log also says "Audiobook tag reads still running
+      after 45 s (N left)", and one more rebuild follows with its own "1 renamed" (the work passes
+      through `untitled/all-systems-red` first). During the reads Task Manager → Details shows at
+      most two `ffmpeg.exe` children, at Below normal. `data/book_tags.json` exists afterwards.
+- [ ] `!book rescan`: the start message says "up to a minute the first time after an update". The
+      reply has 22 works (21 books, 1 podcast), no "↪ Renamed" line (the start-up build already
+      made the rename), no "Doubtful groups" line and no "Music split off" line, and no drive
+      letter anywhere. A second `!book rescan` renames nothing either and takes about 20 s (the
+      tags come from the cache).
+- [ ] `!book library`: "The Murderbot Diaries · Martha Wells" with "#1 All Systems Red
+      (GraphicAudio)"; no work called "Music"; Mistborn #1–7, each "(Terence Aselford)", which is
+      now the edition only; The Stormlight Archive from "#0.5 Edgedancer"; "Words of Radiance",
+      "The Once and Future King" and "The Children's Adventure" spelled that way; no line starting
+      "#null".
+- [ ] **Your bookmark followed the book:** `!book shelf` lists All Systems Red, not "Music", at the
+      noted place, and `!book play all systems red` resumes there (less the usual rewind).
+- [ ] **The Tyler album is music again:** `!album wolf` plays it with no "📚 Also in your books"
+      line, and `!random` or `/vibe` can pick its instrumentals again. `!book library` never lists
+      them.
+- [ ] `git status` in the bot folder lists nothing under `data/`: `data/book_tags.json` (and later
+      `data/book_lookup.json` and `data/book_overrides.json.bak`) are gitignored.
+
+**The card's chapter words**
+
+- [ ] The Once and Future King, `!book goto 30:00:00`: the card reads "**Book N · Chapter N** ·
+      <that book's title>", never "Chapter 240 of 319".
+- [ ] `!book chapter` there lists lines like "240 · Book 4 · Chapter 7 · The Candle in the Wind
+      (N min)", and
+      `!book chapter 240` jumps to that slot. The `/book chapter` autocomplete shows the same words.
+- [ ] Other books: The Way of Kings shows "Chapter 21" or "Prologue"; All Systems Red "Section 1 of
+      3"; Oathbringer's 13th part "Part 13 of 31 · Section 1 of 6"; the podcast "Episode 3 of 8";
+      The Final Empire "Part 7 of 19" with no repeated track title.
+- [ ] `!book stop` mid-chapter: the ended card says "Saved at … (Book 4 · Chapter 7) of …", and
+      `!book shelf` uses the same words.
+
+**`!book edit`**
+
+- [ ] As anyone but the owner: "⛔ Only the bot owner can edit book details."
+- [ ] `!book edit Hyperion`: one line per detail with its source, such as "Title: Hyperion · Plex",
+      "Narrator: Various · folder name" and "Series: -".
+- [ ] The Dan Simmons series, one command per book:
+
+      ```
+      !book edit Hyperion author-series Hyperion Cantos 1
+      !book edit The Fall of Hyperion author-series Hyperion Cantos 2
+      !book edit Endymion author-series Hyperion Cantos 3
+      !book edit The Rise of Endymion author-series Hyperion Cantos 4
+      ```
+
+      Each reply lists the series so far; the fourth reads "✏️ Hyperion Cantos, for every Dan
+      Simmons book: Hyperion #1, The Fall of Hyperion #2 (2 recordings), Endymion #3 (2
+      recordings), The Rise of Endymion #4 (2 recordings) (your edit wins over every other
+      source)." At once,
+      with no rescan, `!book library` shows "Hyperion Cantos · Dan Simmons" with all seven
+      recordings numbered 1–4. `data/book_overrides.json` holds only `authors` → `dan-simmons`,
+      and `book_overrides.json.bak` appears from the second command on.
+- [ ] `!book edit Hyperion` now says "Series: Hyperion Cantos #1 · your author-wide edit", with no
+      "number from" part. `!book rescan` renames nothing and the series stays.
+- [ ] `!book edit dan-simmons/hyperion narrator none`: no narrator on the card or in the library.
+      `!book edit dan-simmons/hyperion clear narrator` brings "Various" back.
+- [ ] `!book edit The Fall of Hyperion narrator Somebody`: refused with both recordings' ids, since
+      a narrator belongs to one recording.
+- [ ] `!book edit The Fall of Hyperion series Test 9`: the reply names both recordings. Then
+      `!book edit The Fall of Hyperion clear series`: both are back to Hyperion Cantos #2.
+- [ ] Break `data/book_overrides.json` (delete one brace), then `!book edit Hyperion title X`:
+      "⚠️ book_overrides.json: the file is not valid JSON (line N column M), so nothing was
+      changed.", with no path, and the file is exactly as you left it. `!book rescan` reports the
+      error too. Fix the file.
+- [ ] Exclude and include on a book you can spare for a minute: `!book edit <id> exclude` says
+      "Rebuilding the catalog, about 20 s", then "✅ … is out of the catalog"; its tracks turn up in
+      music searches, and its entry in `data/book_overrides.json` holds `"exclude": true` and the
+      book's `folderKey`. `!book edit <id> include` brings it back under the same id, removes both
+      keys, and a place saved in it resumes.
+- [ ] If you can reach the test guild where slash commands register: `/book edit title:Hyperion`
+      shows the details, and `/book edit title:<a book> field:series value:Area 51` sets a series
+      named "Area 51" with no number. Clear it afterwards.
+
+**The online lookup**
+
+- [ ] Off, the default: `!book edit Hyperion lookup` says the online lookup is off, `!book rescan`
+      has no 🌐 line, and no `data/book_lookup.json` appears.
+- [ ] `/config` → Audiobooks → "Look up series and narrators online" shows a warning that it sends
+      each book's title and author. Turn it on.
+- [ ] `!book rescan`: the start message adds "Then it looks books up online, up to a minute more."
+      The reply ends with "🌐 Online lookup: …" counts (1 skipped, the podcast) and a "🌐 Filled in
+      online" line. With the answers saved on 2026-10-16 that was publisher Audible Studios on
+      Hyperion and on The Fall of Hyperion (Bevine), and series "Once and Future King" with
+      publisher Naxos AudioBooks on The Once and Future King; today's answers may differ. If the
+      minute ran out, the reply says the lookups are still running, and `!book library` shows the
+      fills a little later.
+- [ ] **Nothing was replaced:** Edgedancer is still #0.5, "The Murderbot Diaries" keeps its "The",
+      Mistborn has no narrator, the Hyperion Cantos numbers beat Audible's "Hyperion", and "Words
+      of Radiance" keeps its capitals.
+- [ ] The bot log shows no lookup warning, or one naming only a title and an author. The batch
+      took about 20 s for 21 books, one request a second.
+- [ ] A second `!book rescan` straight away: the counts say "21 already looked up, 1 skipped",
+      and no new requests go out.
+- [ ] `!book edit Hyperion lookup`: "found this recording" or "found the book", then either what
+      it filled or "nothing was blank, and online details only fill blanks".
+- [ ] `!book rescan`, and while it is still looking books up, `!book edit Hyperion lookup`: the
+      first reply adds "after the batch of lookups running now", and the answer follows once that
+      batch ends (within a minute), with no "try again".
+- [ ] Turn the setting off, `!book rescan`: no 🌐 line, and the online fills (those publishers,
+      the T. H. White series) are gone from `!book library` and `!book edit`. The cache file stays.
 
 ---
 

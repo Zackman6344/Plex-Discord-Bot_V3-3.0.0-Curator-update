@@ -5,13 +5,20 @@
 // library; reading the real overrides file under the runner makes a test pass or fail by what is
 // on this machine; a replace that mutates the live works list lets a reader see half of two
 // catalogs; and a part key looked up by ordinal after a rebuild inserted a part plays the
-// neighbouring file, so a listener resumes in the wrong chapter with no error anywhere.
+// neighbouring file, so a listener resumes in the wrong chapter with no error anywhere. An
+// overrides writer that replaces a hand edit with a typo in it loses the owner's work; one that
+// writes in place leaves half a file after a crash; one that writes back what readOverrides
+// widened turns a short include key into a full path the owner never typed; and a metadata
+// refresh that reads a broken overrides file as "no overrides" drops every edit from view. A
+// Calibre record laid over the catalog must only fill blanks: one titled in lower case or after
+// its series would otherwise replace a good title.
 //
 // Harness: the store pattern of test/archipelagoHints.test.js (pid-suffixed env file set before
 // the first require, afterEach unlink and reset), the directory-at-.tmp write breaker from
 // test/writeFailures.test.js, and a child process for the unset-env-var case, because the store
 // reads its env var once at require time. The catalog is the synthetic
-// test/fixtures/books/catalog.json.
+// test/fixtures/books/catalog.json. The lookup cache and the read-along stores, which the
+// metadata refresh reads by default, point at pid-suffixed temp files before the first require.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -24,6 +31,8 @@ const FILE = pathMod.join(os.tmpdir(), `plexbot-test-book-catalog-${process.pid}
 const OVERRIDES_FILE = pathMod.join(os.tmpdir(), `plexbot-test-book-overrides-${process.pid}.json`);
 process.env.PLEXBOT_BOOK_CATALOG_FILE = FILE;
 delete process.env.PLEXBOT_BOOK_OVERRIDES_FILE;
+const SIDE_STORES = { PLEXBOT_BOOK_LOOKUP_FILE: 'lookup', PLEXBOT_BOOK_TEXT_LINKS_FILE: 'text-links', PLEXBOT_BOOK_TEXT_WORKS_FILE: 'text-works' };
+for (const [env, label] of Object.entries(SIDE_STORES)) process.env[env] = pathMod.join(os.tmpdir(), `plexbot-test-book-catalog-${label}-${process.pid}.json`);
 
 // Counted from before the require, so a read at require time would show up.
 const catalogReads = [];
@@ -52,10 +61,12 @@ function asideFiles() {
 }
 
 test.afterEach(() => {
-	for (const p of [FILE, OVERRIDES_FILE, ...asideFiles()]) {
+	for (const p of [FILE, OVERRIDES_FILE, `${OVERRIDES_FILE}.bak`, ...Object.keys(SIDE_STORES).map((e) => process.env[e]), ...asideFiles()]) {
 		try { fs.unlinkSync(p); } catch (_) {}
 	}
-	try { fs.rmSync(`${FILE}.tmp`, { recursive: true, force: true }); } catch (_) {}
+	for (const p of [`${FILE}.tmp`, `${OVERRIDES_FILE}.tmp`]) {
+		try { fs.rmSync(p, { recursive: true, force: true }); } catch (_) {}
+	}
 	delete process.env.PLEXBOT_BOOK_OVERRIDES_FILE;
 	store.reset();
 });
@@ -290,4 +301,212 @@ test('setPartKey changes the key in memory only and adds its part id to the inde
 	store.replace(store.load());
 	store.reset();
 	assert.strictEqual(store.partKeyFor(SEA, identity(target)), '/library/parts/888888/1900000000/Glass Sea 00.mp3', 'the next replace writes it');
+});
+
+test('replace keeps the music split off book folders, and meta as built', () => {
+	const c = fixture();
+	c.splits = [{ folderKey: 'M:/Library/Music/Avery Quill', album: '5001', albumTitle: 'Night Drive', tracks: 9, reason: 'music-genre' }];
+	c.meta.roots = ['M:/Library/Music'];
+	store.replace(c);
+	store.reset();
+	assert.deepStrictEqual(store.load().splits, c.splits);
+	assert.deepStrictEqual(store.meta().roots, ['M:/Library/Music']);
+	store.replace({ works: {} });
+	assert.deepStrictEqual(store.load().splits, [], 'a catalog without splits has an empty list');
+});
+
+// --- the overrides writer ------------------------------------------------------------------------
+
+function useOverrides(text) {
+	process.env.PLEXBOT_BOOK_OVERRIDES_FILE = OVERRIDES_FILE;
+	if (text !== undefined) fs.writeFileSync(OVERRIDES_FILE, text);
+}
+
+test('editOverrides writes a .bak of the old text, then a temp file renamed over the file', (t) => {
+	const old = '{ "works": { "avery-quill/the-salt-crown": { "title": "Salt" } } }\r\n';
+	useOverrides(old);
+	const renames = t.mock.method(fs, 'renameSync');
+	const r = store.editOverrides((o) => { o.works['avery-quill/the-salt-crown'].narrator = 'Rhea Stone'; });
+	assert.deepStrictEqual([r.ok, r.changed, r.error], [true, true, null]);
+	assert.strictEqual(fs.readFileSync(`${OVERRIDES_FILE}.bak`, 'utf8'), old, 'the previous text, byte for byte');
+	const text = fs.readFileSync(OVERRIDES_FILE, 'utf8');
+	assert.strictEqual(text, `${JSON.stringify({ works: { 'avery-quill/the-salt-crown': { title: 'Salt', narrator: 'Rhea Stone' } } }, null, 2)}\n`);
+	assert.deepStrictEqual(renames.mock.calls.map((c) => c.arguments.map(String)), [[`${OVERRIDES_FILE}.tmp`, OVERRIDES_FILE]]);
+	assert.ok(!fs.existsSync(`${OVERRIDES_FILE}.tmp`));
+	assert.deepStrictEqual(store.readOverrides().overrides.works['avery-quill/the-salt-crown'], { title: 'Salt', narrator: 'Rhea Stone' });
+});
+
+test('editOverrides refuses a file that is not valid JSON and leaves it untouched', (t) => {
+	const warned = [];
+	t.mock.method(logger, 'warn', (...args) => { warned.push(args.join(' ')); });
+	const broken = '{\n  "works": {\n    "a/b": { "title": "B", }\n  }\n}\n';
+	useOverrides(broken);
+	let called = false;
+	const r = store.editOverrides(() => { called = true; });
+	assert.deepStrictEqual([r.ok, r.changed], [false, false]);
+	assert.match(r.error, /^the file is not valid JSON \(line 3 column \d+\)$/);
+	assert.ok(!r.error.includes(pathMod.basename(OVERRIDES_FILE)), 'no path in what a reply may show');
+	assert.strictEqual(called, false);
+	assert.strictEqual(fs.readFileSync(OVERRIDES_FILE, 'utf8'), broken);
+	assert.ok(!fs.existsSync(`${OVERRIDES_FILE}.bak`));
+	assert.strictEqual(warned.length, 1);
+	assert.ok(warned[0].includes(OVERRIDES_FILE), 'the log names the file');
+
+	useOverrides('[1, 2]');
+	assert.deepStrictEqual(store.editOverrides(() => {}), { ok: false, changed: false, error: 'the file must hold a JSON object' });
+	assert.strictEqual(fs.readFileSync(OVERRIDES_FILE, 'utf8'), '[1, 2]');
+});
+
+test('editOverrides writes back the keys as typed, never the ones readOverrides widened', () => {
+	store.replace(fixture());
+	const full = CATALOG.works['avery-quill/the-glass-road'].folderKey;
+	const short = full.split('/').slice(-2).join('/');
+	useOverrides(JSON.stringify({ exclude: [short] }));
+	assert.ok(store.readOverrides().overrides.exclude.includes(full), 'the reader widens the short key');
+	const r = store.editOverrides((o) => { o.podcastArtists = ['Lantern Hollow']; });
+	assert.strictEqual(r.ok, true);
+	assert.deepStrictEqual(JSON.parse(fs.readFileSync(OVERRIDES_FILE, 'utf8')), { exclude: [short], podcastArtists: ['Lantern Hollow'] });
+});
+
+test('editOverrides creates a missing file, with no .bak', () => {
+	useOverrides();
+	const r = store.editOverrides((o) => { o.works = { 'a/b': { exclude: true } }; });
+	assert.deepStrictEqual([r.ok, r.changed], [true, true]);
+	assert.deepStrictEqual(JSON.parse(fs.readFileSync(OVERRIDES_FILE, 'utf8')), { works: { 'a/b': { exclude: true } } });
+	assert.ok(!fs.existsSync(`${OVERRIDES_FILE}.bak`));
+});
+
+test('editOverrides accepts an empty file or one saved with a byte order mark', () => {
+	useOverrides('  \n');
+	assert.strictEqual(store.editOverrides((o) => { o.include = ['1']; }).ok, true);
+	assert.deepStrictEqual(JSON.parse(fs.readFileSync(OVERRIDES_FILE, 'utf8')), { include: ['1'] });
+	useOverrides(`${String.fromCharCode(0xFEFF)}{ "include": ["2"] }`);
+	assert.deepStrictEqual(store.readOverrides(), { overrides: { include: ['2'] }, error: null }, 'the reader takes it too');
+	assert.strictEqual(store.editOverrides((o) => { o.include.push('3'); }).ok, true);
+	assert.deepStrictEqual(JSON.parse(fs.readFileSync(OVERRIDES_FILE, 'utf8')), { include: ['2', '3'] });
+});
+
+test('an edit that changes nothing, or a mutator that returns false, writes nothing', (t) => {
+	const hand = '{"works":{"a/b":{"title":"B"}}}';
+	useOverrides(hand);
+	const renames = t.mock.method(fs, 'renameSync');
+	assert.strictEqual(store.editOverrides((o) => { o.works['a/b'].title = 'B'; }).changed, false);
+	assert.strictEqual(store.editOverrides((o) => { o.works['a/b'].title = 'C'; return false; }).changed, false);
+	assert.strictEqual(renames.mock.callCount(), 0);
+	assert.strictEqual(fs.readFileSync(OVERRIDES_FILE, 'utf8'), hand, 'the owner\'s own formatting stays');
+});
+
+test('a mutator may return a replacement object, and a throw or a non-object writes nothing', (t) => {
+	t.mock.method(logger, 'warn', () => {});
+	useOverrides('{"include":["1"]}');
+	assert.strictEqual(store.editOverrides(() => ({ include: ['9'] })).ok, true);
+	assert.deepStrictEqual(JSON.parse(fs.readFileSync(OVERRIDES_FILE, 'utf8')), { include: ['9'] });
+	assert.deepStrictEqual(store.editOverrides(() => { throw new Error('boom'); }), { ok: false, changed: false, error: 'the edit could not be applied' });
+	assert.deepStrictEqual(store.editOverrides(() => [1]), { ok: false, changed: false, error: 'the edit must leave a JSON object' });
+	assert.deepStrictEqual(JSON.parse(fs.readFileSync(OVERRIDES_FILE, 'utf8')), { include: ['9'] });
+});
+
+test('a failed write keeps the old file whole and reports no path', (t) => {
+	t.mock.method(logger, 'error', () => {});
+	useOverrides('{"include":["1"]}');
+	fs.mkdirSync(`${OVERRIDES_FILE}.tmp`, { recursive: true });
+	const r = store.editOverrides((o) => { o.include.push('2'); });
+	assert.deepStrictEqual(r, { ok: false, changed: false, error: 'the file could not be written' });
+	assert.strictEqual(fs.readFileSync(OVERRIDES_FILE, 'utf8'), '{"include":["1"]}');
+});
+
+test('editOverrides under the runner without its env var never touches the disk', (t) => {
+	const spies = ['readFileSync', 'writeFileSync', 'openSync', 'renameSync', 'mkdirSync'].map((m) => t.mock.method(fs, m));
+	const r = store.editOverrides((o) => { o.include = ['1']; });
+	assert.strictEqual(r.ok, false);
+	for (const spy of spies) assert.strictEqual(spy.mock.calls.filter((c) => String(c.arguments[0]).includes('book_overrides')).length, 0);
+});
+
+test('an author-level series and order written by editOverrides reaches both the build and the display', () => {
+	useOverrides('{}');
+	const order = { 'The Ember Throne': 1, 'The Salt Crown': 2 };
+	assert.strictEqual(store.editOverrides((o) => { o.authors = { 'avery-quill': { series: 'Ashfall Cantos', order } }; }).ok, true);
+	const { overrides } = store.readOverrides();
+	assert.deepStrictEqual(overrides.authors['avery-quill'], { series: 'Ashfall Cantos', order });
+	const built = require('../helpers/bookCatalog.js').applyOverrides(fixture().works, overrides);
+	assert.deepStrictEqual([built['avery-quill/the-salt-crown'].series, built['avery-quill/the-salt-crown'].sequence], ['Ashfall Cantos', 2]);
+
+	store.replace(fixture());
+	const r = store.refreshMetadata({ lookup: null, textStore: null });
+	assert.strictEqual(r.ok, true);
+	const w = store.work('avery-quill/the-salt-crown');
+	assert.deepStrictEqual([w.id, w.series, w.sequence, w.sources.series], ['avery-quill/the-salt-crown', 'Ashfall Cantos', 2, 'override']);
+	assert.deepStrictEqual(w.parts, CATALOG.works['avery-quill/the-salt-crown'].parts);
+	const other = store.work('avery-quill/the-last-lantern');
+	assert.deepStrictEqual([other.series, other.sequence], ['Ashfall', 3], 'a title the order does not list keeps its own series');
+});
+
+// --- refreshMetadata ------------------------------------------------------------------------------
+
+test('refreshMetadata applies an edit found through an alias, persists it and needs no Plex', (t) => {
+	const c = fixture();
+	c.works['avery-quill/the-salt-crown'].aliases = ['old/salt'];
+	store.replace(c);
+	useOverrides(JSON.stringify({ works: { 'old/salt': { title: 'The Salt Crown, Revised', narrator: null } } }));
+	const fetches = t.mock.method(globalThis, 'fetch', async () => { throw new Error('no network in this test'); });
+	const first = store.refreshMetadata({ lookup: null, textStore: null });
+	assert.strictEqual(first.ok, true);
+	assert.ok(first.changed.includes('avery-quill/the-salt-crown'));
+	assert.strictEqual(fetches.mock.callCount(), 0);
+	assert.strictEqual(store.work('old/salt').title, 'The Salt Crown, Revised');
+	assert.strictEqual(store.findWorks('revised')[0].id, 'avery-quill/the-salt-crown', 'the lookups are rebuilt');
+
+	store.reset();
+	const w = store.work('avery-quill/the-salt-crown');
+	assert.deepStrictEqual([w.title, w.narrator, w.sources.title, w.sources.narrator], ['The Salt Crown, Revised', null, 'override', 'override'], 'it reached disk');
+	assert.strictEqual(w.detected.title, 'The Salt Crown');
+	assert.deepStrictEqual(store.refreshMetadata({ lookup: null, textStore: null }), { ok: true, changed: [], error: null }, 'a second run changes nothing');
+});
+
+test('refreshMetadata changes nothing while the overrides file is broken', (t) => {
+	t.mock.method(logger, 'warn', () => {});
+	store.replace(fixture());
+	useOverrides(JSON.stringify({ works: { 'avery-quill/the-salt-crown': { title: 'Edited' } } }));
+	store.refreshMetadata({ lookup: null, textStore: null });
+	const before = fs.readFileSync(FILE, 'utf8');
+	fs.writeFileSync(OVERRIDES_FILE, '{"works": ');
+	const r = store.refreshMetadata({ lookup: null, textStore: null });
+	assert.deepStrictEqual([r.ok, r.changed], [false, []]);
+	assert.match(r.error, /^the file is not valid JSON/);
+	assert.strictEqual(store.work('avery-quill/the-salt-crown').title, 'Edited', 'the edit stays on show');
+	assert.strictEqual(fs.readFileSync(FILE, 'utf8'), before);
+});
+
+test('refreshMetadata lays Calibre and the online lookup under the overrides', () => {
+	store.replace(fixture());
+	const id = 'avery-quill/the-glass-road';
+	const textStore = {
+		works: { peek: (w) => (w.id === id ? { base: 'abcd', via: 'auto', source: { type: 'calibre', id: 11 }, meta: { title: 'The Glass Road: A Novel', authors: ['A. Quill'], series: 'Glass', seriesIndex: 1 } } : null) },
+		links: { get: () => null },
+	};
+	const asked = [];
+	const lookup = { get: (w) => { asked.push([w.id, w.title, w.series]); return w.id === id ? { outcome: 'edition', fields: { title: 'The Glass Road: A Novel', narrator: 'Kit Moss', narrators: ['Kit Moss'], publisher: 'GraphicAudio' } } : null; } };
+	const r = store.refreshMetadata({ overrides: {}, lookup, textStore });
+	assert.ok(r.changed.includes(id));
+	const w = store.work(id);
+	assert.deepStrictEqual([w.title, w.author, w.series, w.sequence, w.narrator], ['The Glass Road', 'Avery Quill', 'Glass', 1, 'Kit Moss'], 'Calibre fills the blank series and never replaces the title or author');
+	assert.deepStrictEqual([w.sources.series, w.sources.sequence, w.sources.narrator, w.sources.publisher], ['calibre', 'calibre', 'online', 'plex']);
+	assert.notStrictEqual(w.sources.title, 'calibre');
+	assert.ok(asked.some(([x, title, series]) => x === id && title === 'The Glass Road' && series === 'Glass'), 'the lookup is asked with the work as Calibre left it');
+	assert.strictEqual(w.id, id);
+
+	const linkedElsewhere = { works: textStore.works, links: { get: () => ({ type: 'calibre', id: 12 }) } };
+	store.refreshMetadata({ overrides: {}, lookup: null, textStore: linkedElsewhere });
+	assert.strictEqual(store.work(id).series, null, 'a pointer made under another link is not this book\'s');
+});
+
+test('refreshMetadata with its real sources reads nothing online while the setting is off', () => {
+	store.replace(fixture());
+	useOverrides(JSON.stringify({ works: { 'avery-quill/the-salt-crown': { series: 'Salt Saga' } } }));
+	const r = store.refreshMetadata();
+	assert.strictEqual(r.ok, true);
+	assert.strictEqual(r.changed.length, Object.keys(CATALOG.works).length, 'every work gains its sources');
+	const w = store.work('avery-quill/the-salt-crown');
+	assert.deepStrictEqual([w.series, w.sources.series], ['Salt Saga', 'override']);
+	assert.ok(!Object.values(store.load().works).some((x) => Object.values(x.sources).includes('online') || Object.values(x.sources).includes('calibre')));
 });

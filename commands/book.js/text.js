@@ -214,6 +214,16 @@ async function doLink(ctx, work, target) {
 		logger.error('!book link failed:', (err && (err.code || err.name)) || 'error');
 		return ctx.say('❌ That did not work; check the bot log.');
 	}
+	// The link picks the Calibre book that fills the catalog's blanks, so they change now rather
+	// than at the next rebuild.
+	if (r.ok) {
+		try {
+			const fresh = catalogStore().refreshMetadata();
+			if (fresh && !fresh.ok) logger.warn(`!book link: saved, but the catalog could not be refreshed: ${fresh.error}`);
+		} catch (err) {
+			logger.warn('!book link: saved, but the catalog could not be refreshed:', (err && err.message) || err);
+		}
+	}
 	return ctx.say(`${r.ok ? '🔗' : '⛔'} ${r.text}`);
 }
 

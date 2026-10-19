@@ -11,11 +11,12 @@
 // would leak into music, and long music mixes would be taken for books.
 //
 // Pure (no fs, no Plex, no discord.js), so a rule change is tested against fixtures in
-// milliseconds. Detection rules and constants are unchanged from the prototype that was checked
-// by hand against a real library; RULES_VERSION goes up whenever a change here would build a
-// different catalog from the same listing, so a stored catalog built under older rules is rebuilt.
+// milliseconds. Embedded tags are read elsewhere (helpers/bookTags.js) and handed in as data.
+// RULES_VERSION goes up whenever a change here would build a different catalog from the same
+// listing, so a stored catalog built under older rules is rebuilt. Version 3 added the disc-folder
+// guard, genre classing, the music split, tag metadata and the duration-weighted alias share.
 
-const RULES_VERSION = 2;
+const RULES_VERSION = 3;
 
 const MIN = 60 * 1000;
 const HOUR = 60 * MIN;
@@ -28,7 +29,199 @@ const DETECT = Object.freeze({
 	podcastMedianMs: 20 * MIN,
 });
 
-const PUBLISHER_RE = /^(graphic\s*audio|grahpic\s*audio)(,?\s*llc)?$/i;
+// Audiobook houses that turn up in the artist or album-artist field. A publisher is never the
+// author: the author then comes from the bracket ("GraphicAudio [Brandon Sanderson]"), the
+// "Written by" comment, the copyright line or the author folder.
+const PUBLISHERS = [
+	['GraphicAudio', /^gr(?:aph|ahp)ic\s*audio$/],
+	['Audible Studios', /^audible(?:\s*(?:studios?|originals?|audio))?$/],
+	['Brilliance Audio', /^brilliance\s*(?:audio|publishing)$/],
+	['Recorded Books', /^recorded\s*books$/],
+	['Tantor Media', /^tantor\s*(?:audio|media)$/],
+	['Blackstone Audio', /^blackstone\s*(?:audio|publishing)$/],
+	['Penguin Random House Audio', /^(?:penguin\s*)?random\s*house\s*audio(?:\s*publishing)?$|^penguin\s*audio$/],
+	['HarperAudio', /^harper\s*audio$/],
+	['Macmillan Audio', /^macmillan\s*audio$/],
+	['Podium Audio', /^podium\s*(?:audio|publishing)$/],
+	['Hachette Audio', /^hachette\s*audio$/],
+	['Simon & Schuster Audio', /^simon\s*(?:&|and)?\s*schuster\s*audio$/],
+	['BBC Audio', /^bbc\s*(?:audio(?:books)?|radio(?:\s*\d)?|worldwide)$/],
+	['Naxos AudioBooks', /^naxos\s*audio\s*books$/],
+	['Dreamscape Media', /^dreamscape\s*media$/],
+	['HighBridge Audio', /^high\s*bridge(?:\s*audio)?$/],
+	['Listening Library', /^listening\s*library$/],
+	['Bolinda Audio', /^bolinda(?:\s*(?:audio|publishing))?$/],
+	['W. F. Howes', /^w\.?\s*f\.?\s*howes$/],
+	['Big Finish', /^big\s*finish(?:\s*productions)?$/],
+];
+const CORP_SUFFIX_RE = /[\s,.]*\b(?:llc|inc|ltd|limited|co|corp|plc|gmbh)\b\.?\s*$/i;
+const CORP_WORD_RE = /\b(?:llc|inc|ltd|entertainment|publishing|publishers?|press|media|audio|books|studios?|productions?|company|corp(?:oration)?|group|records|music|rights|reserved|licensed|arrangement)\b/i;
+// The publisher test of rules version 2. Ids depend on it (the collision suffix falls back to the
+// publisher), so the wider publisherOf() must not reach the id.
+const LEGACY_PUBLISHER_RE = /^(graphic\s*audio|grahpic\s*audio)(,?\s*llc)?$/i;
+
+/** The canonical house name when the text names an audiobook publisher, else null. */
+function publisherOf(text) {
+	const s = String(text || '').trim().replace(CORP_SUFFIX_RE, '').trim().toLowerCase();
+	if (!s) return null;
+	const hit = PUBLISHERS.find(([, re]) => re.test(s));
+	return hit ? hit[0] : null;
+}
+
+// Genres say what an album is far more reliably than track lengths do, but only when they are
+// present (about one album in ten carries none). An audiobook genre wins over a music one in the
+// same tag ("Audiobook - Sci Fi"); "Fantasy", "Comedy" and "Spoken Word" stay neutral.
+const BOOK_GENRE_RE = /audio\s*-?\s*books?|\babooks?\b|\bpodcasts?\b|audio\s*drama|radio\s*(?:play|drama|theat(?:er|re))|full[- ]cast|\bnarrat/i;
+// A music genre is matched on whole segments ("Pop/Rock", "Hard Rock; Heavy Metal"), ending in a
+// music word with only music words or style modifiers before it. A loose word match vetoed books
+// filed under "Space Opera", "Fairy Tales, Folk Tales & Myths" or "Haunted House".
+const MUSIC_WORDS = String.raw`rock|pop|metal|hip[- ]?hop|trip[- ]?hop|hip|hop|rap|jazz|blues|punk|folk|country|electro\w*|electronic|techno|house|trance|dubstep|edm|drum\s*(?:&|and|n)\s*bass|ambient|classical|soundtrack|score|r&b|rhythm\s*(?:and|&)\s*blues|rock\s*(?:and|&|'?n'?)\s*roll|soul|funk|reggae|reggaeton|ska|disco|indie|grunge|emo|hardcore|post-hardcore|trap|lo-?fi|synth\w*|new\s*wave|post-punk|j-?pop|k-?pop|j-?rock|anisong|denpa|singer-songwriter|gospel|latin|salsa|cumbia|bachata|banda|ranchera|mariachi|corridos?|dance|club|orchestral|opera|chill\w*|beats|instrumental|horrorcore|neo\s*soul|britpop|shoegaze|vaporwave|bluegrass|americana|swing|bossa\s*nova|psychedelic|alternative|acoustic|a\s*cappella|choral|chiptune|video\s*game\s*music|ost`;
+const MUSIC_MODIFIERS = String.raw`acid|alt|art|avant[- ]garde|band|baroque|beat|big|black|celtic|chamber|christian|classic|comedy|contemporary|dark|death|deep|doom|experimental|film|french|funky|future|game|garage|german|glam|gothic|hard|heavy|industrial|irish|italo|japanese|jump|korean|melodic|modern|neo|noise|nordic|nu|post|power|progressive|roots|sludge|smooth|soft|southern|stoner|surf|swamp|tech|thrash|traditional|uk|underground|urban|us|vocal|western|world`;
+const MUSIC_SEGMENT_RE = new RegExp(String.raw`^(?:(?:${MUSIC_WORDS}|${MUSIC_MODIFIERS})(?:\s*[-&+]\s*|\s+and\s+|\s+))*(?:${MUSIC_WORDS})(?:\s+music)?$`, 'i');
+
+function isMusicGenre(genre) {
+	return genre.split(/\s*(?:[/;,|>]|\s-\s)\s*/).some((seg) => MUSIC_SEGMENT_RE.test(seg.trim()));
+}
+
+/** @returns {'book'|'music'|null} */
+function genreClass(genres) {
+	const list = (genres || []).map((g) => String(g || '')).filter(Boolean);
+	if (list.some((g) => BOOK_GENRE_RE.test(g))) return 'book';
+	if (list.some(isMusicGenre)) return 'music';
+	return null;
+}
+
+// Folder names that hold a library rather than name a book. A disc or part name ends in a number,
+// one letter or a roman numeral, so "Partials", "Volition" and "Discworld" stay titles.
+const GENERIC_NAME_RE = /^(?:music|media|audio|audio\s*books?|books?|e-?books?|podcasts?|spoken(?:\s*word)?|library|downloads?|torrents?|music-uploads|untagged.*|new\s*folder|unknown(?:\s*(?:artist|album))?|various(?:\s*artists)?|(?:disc|disk|cd|part|vol(?:ume)?|side)\.?(?:\s*\d+|\s+(?:[a-z]|[ivxlc]+))?)$/i;
+
+function isGenericName(name) {
+	const s = String(name || '').trim();
+	return !s || /^[A-Za-z]:$/.test(s) || GENERIC_NAME_RE.test(s);
+}
+
+const SMALL_WORDS = new Set(['a', 'an', 'and', 'as', 'at', 'but', 'by', 'for', 'from', 'in', 'into', 'nor', 'of', 'on', 'onto', 'or', 'over', 'per', 'the', 'to', 'upon', 'via', 'vs', 'with']);
+const ROMAN_RE = /^(?=[MDCLXVI])M{0,3}(?:C[MD]|D?C{0,3})(?:X[CL]|L?X{0,3})(?:I[XV]|V?I{0,3})$/;
+
+/**
+ * Title case for a name taken from a folder or a tag: small words go lower case except first,
+ * last and after a colon or dash; acronyms, roman numerals, mixed-case words (McCoy) and words
+ * with digits are left exactly as written. An all-lower-case title gets its words capitalised; an
+ * all-capitals one is left alone, since it may be the real title. Only letter case changes, so
+ * the slug (and with it the work id) cannot.
+ */
+function smartTitle(raw) {
+	const s = String(raw || '').replace(/\s+/g, ' ').trim();
+	if (!/[a-z]/.test(s)) return s;
+	const allLower = !/[A-Z]/.test(s);
+	const tokens = s.split(' ');
+	return tokens.map((tok, i) => {
+		const m = tok.match(/^([^\p{L}\p{N}]*)([\p{L}\p{N}'’.\-]*?)([^\p{L}\p{N}]*)$/u);
+		if (!m || !m[2]) return tok;
+		const [, pre, core, post] = m;
+		const first = i === 0 || /[:\-–—]$/.test(tokens[i - 1]) || /^[(\[]/.test(pre);
+		const last = i === tokens.length - 1;
+		if (/\d/.test(core) || ROMAN_RE.test(core) || (core.length > 1 && core === core.toUpperCase())) return tok;
+		if (/[a-z][A-Z]/.test(core)) return tok;
+		const lower = core.toLowerCase();
+		if (SMALL_WORDS.has(lower) && !first && !last) return pre + lower + post;
+		if (allLower || core === lower) return pre + core.charAt(0).toUpperCase() + core.slice(1) + post;
+		return tok;
+	}).join(' ');
+}
+
+// "The Childrens Adventure" next to a file named "Children's Adventure": the apostrophe a folder
+// name lost is put back when a part's own title or file name spells the word with it beside the
+// same neighbouring word, so a chapter called "The King's Road" cannot touch "The Way of Kings".
+// norm() drops apostrophes, so the slug is the same either way.
+function restoreApostrophes(title, texts) {
+	const hay = (texts || []).filter(Boolean).join(' \n ');
+	const words = String(title || '').split(' ');
+	const esc = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	return words.map((word, i) => {
+		const m = word.match(/^([A-Za-z]{2,})(s|t|ll|re|ve|d)$/);
+		if (!m) return word;
+		const core = `${m[1]}(['’])${m[2]}`;
+		const next = words[i + 1] ? `\\s+${esc(words[i + 1])}\\b` : null;
+		const prev = words[i - 1] ? `\\b${esc(words[i - 1])}\\s+` : null;
+		for (const re of [next && new RegExp(`\\b${core}${next}`, 'i'), prev && new RegExp(`${prev}${core}\\b`, 'i')]) {
+			const hit = re && hay.match(re);
+			if (hit) return `${m[1]}${hit[1]}${m[2]}`;
+		}
+		return word;
+	}).join(' ');
+}
+
+/**
+ * Series, number and title from an album or folder name.
+ *   "The Rust Ledger 1: Cold Iron"                   series 1: title
+ *   "The Rust Ledger [02] Grey Tides [01]"           series [NN] title [k]
+ *   "The Rust Ledger 4 - Low Sun (2 of 6)"           series N - title (k of n)
+ *   "Ashfall, Book 2 - Salt", "Ashfall #2: Salt"     series, book N - title
+ *   "The Rust Ledger: Interlude"                     series: title (no number, weak)
+ *   "Cold Iron (1 of 5)"                             title (k of n)
+ * A weak reading names a series only when something else backs it up, since a history book
+ * subtitled "Something: A Brief History" has the same shape.
+ * @returns {{ series: string|null, sequence: number|null, title: string, part: number|null, weak: boolean }}
+ */
+function parseSeriesTitle(raw) {
+	let s = String(raw || '').replace(/\s+/g, ' ').trim();
+	let part = null;
+	let m = s.match(/\s*\(\s*(\d+)\s*of\s*\d+\s*\)\s*$/i);
+	if (m) { part = +m[1]; s = s.slice(0, m.index).trim(); }
+	m = s.match(/\s*\[(\d+)\]\s*$/);
+	if (m && /\[\d+(?:\.\d+)?\]/.test(s.slice(0, m.index))) { part = +m[1]; s = s.slice(0, m.index).trim(); }
+	m = s.match(/^(.+?)\s*\[(\d+(?:\.\d+)?)\]\s*[:\-–]?\s*(.+)$/);
+	if (m) return { series: m[1].trim(), sequence: +m[2], title: m[3].trim(), part, weak: false };
+	m = s.match(/^(.+?),?\s+(?:book\s+|vol(?:ume)?\.?\s*|#)?(\d+(?:\.\d+)?)\s*[:\-–]\s+(.+)$/i);
+	if (m && !/^\d{4}$/.test(m[2])) return { series: m[1].trim(), sequence: +m[2], title: m[3].trim(), part, weak: false };
+	m = s.match(/^([^:]+?)\s*:\s+(.+)$/);
+	if (m && !/^(?:a|the)\s+(?:novel|novella|story|memoir)$/i.test(m[2]) && !/^(?:part|book|volume)\b/i.test(m[2])) {
+		return { series: m[1].trim(), sequence: null, title: m[2].trim(), part, weak: true };
+	}
+	return { series: null, sequence: null, title: s, part, weak: false };
+}
+
+function personName(s) {
+	const t = String(s || '').trim();
+	if (!t || CORP_WORD_RE.test(t) || publisherOf(t)) return null;
+	const words = t.split(/\s+/);
+	if (words.length < 2 || words.length > 5) return null;
+	return words.every((w) => /^(?:[A-Z][\p{L}'’.\-]*|[A-Z]\.|de|van|von|der|la|le|du|da)$/u.test(w)) ? t : null;
+}
+
+/** A person's name out of a copyright line, or null for a company or anything unclear. */
+function authorFromCopyright(text) {
+	let s = String(text || '').split(/\(p\)|℗|\n/i)[0];
+	s = s.replace(/copyright|\(c\)|©|all rights reserved.*$/gi, ' ');
+	s = s.replace(/\b(?:19|20)\d{2}\b(?:\s*[-,]\s*(?:19|20)\d{2}\b)*/g, ' ');
+	s = s.replace(/^[\s,.:;]*(?:by\s+)?/i, '').split(/[.;]|\s{2,}|,\s*(?:published|recorded|licensed)/i)[0];
+	s = s.replace(/[\s,]+$/, '').trim();
+	return personName(s);
+}
+
+/** "Written by X", "By : X" in a comment tag. */
+function authorFromComment(text) {
+	const m = String(text || '').match(/(?:written\s+by|^\s*by\s*:)\s*([^\n.,;\-–]+?)(?:\s*[.,;\-–]|\s+performed|\s+narrated|\s+read\b|\n|$)/im)
+		|| String(text || '').match(/\n\s*By\s*:\s*([^\n]+)/);
+	return m ? personName(m[1].trim()) : null;
+}
+
+// A list of names, or one cut short ("Mara Lindqvist,..." is the first of a GraphicAudio cast),
+// is a cast: showing its first name as the narrator would be wrong.
+const CAST_RE = /,|&|\band\b|\.{3}|…|\bcast\b|\bvarious\b|\bensemble\b/i;
+
+function narratorName(text) {
+	const s = String(text || '').trim();
+	return !s || CAST_RE.test(s) ? null : personName(s);
+}
+
+/** "Narrated by: X" / "Read by X", one person only: a full cast is not a narrator. */
+function narratorFromComment(text) {
+	const m = String(text || '').match(/(?:narrated|read)\s+by\s*:?\s*([^\n.;]+)/i);
+	return m ? narratorName(m[1]) : null;
+}
+
 const NAME_SIGNAL_RE = /graphic\s*audio|grahpic\s*audio|unabridged|audio\s*book|\babook\b|narrat|\bread by\b|STORMLIGHT\d{4}/i;
 const CHAPTER_TITLE_RE = /\b(chapter|chatper|chap\.?|prologue|epilogue|interlude|prelude)\b/i;
 const EPISODE_RE = /\b(?:ep|episode)\.?\s*(\d+)/i;
@@ -138,8 +331,15 @@ function splitArtist(artist) {
 	const m = raw.match(/^(.*?)\s*\[(.+)\]\s*$/);
 	const base = m ? m[1] : raw;
 	const bracket = m ? m[2] : null;
-	if (PUBLISHER_RE.test(base)) return { author: bracket, publisher: 'GraphicAudio' };
+	const house = publisherOf(base);
+	if (house) return { author: bracket, publisher: house };
 	return { author: base || bracket, publisher: null };
+}
+
+function legacyPublisherArtist(artist) {
+	const raw = String(artist || '').trim();
+	const m = raw.match(/^(.*?)\s*\[(.+)\]\s*$/);
+	return LEGACY_PUBLISHER_RE.test(m ? m[1] : raw);
 }
 
 /** The folder directly under the library's "Music" root, taken to be the author or artist. */
@@ -168,10 +368,47 @@ function matchKey(key) {
 	return String(key || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 }
 
-function groupTracks(tracks) {
+function dirKeyOf(t) {
+	return segmentsOf(t).slice(0, -1).join('/');
+}
+
+function albumOf(t) {
+	return String(t.parentRatingKey);
+}
+
+/** Section folders in folder-key form (slashes, no leading slash), lower-cased. */
+function rootSet(roots) {
+	return new Set((roots || []).map((r) => String(r || '').split(/[\\/]+/).filter(Boolean).join('/').toLowerCase()));
+}
+
+/**
+ * @param {object[]} tracks
+ * @param {{ roots?: string[] }} [ctx] roots: the music sections' folders
+ * @returns {Map<string, object[]>} folder key to tracks
+ */
+function groupTracks(tracks, ctx = {}) {
+	const roots = rootSet(ctx.roots);
+	const dirAlbums = new Map();
+	for (const t of tracks) {
+		const d = dirKeyOf(t);
+		if (!dirAlbums.has(d)) dirAlbums.set(d, new Set());
+		dirAlbums.get(d).add(albumOf(t));
+	}
+	// A "Disc 2" or "Title 1" folder folds into its parent only when that parent is a book's
+	// folder: it holds no loose files, or its loose files are the same Plex album. A stray "Disc 2"
+	// of some rap album under the library root once folded into the root and took a loose book file
+	// sitting there along with it.
+	const keyOf = (t) => {
+		const k = folderKey(t);
+		const d = dirKeyOf(t);
+		if (k === d || !d.startsWith(k + '/')) return k;
+		const loose = dirAlbums.get(k);
+		if (loose && loose.size) return loose.has(albumOf(t)) ? k : d;
+		return roots.has(k.toLowerCase()) || /^[A-Za-z]:$/.test(k) ? d : k;
+	};
 	const groups = new Map();
 	for (const t of tracks) {
-		const k = folderKey(t);
+		const k = keyOf(t);
 		if (!groups.has(k)) groups.set(k, []);
 		groups.get(k).push(t);
 	}
@@ -201,7 +438,19 @@ function groupTracks(tracks) {
 	return groups;
 }
 
-function groupStats(key, ts, albumsByKey) {
+/**
+ * The music albums of a group that classified as a book or podcast, when some album in it is
+ * not music. Plex filed them apart on purpose; groups that stay music are never split, so the
+ * rejected list does not fill with pieces.
+ * @returns {string[]} album ratingKeys to split off, possibly empty
+ */
+function musicAlbumsToSplit(ts, albumClass) {
+	const albums = [...new Set(ts.map(albumOf))];
+	const music = albums.filter((a) => albumClass(a) === 'music');
+	return music.length && music.length < albums.length ? music : [];
+}
+
+function groupStats(key, ts, albumsByKey, albumClass = () => null) {
 	const durations = ts.map((t) => t.duration || 0);
 	const totalMs = durations.reduce((s, d) => s + d, 0);
 	const media = ts.map((t) => (t.Media && t.Media[0]) || {});
@@ -212,7 +461,10 @@ function groupStats(key, ts, albumsByKey) {
 	const names = [key, ...albums.map((a) => `${a.parentTitle} ${a.title}`), ...ts.map((t) => t.grandparentTitle)].join(' | ');
 	const chapterShare = ts.filter((t) => CHAPTER_TITLE_RE.test(t.title) || CHAPTER_TITLE_RE.test(segmentsOf(t).pop())).length / ts.length;
 	const episodeShare = ts.filter((t) => EPISODE_RE.test(t.title) || EPISODE_RE.test(segmentsOf(t).pop())).length / ts.length;
+	const bookShare = ts.filter((t) => albumClass(albumOf(t)) === 'book').length / ts.length;
+	const musicShare = ts.filter((t) => albumClass(albumOf(t)) === 'music').length / ts.length;
 	return {
+		bookShare, musicShare,
 		n: ts.length, totalMs, medianMs: median(durations), maxMs: durations.reduce((m, d) => Math.max(m, d), 0),
 		mono, bitrate, genres,
 		nameSignal: NAME_SIGNAL_RE.test(names) || genres.some((g) => SPOKEN_GENRE_RE.test(g)) || chapterShare >= 0.3,
@@ -220,10 +472,18 @@ function groupStats(key, ts, albumsByKey) {
 	};
 }
 
+function musicVetoed(s) {
+	return (s.musicShare || 0) >= 0.5 && !s.bookShare;
+}
+
 function classify(s) {
 	if (s.totalMs < DETECT.minTotalMs) return null;
+	// A music genre with no audiobook genre beside it vetoes every length rule: an hour-long mix
+	// is still music.
+	if (musicVetoed(s)) return null;
 	if (s.episodeShare >= 0.5 && s.medianMs >= DETECT.podcastMedianMs) return { kind: 'podcast', rule: 'episodes' };
 	if (s.medianMs >= DETECT.medianLongMs) return { kind: 'book', rule: 'median' };
+	if (s.bookShare >= 0.5) return { kind: 'book', rule: 'genre' };
 	if (s.nameSignal && s.totalMs >= DETECT.signalTotalMs) return { kind: 'book', rule: 'name-signal' };
 	if (s.mono >= 0.8 && s.bitrate && s.bitrate <= 96 && s.n >= DETECT.monoMinTracks && s.totalMs >= DETECT.signalTotalMs) return { kind: 'book', rule: 'mono-low-bitrate' };
 	return null;
@@ -388,46 +648,192 @@ function parenOf(raw) {
 	return /^\d+\s*of\s*\d+$/i.test(inner) ? null : inner || null;
 }
 
-function describe(key, ts, albumsByKey, titleCounts) {
-	const albumKeys = [...new Set(ts.map((t) => String(t.parentRatingKey)))];
+// The bracket text parenOf() reads, and whether it was cut short ("Mara Lindqvist,...").
+function truncatedParen(raw) {
+	const m = String(raw || '').match(/\(([^)]+)\)/);
+	return !!m && /(?:\.{2,}|…)\s*$/.test(m[1].trim());
+}
+
+function stripFeat(name) {
+	return String(name || '').replace(/\s+(?:feat\.?|ft\.?|featuring|with|x)\s+.*$/i, '').trim();
+}
+
+// The most-weighted reading of several names (album titles, a folder name) that agree on a series.
+function consensus(readings) {
+	const tally = new Map();
+	for (const r of readings) {
+		const k = `${norm(r.series)}|${r.sequence ?? ''}|${norm(r.title)}`;
+		const e = tally.get(k) || { ...r, weight: 0 };
+		e.weight += r.weight;
+		tally.set(k, e);
+	}
+	return [...tally.values()].sort((a, b) => b.weight - a.weight)[0] || null;
+}
+
+const AUTHOR_SOURCE = { artist: 'plex-artist', 'tag-artist': 'tag', comment: 'tag', copyright: 'tag', folder: 'folder' };
+
+/**
+ * What a group is called. Besides the display fields it returns idEdition, the collision suffix
+ * input exactly as rules version 2 derived it, so tag data can never change an existing id.
+ * Doubts are structured and carry names only, never a folder path.
+ */
+function describe(key, ts, albumsByKey, titleCounts, tagsOf = () => ({}), roots = new Set()) {
+	const albumKeys = [...new Set(ts.map(albumOf))];
 	const albums = albumKeys.map((k) => albumsByKey.get(k)).filter(Boolean);
-	// A group carved out by an album include override has no folder of its own to be named after.
-	const leaf = key.startsWith('album:') && albums[0] ? albums[0].title : key.split('/').pop();
+	const baseKey = key.replace(/#album:[^/]+$/, '');
+	// A group carved out by an album include override or a split has no folder of its own to be
+	// named after.
+	const carved = key.startsWith('album:') || baseKey !== key;
+	const weightOf = (a) => ts.filter((t) => albumOf(t) === String(a.ratingKey)).length;
+	const mainAlbum = [...albums].sort((a, b) => weightOf(b) - weightOf(a))[0] || null;
+	const rawLeaf = carved && mainAlbum ? mainAlbum.title : baseKey.split('/').pop();
+	// "Music", "Disc 2", a drive or a library root names where files live, not what they are.
+	const genericLeaf = !carved && (isGenericName(cleanTitle(rawLeaf)) || roots.has(baseKey.toLowerCase()));
+	const leaf = genericLeaf && mainAlbum ? mainAlbum.title : rawLeaf;
+	const leafSource = carved || (genericLeaf && mainAlbum) ? 'album' : 'folder';
+	const tagList = albumKeys.map((k) => tagsOf(k) || {});
+	const doubts = [];
 
 	const artists = ts.map((t) => splitArtist(t.grandparentTitle));
 	const authorVotes = {};
-	for (const a of artists) if (a.author) authorVotes[a.author] = (authorVotes[a.author] || 0) + 1;
-	let author = Object.entries(authorVotes).sort((a, b) => b[1] - a[1])[0];
-	author = author ? author[0] : rootChild(ts[0]);
-	const publisher = artists.some((a) => a.publisher) || /graphic\s*audio|grahpic/i.test(key + ts.map((t) => segmentsOf(t).pop()).join(' ')) ? 'GraphicAudio' : null;
+	for (const a of artists) if (a.author) { const n = stripFeat(a.author); authorVotes[n] = (authorVotes[n] || 0) + 1; }
+	const ranked = Object.entries(authorVotes).sort((a, b) => b[1] - a[1]);
+	if (new Set(ranked.map(([n]) => norm(n))).size > 1) doubts.push({ code: 'mixed-artists', artists: ranked.map(([name, tracks]) => ({ name, tracks })) });
+	let author = ranked[0] ? ranked[0][0] : null;
+	let authorSource = author ? 'artist' : null;
+	if (!author) {
+		for (const tg of tagList) {
+			const fromTag = [tg.artist, tg.album_artist].map((x) => splitArtist(x).author).find((x) => x && !publisherOf(x));
+			const byComment = authorFromComment(tg.comment);
+			const byCopyright = authorFromCopyright(tg.copyright);
+			const found = fromTag ? ['tag-artist', stripFeat(fromTag)] : byComment ? ['comment', byComment] : byCopyright ? ['copyright', byCopyright] : null;
+			if (found) { [authorSource, author] = found; break; }
+		}
+	}
+	if (!author && rootChild(ts[0])) { author = rootChild(ts[0]); authorSource = 'folder'; }
+	if (!author) doubts.push({ code: 'no-author' });
+
+	const nameText = key + ts.map((t) => segmentsOf(t).pop()).join(' ');
+	const gaName = /graphic\s*audio|grahpic/i.test(nameText);
+	const artistHouse = artists.map((a) => a.publisher).find(Boolean) || null;
+	const tagHouse = tagList.flatMap((tg) => [tg.artist, tg.album_artist, tg.composer, tg.publisher].map((x) => splitArtist(x).publisher)).find(Boolean) || null;
+	const gaComment = tagList.some((tg) => /graphicaudio\.net/i.test(tg.comment || ''));
+	const publisher = artistHouse || tagHouse || (gaComment || gaName ? 'GraphicAudio' : null);
+	const publisherSource = artistHouse ? 'plex-artist' : (tagHouse || gaComment) ? 'tag' : gaName ? 'folder' : null;
+	const legacyPublisher = ts.some((t) => legacyPublisherArtist(t.grandparentTitle)) || gaName ? 'GraphicAudio' : null;
 
 	// The folder is the author folder (a flat dump): the album title is the only name there is.
 	const folderIsAuthor = norm(leaf) === norm(rootChild(ts[0])) || norm(leaf) === norm(author);
 	const singleAlbum = albums.length === 1 ? albums[0] : null;
-	const albumTitleUsable = singleAlbum && (titleCounts.get(norm(singleAlbum.title)) || 0) === 1;
+	const unique = (a) => (titleCounts.get(norm(a.title)) || 0) === 1;
+	const albumTitleUsable = singleAlbum && unique(singleAlbum);
 
-	let rawTitle = folderIsAuthor && singleAlbum ? singleAlbum.title : (albumTitleUsable ? singleAlbum.title : leaf);
-	let series = null, sequence = null;
+	// Series and number: album titles first (only titles no other work shares), the folder second.
+	const readings = albums.filter(unique).map((a) => ({ ...parseSeriesTitle(a.title), weight: weightOf(a) }));
+	const strongAlbum = consensus(readings.filter((r) => r.series && !r.weak));
+	const weakAlbum = consensus(readings.filter((r) => r.series && r.weak));
+	const keySegs = baseKey.split('/').slice(-3).filter((s) => !isGenericName(s));
+	const keyReadings = keySegs.map((s) => parseSeriesTitle(s)).filter((r) => r.series && !r.weak);
+	const keyStrong = keyReadings[keyReadings.length - 1] || null;
+	const covered = strongAlbum ? strongAlbum.weight / ts.length : 0;
 
-	const stormlight = (rawTitle + ' ' + key).match(/stormlight archive\s*(?:\[(\d+(?:\.\d+)?)\]|(\d+))?/i);
-	const code = ts.map((t) => (t.title || '').match(/STORMLIGHT(\d{2})\d{2}P\d{2}/i)).find(Boolean);
-	if (stormlight || code) {
-		series = 'The Stormlight Archive';
-		const fromKey = key.match(/stormlight archive\s*\[(\d+(?:\.\d+)?)\]/i);
-		sequence = fromKey ? +fromKey[1] : stormlight && stormlight[2] ? +stormlight[2] : code ? +code[1] : null;
-		rawTitle = rawTitle.replace(/^.*stormlight archive\s*(\[\d+(?:\.\d+)?\]|\d+)?\s*[:\-]?\s*/i, '');
+	let rawTitle;
+	let titleSource = 'album';
+	if ((folderIsAuthor || genericLeaf) && singleAlbum) rawTitle = singleAlbum.title;
+	else if (albumTitleUsable) rawTitle = singleAlbum.title;
+	else if (strongAlbum && covered >= 0.5) rawTitle = strongAlbum.title;
+	else { rawTitle = leaf; titleSource = leafSource; }
+
+	let series = null, sequence = null, seriesWeak = false, weakFull = null;
+	let seriesSource = null, sequenceSource = null;
+	const ownReading = parseSeriesTitle(rawTitle);
+	const pick = (ownReading.series && !ownReading.weak ? ownReading : null) || (strongAlbum && covered >= 0.5 ? strongAlbum : null) || keyStrong;
+	if (pick) {
+		series = pick.series;
+		sequence = pick.sequence;
+		seriesSource = pick === ownReading ? titleSource : pick === keyStrong ? 'folder' : 'album';
+		if (ownReading.series && norm(ownReading.series) === norm(series)) rawTitle = ownReading.title;
+	} else if (ownReading.series && ownReading.weak) {
+		weakFull = rawTitle;
+		series = ownReading.series; seriesWeak = true; rawTitle = ownReading.title;
+		seriesSource = titleSource;
+	} else if (weakAlbum && weakAlbum.weight / ts.length >= 0.5) {
+		series = weakAlbum.series; seriesWeak = true;
+		seriesSource = 'album';
+	}
+	if (series && sequence !== null) sequenceSource = seriesSource;
+	if (series && sequence === null) {
+		const fromKey = keyReadings.find((r) => norm(r.series) === norm(series));
+		if (fromKey) { sequence = fromKey.sequence; seriesWeak = false; sequenceSource = 'folder'; }
 	}
 
+	// The rules this replaces, kept as fallbacks: GraphicAudio's STORMLIGHT codes, and "1.Title"
+	// folders under an album named after the series.
+	if (!series) {
+		const stormlight = (rawTitle + ' ' + key).match(/stormlight archive\s*(?:\[(\d+(?:\.\d+)?)\]|(\d+))?/i);
+		const code = ts.map((t) => (t.title || '').match(/STORMLIGHT(\d{2})\d{2}P\d{2}/i)).find(Boolean);
+		if (stormlight || code) {
+			series = 'The Stormlight Archive';
+			seriesSource = stormlight ? 'folder' : 'album';
+			const fromKey = key.match(/stormlight archive\s*\[(\d+(?:\.\d+)?)\]/i);
+			sequence = fromKey ? +fromKey[1] : stormlight && stormlight[2] ? +stormlight[2] : code ? +code[1] : null;
+			sequenceSource = sequence === null ? null : (fromKey || (stormlight && stormlight[2]) ? 'folder' : 'album');
+			rawTitle = rawTitle.replace(/^.*stormlight archive\s*(\[\d+(?:\.\d+)?\]|\d+)?\s*[:\-]?\s*/i, '');
+		}
+	}
 	const leadNum = String(leaf).match(/^\s*(\d+)\s*\./);
 	if (!series && leadNum && albums.length) {
-		// "1.Title" under an album named after the series: the album is the series.
 		series = cleanTitle(albums[0].title.replace(/\(.*\)/, '')) || null;
 		sequence = +leadNum[1];
+		seriesSource = series ? 'album' : null;
+		sequenceSource = leafSource;
 	}
 
-	const title = cleanTitle(rawTitle) || cleanTitle(leaf);
-	const edition = parenOf(leaf) || albums.map((a) => parenOf(a.title)).find(Boolean) || publisher || null;
-	return { title, author, series, sequence, edition, publisher, albums };
+	const evidence = ts.flatMap((t) => [t.title, segmentsOf(t).pop()]);
+	let title = cleanTitle(rawTitle) || cleanTitle(leaf);
+	title = smartTitle(restoreApostrophes(title, evidence));
+	if (isGenericName(title)) doubts.push({ code: 'generic-title', title });
+	if (genericLeaf && !singleAlbum) {
+		// The leaf name only: a drive letter or a full folder path would leak into a public reply.
+		doubts.push({ code: 'generic-folder', folder: /^[A-Za-z]:$/.test(rawLeaf) ? null : rawLeaf, albums: albums.length });
+	}
+	series = series ? smartTitle(cleanTitle(series) || series) : null;
+	if (!series) seriesSource = null;
+
+	const parens = [
+		...(!genericLeaf ? [{ raw: leaf, source: leafSource }] : []),
+		...albums.map((a) => ({ raw: a.title, source: 'album' })),
+	].map((p) => ({ ...p, value: parenOf(p.raw) })).filter((p) => p.value);
+	const paren = parens[0] || null;
+	const edition = (paren && paren.value) || publisher || null;
+	const editionSource = paren ? paren.source : (publisher ? publisherSource : null);
+	const idEdition = parenOf(rawLeaf) || albums.map((a) => parenOf(a.title)).find(Boolean) || legacyPublisher || null;
+
+	let narrator = null, narratorSource = null;
+	if (paren) {
+		if (!truncatedParen(paren.raw) && paren.value !== publisher && !publisherOf(paren.value)) {
+			narrator = paren.value;
+			narratorSource = paren.source;
+		}
+	} else {
+		narrator = tagList.map((tg) => narratorName(tg.narrator) || narratorFromComment(tg.comment)).find(Boolean) || null;
+		narratorSource = narrator ? 'tag' : null;
+	}
+
+	const titleWithoutWeakSeries = weakFull ? smartTitle(restoreApostrophes(cleanTitle(weakFull), evidence)) : title;
+	return {
+		title, titleWithoutWeakSeries, author, authorSource, series, sequence, seriesWeak, edition, idEdition, publisher, narrator,
+		albums, doubts,
+		sources: {
+			title: titleSource,
+			author: authorSource ? AUTHOR_SOURCE[authorSource] : null,
+			narrator: narratorSource,
+			edition: editionSource,
+			publisher: publisher ? publisherSource : null,
+			series: seriesSource,
+			sequence: sequence === null ? null : sequenceSource,
+		},
+	};
 }
 
 /** The four override lists and maps, with anything malformed read as absent. */
@@ -484,6 +890,14 @@ function reorderParts(w, partOrder) {
 	if (!missing.length && !rest.length) w.confidence = 'high';
 }
 
+// `!book edit exclude` writes the work's folder beside the flag. No naming rule moves a folder, so
+// the exclude holds after the id it was written under stops being the one detection gives.
+function excludedFoldersOf(works) {
+	return new Set(Object.values(works)
+		.filter((e) => isObject(e) && e.exclude === true && nonEmpty(e.folderKey))
+		.map((e) => matchKey(e.folderKey)));
+}
+
 /**
  * Work-level overrides: author series and order, and per-work title, series, sequence, narrator,
  * edition, partOrder, exclude and pinId. Entries are keyed by the id detection gave the work, so
@@ -499,8 +913,10 @@ function applyOverrides(works, overrides) {
 		parts: Array.isArray(w.parts) ? w.parts : [],
 	}));
 	const taken = new Set(list.map((w) => w.id));
+	const excludedFolders = excludedFoldersOf(ov.works);
 	const out = [];
 	for (const w of list) {
+		if (w.folderKey && excludedFolders.has(matchKey(w.folderKey))) continue;
 		const a = own(ov.authors, slug(w.author));
 		if (isObject(a)) {
 			if (isObject(a.order)) {
@@ -544,17 +960,23 @@ function applyOverrides(works, overrides) {
 	return toObject(out);
 }
 
+// The larger of the share of parts and the share of listening time: a work that wrongly held one
+// long book file and eleven short songs is that book, and a bookmark saved in it follows the book.
 function shareOf(parts, keyOf, keys) {
 	if (!parts.length) return 0;
-	return parts.filter((p) => { const k = keyOf(p); return k !== null && keys.has(k); }).length / parts.length;
+	const hit = parts.filter((p) => { const k = keyOf(p); return k !== null && keys.has(k); });
+	const byCount = hit.length / parts.length;
+	const total = parts.reduce((sum, p) => sum + (Number(p.durationMs) || 0), 0);
+	const byTime = total > 0 ? hit.reduce((sum, p) => sum + (Number(p.durationMs) || 0), 0) / total : 0;
+	return Math.max(byCount, byTime);
 }
 
 /**
  * Carries ids forward across a rebuild. A work whose id changed (a renamed folder, a corrected
  * title) is found again by its tracks, and its old id becomes an alias, so bookmarks saved under
  * it still resolve. Matching tries track ratingKeys, then basename plus size, then basename alone;
- * at least half the old parts must match, and a tie between candidates matches nothing (two
- * narrations of one book share every basename).
+ * at least half the old parts, or half the old listening time, must match, and a tie between
+ * candidates matches nothing (two narrations of one book share every basename).
  * @returns {{ works: Object<string, object>, moved: Object<string, string> }} new works with
  *   aliases filled, and old id to new id for every work that moved
  */
@@ -618,6 +1040,73 @@ function matchAliases(oldWorks, newWorks) {
 		out[w.id] = w;
 	}
 	return { works: out, moved };
+}
+
+const CARRIED_FIELDS = ['exclude', 'partOrder', 'pinId'];
+
+/**
+ * Copies an exclude, partOrder or pinId written under an id a work had before (one a rule change
+ * or a late tag moved, kept as an alias) onto the id detection gives it now. applyOverrides reads
+ * those by the detected id alone, so they would silently stop applying; display fields need no
+ * copy, since helpers/bookMetadata.js finds an entry under every alias. The file is never
+ * written, so this runs on every build, from the old catalog's ids and aliases.
+ * @param {object} overrides the parsed book_overrides.json
+ * @param {Object|Array} oldWorks the catalog before this build
+ * @param {Object|Array} newWorks a build of the same listing with those overrides
+ * @param {Object<string, string>} [moved] matchAliases(oldWorks, newWorks).moved
+ * @returns {{ overrides: object, carried: Array<{ from: string, to: string, fields: string[] }> }}
+ *   overrides is a new object when anything was carried, otherwise the one given
+ */
+function carryOverrides(overrides, oldWorks, newWorks, moved = {}) {
+	const ov = cleanOverrides(overrides);
+	const news = toList(newWorks);
+	const newIds = new Set(news.map((w) => w.id));
+	const pinned = new Set(Object.values(ov.works).filter((e) => isObject(e) && nonEmpty(e.pinId)).map((e) => e.pinId.trim()));
+	const olds = new Map(toList(oldWorks).map((w) => [w.id, w]));
+	const oldOf = new Map();
+	for (const [from, to] of Object.entries(isObject(moved) ? moved : {})) if (olds.has(from)) oldOf.set(to, olds.get(from));
+	const works = { ...ov.works };
+	const carried = [];
+	for (const w of news) {
+		// Already pinned: its entry was found under the id detection gave.
+		if (pinned.has(w.id)) continue;
+		const old = olds.get(w.id) || oldOf.get(w.id);
+		if (!old) continue;
+		for (const from of [old.id, ...(Array.isArray(old.aliases) ? old.aliases : [])]) {
+			// An id another work holds in this build is that work's entry, never this one's.
+			if (from === w.id || newIds.has(from)) continue;
+			const e = own(works, from);
+			if (!isObject(e)) continue;
+			const target = isObject(own(works, w.id)) ? works[w.id] : {};
+			const fields = CARRIED_FIELDS.filter((f) => e[f] !== undefined && target[f] === undefined);
+			if (!fields.length) continue;
+			works[w.id] = { ...target, ...Object.fromEntries(fields.map((f) => [f, e[f]])) };
+			carried.push({ from, to: w.id, fields });
+		}
+	}
+	if (!carried.length) return { overrides, carried };
+	return { overrides: { ...(isObject(overrides) ? overrides : {}), works }, carried };
+}
+
+/**
+ * The doubts still worth showing and acting on. A 'split' is told on the rescan's split line
+ * instead, and a title or author the owner set by hand means the grouping has been looked at, so
+ * `!book rescan` and the online lookup's eligibility agree on which books are doubtful.
+ * @param {object} work a catalog work
+ * @param {object|null} [override] its book_overrides.json `works` entry, if any
+ */
+function openDoubts(work, override = null) {
+	if (!isObject(work) || !Array.isArray(work.doubts)) return [];
+	const doubts = work.doubts.filter((d) => isObject(d) && d.code !== 'split');
+	if (!doubts.length) return [];
+	if (isObject(override) && (nonEmpty(override.title) || nonEmpty(override.author))) return [];
+	// A catalog saved before the metadata layer has no sources, only detection to compare with.
+	if (isObject(work.sources)) {
+		if (work.sources.title === 'override' || work.sources.author === 'override') return [];
+	} else if (isObject(work.detected) && (work.title !== work.detected.title || work.author !== work.detected.author)) {
+		return [];
+	}
+	return doubts;
 }
 
 /**
@@ -708,11 +1197,27 @@ function partFrom(t, ordinal, chapters) {
  * @param {Object<string, Array|'markers'|'none'>} [input.chapters] by track ratingKey: a Plex
  *   `Chapter` array or a normalizeChapters() result
  * @param {object} [input.overrides] the hand-edited overrides file
- * @returns {{ works: Object<string, object>, rejected: object[], index: object, notes: string[] }}
+ * @param {Object<string, {tags: object}>} [input.tags] embedded tags of one sampled file per
+ *   album, keyed by album ratingKey (bookTags.read().byAlbum)
+ * @param {string[]} [input.roots] the music sections' folders
+ * @returns {{ works: Object<string, object>, rejected: object[], splits: object[], index: object,
+ *   notes: string[] }} splits: one { folderKey, album, albumTitle, tracks, reason } per music
+ *   album taken out of a book's folder group
  */
-function buildCatalog({ albums = [], tracks = [], chapters = {}, overrides = {} } = {}) {
+function buildCatalog({ albums = [], tracks = [], chapters = {}, overrides = {}, tags = {}, roots = [] } = {}) {
 	const ov = cleanOverrides(overrides);
 	const albumsByKey = new Map(albums.map((a) => [String(a.ratingKey), a]));
+	const tagsOf = (k) => { const e = own(tags, String(k)); return (isObject(e) && isObject(e.tags) && e.tags) || {}; };
+	const classCache = new Map();
+	const albumClass = (k) => {
+		if (!classCache.has(k)) {
+			const a = albumsByKey.get(k);
+			classCache.set(k, genreClass([...((a && a.Genre) || []).map((g) => g && g.tag), tagsOf(k).genre]));
+		}
+		return classCache.get(k);
+	};
+	const rootKeys = rootSet(roots);
+	const splits = [];
 	const include = new Set(ov.include.map(matchKey));
 	const exclude = new Set(ov.exclude.map(matchKey));
 	const notes = [];
@@ -732,7 +1237,7 @@ function buildCatalog({ albums = [], tracks = [], chapters = {}, overrides = {} 
 			loose.push(t);
 		}
 	}
-	const groups = groupTracks(loose);
+	const groups = groupTracks(loose, { roots });
 	for (const [k, ts] of forced) groups.set(k, ts);
 
 	const candidates = [];
@@ -741,13 +1246,29 @@ function buildCatalog({ albums = [], tracks = [], chapters = {}, overrides = {} 
 		folderKey: key, tracks: stats.n, hours: +(stats.totalMs / HOUR).toFixed(2),
 		medianMin: +(stats.medianMs / MIN).toFixed(1), maxMin: +(stats.maxMs / MIN).toFixed(1), reason,
 	});
-	for (const [key, ts] of groups) {
-		const stats = groupStats(key, ts, albumsByKey);
+	const queue = [...groups].map(([key, ts]) => ({ key, ts, first: true }));
+	while (queue.length) {
+		const { key, ts, first } = queue.shift();
+		const stats = groupStats(key, ts, albumsByKey, albumClass);
 		if (exclude.has(matchKey(key))) { reject(key, stats, 'excluded by override'); continue; }
 		const wanted = forced.has(key) || include.has(matchKey(key)) || ts.some((t) => include.has(matchKey(folderKey(t))));
 		const cls = classify(stats) || (wanted ? { kind: 'book', rule: 'override' } : null);
+		// Only once per group and never on an album the owner included by hand; each piece is
+		// classified again on its own.
+		const off = cls && first && !forced.has(key) ? musicAlbumsToSplit(ts, albumClass) : [];
+		if (off.length) {
+			const offSet = new Set(off);
+			queue.push({ key, ts: ts.filter((t) => !offSet.has(albumOf(t))), first: false });
+			for (const a of off) {
+				const piece = ts.filter((t) => albumOf(t) === a);
+				const album = albumsByKey.get(a);
+				splits.push({ folderKey: key, album: a, albumTitle: album ? album.title : null, tracks: piece.length, reason: 'music-genre' });
+				queue.push({ key: `${key}#album:${a}`, ts: piece, first: false });
+			}
+			continue;
+		}
 		if (cls) candidates.push({ key, ts, stats, cls });
-		else if (stats.maxMs >= 15 * MIN || stats.totalMs >= 3 * HOUR) reject(key, stats, stats.totalMs < DETECT.minTotalMs ? 'under 2 h' : 'no long-form signal');
+		else if (stats.maxMs >= 15 * MIN || stats.totalMs >= 3 * HOUR) reject(key, stats, stats.totalMs < DETECT.minTotalMs ? 'under 2 h' : (musicVetoed(stats) ? 'music genre' : 'no long-form signal'));
 	}
 
 	const titleCounts = new Map();
@@ -765,8 +1286,15 @@ function buildCatalog({ albums = [], tracks = [], chapters = {}, overrides = {} 
 		tracksByAlbum.get(a).push(t);
 	}
 
+	const idEditionOf = new Map();
+	const sourcesOf = new Map();
 	const works = candidates.map((c) => {
-		const d = describe(c.key, c.ts, albumsByKey, titleCounts);
+		const d = describe(c.key, c.ts, albumsByKey, titleCounts, tagsOf, rootKeys);
+		const musicAlbums = d.albums.filter((a) => albumClass(String(a.ratingKey)) === 'music');
+		if (musicAlbums.length) d.doubts.push({ code: 'music-genre', albums: musicAlbums.map((a) => a.title) });
+		const splitOff = splits.filter((sp) => sp.folderKey === c.key);
+		// An album with no title stays null: its ratingKey is a Plex id, never shown in a reply.
+		if (splitOff.length) d.doubts.push({ code: 'split', albums: splitOff.map((sp) => sp.albumTitle || null) });
 		const { parts, method } = orderParts(c.cls.kind, c.key, c.ts);
 		const workNotes = [];
 		const dupIdx = new Set();
@@ -801,19 +1329,24 @@ function buildCatalog({ albums = [], tracks = [], chapters = {}, overrides = {} 
 		});
 		if (markers) workNotes.push('some parts carry "Marker N" points rather than chapters; they are ignored');
 
-		const series = c.cls.kind === 'podcast' && !d.series ? d.author : d.series;
-		return {
+		const podcastSeries = c.cls.kind === 'podcast' && !d.series;
+		const series = podcastSeries ? d.author : d.series;
+		const w = {
 			id: null,
 			kind: c.cls.kind,
 			title: d.title,
 			author: d.author,
-			narrator: d.edition && d.edition !== d.publisher ? d.edition : null,
+			narrator: d.narrator,
 			edition: d.edition,
 			// Kept apart from edition, which holds the narrator's name when there is one and so
 			// hides a GraphicAudio edition from the read-along's "dramatized" label.
 			publisher: d.publisher || null,
 			series: series || null,
 			sequence: d.sequence ?? null,
+			seriesWeak: d.seriesWeak,
+			titleWithoutWeakSeries: d.titleWithoutWeakSeries,
+			authorSource: d.authorSource,
+			doubts: d.doubts,
 			confidence,
 			aliases: [],
 			totalMs: outParts.reduce((s, p) => s + p.durationMs, 0),
@@ -829,21 +1362,87 @@ function buildCatalog({ albums = [], tracks = [], chapters = {}, overrides = {} 
 				trackRatingKey: String(t.ratingKey), albumRatingKey: String(t.parentRatingKey), partKey: partOf(t).key || null,
 			})),
 		};
+		idEditionOf.set(w, d.idEdition);
+		sourcesOf.set(w, podcastSeries ? { ...d.sources, series: d.author ? d.sources.author : null } : d.sources);
+		return w;
 	});
 
-	// Stable ids: author/title, with the edition appended only where two works would collide.
+	// "Series: Title" without a number names a series only when another work names it with one,
+	// or a number turned up elsewhere: "Something: A Brief History" is a subtitle.
+	const strongSeries = new Set(works.filter((w) => w.series && !w.seriesWeak).map((w) => norm(w.series)));
+	for (const w of works) {
+		if (w.seriesWeak && !strongSeries.has(norm(w.series)) && w.sequence === null) {
+			const podcast = w.kind === 'podcast';
+			w.series = podcast ? w.author : null;
+			w.title = w.titleWithoutWeakSeries;
+			const s = sourcesOf.get(w);
+			sourcesOf.set(w, { ...s, series: podcast && w.author ? s.author : null });
+		}
+		delete w.seriesWeak;
+		delete w.titleWithoutWeakSeries;
+	}
+
+	// What detection and tags found, before any override, for the metadata layers to start from.
+	for (const w of works) {
+		w.detected = {
+			title: w.title, author: w.author, narrator: w.narrator, edition: w.edition, publisher: w.publisher,
+			series: w.series, sequence: w.sequence, sources: sourcesOf.get(w),
+		};
+	}
+
+	// Stable ids: author/title, with the edition appended only where two works would collide. The
+	// suffix input is frozen at its version 2 derivation, so a publisher learned from tags never
+	// turns a folder suffix into "~graphicaudio".
 	const base = (w) => `${slug(w.kind === 'podcast' ? (w.series || w.author) : w.author)}/${slug(w.title)}`;
 	const counts = {};
 	for (const w of works) counts[base(w)] = (counts[base(w)] || 0) + 1;
-	for (const w of works) w.id = counts[base(w)] > 1 ? `${base(w)}~${slug(w.edition || w.folderKey)}` : base(w);
+	for (const w of works) w.id = counts[base(w)] > 1 ? `${base(w)}~${slug(idEditionOf.get(w) || w.folderKey)}` : base(w);
 
 	const detected = new Set(works.map((w) => w.id));
-	for (const id of Object.keys(ov.works)) {
-		if (!detected.has(id)) notes.push(`overrides name a work that was not detected: ${id}`);
+	const excludedFolders = excludedFoldersOf(ov.works);
+	const heldFolders = new Set(works.map((w) => matchKey(w.folderKey)).filter((k) => excludedFolders.has(k)));
+	for (const [id, e] of Object.entries(ov.works)) {
+		if (detected.has(id)) continue;
+		if (isObject(e) && e.exclude === true && nonEmpty(e.folderKey) && heldFolders.has(matchKey(e.folderKey))) continue;
+		notes.push(`overrides name a work that was not detected: ${id}`);
 	}
 
 	const final = applyOverrides(works, ov);
-	return { works: final, rejected, index: buildIndex(final, { albums, tracks }, ov), notes };
+	return { works: final, rejected, splits, index: buildIndex(final, { albums, tracks }, ov), notes };
+}
+
+/**
+ * The files whose embedded tags are worth reading: one per Plex album (its first non-sample track
+ * by disc and index), only for albums inside a folder group long enough to be a book (2 h in
+ * all, or a track of 15 min). Grouped exactly as buildCatalog groups, so a stray disc folder is
+ * judged on its own.
+ * @param {object[]} tracks
+ * @param {{ roots?: string[] }} [ctx]
+ * @returns {Array<{ album: string, track: string, file: string, sizeBytes: number|null }>}
+ */
+function tagSamples(tracks = [], { roots = [] } = {}) {
+	const want = new Set();
+	for (const ts of groupTracks(tracks, { roots }).values()) {
+		const total = ts.reduce((s, t) => s + (t.duration || 0), 0);
+		const max = ts.reduce((m, t) => Math.max(m, t.duration || 0), 0);
+		if (total >= DETECT.minTotalMs || max >= DETECT.medianLongMs) for (const t of ts) want.add(albumOf(t));
+	}
+	const byAlbum = new Map();
+	for (const t of tracks) {
+		const a = albumOf(t);
+		if (!want.has(a)) continue;
+		if (!byAlbum.has(a)) byAlbum.set(a, []);
+		byAlbum.get(a).push(t);
+	}
+	const out = [];
+	for (const [album, ts] of byAlbum) {
+		const sorted = [...ts].sort((x, y) => (x.parentIndex || 0) - (y.parentIndex || 0) || (x.index || 0) - (y.index || 0));
+		const t = sorted.find((x) => !isSample(x)) || sorted[0];
+		const p = partOf(t);
+		if (!p.file) continue;
+		out.push({ album, track: String(t.ratingKey), file: String(p.file), sizeBytes: p.size || null });
+	}
+	return out;
 }
 
 module.exports = {
@@ -852,6 +1451,8 @@ module.exports = {
 	buildCatalog,
 	applyOverrides,
 	matchAliases,
+	carryOverrides,
+	openDoubts,
 	buildIndex,
 	normalizeChapters,
 	wantsChapters,
@@ -866,4 +1467,15 @@ module.exports = {
 	slug,
 	basename,
 	partIdOf,
+	groupTracks,
+	tagSamples,
+	publisherOf,
+	genreClass,
+	isGenericName,
+	smartTitle,
+	restoreApostrophes,
+	parseSeriesTitle,
+	authorFromCopyright,
+	authorFromComment,
+	narratorFromComment,
 };

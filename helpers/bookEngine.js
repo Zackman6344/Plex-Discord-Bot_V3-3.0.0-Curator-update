@@ -28,6 +28,7 @@ const {
 	getVoiceConnection
 } = require('@discordjs/voice');
 const bookModel = require('./bookModel.js');
+const bookChapterLabel = require('./bookChapterLabel.js');
 const logger = require('./logger.js');
 
 // An AudioPlayer in Buffering has no timeout of its own, and ffmpeg waits forever on an upstream
@@ -526,7 +527,8 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 
 	function fileMissing(s) {
 		const ch = bookModel.chapterAt(s.work, s.anchorAbsMs);
-		const where = ch ? `Ch ${ch.number}` : partLabel(s, s.partIndex);
+		const chs = ch ? bookModel.chapters(s.work) : null;
+		const where = ch ? shortChapter(ch, chs, labelOf(s, ch, chs)) : partLabel(s, s.partIndex);
 		s.endDetail = `Plex can't find the file for ${where} (it may have moved). Your place is saved; try again in a minute.`;
 		stop(s, 'failed-file');
 	}
@@ -758,6 +760,32 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 		return bookModel.formatClock(ms, totalOf(s) >= 3600000);
 	}
 
+	// A title the parsers trip on must never cost the card a render: the slot numbers are the
+	// fallback, and the fault is logged once per work rather than on every card edit.
+	const labelFaults = new Set();
+	function labelOf(s, ch, chs, { map = null, ms = NaN } = {}) {
+		try {
+			return bookChapterLabel.chapterLabel(s.work, ch, chs, { map, ms });
+		} catch (err) {
+			if (!labelFaults.has(s.workId)) {
+				labelFaults.add(s.workId);
+				logger.warn(`Audiobook chapter label failed for ${s.workId}:`, (err && err.message) || err);
+			}
+			return null;
+		}
+	}
+
+	function shortChapter(ch, chs, label) {
+		return label ? label.short : `Ch ${ch.number} of ${chs.length}`;
+	}
+
+	// The read-along may hand its map over for the label; the view itself only carries the rest.
+	function publicText(info) {
+		if (!info || typeof info !== 'object' || !('map' in info)) return info;
+		const { map: _map, ...rest } = info;
+		return rest;
+	}
+
 	/**
 	 * Everything the card needs, as plain data. Times named `...At` are epoch ms (for <t:…:R>),
 	 * positions are ms from the start of the work.
@@ -792,6 +820,8 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 		}
 		let saveHealthy = s.saveHealthy;
 		try { saveHealthy = bookmarks().healthy(); } catch (_) {}
+		const text = textInfoOf(s);
+		const label = ch ? labelOf(s, ch, chs, { map: text && text.map, ms: pos }) : null;
 		return {
 			sessionId: s.id,
 			guildId: s.guildId,
@@ -816,6 +846,9 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 				index: ch.number,
 				count: chs.length,
 				title: ch.title,
+				label: label ? label.label : null,
+				short: shortChapter(ch, chs, label),
+				detail: label ? label.detail : null,
 				startMs: ch.startMs,
 				endMs: ch.endMs,
 				endsAt: audible ? t + Math.max(0, ch.endMs - pos) / s.speed : null
@@ -832,7 +865,7 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 			endReason: s.endReason,
 			endDetail: s.endDetail,
 			finished,
-			text: textInfoOf(s)
+			text: publicText(text)
 		};
 	}
 
@@ -995,8 +1028,9 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 
 	function where(s, ms) {
 		const ch = bookModel.chapterAt(s.work, ms);
+		if (!ch) return clockOf(s, ms);
 		const chs = bookModel.chapters(s.work);
-		return ch ? `${clockOf(s, ms)} (Ch ${ch.number} of ${chs.length})` : clockOf(s, ms);
+		return `${clockOf(s, ms)} (${shortChapter(ch, chs, labelOf(s, ch, chs, { ms }))})`;
 	}
 
 	function jump(s, target, prefix) {
@@ -1254,7 +1288,7 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 		const v = view(s);
 		const title = v.title;
 		const pct = Math.round(v.fraction * 100);
-		const ch = v.chapter ? `Ch ${v.chapter.index} of ${v.chapter.count}, ` : '';
+		const ch = v.chapter ? `${v.chapter.short}, ` : '';
 		switch (rs.mode) {
 			case 'resume': {
 				const rewound = rewindMs > 0 ? `, rewound ${Math.round(rewindMs / 1000)} s` : '';

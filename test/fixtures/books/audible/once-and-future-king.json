@@ -1,0 +1,113 @@
+{
+	"products": [
+		{
+			"asin": "B00546D584",
+			"title": "The Once and Future King",
+			"authors": [
+				{
+					"name": "T. H. White"
+				}
+			],
+			"narrators": [
+				{
+					"name": "Neville Jason"
+				}
+			],
+			"publisher_name": "Naxos AudioBooks",
+			"runtime_length_min": 1980,
+			"release_date": "2010-12-26",
+			"language": "english",
+			"format_type": "unabridged",
+			"content_delivery_type": "MultiPartBook",
+			"publication_name": "Once and Future King",
+			"series": [
+				{
+					"title": "Once and Future King",
+					"sequence": "1-5"
+				}
+			]
+		},
+		{
+			"asin": "B002V0LQ28",
+			"title": "The Candle in the Wind and The Book of Merlyn",
+			"authors": [
+				{
+					"name": "T. H. White"
+				}
+			],
+			"narrators": [
+				{
+					"name": "Neville Jason"
+				}
+			],
+			"publisher_name": "Naxos AudioBooks",
+			"runtime_length_min": 616,
+			"release_date": "2009-03-16",
+			"language": "english",
+			"format_type": "unabridged",
+			"content_delivery_type": "MultiPartBook",
+			"publication_name": "Once and Future King",
+			"series": [
+				{
+					"title": "Once and Future King",
+					"sequence": "4-5"
+				}
+			]
+		},
+		{
+			"asin": "B002UZZ4YK",
+			"title": "The Sword in the Stone",
+			"authors": [
+				{
+					"name": "T. H. White"
+				}
+			],
+			"narrators": [
+				{
+					"name": "Neville Jason"
+				}
+			],
+			"publisher_name": "Naxos AudioBooks",
+			"runtime_length_min": 580,
+			"release_date": "2008-02-25",
+			"language": "english",
+			"format_type": "unabridged",
+			"content_delivery_type": "MultiPartBook",
+			"publication_name": "Once and Future King",
+			"series": [
+				{
+					"title": "Once and Future King",
+					"sequence": "1"
+				}
+			]
+		},
+		{
+			"asin": "B002V1JEQW",
+			"title": "'The Witch in the Wood' & 'The Ill-Made Knight'",
+			"authors": [
+				{
+					"name": "T. H. White"
+				}
+			],
+			"narrators": [
+				{
+					"name": "Neville Jason"
+				}
+			],
+			"publisher_name": "Naxos AudioBooks",
+			"runtime_length_min": 785,
+			"release_date": "2008-05-12",
+			"language": "english",
+			"format_type": "unabridged",
+			"content_delivery_type": "MultiPartBook",
+			"publication_name": "Once and Future King",
+			"series": [
+				{
+					"title": "Once and Future King",
+					"sequence": "2-3"
+				}
+			]
+		}
+	],
+	"total_results": 4
+}

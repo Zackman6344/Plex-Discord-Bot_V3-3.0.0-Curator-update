@@ -278,10 +278,12 @@ test('a reply never goes over 2,000 characters, and long chapter titles are clip
 	await book._internal.makeSay(s.message)({ content: 'x'.repeat(2500) });
 	assert.strictEqual(contentOf(s.interaction.calls[0]).length, 2000);
 
+	// One word of its own per episode: words every title shares are dropped from the label.
+	const topics = 'maps rivers tides storms lanterns bridges orchards ferries canals beacons quarries mills harbours meadows glaciers deserts islands forests valleys caves comets reefs dunes marshes cliffs moors fjords deltas lagoons prairies'.split(' ');
 	const parts = Array.from({ length: 30 }, (_, i) => ({
 		ordinal: i + 1,
 		durationMs: 3600000,
-		title: `Episode ${i + 1}: ${'a long conversation about a book, recorded live at a festival, '.repeat(3)}`
+		title: `Episode ${i + 1}: ${topics[i]} and ${'a long conversation about a book, recorded live at a festival, '.repeat(3)}`
 	}));
 	const work = { id: 'pod/show', title: 'The Show', kind: 'podcast', parts, totalMs: 30 * 3600000 };
 	const r = recordingBooks({ session: () => ({ work }), position: () => 15 * 3600000 });
@@ -291,7 +293,7 @@ test('a reply never goes over 2,000 characters, and long chapter titles are clip
 	const lines = text.split('\n').slice(1);
 	assert.strictEqual(lines.length, 10, 'every one of the ten lines is still there');
 	for (const line of lines) assert.ok(line.length < 120, line);
-	assert.match(lines.find(l => l.startsWith('▶')), /^▶ 16 · Episode 16: /);
+	assert.match(lines.find(l => l.startsWith('▶')), /^▶ 16 · Episode 16 of 30 · Episode 16: deserts and a long .*… \(1 h 00 m\)$/);
 });
 
 // The bug: the clip cut by UTF-16 units, so an emoji across the 2,000 boundary left half a
@@ -633,7 +635,7 @@ test('the shelf lists books in progress with Resume buttons and collapses finish
 	const calls = await runSlash({ books: recordingBooks().books }, w, ana, 'shelf', {});
 	const reply = calls[0][1];
 	const d = reply.embeds[0].description;
-	assert.match(d, /▶ \*\*The Salt Crown\*\*.* · 40% · Ch 2 of 4 · 1 h 58 m left at 1\.25x/);
+	assert.match(d, /▶ \*\*The Salt Crown\*\*.* · 40% · Part 2 of 4 · 1 h 58 m left at 1\.25x/);
 	assert.match(d, /⚠️ \*\*Lost Book\*\* · not in the library any more/);
 	assert.match(d, /\*\*Finished\*\*\n✅ The Ember Throne.* · finished <t:\d+:d>/);
 	const ids = reply.components[0].components.map(b => b.custom_id);
@@ -797,4 +799,17 @@ test('text and link are /book subcommands, in the usage line and the sub-help', 
 	const help = book._internal.helpEmbed({ config: { commandPrefix: '!' } }).data.description;
 	assert.match(help, /READ ALONG/);
 	assert.ok(!/\/config/.test(help));
+});
+
+// The bug: Number(null) is 0, so a series with no number (a podcast, or a series the online
+// lookup filled without one) was listed as "#null" and sorted ahead of book 1.
+test('the library lists a series book with no number without "#null", after the numbered ones', () => {
+	const works = [
+		{ id: 'a/two', title: 'Two', author: 'A', series: 'S', sequence: 2, parts: [], totalMs: 0 },
+		{ id: 'a/loose', title: 'Loose', author: 'A', series: 'S', sequence: null, parts: [], totalMs: 0 },
+		{ id: 'a/one', title: 'One', author: 'A', series: 'S', sequence: 1, parts: [], totalMs: 0 }
+	];
+	const chunks = require('../commands/book.js/library.js').libraryChunks('u', '', { bookmarks: { get: () => null }, catalog: { works: () => works, findWorks: () => works } });
+	const lines = chunks.join('\n').split('\n').filter(l => l.startsWith('•'));
+	assert.deepStrictEqual(lines.map(l => l.split(' · ')[0]), ['• #1 One', '• #2 Two', '• Loose']);
 });

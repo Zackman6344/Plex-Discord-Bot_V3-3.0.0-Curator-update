@@ -8,10 +8,23 @@
 // accepted whatever key a ratingKey now points at, or searched by title, would play another
 // narration or another book entirely.
 //
+// The bug (rules version 3): the catalog never learned the music sections' folders, so a stray
+// disc folder could fold into a library root, and it built without embedded tags, so a book whose
+// author is only in its tags came out "untitled" and was renamed on the next build.
+//
+// The bug (metadata layer): a build stored what detection found and left the owner's edits,
+// Calibre's and the online lookup's fills to a later refresh, so every rescan showed raw folder
+// titles until then. An edit written while a build listed Plex was lost when that build replaced
+// the catalog, and an exclude written mid-build was ignored until the next day's build. Waiting
+// for the online lookup inside the build would hold every rescan and hourly build for half a
+// minute.
+//
 // Harness: createLibrary() with an injected fake plex.query that serves the synthetic
-// test/fixtures/books/library.json and records every path, injected interval timers and clock,
-// and the real catalog store on a pid-suffixed file set before the first require (the store
-// pattern of test/archipelagoHints.test.js).
+// test/fixtures/books/library.json and records every path, an injected tag reader (ffmpeg is never
+// spawned), an injected online lookup (no network), injected timers and clock, and the real
+// catalog store on a pid-suffixed file set before the first require (the store pattern of
+// test/archipelagoHints.test.js). The lookup, tag and read-along stores the metadata layer
+// requires point at pid-suffixed temp files too.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -21,7 +34,15 @@ const pathMod = require('node:path');
 
 const FILE = pathMod.join(os.tmpdir(), `plexbot-test-book-library-${process.pid}.json`);
 const OVERRIDES_FILE = pathMod.join(os.tmpdir(), `plexbot-test-book-library-overrides-${process.pid}.json`);
+const AUX = pathMod.join(os.tmpdir(), `plexbot-test-book-library-aux-${process.pid}`);
 process.env.PLEXBOT_BOOK_CATALOG_FILE = FILE;
+process.env.PLEXBOT_BOOK_LOOKUP_FILE = `${AUX}-lookup.json`;
+process.env.PLEXBOT_BOOK_TAGS_FILE = `${AUX}-tags.json`;
+process.env.PLEXBOT_BOOK_TEXT_WORKS_FILE = `${AUX}-text-works.json`;
+process.env.PLEXBOT_BOOK_TEXT_LINKS_FILE = `${AUX}-text-links.json`;
+process.env.PLEXBOT_BOOK_TEXT_READERS_FILE = `${AUX}-text-readers.json`;
+process.env.PLEXBOT_BOOK_TEXT_MARKS_FILE = `${AUX}-text-marks.json`;
+process.env.PLEXBOT_BOOK_TEXT_DIR = `${AUX}-text`;
 delete process.env.PLEXBOT_BOOK_OVERRIDES_FILE;
 
 const logger = require('../helpers/logger.js');
@@ -43,7 +64,7 @@ function clone(x) {
 function fakePlex() {
 	const state = {
 		lib: clone(LIBRARY),
-		sections: [{ key: '1', type: 'artist', title: 'Music', scannedAt: 100, updatedAt: 100 }],
+		sections: [{ key: '1', type: 'artist', title: 'Music', scannedAt: 100, updatedAt: 100, Location: [{ id: 1, path: 'M:\\Music' }] }],
 		metadata: {},
 		failListing: null,
 		gate: null,
@@ -86,15 +107,56 @@ function fakePlex() {
 	return state;
 }
 
-function setup({ enabled = true } = {}) {
+// Answers every tag read at once with whatever byAlbum holds, and records what it was asked.
+function fakeTags(byAlbum = {}) {
+	const state = { calls: [], byAlbum, next: [] };
+	state.read = async (samples, opts) => {
+		state.calls.push({ samples, opts });
+		if (state.next.length) return state.next.shift()(samples, opts);
+		return { byAlbum: clone(state.byAlbum), pending: 0, failed: 0, settled: Promise.resolve({ added: 0 }) };
+	};
+	return state;
+}
+
+function deferred() {
+	let resolve;
+	const promise = new Promise((r) => { resolve = r; });
+	return { promise, resolve };
+}
+
+async function settle() {
+	for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+}
+
+// Records every batch and answers with `answer(works, opts)`, or waits on `gate` first.
+function fakeLookup(answer = () => ({ enabled: true, counts: {}, changed: [], results: {}, stopped: false })) {
+	const state = { calls: [], gate: null, running: false, answer };
+	state.refresh = async (works, opts) => {
+		state.calls.push({ works, opts });
+		state.running = true;
+		try {
+			if (state.gate) await state.gate;
+			return state.answer(works, opts);
+		} finally {
+			state.running = false;
+		}
+	};
+	state.isRunning = () => state.running;
+	return state;
+}
+
+function setup({ enabled = true, tags = fakeTags(), online = false, lookup = fakeLookup(), query = null } = {}) {
 	const plex = fakePlex();
-	const cfg = { audiobooksEnabled: enabled };
+	const cfg = { audiobooksEnabled: enabled, audiobookOnlineLookup: online };
 	const clock = { now: T0 };
 	const timers = [];
+	const timeouts = [];
 	const lib = createLibrary({
-		query: plex.query,
+		query: query ? query(plex) : plex.query,
 		store,
 		getConfig: () => cfg,
+		tags,
+		lookup,
 		now: () => clock.now,
 		setInterval: (fn, ms) => {
 			const handle = { fn, ms, cleared: false, unrefed: false, unref() { this.unrefed = true; } };
@@ -102,8 +164,19 @@ function setup({ enabled = true } = {}) {
 			return handle;
 		},
 		clearInterval: (h) => { h.cleared = true; },
+		setTimeout: (fn, ms) => {
+			const handle = { fn, ms, cleared: false, unref() {} };
+			timeouts.push(handle);
+			return handle;
+		},
+		clearTimeout: (h) => { h.cleared = true; },
 	});
-	return { plex, cfg, clock, timers, lib };
+	return { plex, cfg, clock, timers, timeouts, tags, lookup, lib };
+}
+
+function useOverrides(obj) {
+	process.env.PLEXBOT_BOOK_OVERRIDES_FILE = OVERRIDES_FILE;
+	fs.writeFileSync(OVERRIDES_FILE, typeof obj === 'string' ? obj : JSON.stringify(obj));
 }
 
 function listings(plex) {
@@ -121,12 +194,20 @@ test.beforeEach((t) => {
 });
 
 test.afterEach(() => {
-	for (const p of [FILE, OVERRIDES_FILE]) {
+	for (const p of [FILE, OVERRIDES_FILE, `${OVERRIDES_FILE}.bak`]) {
 		try { fs.unlinkSync(p); } catch (_) {}
 	}
 	try { fs.rmSync(`${FILE}.tmp`, { recursive: true, force: true }); } catch (_) {}
 	delete process.env.PLEXBOT_BOOK_OVERRIDES_FILE;
 	store.reset();
+});
+
+test.after(() => {
+	for (const f of fs.readdirSync(os.tmpdir())) {
+		if (f.startsWith(pathMod.basename(AUX))) {
+			try { fs.rmSync(pathMod.join(os.tmpdir(), f), { recursive: true, force: true }); } catch (_) {}
+		}
+	}
 });
 
 test('a first build lists every music section and fills the store', async () => {
@@ -147,6 +228,7 @@ test('a first build lists every music section and fills the store', async () => 
 		rulesVersion: bookCatalog.RULES_VERSION,
 		sections: { '1': { scannedAt: 100, updatedAt: 100, totalSize: plex.lib.tracks.length } },
 		overridesError: null,
+		roots: ['M:\\Music'],
 	});
 	assert.ok(store.index().trackKeys.has(String(trackOf(plex, 'Sample').ratingKey)));
 	assert.ok(!plex.calls.some((p) => p.startsWith('/library/sections/7/')), 'a movie section is never listed');
@@ -196,6 +278,7 @@ test('a chapter probe that fails leaves the part playable and is asked again nex
 		},
 		store,
 		getConfig: () => ({ audiobooksEnabled: true }),
+		tags: fakeTags(),
 	});
 	assert.strictEqual((await lib2.rebuild()).ok, true);
 	assert.strictEqual(store.work('corin-vale/the-long-tide').parts[4].chapters, undefined);
@@ -462,6 +545,294 @@ test('overrides are read at each rebuild, and a broken file is recorded and the 
 	assert.strictEqual(r.works, 16);
 	assert.strictEqual(typeof r.overridesError, 'string');
 	assert.strictEqual(store.meta().overridesError, r.overridesError);
+});
+
+test('the section folders and the embedded tags reach both catalog builds', async (t) => {
+	const tags = fakeTags({ 1040: { tags: { genre: 'Audiobook' }, chapters: 0, at: 1 } });
+	const { lib } = setup({ tags });
+	const build = t.mock.method(bookCatalog, 'buildCatalog');
+	const report = await lib.rebuild();
+
+	assert.strictEqual(tags.calls.length, 1);
+	assert.deepStrictEqual(tags.calls[0].opts, { budgetMs: 45000, concurrency: 2 });
+	assert.ok(tags.calls[0].samples.some((s) => s.album === '1040'));
+	assert.ok(tags.calls[0].samples.every((s) => typeof s.file === 'string' && s.file.startsWith('M:/Music/')));
+	assert.strictEqual(build.mock.callCount(), 2);
+	for (const call of build.mock.calls) {
+		assert.deepStrictEqual(call.arguments[0].roots, ['M:\\Music']);
+		assert.strictEqual(call.arguments[0].tags['1040'].tags.genre, 'Audiobook');
+	}
+	assert.strictEqual(store.work('r-j-ashdown/the-hollow-king').detectedBy, 'genre');
+	assert.deepStrictEqual(report.tags, { sampled: tags.calls[0].samples.length, pending: 0, failed: 0 });
+	assert.deepStrictEqual(report.splits, []);
+	assert.deepStrictEqual(report.doubtful, []);
+});
+
+test('a build waits for the tag read before it builds', async () => {
+	const tags = fakeTags();
+	const gate = deferred();
+	tags.next.push(async () => {
+		await gate.promise;
+		return { byAlbum: { 1040: { tags: { genre: 'Audiobook' } } }, pending: 0, failed: 0, settled: Promise.resolve({ added: 1 }) };
+	});
+	const { lib } = setup({ tags });
+	const run = lib.rebuild();
+	await settle();
+	assert.strictEqual(lib.status(), 'building');
+	assert.strictEqual(store.works().length, 0);
+	gate.resolve();
+	assert.strictEqual((await run).ok, true);
+	assert.strictEqual(store.work('r-j-ashdown/the-hollow-king').detectedBy, 'genre');
+});
+
+test('reads still running after the budget rebuild once when they add something', async () => {
+	const tags = fakeTags();
+	const late = deferred();
+	tags.next.push(async () => ({ byAlbum: {}, pending: 3, failed: 0, settled: late.promise }));
+	const { plex, lib } = setup({ tags });
+	const report = await lib.rebuild();
+	assert.deepStrictEqual(report.tags, { sampled: tags.calls[0].samples.length, pending: 3, failed: 0 });
+	assert.strictEqual(listings(plex), 1);
+
+	tags.byAlbum = { 1040: { tags: { genre: 'Audiobook' } } };
+	late.resolve({ added: 3 });
+	await settle();
+	assert.strictEqual(listings(plex), 2, 'one more build, with the new tags');
+	assert.strictEqual(store.work('r-j-ashdown/the-hollow-king').detectedBy, 'genre');
+	await settle();
+	assert.strictEqual(listings(plex), 2, 'and only one');
+
+	const nothing = deferred();
+	tags.next.push(async () => ({ byAlbum: {}, pending: 1, failed: 0, settled: nothing.promise }));
+	await lib.rebuild();
+	nothing.resolve({ added: 0 });
+	await settle();
+	assert.strictEqual(listings(plex), 3, 'reads that all failed are not worth another listing');
+});
+
+test('a second late tag rebuild within 10 minutes waits out the gap instead of being dropped', async () => {
+	const tags = fakeTags();
+	const first = deferred();
+	const second = deferred();
+	tags.next.push(async () => ({ byAlbum: {}, pending: 1, failed: 0, settled: first.promise }));
+	const { plex, lib, clock, timeouts } = setup({ tags });
+	await lib.rebuild();
+	first.resolve({ added: 1 });
+	await settle();
+	assert.strictEqual(listings(plex), 2);
+
+	tags.next.push(async () => ({ byAlbum: {}, pending: 1, failed: 0, settled: second.promise }));
+	clock.now += 60 * 1000;
+	await lib.rebuild();
+	assert.strictEqual(listings(plex), 3);
+	second.resolve({ added: 1 });
+	await settle();
+	assert.strictEqual(listings(plex), 3, 'not yet');
+	assert.strictEqual(timeouts.length, 1);
+	assert.strictEqual(timeouts[0].ms, 9 * MIN);
+	timeouts[0].fn();
+	await settle();
+	assert.strictEqual(listings(plex), 4);
+});
+
+test('a late tag rebuild waits for a build that is already running', async () => {
+	const tags = fakeTags();
+	const late = deferred();
+	tags.next.push(async () => ({ byAlbum: {}, pending: 1, failed: 0, settled: late.promise }));
+	const { plex, lib } = setup({ tags });
+	await lib.rebuild();
+	let release;
+	plex.gate = new Promise((resolve) => { release = resolve; });
+	const running = lib.rebuild();
+	late.resolve({ added: 1 });
+	await settle();
+	release();
+	plex.gate = null;
+	await running;
+	await settle();
+	assert.strictEqual(listings(plex), 3, 'the running build read the old cache, so one more follows it');
+});
+
+test('a build shows the owner\'s edits through the metadata layer before it replaces the catalog', async () => {
+	useOverrides({
+		works: { 'avery-quill/the-salt-crown': { title: 'The Salt Crown, Revised', narrator: 'Rhea Stone' } },
+		authors: { 'Corin Vale': { series: 'The Tide Cantos', order: { 'The Long Tide': 1 } } },
+	});
+	const { lib } = setup();
+	const report = await lib.rebuild();
+	assert.strictEqual(report.ok, true);
+	assert.deepStrictEqual(report.added.length, 16);
+
+	const check = () => {
+		const salt = store.work('avery-quill/the-salt-crown');
+		assert.strictEqual(salt.id, 'avery-quill/the-salt-crown', 'an edited title never moves the id');
+		assert.deepStrictEqual([salt.title, salt.narrator, salt.sources.title, salt.sources.narrator], ['The Salt Crown, Revised', 'Rhea Stone', 'override', 'override']);
+		assert.strictEqual(salt.detected.title, 'The Salt Crown');
+		const tide = store.work('corin-vale/the-long-tide');
+		assert.deepStrictEqual([tide.series, tide.sequence, tide.sources.series], ['The Tide Cantos', 1, 'override'], 'an author key the build itself does not read');
+		assert.ok(store.works().every((w) => w.sources && typeof w.sources === 'object'));
+	};
+	check();
+	store.reset();
+	check();
+	assert.deepStrictEqual(store.refreshMetadata(), { ok: true, changed: [], error: null }, 'a refresh right after a build has nothing left to do');
+});
+
+test('an edit written while the build lists Plex is in the catalog that build stores', async () => {
+	let wrote = false;
+	const { lib } = setup({
+		query: (plex) => async (p) => {
+			// The chapter probes run after the build read the overrides file.
+			if (!wrote && p.includes('includeChapters=1')) {
+				wrote = true;
+				useOverrides({ works: { 'avery-quill/the-salt-crown': { title: 'Edited Mid Build' } } });
+			}
+			return plex.query(p);
+		},
+	});
+	await lib.rebuild();
+	assert.strictEqual(wrote, true);
+	assert.deepStrictEqual([store.work('avery-quill/the-salt-crown').title, store.work('avery-quill/the-salt-crown').sources.title], ['Edited Mid Build', 'override']);
+});
+
+test('a broken overrides file keeps what the build applied rather than resolving without the owner\'s edits', async () => {
+	useOverrides('{"works": {');
+	const { lib } = setup();
+	const report = await lib.rebuild();
+	assert.strictEqual(report.ok, true);
+	assert.strictEqual(typeof report.overridesError, 'string');
+	assert.strictEqual(store.works().length, 16);
+	assert.ok(store.works().every((w) => w.sources === undefined), 'the metadata layer did not run');
+	assert.strictEqual(store.work('avery-quill/the-salt-crown').title, 'The Salt Crown');
+});
+
+test('with the online lookup off a build queues no batch', async () => {
+	const { lib, lookup } = setup({ online: false });
+	const report = await lib.rebuild();
+	await settle();
+	assert.strictEqual(lookup.calls.length, 0);
+	assert.strictEqual(lib.onlineBatch(report), null);
+	assert.strictEqual(lib.onlineBatch(null), null);
+});
+
+test('with the online lookup on, a build queues one batch it does not wait for, and applies what the batch changed', async (t) => {
+	useOverrides({ works: { 'avery-quill/the-salt-crown': { narrator: 'Rhea Stone' } } });
+	const gate = deferred();
+	const lookup = fakeLookup(() => ({ enabled: true, region: 'us', counts: { edition: 1 }, changed: ['avery-quill/the-salt-crown'], results: {}, stopped: false }));
+	lookup.gate = gate.promise;
+	const refreshed = t.mock.method(store, 'refreshMetadata');
+	const { lib } = setup({ online: true, lookup });
+
+	const report = await lib.rebuild();
+	assert.strictEqual(report.ok, true, 'the build finished while the batch is still waiting');
+	const batch = lib.onlineBatch(report);
+	assert.ok(batch && typeof batch.then === 'function');
+	await settle();
+	assert.strictEqual(lookup.calls.length, 1);
+	const { works, opts } = lookup.calls[0];
+	assert.deepStrictEqual(works.map((w) => w.id).sort(), store.works().map((w) => w.id).sort());
+	assert.ok(works.every((w) => w.sources && typeof w.sources === 'object'), 'the batch is handed the resolved works');
+	assert.deepStrictEqual(opts.overrideOf(store.work('avery-quill/the-salt-crown')), { narrator: 'Rhea Stone' });
+	assert.strictEqual(opts.overrideOf(store.work('avery-quill/the-glass-road')), null);
+	assert.strictEqual(refreshed.mock.callCount(), 0);
+
+	gate.resolve();
+	const summary = await batch;
+	assert.deepStrictEqual(summary.changed, ['avery-quill/the-salt-crown']);
+	assert.strictEqual(refreshed.mock.callCount(), 1, 'the fills reach the catalog');
+});
+
+test('a batch that changed nothing applies nothing, and a failing one resolves null', async (t) => {
+	const lookup = fakeLookup();
+	const refreshed = t.mock.method(store, 'refreshMetadata');
+	const { lib } = setup({ online: true, lookup });
+	const quiet = await lib.onlineBatch(await lib.rebuild());
+	assert.deepStrictEqual(quiet.changed, []);
+	assert.strictEqual(refreshed.mock.callCount(), 0);
+
+	lookup.answer = () => { throw new Error('store went away'); };
+	assert.strictEqual(await lib.onlineBatch(await lib.rebuild()), null);
+	assert.strictEqual(logger.warn.mock.calls.some((c) => /online lookup failed/.test(c.arguments.join(' '))), true);
+	assert.strictEqual(refreshed.mock.callCount(), 0);
+});
+
+test('one lookup batch runs at a time, and the builds made meanwhile share one more', async () => {
+	const gate = deferred();
+	const lookup = fakeLookup();
+	lookup.gate = gate.promise;
+	const { lib } = setup({ online: true, lookup });
+	const first = lib.onlineBatch(await lib.rebuild());
+	await settle();
+	const second = lib.onlineBatch(await lib.rebuild());
+	const third = lib.onlineBatch(await lib.rebuild());
+	assert.notStrictEqual(first, second);
+	assert.strictEqual(second, third);
+	assert.strictEqual(lookup.calls.length, 1);
+	gate.resolve();
+	await Promise.all([first, second]);
+	assert.strictEqual(lookup.calls.length, 2);
+});
+
+test('a batch started elsewhere is waited out before this catalog is looked up', async () => {
+	const lookup = fakeLookup();
+	lookup.running = true;
+	const { lib } = setup({ online: true, lookup });
+	await lib.onlineBatch(await lib.rebuild());
+	assert.deepStrictEqual(lookup.calls.map((c) => c.works.length), [0, 16]);
+});
+
+test('after: current queues exactly one more build behind a running one, which reads an exclude written meanwhile', async () => {
+	let queuedBuild = null;
+	let queuedAgain = null;
+	const { plex, lib } = setup({
+		query: (fake) => async (p) => {
+			if (!queuedBuild && p.includes('includeChapters=1')) {
+				useOverrides({ works: { 'avery-quill/shadows-of-glass': { exclude: true } } });
+				queuedBuild = lib.rebuild({ after: 'current' });
+				queuedAgain = lib.rebuild({ after: 'current', force: true });
+			}
+			return fake.query(p);
+		},
+	});
+	const running = lib.rebuild();
+	const first = await running;
+	assert.strictEqual(first.works, 16, 'the running build read the overrides before the exclude');
+	assert.notStrictEqual(queuedBuild, running);
+	assert.strictEqual(queuedAgain, queuedBuild, 'every call made meanwhile shares one queued build');
+	const second = await queuedBuild;
+	assert.strictEqual(second.works, 15);
+	assert.strictEqual(store.work('avery-quill/shadows-of-glass'), null);
+	assert.strictEqual(listings(plex), 2);
+
+	const idle = lib.rebuild({ after: 'current' });
+	assert.strictEqual(lib.status(), 'building', 'with nothing running it starts at once');
+	await idle;
+	assert.strictEqual(listings(plex), 3);
+});
+
+// The bug (review): applyOverrides finds an exclude, partOrder or pinId by the id detection gives
+// alone, so a folder rename or a rule change that moved the id dropped a pinned id without a word
+// outside a manual rescan's reply.
+test('a pinned id survives a folder rename that moves the detected id, and the move is logged', async () => {
+	useOverrides({ works: { 'avery-quill/the-ember-throne': { pinId: 'ember-pin' } } });
+	const { plex, lib } = setup();
+	await lib.rebuild();
+	assert.strictEqual(store.work('ember-pin').id, 'ember-pin');
+	for (const t of plex.lib.tracks) {
+		const p = t.Media[0].Part[0];
+		p.file = p.file.replace('/1.The Ember Throne/The Ember Throne ', '/1.Ember Throne/Ember Throne ');
+	}
+	const report = await lib.rebuild();
+	assert.strictEqual(store.work('ember-pin').id, 'ember-pin');
+	assert.strictEqual(store.work('avery-quill/ember-throne').id, 'ember-pin');
+	assert.deepStrictEqual(report.moved, {});
+	assert.ok(report.notes.some((n) => /avery-quill\/the-ember-throne \(pinId\) now apply to avery-quill\/ember-throne/.test(n)), report.notes.join('; '));
+	const warned = () => logger.warn.mock.calls.map((c) => c.arguments.join(' '));
+	assert.ok(warned().some((w) => /not detected: avery-quill\/the-ember-throne/.test(w)), 'every build logs what no longer matches');
+
+	await lib.rebuild();
+	assert.strictEqual(store.work('ember-pin').id, 'ember-pin', 'and on the build after that');
+	assert.deepStrictEqual(JSON.parse(fs.readFileSync(OVERRIDES_FILE, 'utf8')), { works: { 'avery-quill/the-ember-throne': { pinId: 'ember-pin' } } }, 'the file is left as written');
 });
 
 test('no request ever went to a Plex search endpoint', () => {
