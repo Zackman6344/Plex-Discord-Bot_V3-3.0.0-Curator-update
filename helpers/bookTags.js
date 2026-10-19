@@ -2,7 +2,8 @@
 //
 // Embedded tags of audiobook files, for the catalog. A GraphicAudio file names its publisher as
 // the artist and its author only in the copyright tag, and genres tell a 3-hour mix from a book,
-// none of which Plex's listing carries.
+// none of which Plex's listing carries. Most files are read as their album's sample; a folder that
+// may hold loose single-file books has each file read for itself, keyed by its track.
 //
 // Read with ffmpeg-static in a child process (`ffmpeg -i file` prints the container metadata and
 // exits), two at a time, each child at Below Normal priority: CPU contention is a measured cause
@@ -17,7 +18,7 @@ const path = require('path');
 const { createStore } = require('./jsonStore.js');
 
 const DAY = 24 * 60 * 60 * 1000;
-const KEEP_TAGS = Object.freeze(['album', 'album_artist', 'artist', 'composer', 'genre', 'copyright', 'comment', 'narrator', 'publisher', 'title', 'date', 'asin', 'audible_asin']);
+const KEEP_TAGS = Object.freeze(['album', 'album_artist', 'artist', 'composer', 'genre', 'copyright', 'comment', 'narrator', 'publisher', 'title', 'track', 'date', 'asin', 'audible_asin']);
 const KEEP = new Set(KEEP_TAGS);
 const MAX_VALUE = 300;
 const SPAWN_TIMEOUT_MS = 20000;
@@ -96,8 +97,18 @@ function good(entry) {
 	return isObject(entry) && !entry.failed && isObject(entry.tags);
 }
 
+function present(v) {
+	return v !== undefined && v !== null;
+}
+
+// An album sample names its album and track; a file read for itself names only its track.
 function validJob(j) {
-	return isObject(j) && j.album !== undefined && j.album !== null && typeof j.file === 'string' && j.file !== '';
+	return isObject(j) && (present(j.album) || present(j.track)) && typeof j.file === 'string' && j.file !== '';
+}
+
+function put(out, j, value) {
+	if (present(j.album)) out.byAlbum[String(j.album)] = value;
+	if (present(j.track)) out.byTrack[String(j.track)] = value;
 }
 
 function view(entry) {
@@ -233,9 +244,11 @@ function createTags(deps = {}) {
 	 * Reads the tags of each sampled file, from the cache when its size and mtime still match.
 	 * Resolves when every job is done or budgetMs has passed, whichever is first; reads still
 	 * running then finish in the background and land in the cache. Never throws.
-	 * @param {Array<{ album: string, track?: string, file: string, sizeBytes?: number }>} list
+	 * @param {Array<{ album?: string, track?: string, file: string, sizeBytes?: number }>} list
+	 *   each job names an album, a track or both
 	 * @param {{ budgetMs?: number, concurrency?: number, signal?: AbortSignal }} [opts]
 	 * @returns {Promise<{ byAlbum: Object<string, {tags: object, chapters: number, at: number}>,
+	 *   byTrack: Object<string, {tags: object, chapters: number, at: number}>,
 	 *   pending: number, failed: number, settled: Promise<{ added: number }> }>} pending: jobs
 	 *   unfinished when it resolved; settled: resolves once they are all done, with how many
 	 *   new entries they added
@@ -243,7 +256,7 @@ function createTags(deps = {}) {
 	async function read(list, { budgetMs = 45000, concurrency = 2, signal } = {}) {
 		try {
 			const jobs = (Array.isArray(list) ? list : []).filter(validJob);
-			const byAlbum = {};
+			const out = { byAlbum: {}, byTrack: {} };
 			let done = 0;
 			let failed = 0;
 			let added = 0;
@@ -253,7 +266,7 @@ function createTags(deps = {}) {
 			const fallback = (j) => {
 				failed++;
 				const old = lastGood(j.file);
-				if (old) byAlbum[String(j.album)] = view(old);
+				if (old) put(out, j, view(old));
 			};
 			const runJob = async (j) => {
 				let st;
@@ -271,7 +284,7 @@ function createTags(deps = {}) {
 				}
 				if (good(hit)) {
 					touch(hit);
-					byAlbum[String(j.album)] = view(hit);
+					put(out, j, view(hit));
 					return;
 				}
 				let p = inflight.get(k);
@@ -293,7 +306,7 @@ function createTags(deps = {}) {
 				}
 				const r = await p;
 				const entry = data()[k];
-				if (r && good(entry)) byAlbum[String(j.album)] = view(entry);
+				if (r && good(entry)) put(out, j, view(entry));
 				else fallback(j);
 			};
 			const worker = async () => {
@@ -328,19 +341,20 @@ function createTags(deps = {}) {
 			await Promise.race([settled, budget]);
 			clearTimeout(timer);
 			if (signal && onAbort) signal.removeEventListener('abort', onAbort);
-			return { byAlbum: { ...byAlbum }, pending: jobs.length - done, failed, settled };
+			return { byAlbum: { ...out.byAlbum }, byTrack: { ...out.byTrack }, pending: jobs.length - done, failed, settled };
 		} catch (_) {
-			return { byAlbum: {}, pending: 0, failed: 0, settled: Promise.resolve({ added: 0 }) };
+			return { byAlbum: {}, byTrack: {}, pending: 0, failed: 0, settled: Promise.resolve({ added: 0 }) };
 		}
 	}
 
 	/**
 	 * What the cache already holds, without a stat or a spawn: matched by path and Plex's size,
 	 * newest first. Never throws.
-	 * @returns {{ byAlbum: Object<string, {tags: object, chapters: number, at: number}> }}
+	 * @returns {{ byAlbum: Object<string, {tags: object, chapters: number, at: number}>,
+	 *   byTrack: Object<string, {tags: object, chapters: number, at: number}> }}
 	 */
 	function cached(list) {
-		const byAlbum = {};
+		const out = { byAlbum: {}, byTrack: {} };
 		try {
 			const d = data();
 			const keys = Object.keys(d);
@@ -352,10 +366,10 @@ function createTags(deps = {}) {
 					if (j.sizeBytes && k.split('|').slice(-2)[0] !== String(j.sizeBytes)) continue;
 					if (!best || (d[k].at || 0) > (best.at || 0)) best = d[k];
 				}
-				if (best) byAlbum[String(j.album)] = view(best);
+				if (best) put(out, j, view(best));
 			}
 		} catch (_) {}
-		return { byAlbum };
+		return out;
 	}
 
 	return { read, cached, reset: () => { if (storeRef && storeRef.reset) storeRef.reset(); dirty = false; inflight.clear(); } };

@@ -19,6 +19,10 @@
 // for the online lookup inside the build would hold every rescan and hourly build for half a
 // minute.
 //
+// The bug (rules version 4): four loose single-file books that Plex filed as one album beside a
+// fifth were one work, since tags were read once per album; split apart, none of them held half
+// the old work, so its id, and the bookmark saved under it, matched nothing.
+//
 // Harness: createLibrary() with an injected fake plex.query that serves the synthetic
 // test/fixtures/books/library.json and records every path, an injected tag reader (ffmpeg is never
 // spawned), an injected online lookup (no network), injected timers and clock, and the real
@@ -43,10 +47,13 @@ process.env.PLEXBOT_BOOK_TEXT_LINKS_FILE = `${AUX}-text-links.json`;
 process.env.PLEXBOT_BOOK_TEXT_READERS_FILE = `${AUX}-text-readers.json`;
 process.env.PLEXBOT_BOOK_TEXT_MARKS_FILE = `${AUX}-text-marks.json`;
 process.env.PLEXBOT_BOOK_TEXT_DIR = `${AUX}-text`;
+process.env.PLEXBOT_BOOK_BOOKMARKS_FILE = `${AUX}-bookmarks.json`;
 delete process.env.PLEXBOT_BOOK_OVERRIDES_FILE;
 
 const logger = require('../helpers/logger.js');
 const store = require('../helpers/bookCatalogStore.js');
+const bookmarks = require('../helpers/bookmarks.js');
+const bookModel = require('../helpers/bookModel.js');
 const bookCatalog = require('../helpers/bookCatalog.js');
 const { createLibrary } = require('../helpers/bookLibrary.js');
 const LIBRARY = require('./fixtures/books/library.json');
@@ -833,6 +840,66 @@ test('a pinned id survives a folder rename that moves the detected id, and the m
 	await lib.rebuild();
 	assert.strictEqual(store.work('ember-pin').id, 'ember-pin', 'and on the build after that');
 	assert.deepStrictEqual(JSON.parse(fs.readFileSync(OVERRIDES_FILE, 'utf8')), { works: { 'avery-quill/the-ember-throne': { pinId: 'ember-pin' } } }, 'the file is left as written');
+});
+
+function looseTrack(rk, album, file, min, extra = {}) {
+	const ms = Math.round(min * MIN);
+	const name = file.split('/').pop();
+	return {
+		ratingKey: String(rk), key: `/library/metadata/${rk}`, parentRatingKey: album.ratingKey, grandparentRatingKey: album.parentRatingKey,
+		type: 'track', title: name.replace(/\.[^.]+$/, ''), grandparentTitle: album.parentTitle, parentTitle: album.title,
+		parentIndex: 1, duration: ms, addedAt: 1700000000,
+		Media: [{ id: rk, duration: ms, bitrate: 64, audioChannels: 2, container: 'mp4', Part: [{ id: rk, key: `/library/parts/${rk}/1700000000/file.m4b`, duration: ms, file, size: 1000 + rk, container: 'mp4' }] }],
+		...extra,
+	};
+}
+
+test('a work split into loose books hands its id, its aliases and their bookmarks to the first book', async (t) => {
+	t.after(() => bookmarks.reset());
+	const first = { ratingKey: '4001', parentRatingKey: '94001', type: 'album', title: 'The Rust Ledger 1: Cold Iron', parentTitle: 'Graphic Audio LLC.', Genre: [{ tag: 'Audiobook' }] };
+	const lumped = { ratingKey: '4002', parentRatingKey: '94002', type: 'album', title: 'The Rust Ledger 1: Cold Iron', parentTitle: 'Various Artists', Genre: [{ tag: 'Audiobook' }] };
+	const loose = [looseTrack(40010, first, 'M:/Music/Cold_Iron_GraphicAudio.m4b', 150)];
+	const byTrack = {};
+	for (const [n, title] of [[2, 'Grey Tides'], [3, 'Low Sun'], [4, 'Salt Road'], [5, 'Iron Sea']]) {
+		loose.push(looseTrack(40020 + n, lumped, `M:/Music/Wren Halloway - #${n} ${title} (Graphic Audio LLC.).m4b`, 160, { title, index: n }));
+		byTrack[40020 + n] = { tags: { album: title, artist: 'Wren Halloway', composer: 'Graphic Audio LLC.', track: String(n) } };
+	}
+	const firstTags = { tags: { album: first.title, artist: 'Graphic Audio LLC.', copyright: 'Copyright (c) 2017, Wren Halloway' } };
+	const tags = fakeTags();
+	const answer = (a, b) => async () => ({ byAlbum: a, byTrack: b, pending: 0, failed: 0, settled: Promise.resolve({ added: 0 }) });
+	tags.next.push(answer({}, {}), answer({ 4001: firstTags }, { ...byTrack, 40010: firstTags }));
+	const { plex, lib } = setup({ tags });
+	plex.lib.albums.push(first, lumped);
+	plex.lib.tracks.push(...loose);
+
+	await lib.rebuild();
+	const before = clone(store.load());
+	const merged = before.works['wren-halloway/cold-iron'];
+	assert.strictEqual(merged.parts.length, 5, 'with no tags the #1 file names no book, so this build keeps them together');
+	delete before.works['wren-halloway/cold-iron'];
+	before.works['various-artists/cold-iron'] = { ...merged, id: 'various-artists/cold-iron', aliases: ['kid-ferro/music'] };
+	store.replace(before);
+	const old = store.work('various-artists/cold-iron');
+	const at = 100 * MIN;
+	bookmarks.record('listener-a', old, { absoluteMs: at }, { force: true });
+	bookmarks.record('listener-b', { ...old, id: 'kid-ferro/music' }, { absoluteMs: at }, { force: true });
+
+	const report = await lib.rebuild();
+	assert.ok(tags.calls[1].samples.some((s) => s.album === undefined && s.track === '40023'), 'each loose file is read for itself');
+	assert.deepStrictEqual(report.moved, { 'various-artists/cold-iron': 'wren-halloway/cold-iron' });
+	assert.deepStrictEqual(report.added.filter((id) => id.startsWith('wren-halloway/')).sort(), ['wren-halloway/grey-tides', 'wren-halloway/iron-sea', 'wren-halloway/low-sun', 'wren-halloway/salt-road']);
+	assert.deepStrictEqual(report.removed, []);
+	for (const id of ['various-artists/cold-iron', 'kid-ferro/music', 'wren-halloway/cold-iron']) {
+		const w = store.work(id);
+		assert.deepStrictEqual([w.id, w.parts.map((p) => p.trackRatingKey)], ['wren-halloway/cold-iron', ['40010']], id);
+	}
+	for (const who of ['listener-a', 'listener-b']) {
+		const w = store.work('wren-halloway/cold-iron');
+		const mark = bookmarks.get(who, w);
+		assert.strictEqual(mark && mark.workId, 'wren-halloway/cold-iron', who);
+		const r = bookModel.resumeStart(w, mark);
+		assert.deepStrictEqual([r.partIndex, r.partMs], [0, at], `${who} resumes where it stopped`);
+	}
 });
 
 test('no request ever went to a Plex search endpoint', () => {

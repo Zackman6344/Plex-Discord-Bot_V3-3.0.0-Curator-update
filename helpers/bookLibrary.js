@@ -16,8 +16,9 @@
 // A build waits for embedded tags (helpers/bookTags.js) up to TAG_BUDGET_MS. Without them a
 // GraphicAudio book has no author and comes out as "untitled/<title>", to be renamed on the next
 // build; warm builds read from the cache in milliseconds, so only the first build of a large
-// library, about 30 s, ever waits for long. Reads still running when the budget ends finish in the
-// background and trigger one more build.
+// library, about 30 s, ever waits for long. Folders that may hold loose single-file books have
+// every file read, about 0.3 s each, so the first build after rules version 4 also waits. Reads
+// still running when the budget ends finish in the background and trigger one more build.
 //
 // Displayed metadata goes through helpers/bookMetadata.js before the catalog is replaced, so a
 // build shows the owner's edits, Calibre's and the online lookup's fills at once instead of the
@@ -257,13 +258,14 @@ function createLibrary(deps = {}) {
 		const samples = bookCatalog.tagSamples(tracks, { roots });
 		const tagRead = await tagReader().read(samples, { budgetMs: TAG_BUDGET_MS, concurrency: TAG_CONCURRENCY });
 		const tags = (tagRead && tagRead.byAlbum) || {};
+		const trackTags = (tagRead && tagRead.byTrack) || {};
 		if (tagRead && tagRead.pending > 0 && tagRead.settled) {
 			logger.info(`Audiobook tag reads still running after ${TAG_BUDGET_MS / 1000} s (${tagRead.pending} left); the catalog is rebuilt once they finish.`);
 			tagRead.settled.then((r) => { if (r && r.added > 0) scheduleTagRebuild(); }, () => {});
 		}
 
 		const { overrides: written, error: overridesError } = store.readOverrides();
-		const first = bookCatalog.buildCatalog({ albums, tracks, overrides: written, tags, roots });
+		const first = bookCatalog.buildCatalog({ albums, tracks, overrides: written, tags, trackTags, roots });
 		// The file is never rewritten for this, so the old catalog's ids and aliases carry an entry
 		// forward on every build.
 		const carry = bookCatalog.carryOverrides(written, oldWorks, first.works, bookCatalog.matchAliases(oldWorks, first.works).moved);
@@ -274,7 +276,7 @@ function createLibrary(deps = {}) {
 		for (const w of Object.values(first.works)) {
 			Object.assign(chapters, await probeChapters(w, tracksByKey, oldChapterCache, chapterCache));
 		}
-		const built = bookCatalog.buildCatalog({ albums, tracks, chapters, overrides, tags, roots });
+		const built = bookCatalog.buildCatalog({ albums, tracks, chapters, overrides, tags, trackTags, roots });
 		const matched = bookCatalog.matchAliases(oldWorks, built.works);
 		const moved = matched.moved;
 

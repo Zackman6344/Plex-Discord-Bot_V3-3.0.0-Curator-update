@@ -17,7 +17,7 @@
 // SYNTHETIC library (invented names under M:/Music/) that reproduces each of those structures,
 // built by a generator kept outside the repo; catalog.json is its built form, which the music
 // exclusion tests seed the store with, and tags.json holds invented embedded tags by album. The
-// version 3 cases build small invented libraries under N:/Media/Music inline, so the shared
+// version 3 and 4 cases build small invented libraries under N:/Media/Music inline, so the shared
 // fixture that other test files read stays as it was.
 
 const test = require('node:test');
@@ -817,6 +817,17 @@ test('a narrator tag is used only for one person and only when no folder or albu
 	assert.deepStrictEqual(narratorWith({ comment: 'Read by Ida Marsh and Tom Reed' }), [null, null]);
 });
 
+// Checked on a real library (rules version 4): three single-file books came out narrated by a
+// name with its surname twice. Their credits comment spells the name that way in both places it
+// appears, so the parser is right to keep it; it neither doubles a word nor drops a repeated one.
+test('a credits comment gives its narrator exactly as written, repeated words and all', () => {
+	const credits = 'Written by Wren Halloway - Performed by Narrated by Kit Moss Moss. Featuring Kit Moss Moss as the Warden and Ida Mar';
+	assert.strictEqual(bookCatalog.narratorFromComment(credits), 'Kit Moss Moss');
+	assert.strictEqual(bookCatalog.authorFromComment(credits), 'Wren Halloway');
+	assert.strictEqual(bookCatalog.narratorFromComment('Written by Wren Halloway - Performed by Narrated by Kit Moss. Featuring Kit Moss as the Warden'), 'Kit Moss');
+	assert.strictEqual(bookCatalog.narratorFromComment('See the publisher for cast and production credits.'), null);
+});
+
 test('doubts are structured, name no folder path, and never hold a work back', () => {
 	const one = album(3901, 'Book One', 'Ida Marsh');
 	const two = album(3902, 'Book Two', 'Tom Reed');
@@ -876,18 +887,21 @@ test('tag samples are one file per album, only from groups long enough to be a b
 	lib.albums.push(sample);
 	lib.tracks.push(
 		track(30031, sample, 'N:/Media/Music/Wren Halloway/Grey Tides/Sample.mp3', 2, { title: 'Sample', index: 1 }),
-		track(30032, sample, 'N:/Media/Music/Wren Halloway/Grey Tides/02.mp3', 70, { index: 2 }),
-		track(30033, sample, 'N:/Media/Music/Wren Halloway/Grey Tides/03.mp3', 70, { index: 3 }),
+		track(30032, sample, 'N:/Media/Music/Wren Halloway/Grey Tides/02.m4b', 70, { index: 2 }),
+		track(30033, sample, 'N:/Media/Music/Wren Halloway/Grey Tides/03.m4b', 70, { index: 3 }),
 	);
 	assert.deepStrictEqual(bookCatalog.tagSamples(lib.tracks, { roots: ROOTS }), [
 		{ album: '3002', track: '30020', file: 'N:/Media/Music/Cold_Iron_GraphicAudio.m4b', sizeBytes: 1030020 },
-		{ album: '3003', track: '30032', file: 'N:/Media/Music/Wren Halloway/Grey Tides/02.mp3', sizeBytes: 1030032 },
-	]);
+		{ album: '3003', track: '30032', file: 'N:/Media/Music/Wren Halloway/Grey Tides/02.m4b', sizeBytes: 1030032 },
+		{ track: '30033', file: 'N:/Media/Music/Wren Halloway/Grey Tides/03.m4b', sizeBytes: 1030033 },
+	], 'two long m4b files could be two books, so the one the album sample missed is read for itself');
+	const mp3s = lib.tracks.map((t) => (t.ratingKey === '30032' || t.ratingKey === '30033' ? track(t.ratingKey, sample, t.Media[0].Part[0].file.replace('.m4b', '.mp3'), 70, { index: t.index }) : t));
+	assert.deepStrictEqual(bookCatalog.tagSamples(mp3s, { roots: ROOTS }).map((s) => s.track), ['30020', '30032'], 'long mp3 files are one book, so only the album is sampled');
 	assert.deepStrictEqual(bookCatalog.tagSamples([]), []);
 });
 
-test('the rules version is 3', () => {
-	assert.strictEqual(bookCatalog.RULES_VERSION, 3);
+test('the rules version is 4', () => {
+	assert.strictEqual(bookCatalog.RULES_VERSION, 4);
 });
 
 // The bug (review): the music genre pattern matched words inside book genres ("Space Opera",
@@ -967,4 +981,319 @@ test('openDoubts leaves out a split and any doubt the owner answered with a titl
 	assert.deepStrictEqual(bookCatalog.openDoubts(w, { author: 'Avery Quill' }), []);
 	assert.deepStrictEqual(bookCatalog.openDoubts({ doubts: w.doubts, title: 'B', detected: { title: 'A' } }), [], 'a catalog without sources compares against detection');
 	assert.deepStrictEqual(bookCatalog.openDoubts(null), []);
+});
+
+// ---- rules version 4 ----
+
+// The bug (rules version 4): books #2 to #5 of a series were dropped as loose single-file books
+// beside #1 in the library root. Plex filed the four as one album under "Various Artists" with
+// #1's album title, and tags were read from one file per album, so all five became one work named
+// after #1, by "Various Artists", with a live bookmark under its id.
+
+const LEDGER = [[2, 'Grey Tides', 160], [3, 'Low Sun', 165], [4, 'Salt Road', 170], [5, 'Iron Sea', 490]];
+
+function looseBooks() {
+	const first = album(4001, 'The Rust Ledger 1: Cold Iron', 'Graphic Audio LLC.', ['Audiobook']);
+	const lumped = album(4002, 'The Rust Ledger 1: Cold Iron', 'Various Artists', ['Audiobook']);
+	const tracks = [track(40010, first, 'N:/Media/Music/Cold_Iron_GraphicAudio.m4b', 150, { index: undefined })];
+	const tags = { 4001: { tags: { artist: 'Graphic Audio LLC.', album: 'The Rust Ledger 1: Cold Iron', genre: 'Audiobook', copyright: 'Copyright (c) 2017, Wren Halloway. All rights reserved.' } } };
+	const trackTags = {};
+	for (const [n, title, min] of LEDGER) {
+		const name = n === 5 ? `${title} (Dramatized Adaptation)` : title;
+		tracks.push(track(40020 + n, lumped, `N:/Media/Music/Wren Halloway - #${n} ${title} (Graphic Audio LLC.).m4b`, min, { title: name, index: n, chapterSource: 'media' }));
+		trackTags[40020 + n] = { tags: { title: name, album: name, artist: 'Wren Halloway', composer: 'Graphic Audio LLC.', genre: 'Audiobook', track: String(n) } };
+	}
+	return { albums: [first, lumped], tracks, roots: ROOTS, tags, trackTags };
+}
+
+const LEDGER_WORKS = [
+	['wren-halloway/cold-iron', 'Cold Iron', 1, '40010'],
+	['wren-halloway/grey-tides', 'Grey Tides', 2, '40022'],
+	['wren-halloway/iron-sea', 'Iron Sea', 5, '40025'],
+	['wren-halloway/low-sun', 'Low Sun', 3, '40023'],
+	['wren-halloway/salt-road', 'Salt Road', 4, '40024'],
+];
+
+function rowsOf(works) {
+	return Object.values(works).map((w) => [w.id, w.title, w.sequence, w.parts.map((p) => p.trackRatingKey).join()]).sort((a, b) => a[0].localeCompare(b[0]));
+}
+
+test('loose single-file books in one folder are one work each, named by their own tags', () => {
+	const out = buildCatalog(looseBooks());
+	assert.deepStrictEqual(rowsOf(out.works), LEDGER_WORKS);
+	for (const w of Object.values(out.works)) {
+		assert.deepStrictEqual([w.author, w.series, w.publisher, w.edition, w.narrator, w.kind, w.doubts], ['Wren Halloway', 'The Rust Ledger', 'GraphicAudio', 'GraphicAudio', null, 'book', []], w.id);
+		assert.ok(w.notes.includes('one of 5 books in one folder, told apart by their album tags'), w.id);
+		assert.ok(noPaths(w.doubts) && noPaths(w.notes));
+	}
+	const tides = out.works['wren-halloway/grey-tides'];
+	assert.deepStrictEqual([tides.detected.sources.title, tides.detected.sources.author, tides.detected.sources.sequence], ['tag', 'tag', 'tag']);
+	assert.strictEqual(tides.detected.sources.series, out.works['wren-halloway/cold-iron'].detected.sources.series, 'the series comes from the sibling that names it');
+	assert.deepStrictEqual(out.index.trackKeys, ['40010', '40022', '40023', '40024', '40025']);
+	assert.deepStrictEqual(out.splits, [], 'a book split is not a music split');
+});
+
+test('without a file\'s own tags its "#N Title" file name tells the books apart, and one silent file holds the split back', () => {
+	const lib = looseBooks();
+	const byName = buildCatalog({ ...lib, trackTags: {} });
+	assert.deepStrictEqual(rowsOf(byName.works), LEDGER_WORKS);
+	const tides = byName.works['wren-halloway/grey-tides'];
+	assert.deepStrictEqual([tides.author, tides.series, tides.publisher, tides.detected.sources.title, tides.detected.sources.author], ['Wren Halloway', 'The Rust Ledger', 'GraphicAudio', 'folder', 'folder']);
+	assert.ok(tides.notes.includes('one of 5 books in one folder, told apart by their file names'));
+
+	const silent = buildCatalog({ ...lib, tags: {}, trackTags: {} });
+	assert.deepStrictEqual(Object.values(silent.works).map((w) => w.parts.length), [5], 'the #1 file names no book, so nothing is split until its tags arrive');
+});
+
+test('a number with no series on any sibling is dropped rather than shown alone', () => {
+	const lib = looseBooks();
+	const out = buildCatalog({ ...lib, tracks: lib.tracks.slice(1), tags: {} });
+	assert.deepStrictEqual(rowsOf(out.works).map(([id, , seq]) => [id, seq]), [['wren-halloway/grey-tides', null], ['wren-halloway/iron-sea', null], ['wren-halloway/low-sun', null], ['wren-halloway/salt-road', null]]);
+	assert.ok(Object.values(out.works).every((w) => w.series === null && w.detected.sources.sequence === null));
+});
+
+test('Various Artists and its kin are never an author, and the tags or the file name give one', () => {
+	for (const name of ['Various Artists', 'Various', 'various artist', 'VA', 'V.A.', 'Unknown Artist', '[Unknown Artist]']) assert.ok(bookCatalog.isVarious(name), name);
+	for (const name of ['Vance Arlo', 'Variety Hour', 'Wren Halloway']) assert.ok(!bookCatalog.isVarious(name), name);
+	const a = album(4101, 'Tin Crown', 'Various Artists', ['Audiobook']);
+	const tracks = [1, 2, 3].map((i) => track(41010 + i, a, `N:/Media/Music/Ida Marsh/Tin Crown/0${i}.mp3`, 50, { index: i }));
+	const tagged = buildCatalog({ albums: [a], tracks, roots: ROOTS, tags: { 4101: { tags: { artist: 'Various Artists', copyright: 'Copyright 2019 by Ida Marsh' } } } });
+	assert.deepStrictEqual(Object.values(tagged.works).map((w) => [w.id, w.author, w.authorSource]), [['ida-marsh/tin-crown', 'Ida Marsh', 'copyright']]);
+	assert.deepStrictEqual(Object.values(tagged.works)[0].doubts, [], 'no mixed-artists doubt from a placeholder');
+	const bare = buildCatalog({ albums: [a], tracks, roots: ROOTS });
+	assert.deepStrictEqual(Object.values(bare.works).map((w) => [w.author, w.authorSource]), [['Ida Marsh', 'folder']], 'even the author folder beats a placeholder');
+});
+
+test('edition markers leave titles, and are never a narrator or an edition name', () => {
+	assert.strictEqual(bookCatalog.cleanTitle('Iron Sea (Dramatized Adaptation)'), 'Iron Sea');
+	assert.strictEqual(bookCatalog.cleanTitle('Iron Sea [Unabridged]'), 'Iron Sea');
+	assert.strictEqual(bookCatalog.cleanTitle('Iron Sea (Full Cast)'), 'Iron Sea');
+	const a = album(4201, 'Tin Crown (Unabridged)', 'Ida Marsh', ['Audiobook']);
+	const tracks = [1, 2, 3].map((i) => track(42010 + i, a, `N:/Media/Music/Ida Marsh/Tin Crown (Unabridged)/0${i}.mp3`, 50, { index: i }));
+	const w = buildCatalog({ albums: [a], tracks, roots: ROOTS }).works['ida-marsh/tin-crown'];
+	assert.ok(w, 'the id is the one the trailing bracket never reached');
+	assert.deepStrictEqual([w.title, w.narrator, w.edition], ['Tin Crown', null, null]);
+});
+
+test('bookIdentity sees past part, edition and series markers, and numberedName reads a loose book file', () => {
+	const same = [
+		'The Rust Ledger 4 - Low Sun (2 of 6)', 'The Rust Ledger 4: Low Sun (3 of 6)', 'The Rust Ledger [04] Low Sun [01]',
+		'The Rust Ledger [04] Low Sun [01-02]', 'Low Sun Part 1', 'Low Sun - Disc 2', 'Low Sun CD 1', 'Low Sun 01',
+		'Low Sun (Dramatized Adaptation)', 'Low Sun (Unabridged)', 'Low Sun (Abridged)', 'Low Sun (Full Cast)', 'Low Sun (Part 2 of 3)', 'Low Sun [2 of 6]',
+		'The Rust Ledger: Low Sun', 'LOW SUN', 'Low, Sun!',
+	];
+	for (const s of same) assert.strictEqual(bookCatalog.bookIdentity(s), 'low sun', s);
+	assert.notStrictEqual(bookCatalog.bookIdentity('The Rust Ledger 1: Cold Iron'), bookCatalog.bookIdentity('Grey Tides'));
+	assert.deepStrictEqual(bookCatalog.numberedName('Wren Halloway - #2 Grey Tides (Graphic Audio LLC.).m4b'), { author: 'Wren Halloway', number: 2, name: 'Grey Tides' });
+	assert.deepStrictEqual(bookCatalog.numberedName('#3 Low Sun.mp3'), { author: null, number: 3, name: 'Low Sun' });
+	assert.strictEqual(bookCatalog.numberedName('03 Low Sun.mp3'), null);
+	assert.strictEqual(bookCatalog.numberedName('Low Sun.mp3'), null);
+});
+
+test('the old id of a split work and every alias go to the book that held its first part', () => {
+	const lib = looseBooks();
+	const [merged] = Object.values(buildCatalog({ ...lib, tags: {}, trackTags: {} }).works);
+	const old = { ...merged, id: 'various-artists/cold-iron', aliases: ['wren-halloway/cold-iron', 'kid-ferro/music'] };
+	const next = buildCatalog(lib).works;
+	const { works, moved } = matchAliases({ [old.id]: old }, next);
+	assert.deepStrictEqual(moved, { 'various-artists/cold-iron': 'wren-halloway/cold-iron' });
+	assert.deepStrictEqual(works['wren-halloway/cold-iron'].aliases, ['various-artists/cold-iron', 'kid-ferro/music']);
+	assert.ok(['grey-tides', 'low-sun', 'salt-road', 'iron-sea'].every((t) => works[`wren-halloway/${t}`].aliases.length === 0));
+
+	const lowFirst = [merged.parts[2], merged.parts[0], merged.parts[1], ...merged.parts.slice(3)].map((p, i) => ({ ...p, ordinal: i + 1 }));
+	assert.deepStrictEqual(matchAliases({ [old.id]: { ...old, parts: lowFirst } }, next).moved, { 'various-artists/cold-iron': 'wren-halloway/low-sun' });
+
+	const ghosts = [1, 2, 3, 4, 5, 6].map((i) => ({ ordinal: 2 + i, trackRatingKey: `999${i}`, file: `gone ${i}.mp3`, sizeBytes: i, durationMs: 600 * MIN }));
+	const mostlyGone = { ...old, parts: [merged.parts[0], merged.parts[1], ...ghosts] };
+	assert.deepStrictEqual(matchAliases({ [old.id]: mostlyGone }, next).moved, {}, 'two books holding a sliver of a vanished work are no split of it');
+});
+
+// Shapes from the real library that must stay one work each: their files are long enough to be
+// read one by one, or their parts carry several album tags, yet each is one book.
+
+function oneBookEach(lib, expected, message) {
+	const out = buildCatalog({ roots: ROOTS, ...lib });
+	assert.deepStrictEqual(Object.values(out.works).map((w) => w.parts.length + w.dropped.length).sort((a, b) => a - b), expected, message);
+	return out;
+}
+
+function taggedParts(alb, folder, n, min, albumTag, extra = {}) {
+	return Array.from({ length: n }, (_, i) => track(alb.ratingKey * 100 + i, alb, `${folder}/${String(i + 1).padStart(2, '0')}.mp3`, min, { index: i + 1, ...extra }))
+		.map((t) => ({ t, tags: { tags: { album: albumTag, title: t.title, track: String(t.index) } } }));
+}
+
+function libOf(albums, groups) {
+	const all = groups.flat();
+	return { albums, tracks: all.map((x) => x.t), trackTags: Object.fromEntries(all.map((x) => [x.t.ratingKey, x.tags])) };
+}
+
+test('podcast episodes, one album and no tags, stay one podcast', () => {
+	const a = album(43, 'Far Signals', 'Far Signals');
+	const tracks = Array.from({ length: 8 }, (_, i) => track(4300 + i, a, `N:/Media/Music/Far Signals/FS ep${i + 1} Arrival Part ${i + 1}.mp3`, 95, { index: i + 1 }));
+	const out = oneBookEach({ albums: [a], tracks }, [8]);
+	assert.strictEqual(Object.values(out.works)[0].kind, 'podcast');
+	assert.strictEqual(bookCatalog.tagSamples(tracks, { roots: ROOTS }).filter((s) => s.album === undefined).length, 0, 'long mp3 episodes are never read file by file');
+	const titled = Object.fromEntries(tracks.map((t, i) => [t.ratingKey, { tags: { album: ['Arrival', 'The Long Dark', 'Static', 'Relay', 'Drift', 'Echoes', 'Signal Fire', 'Homeward'][i] } }]));
+	assert.strictEqual(Object.values(oneBookEach({ albums: [a], tracks, trackTags: titled }, [8]).works)[0].kind, 'podcast', 'episodes tagged with their own titles are still one podcast');
+});
+
+test('part albums that differ only by part markers stay one book', () => {
+	const dir = 'N:/Media/Music/Wren Halloway/The Rust Ledger [04] Low Sun';
+	const p1 = album(44, 'The Rust Ledger [04] Low Sun [01]', 'Graphic Audio [Wren Halloway]');
+	const p2 = album(45, 'The Rust Ledger 4 - Low Sun (2 of 6)', 'Graphic Audio [Wren Halloway]');
+	const p3 = album(46, 'The Rust Ledger 4: Low Sun (3 of 6)', 'Graphic Audio [Wren Halloway]');
+	const m4b = { t: track(4400, p1, `${dir}/Part 1/The Rust Ledger [04] Low Sun [01].m4b`, 140, { chapterSource: 'media' }), tags: { tags: { album: p1.title } } };
+	oneBookEach(libOf([p1, p2, p3], [[m4b], taggedParts(p2, `${dir}/Part 2`, 3, 60, p2.title), taggedParts(p3, `${dir}/Part 3`, 3, 60, p3.title)]), [7], 'Low Sun');
+
+	const tides = [1, 2, 3].map((k) => album(46 + k, `The Rust Ledger [02] Grey Tides [0${k}]`, 'Graphic Audio [Wren Halloway]'));
+	const tdir = 'N:/Media/Music/Wren Halloway/The Rust Ledger [02] Grey Tides';
+	oneBookEach(libOf(tides, tides.map((a, k) => taggedParts(a, `${tdir} [0${k + 1}]`, 3, 60, a.title))), [9], 'Grey Tides');
+
+	const oath = [album(50, 'The Rust Ledger [03] Oath [01]', 'Graphic Audio [Wren Halloway]'), album(51, 'The Rust Ledger 3: Oath (3 of 6)', 'Graphic Audio [Wren Halloway]')];
+	const odir = 'N:/Media/Music/Wren Halloway/The Rust Ledger [03] Oath';
+	const m4a = { t: track(5000, oath[0], `${odir} [01]/The Rust Ledger [03] Oath [01].m4a`, 300, { chapterSource: 'media' }), tags: { tags: { album: 'The Rust Ledger [03] Oath [01]' } } };
+	oneBookEach(libOf(oath, [[m4a], taggedParts(oath[1], `${odir} [03]`, 4, 65, oath[1].title)]), [5], 'Oath: one chaptered file plus mp3 parts in a sibling folder');
+});
+
+test('chapter files, an omnibus and hour splits are never read one by one or split', () => {
+	const road = album(52, 'The Long Road (5 of 5)', 'Graphic Audio [Wren Halloway]');
+	const chapters = Array.from({ length: 83 }, (_, i) => ({ t: track(52000 + i, road, `N:/Media/Music/Wren Halloway/The Long Road/${String(i + 2).padStart(2, '0')} The Long Road - Chapter ${i + 1}.mp3`, i % 2 ? 40 : 20, { index: i + 1 }), tags: { tags: { album: `Chapter ${i + 1}` } } }));
+	oneBookEach(libOf([road], [chapters]), [83], '83 chapter tracks');
+	assert.strictEqual(bookCatalog.tagSamples(chapters.map((x) => x.t), { roots: ROOTS }).length, 1, 'one album sample, no file read for itself');
+
+	const king = album(53, 'The Hollow Crown Cycle', 'Ida Marsh');
+	const omnibus = Array.from({ length: 319 }, (_, i) => ({ t: track(53000 + i, king, `N:/Media/Music/Ida Marsh/The Hollow Crown Cycle/${Math.floor(i / 64) + 1}-${String((i % 64) + 1).padStart(2, '0')} Book ${Math.floor(i / 64) + 1}_ Part - Chapter ${i}.mp3`, 6, { index: i + 1 }), tags: { tags: { album: `Book ${Math.floor(i / 64) + 1}` } } }));
+	oneBookEach(libOf([king], [omnibus]), [319], 'a 319-track omnibus');
+
+	const short = album(57, 'The Glass Road', 'Ida Marsh');
+	const shortChapters = Array.from({ length: 12 }, (_, i) => ({ t: track(57000 + i, short, `N:/Media/Music/Ida Marsh/The Glass Road/Chapter ${i + 1}.mp3`, 20, { index: i + 1 }), tags: { tags: { album: `Chapter ${['One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve'][i]}` } } }));
+	oneBookEach(libOf([short], [shortChapters]), [12], 'twelve 20-minute chapter files, each tagged with its chapter');
+
+	const box = album(58, 'The Hollow Crown Box', 'Ida Marsh');
+	const boxParts = Array.from({ length: 41 }, (_, i) => ({ t: track(58000 + i, box, `N:/Media/Music/Ida Marsh/The Hollow Crown Box/Part ${i + 1}.mp3`, 45, { index: i + 1 }), tags: { tags: { album: `Section ${String.fromCharCode(65 + (i % 26))}${i >= 26 ? 'x' : ''}` } } }));
+	oneBookEach(libOf([box], [boxParts]), [41], 'more long files than a series has books');
+	assert.strictEqual(bookCatalog.tagSamples(boxParts.map((x) => x.t), { roots: ROOTS }).length, 1);
+
+	const star = album(54, 'Starfall', 'Ida Marsh');
+	const hours = Array.from({ length: 6 }, (_, i) => ({ t: track(54000 + i, star, `N:/Media/Music/Ida Marsh/Starfall/Starfall ${String(i).padStart(2, '0')}.mp3`, 60, { index: i + 1 }), tags: { tags: { album: 'Starfall', title: `Starfall ${String(i).padStart(2, '0')}` } } }));
+	oneBookEach(libOf([star], [hours]), [6], 'hour splits named after their book');
+	oneBookEach({ albums: [star], tracks: hours.map((x) => x.t) }, [6], 'hour splits without tags');
+});
+
+test('books sharing one album title stay apart by folder, and neither is split', () => {
+	const a = album(55, 'Ashfall (Mara Lindqvist,...)', 'Avery Quill');
+	const b = album(56, 'Ashfall (Mara Lindqvist,...)', 'Avery Quill');
+	const out = oneBookEach(libOf([a, b], [
+		taggedParts(a, 'N:/Media/Music/Avery Quill/1.The Ember Throne', 5, 60, a.title),
+		taggedParts(b, 'N:/Media/Music/Avery Quill/2.The Salt Crown', 4, 60, b.title),
+	]), [4, 5]);
+	assert.deepStrictEqual(Object.values(out.works).map((w) => w.folderKey).sort(), ['N:/Media/Music/Avery Quill/1.The Ember Throne', 'N:/Media/Music/Avery Quill/2.The Salt Crown']);
+});
+
+// The bug (review of rules version 4): a podcast is typed one only when its file names say "ep N"
+// or "Episode N". Other long mp3 episodes were cut into one work per episode when their names
+// read "#N Title" or each carried its own album tag, and so was a course tagged lecture by lecture.
+
+const NIGHT_OWL = ['The Long Dark', 'Static', 'Relay', 'Drift', 'Echoes', 'Signal Fire'];
+
+function nightOwl(a, ext, prefix = () => '') {
+	return NIGHT_OWL.map((t, i) => track(a.ratingKey * 100 + i, a, `N:/Media/Music/Night Owl Radio/${prefix(i)}${t}.${ext}`, 55, { index: i + 1 }));
+}
+
+function perEpisodeTags(ts, extra = {}) {
+	return Object.fromEntries(ts.map((t, i) => [t.ratingKey, { tags: { album: NIGHT_OWL[i], title: NIGHT_OWL[i], ...extra } }]));
+}
+
+test('long mp3 files are never books of their own, however they are named or tagged', () => {
+	const a = album(60, 'Night Owl Radio', 'Night Owl Radio', ['Podcast']);
+	oneBookEach({ albums: [a], tracks: nightOwl(a, 'mp3', (i) => `Night Owl Radio - #${i + 1} `) }, [6], '"Show - #N Title" names');
+	oneBookEach({ albums: [a], tracks: nightOwl(a, 'mp3', (i) => `#${i + 1} `) }, [6], '"#N Title" names');
+	const bare = nightOwl(a, 'mp3');
+	oneBookEach({ albums: [a], tracks: bare, trackTags: perEpisodeTags(bare, { artist: 'Night Owl Radio', genre: 'Podcast' }) }, [6], 'one album tag per episode, genre Podcast');
+	const plain = album(60, 'Night Owl Radio', 'Night Owl Radio');
+	oneBookEach({ albums: [plain], tracks: bare, trackTags: perEpisodeTags(bare) }, [6], 'one album tag per episode, no genre');
+	const chaptered = bare.map((t) => ({ ...t, chapterSource: 'media' }));
+	oneBookEach({ albums: [plain], tracks: chaptered, trackTags: perEpisodeTags(chaptered) }, [6], 'mp3 chapter marks make no file a book of its own');
+	assert.strictEqual(bookCatalog.tagSamples(chaptered, { roots: ROOTS }).filter((s) => s.album === undefined).length, 0, 'nor are they read one by one');
+
+	const lec = album(61, 'Understanding Tides', 'Ida Marsh', ['Audiobook']);
+	const lectures = Array.from({ length: 12 }, (_, i) => track(6100 + i, lec, `N:/Media/Music/Ida Marsh/Understanding Tides/Lecture ${i + 1}.mp3`, 31, { index: i + 1 }));
+	const topics = Object.fromEntries(lectures.map((t, i) => [t.ratingKey, { tags: { album: `Lecture ${i + 1}: Topic ${String.fromCharCode(65 + i)}`, genre: 'Audiobook' } }]));
+	oneBookEach({ albums: [lec], tracks: lectures, trackTags: topics }, [12], 'a lecture course tagged lecture by lecture');
+});
+
+test('episodes tagged genre Podcast are never split, even in mp4 files', () => {
+	const a = album(62, 'Night Owl Radio', 'Night Owl Radio');
+	const ts = nightOwl(a, 'm4a');
+	oneBookEach({ albums: [a], tracks: ts, trackTags: perEpisodeTags(ts, { genre: 'Podcast' }) }, [6]);
+	assert.strictEqual(Object.keys(buildCatalog({ roots: ROOTS, albums: [a], tracks: ts, trackTags: perEpisodeTags(ts, { genre: 'Audiobook' }) }).works).length, 6, 'the same files as books are split');
+});
+
+// The bug (review of rules version 4): part words the part-marker list did not know split one
+// book in long m4b parts into one work per part, titled "Grey Tides, Part 1 Of" and the like.
+test('bookIdentity sees past spelled, roman and "N of M" part words', () => {
+	const same = [
+		'Grey Tides, Part One', 'Grey Tides, Part Four', 'Grey Tides, Part 1 of 3', 'Grey Tides - Book 2 of 3', 'Grey Tides (Book 3 of 3)',
+		'Grey Tides - Part I', 'Grey Tides - Part II', 'Grey Tides Pt. IV', 'Grey Tides, 1 of 3', 'Grey Tides - 2 of 3', 'Grey Tides Vol. 2', 'Grey Tides (Disc 2)',
+	];
+	for (const s of same) assert.strictEqual(bookCatalog.bookIdentity(s), 'grey tides', s);
+	for (const s of ['Fahrenheit 451', 'Catch-22', '1984', 'The Rust Ledger 1: Cold Iron']) assert.notStrictEqual(bookCatalog.bookIdentity(s), '', s);
+	assert.notStrictEqual(bookCatalog.bookIdentity('Fahrenheit 451'), bookCatalog.bookIdentity('Catch-22'));
+});
+
+test('one book in long m4b parts named by part words stays one work', () => {
+	const a = album(63, 'Grey Tides', 'Wren Halloway', ['Audiobook']);
+	const shapes = [
+		['Part One', 'Part Two', 'Part Three', 'Part Four'].map((p) => `Grey Tides, ${p}`),
+		[1, 2, 3].map((n) => `Grey Tides, Part ${n} of 3`),
+		[1, 2, 3].map((n) => `Grey Tides - Book ${n} of 3`),
+		['Part I', 'Part II'].map((p) => `Grey Tides - ${p}`),
+	];
+	for (const names of shapes) {
+		const ts = names.map((_, i) => track(6300 + i, a, `N:/Media/Music/Wren Halloway/Grey Tides/GT${i + 1}.m4b`, 120, { index: i + 1 }));
+		const out = oneBookEach({ albums: [a], tracks: ts, trackTags: Object.fromEntries(ts.map((t, i) => [t.ratingKey, { tags: { album: names[i] } }])) }, [names.length], names[0]);
+		assert.deepStrictEqual(Object.values(out.works).map((w) => w.title), ['Grey Tides'], names[0]);
+	}
+});
+
+// Lower severity, same review: one book whose parts spell its album tag two ways was split.
+test('one book whose parts spell its album tag two ways stays one work', () => {
+	const pairs = [
+		['Iron Sea: A Novel', 'Iron Sea'],
+		['The Rust Ledger, Book 5: Iron Sea', 'Iron Sea: The Rust Ledger, Book 5'],
+		['Iron Sea A', 'Iron Sea B'],
+	];
+	for (const [x, y] of pairs) assert.strictEqual(bookCatalog.bookIdentity(x), bookCatalog.bookIdentity(y), `${x} / ${y}`);
+	assert.notStrictEqual(bookCatalog.bookIdentity('Iron Sea: The Rust Ledger, Book 5'), bookCatalog.bookIdentity('Low Sun: The Rust Ledger, Book 4'));
+	const a = album(64, 'Iron Sea', 'Wren Halloway', ['Audiobook']);
+	for (const pair of pairs) {
+		const ts = pair.map((_, i) => track(6400 + i, a, `N:/Media/Music/Wren Halloway/Iron Sea/Iron Sea ${i + 1}.m4b`, 150, { index: i + 1 }));
+		oneBookEach({ albums: [a], tracks: ts, trackTags: Object.fromEntries(ts.map((t, i) => [t.ratingKey, { tags: { album: pair[i] } }])) }, [2], pair.join(' / '));
+	}
+});
+
+test('an m4b box set splits into its books, each with its own series number, and titles ending in numbers stay whole', () => {
+	const box = album(65, 'The Rust Ledger Box Set', 'Wren Halloway', ['Audiobook']);
+	const books = ['Cold Iron', 'Grey Tides', 'Low Sun'];
+	const ts = [];
+	const tags = {};
+	books.forEach((b, bi) => [1, 2].forEach((p) => {
+		const t = track(6500 + bi * 2 + p, box, `N:/Media/Music/Wren Halloway/The Rust Ledger Box Set/${bi + 1}-${p} ${b}.m4b`, 200, { index: bi * 2 + p });
+		ts.push(t);
+		tags[t.ratingKey] = { tags: { album: `The Rust Ledger ${bi + 1}: ${b} (${p} of 2)`, artist: 'Wren Halloway', track: String(bi * 2 + p) } };
+	}));
+	const out = buildCatalog({ roots: ROOTS, albums: [box], tracks: ts, trackTags: tags });
+	assert.deepStrictEqual(Object.values(out.works).map((w) => [w.id, w.series, w.sequence, w.parts.length]).sort((x, y) => x[0].localeCompare(y[0])), [
+		['wren-halloway/cold-iron', 'The Rust Ledger', 1, 2],
+		['wren-halloway/grey-tides', 'The Rust Ledger', 2, 2],
+		['wren-halloway/low-sun', 'The Rust Ledger', 3, 2],
+	]);
+
+	const classics = album(66, 'Classics', 'Various Artists', ['Audiobook']);
+	const named = [['Fahrenheit 451', 'Ray Barton'], ['Catch-22', 'Jo Heller'], ['1984', 'Ed Orwin'], ['2001: A Space Odyssey', 'Art Clarkson']];
+	const cts = named.map(([b], i) => track(6600 + i, classics, `N:/Media/Music/Classics/${b.replace(':', '')}.m4b`, 400, { index: i + 1 }));
+	const four = buildCatalog({ roots: ROOTS, albums: [classics], tracks: cts, trackTags: Object.fromEntries(cts.map((t, i) => [t.ratingKey, { tags: { album: named[i][0], artist: named[i][1] } }])) });
+	assert.deepStrictEqual(Object.values(four.works).map((w) => [w.title, w.author]).sort((x, y) => x[0].localeCompare(y[0])), [
+		['1984', 'Ed Orwin'], ['2001: A Space Odyssey', 'Art Clarkson'], ['Catch-22', 'Jo Heller'], ['Fahrenheit 451', 'Ray Barton'],
+	]);
 });
