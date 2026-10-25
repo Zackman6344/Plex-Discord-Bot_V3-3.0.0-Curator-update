@@ -13,6 +13,10 @@ const { runHealthCheck, formatHealthCheck } = require('./healthCheck.js');
 
 const INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
 let previousStatuses = null;
+let monitorTimer = null;
+// Bumped on every start and stop. A check that was still waiting on its results when the monitor
+// it belongs to stopped must not report: its client is the one !restart destroyed.
+let generation = 0;
 
 function statusMap(results) {
     const out = {};
@@ -40,7 +44,7 @@ async function dmOwner(client, message) {
     }
 }
 
-async function tick(client) {
+async function tick(client, gen) {
     let results;
     try {
         results = await runHealthCheck();
@@ -48,6 +52,7 @@ async function tick(client) {
         logger.error('Health check tick threw:', err);
         return;
     }
+    if (gen !== generation) return;
 
     const formatted = formatHealthCheck(results);
 
@@ -85,14 +90,29 @@ async function tick(client) {
         }
     }
 
+    // Again after the DM: a stop that lands while it is being sent (through the client being
+    // destroyed, so it may not arrive) leaves the baseline alone, and the new monitor reports the
+    // change itself. A notice sent twice beats one never sent.
+    if (gen !== generation) return;
     previousStatuses = statusMap(results);
 }
 
+// Replaces any monitor already running. !restart starts a new one for the new client, and the old
+// one's interval used to keep running beside it, so every check ran and logged twice.
 function startHealthMonitor(client) {
-    tick(client).then(() => {
-        logger.info(`Health monitor scheduled — re-checking every ${INTERVAL_MS / 60000} minutes`);
+    stopHealthMonitor();
+    const gen = generation;
+    tick(client, gen).then(() => {
+        if (gen === generation) logger.info(`Health monitor scheduled — re-checking every ${INTERVAL_MS / 60000} minutes`);
     });
-    return setInterval(() => tick(client), INTERVAL_MS);
+    monitorTimer = setInterval(() => tick(client, gen), INTERVAL_MS);
+    return monitorTimer;
 }
 
-module.exports = { startHealthMonitor };
+function stopHealthMonitor() {
+    generation++;
+    if (monitorTimer) clearInterval(monitorTimer);
+    monitorTimer = null;
+}
+
+module.exports = { startHealthMonitor, stopHealthMonitor };

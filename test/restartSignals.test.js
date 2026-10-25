@@ -49,6 +49,9 @@ stub('helpers/logger.js', { info() {}, warn() {}, error() {} });
 stub('helpers/commandLog.js', { recordEvent() {} });
 stub('helpers/processPriority.js', { bindToConfig() {} });
 stub('helpers/voiceHealth.js', { bindToConfig() {} });
+stub('helpers/eventServer.js', { stopEventServer() {} });
+stub('helpers/healthMonitor.js', { stopHealthMonitor() {} });
+stub('helpers/kometaTheater.js', { stopKometaTheater() {} });
 stub('config/config.js', {});
 stub('config/keys.js', { botToken: 'not-a-token' });
 
@@ -81,5 +84,5 @@ test('a signal after !restart shuts down the bot that is running now', (t) => {
 	assert.deepStrictEqual(old.calls, [], 'the old bot was already stopped by !restart');
 	assert.strictEqual((listeners.SIGINT || []).length, 1);
 	assert.strictEqual((listeners.SIGTERM || []).length, 1);
-	assert.strictEqual(listeners.uncaughtException.length, 2, 'the exception loggers are as before');
+	assert.strictEqual(listeners.uncaughtException.length, 1, 'bound once, like the quitter');
 });
