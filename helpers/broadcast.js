@@ -187,7 +187,10 @@ const warnedTypes = new Set();
 
 async function resolveChannelById(client, id) {
     if (!id) return null;
-    if (channelCache.has(id)) return channelCache.get(id);
+    // A channel cached before !restart belongs to the destroyed client, and every send through it
+    // failed with "Expected token to be set for this request".
+    const cached = channelCache.get(id);
+    if (cached && cached.client === client) return cached;
     try {
         const channel = await client.channels.fetch(id);
         if (!channel || typeof channel.send !== 'function') {

@@ -10,6 +10,9 @@ function stop(bot, client) {
     // read-along DM page. On a signal the process exits before that edit is sent, and the left-over
     // page is stubbed or adopted when it is next clicked.
     try { if (bot.readAlong) bot.readAlong.shutdown(); } catch (_) {}
+    try { require('../helpers/eventServer.js').stopEventServer(); } catch (_) {}
+    try { require('../helpers/healthMonitor.js').stopHealthMonitor(); } catch (_) {}
+    try { require('../helpers/kometaTheater.js').stopKometaTheater(); } catch (_) {}
     bot.songQueue = [];
     bot.stop();
     bot.destroy();
@@ -18,9 +21,11 @@ function stop(bot, client) {
 
 // !restart runs start() again in this process. A quitter per start() closed over its own bot,
 // and the first one registered (the stopped bot's) exits the process before the next one runs,
-// so one quitter is bound once and always stops whichever bot is running now.
+// so one quitter is bound once and always stops whichever bot is running now. The error loggers
+// are bound once too: a login retry runs start() again, and each run added another pair, so every
+// later error was logged once per restart and retry.
 let current = null;
-let signalsBound = false;
+let processHooksBound = false;
 
 async function quitter(){
     const logger = require('../helpers/logger.js');
@@ -34,7 +39,38 @@ async function quitter(){
     }
 }
 
-function start(){
+// A failed login has already destroyed its client, and discord.js leaves that client's gateway
+// manager marked destroyed for good. Logged in again, its next destroy() would return early and
+// leave the gateway open, so !restart would leave two clients answering every command. Each retry
+// gets a fresh client and Bot instead, the way !restart builds them.
+function loginFailed(err, attempt, bot, client) {
+    const logger = require('../helpers/logger.js');
+    const commandLog = require('../helpers/commandLog.js');
+    const loginRetry = require('../helpers/loginRetry.js');
+    const reason = (err && err.message) || String(err);
+
+    if (!loginRetry.isRetryable(err)) {
+        logger.error(`Discord login failed and will not be retried: ${reason}`);
+        commandLog.recordEvent('login-failed', { attempt: attempt + 1, error: reason, retryInMs: null });
+        // Not process.exit(1) straight away: on Windows that aborted on a libuv assertion
+        // (UV_HANDLE_CLOSING, src\win\async.c) while the failed client was still closing, so the
+        // process died on the abort rather than with code 1. With nothing left running it ends by
+        // itself; the timer only covers something holding it open.
+        process.exitCode = 1;
+        setTimeout(() => process.exit(1), 5000).unref();
+        return;
+    }
+
+    const delay = loginRetry.retryDelayMs(attempt);
+    logger.warn(`Discord login failed (attempt ${attempt + 1}): ${reason}. Trying again in ${delay / 1000} s.`);
+    commandLog.recordEvent('login-failed', { attempt: attempt + 1, error: reason, retryInMs: delay });
+    setTimeout(() => {
+        stop(bot, client);
+        start(attempt + 1);
+    }, delay);
+}
+
+function start(attempt = 0){
     // packages --------------------------------------------------------------------
     const { Client, GatewayIntentBits, Partials } = require('discord.js');
     const Bot = require('./bot.js');
@@ -74,28 +110,29 @@ function start(){
     // bot functions ---------------------------------------------------------------
     require('./music.js')(client, bot);
 
-    client.login(keys.botToken);
+    client.login(keys.botToken).catch((err) => loginFailed(err, attempt, bot, client));
 
-    // Catch anything that escapes a try/catch or a .catch() so the bot doesn't die mid-session.
-    // Node's default would crash the process on an uncaught exception; for a long-running bot we'd
-    // rather log it loudly and keep running.
-    // Also recorded in the command log: this is where a failure with no command behind it shows
-    // up (a queue advancing, a timer firing), and the console line alone gave no way to see what
-    // the bot had been doing at the time.
-    const commandLog = require('../helpers/commandLog.js');
+    if (!processHooksBound) {
+        processHooksBound = true;
 
-    process.on('uncaughtException', (err, origin) => {
-        logger.error(`Uncaught exception (${origin}):`, err && err.stack ? err.stack : err);
-        commandLog.recordEvent('uncaught-exception', { origin, error: (err && err.stack) || String(err) });
-    });
+        // Catch anything that escapes a try/catch or a .catch() so the bot doesn't die mid-session.
+        // Node's default would crash the process on an uncaught exception; for a long-running bot we'd
+        // rather log it loudly and keep running.
+        // Also recorded in the command log: this is where a failure with no command behind it shows
+        // up (a queue advancing, a timer firing), and the console line alone gave no way to see what
+        // the bot had been doing at the time.
+        const commandLog = require('../helpers/commandLog.js');
 
-    process.on('unhandledRejection', (reason) => {
-        logger.error('Unhandled promise rejection:', reason && reason.stack ? reason.stack : reason);
-        commandLog.recordEvent('unhandled-rejection', { error: (reason && reason.stack) || String(reason) });
-    });
+        process.on('uncaughtException', (err, origin) => {
+            logger.error(`Uncaught exception (${origin}):`, err && err.stack ? err.stack : err);
+            commandLog.recordEvent('uncaught-exception', { origin, error: (err && err.stack) || String(err) });
+        });
 
-    if (!signalsBound) {
-        signalsBound = true;
+        process.on('unhandledRejection', (reason) => {
+            logger.error('Unhandled promise rejection:', reason && reason.stack ? reason.stack : reason);
+            commandLog.recordEvent('unhandled-rejection', { error: (reason && reason.stack) || String(reason) });
+        });
+
         process.on('SIGTERM', quitter);
         process.on('SIGINT', quitter);
     }

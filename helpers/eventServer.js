@@ -16,6 +16,7 @@ const broadcast = require('./broadcast.js');
 // arrives as ~340 KB of JSON. The old 64 KB ceiling silently 413'd exactly those events.
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
 let isListening = false;
+let activeServer = null;
 
 function readBody(req) {
     return new Promise((resolve, reject) => {
@@ -109,7 +110,20 @@ function startEventServer(client) {
         logger.info(`Event server listening on http://127.0.0.1:${port} (Kometa + Playnite pushes)`);
     });
 
+    activeServer = server;
     return server;
+}
+
+// !restart starts a new server for the new client. Left open, this one kept the port, so the new
+// one failed with EADDRINUSE while this one went on handing pushes to the destroyed client.
+// isListening is cleared here rather than on 'close', which can land after the new server is up.
+function stopEventServer() {
+    if (!activeServer) return;
+    const server = activeServer;
+    activeServer = null;
+    isListening = false;
+    server.closeAllConnections();
+    server.close();
 }
 
 // Snapshot for the health check / !diag report.
@@ -121,4 +135,4 @@ function getStatus() {
     };
 }
 
-module.exports = { startEventServer, getStatus };
+module.exports = { startEventServer, stopEventServer, getStatus };

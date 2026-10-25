@@ -28,9 +28,11 @@ const config = require('../config/config.js');
 const logger = require('./logger.js');
 const { getModel } = require('./geminiAPI.js');
 
-const STORE_PATH = path.join(__dirname, '..', 'data', 'kometa_theater.json');
-const QUEUE_PATH = path.join(__dirname, '..', 'data', 'kometa_theater_queue.json');
-const TAIL_PATH = path.join(__dirname, '..', 'data', 'kometa_theater_tail.json');
+// Overridable so a test run can point at its own directory instead of the live tail and queue.
+const DATA_DIR = process.env.PLEXBOT_KOMETA_THEATER_DIR || path.join(__dirname, '..', 'data');
+const STORE_PATH = path.join(DATA_DIR, 'kometa_theater.json');
+const QUEUE_PATH = path.join(DATA_DIR, 'kometa_theater_queue.json');
+const TAIL_PATH = path.join(DATA_DIR, 'kometa_theater_tail.json');
 const GRACE_MS = 3000;   // wait this long after a "Finished" line so its `changes` webhook can arrive
 const IDLE_MS = 750;     // poll cadence when the queue is empty
 const WATCHDOG_MS = 5 * 60 * 1000; // silent log + empty queues for this long = the run died
@@ -178,11 +180,16 @@ let seenSet = new Set();
 const changeBuffer = new Map(); // norm -> { added:[], removed:[], created, ts }
 const genQueue = [];            // raw collections awaiting generation: { name, norm, total, added, readyAt }
 let postQueue = [];             // rendered, ready-to-post specs (persisted to disk): { kind, ... }
-let generating = false;         // true while a spec is mid-generation (don't end the session under it)
+let generating = 0;             // specs mid-generation (don't end the session under them); a count,
+                                // since the run before a !restart can still be finishing one
 let pendingCounts = null;       // last "N Processed M Added" seen, attached to the next Finished line
 let pendingMissing = null;      // last "N Movies Missing" seen, same attachment
 let sessionActive = false;
 let ending = false;
+// Bumped by every stop. The worker loops re-arm only while it still matches the run they were
+// scheduled in: a produce or consume still awaiting when !restart stops the theater must not
+// carry on as a second loop beside the new run's.
+let runId = 0;
 let produceTimer = null;
 let consumeTimer = null;
 let stopTailer = null;
@@ -386,7 +393,9 @@ async function generateReport(persona, ctx, isNew) {
 // --- posting --------------------------------------------------------------------------------
 
 async function getChannel() {
-    if (channelCache) return channelCache;
+    // A channel cached before !restart belongs to the destroyed client, and every post through it
+    // failed with "Expected token to be set for this request".
+    if (channelCache && channelCache.client === _client) return channelCache;
     const id = config.kometaChannelId || config.broadcastChannelId || '';
     if (!id || !_client) return null;
     try {
@@ -514,31 +523,34 @@ function postSpec(spec) {
 // PRODUCER: generate specs continuously, back-to-back, as soon as collections are ready. Each
 // prompt gets full time to generate (paced only by Gemini's own latency), and finished messages
 // pile up in the persisted post queue ahead of the poster.
-async function produce() {
+async function produce(run) {
     produceTimer = null;
     let nextDelay = IDLE_MS;
     try {
         if (genQueue.length && genQueue[0].readyAt <= Date.now()) {
             const item = genQueue.shift();
-            generating = true;
+            generating++;
             try {
-                postQueue.push(await renderSpec(item));
+                // Not postQueue.push(await …): that fixes the array before the await, and a
+                // !restart during the Gemini call swaps in the queue reloaded from disk, so the
+                // finished report went into the discarded array and was never posted.
+                const spec = await renderSpec(item);
+                postQueue.push(spec);
                 savePostQueue();
             } finally {
-                generating = false;
+                generating--;
             }
             nextDelay = 0; // no artificial pause — keep the queue filled ahead of the poster
         }
     } catch (err) {
         logger.error('Kometa Theater generate failed:', err.message || err);
-        generating = false;
     }
-    scheduleProduce(nextDelay);
+    if (run === runId) scheduleProduce(nextDelay);
 }
 
 // CONSUMER: post the pre-generated specs at the deliberate pace. Signs off once everything —
 // the generation queue, an in-flight generation, and the post queue — is drained.
-async function consume() {
+async function consume(run) {
     consumeTimer = null;
     let nextDelay = IDLE_MS;
     try {
@@ -547,24 +559,26 @@ async function consume() {
             savePostQueue();
             await postSpec(spec);
             nextDelay = config.kometaTheaterDelayMs || 5000;
-        } else if (sessionActive && genQueue.length === 0 && !generating) {
+        } else if (sessionActive && genQueue.length === 0 && generating === 0) {
             if (ending) await endSession();
             else if (Date.now() - lastLogActivity > WATCHDOG_MS) await endSession(true);
         }
     } catch (err) {
         logger.error('Kometa Theater post failed:', err.message || err);
     }
-    scheduleConsume(nextDelay);
+    if (run === runId) scheduleConsume(nextDelay);
 }
 
 function scheduleProduce(ms) {
     if (produceTimer) clearTimeout(produceTimer);
-    produceTimer = setTimeout(produce, ms);
+    const run = runId;
+    produceTimer = setTimeout(() => produce(run), ms);
 }
 
 function scheduleConsume(ms) {
     if (consumeTimer) clearTimeout(consumeTimer);
-    consumeTimer = setTimeout(consume, ms);
+    const run = runId;
+    consumeTimer = setTimeout(() => consume(run), ms);
 }
 
 // --- log tailer -----------------------------------------------------------------------------
@@ -579,7 +593,10 @@ function startTailer(filePath, onLine, resumeFrom) {
     async function poll() {
         try {
             const stat = await fs.promises.stat(filePath);
-            if (!primed) { offset = stat.size; primed = true; return; } // start at EOF — only new lines
+            if (stopped) return;
+            // Start at EOF — only new lines — and save it: a tailer stopped during its first read
+            // leaves those lines to the next one, which can only resume from a saved offset.
+            if (!primed) { offset = stat.size; primed = true; tailOffset = offset; saveTail(); return; }
             if (stat.size < offset) { offset = 0; pending = ''; } // rotated / truncated
             if (stat.size > offset) {
                 const fh = await fs.promises.open(filePath, 'r');
@@ -587,6 +604,9 @@ function startTailer(filePath, onLine, resumeFrom) {
                     const len = stat.size - offset;
                     const buf = Buffer.alloc(len);
                     await fh.read(buf, 0, len, offset);
+                    // Stopped while reading: these lines are left to the next tailer, which resumes
+                    // from the saved offset. Handing them on here as well narrated them twice.
+                    if (stopped) return;
                     offset = stat.size;
                     tailOffset = offset;
                     saveTail();
@@ -657,7 +677,11 @@ function onError(payload) {
     sessionErrors.push(text);
 }
 
+// Replaces any theater already running. !restart starts a new one, and the old tailer used to
+// keep polling beside it from the same offset, so both read every new line and each collection
+// was queued twice.
 function startKometaTheater(client) {
+    stopKometaTheater();
     if (!config.kometaTheaterEnabled) {
         logger.info('Kometa Theater disabled (kometaTheaterEnabled=false)');
         return;
@@ -684,12 +708,26 @@ function startKometaTheater(client) {
         + (postQueue.length ? ` (${postQueue.length} queued transmissions)` : ''));
 }
 
+// The queues, the open session and the tail offset are left as they are: they are saved as they
+// change, and the next start carries on from them. A generation or post already in flight
+// finishes, but does not schedule another.
+function stopKometaTheater() {
+    runId++;
+    if (stopTailer) stopTailer();
+    stopTailer = null;
+    if (produceTimer) clearTimeout(produceTimer);
+    produceTimer = null;
+    if (consumeTimer) clearTimeout(consumeTimer);
+    consumeTimer = null;
+}
+
 function isEnabled() {
     return !!config.kometaTheaterEnabled;
 }
 
 module.exports = {
     startKometaTheater,
+    stopKometaTheater,
     isEnabled,
     onRunStart,
     onRunEnd,
