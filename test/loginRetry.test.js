@@ -19,7 +19,7 @@ const clients = [];
 const logins = [];
 const logged = { warn: [], error: [] };
 const events = [];
-const stops = { server: 0, health: 0, theater: 0 };
+const stops = { server: 0, health: 0, theater: 0, archipelago: 0, games: 0 };
 
 class FakeBot {
 	constructor(client) {
@@ -70,6 +70,9 @@ stub('helpers/voiceHealth.js', { bindToConfig() {} });
 stub('helpers/eventServer.js', { stopEventServer() { stops.server++; } });
 stub('helpers/healthMonitor.js', { stopHealthMonitor() { stops.health++; } });
 stub('helpers/kometaTheater.js', { stopKometaTheater() { stops.theater++; } });
+stub('helpers/archipelagoMonitor.js', { detachArchipelagoMonitor() { stops.archipelago++; } });
+const retired = [];
+stub('helpers/restartHandoff.js', { endAll(client) { stops.games++; retired.push(client); } });
 stub('config/config.js', {});
 stub('config/keys.js', { botToken: 'not-a-token' });
 
@@ -110,9 +113,8 @@ test.beforeEach(() => {
 	logged.warn.length = 0;
 	logged.error.length = 0;
 	events.length = 0;
-	stops.server = 0;
-	stops.health = 0;
-	stops.theater = 0;
+	for (const key of Object.keys(stops)) stops[key] = 0;
+	retired.length = 0;
 });
 
 test('a login that cannot reach Discord is tried again with a fresh client', async (t) => {
@@ -140,7 +142,8 @@ test('a login that cannot reach Discord is tried again with a fresh client', asy
 	assert.notStrictEqual(clients[1], clients[0], 'never the client whose login failed');
 	assert.deepStrictEqual(bots[0].calls, ['books.shutdown', 'stop:0', 'destroy'], 'the failed pair is stopped like !restart stops one');
 	assert.strictEqual(clients[0].destroyed, true);
-	assert.deepStrictEqual(stops, { server: 1, health: 1, theater: 1 }, 'everything started on ready is stopped with it');
+	assert.deepStrictEqual(stops, { server: 1, health: 1, theater: 1, archipelago: 1, games: 1 }, 'everything started on ready is stopped with it');
+	assert.deepStrictEqual(retired, [clients[0]], 'the failed client is the one retired');
 	assert.strictEqual(clients[1].loginCalls, 1);
 
 	t.mock.timers.tick(60 * 60 * 1000);

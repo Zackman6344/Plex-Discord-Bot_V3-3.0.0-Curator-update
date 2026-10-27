@@ -23,6 +23,13 @@ function startedGames(prev, activities) {
     return { now, started };
 }
 
+// userId -> Set(currently-playing game names). Kept across startGamePresence calls: !restart
+// starts another for the new client, and one starting empty announced a game already open again on
+// its first update, a change of the game's details line being enough. Not seeded from the new
+// client's cached presences: those cannot tell an announced game from one launched while the bot
+// was between clients, which would then never be announced.
+const playing = new Map();
+
 function startGamePresence(client) {
     if (!config.gamePresenceEnabled) {
         logger.info('Game presence detection disabled (gamePresenceEnabled=false)');
@@ -30,7 +37,6 @@ function startGamePresence(client) {
     }
 
     const watchId = config.ownerId;
-    const playing = new Map(); // userId -> Set(currently-playing game names)
 
     client.on('presenceUpdate', (oldPresence, newPresence) => {
         try {
@@ -54,4 +60,4 @@ function startGamePresence(client) {
     logger.info(`Game presence detection enabled — watching ${watchId ? 'owner' : 'no one (set ownerId)'} activity.`);
 }
 
-module.exports = { startGamePresence, startedGames };
+module.exports = { startGamePresence, startedGames, _reset: () => playing.clear() };

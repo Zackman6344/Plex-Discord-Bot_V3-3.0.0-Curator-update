@@ -6,6 +6,7 @@ const { getPlex } = require('../helpers/plexClient.js');
 const handleAIError = require('../helpers/aiErrorHandler.js');
 const clueCache = require('../helpers/clueCache.js');
 const logger = require('../helpers/logger.js');
+const restartHandoff = require('../helpers/restartHandoff.js');
 
 const model = getModel();
 const plex = getPlex();
@@ -173,6 +174,8 @@ module.exports = {
                     msg.channel.send(`🕦 **Actor 3:** ${clues.clue3}`);
                 }, 120000);
 
+                restartHandoff.trackCollector(collector);
+
                 // Listen for guesses
                 collector.on('collect', m => {
                     if (currentWinners.has(m.author.id)) return;
@@ -190,7 +193,12 @@ module.exports = {
                 });
 
                 // End the game
-                collector.on('end', () => {
+                collector.on('end', (collected, reason) => {
+                    clearTimeout(clue2Timer);
+                    clearTimeout(clue3Timer);
+                    const post = restartHandoff.poster(msg.channel, reason);
+                    const preamble = reason === restartHandoff.REASON ? `🔄 **THE BOT RESTARTED!** 🔄` : `🕰️ **TIME'S UP!** 🕰️`;
+
                     if (gameWinnersData.length > 0) {
                         const board = loadLeaderboard();
                         let winnerNames = [];
@@ -207,9 +215,9 @@ module.exports = {
 
                         saveLeaderboard(board);
 
-                        msg.channel.send(`🕰️ **TIME'S UP!** 🕰️\nThe secret ${targetType.toLowerCase()} was:\n🎬 **${target.title}** (${target.year})\n\n🎭 **The Roles:**\n${clues.reveal}\n\n🎉 **Points awarded to:** ${winnerNames.join(", ")}!`);
+                        post(`${preamble}\nThe secret ${targetType.toLowerCase()} was:\n🎬 **${target.title}** (${target.year})\n\n🎭 **The Roles:**\n${clues.reveal}\n\n🎉 **Points awarded to:** ${winnerNames.join(", ")}!`);
                     } else {
-                        msg.channel.send(`🕰️ **TIME'S UP!** 🕰️\nNobody guessed it! The secret ${targetType.toLowerCase()} was:\n\n🎬 **${target.title}** (${target.year})\n\n🎭 **The Roles:**\n${clues.reveal}\n\n> *${target.summary.substring(0, 200)}...*`);
+                        post(`${preamble}\nNobody guessed it! The secret ${targetType.toLowerCase()} was:\n\n🎬 **${target.title}** (${target.year})\n\n🎭 **The Roles:**\n${clues.reveal}\n\n> *${target.summary.substring(0, 200)}...*`);
                     }
                 });
 
