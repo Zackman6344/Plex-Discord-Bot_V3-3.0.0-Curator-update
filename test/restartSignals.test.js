@@ -52,6 +52,8 @@ stub('helpers/voiceHealth.js', { bindToConfig() {} });
 stub('helpers/eventServer.js', { stopEventServer() {} });
 stub('helpers/healthMonitor.js', { stopHealthMonitor() {} });
 stub('helpers/kometaTheater.js', { stopKometaTheater() {} });
+stub('helpers/archipelagoMonitor.js', { detachArchipelagoMonitor() {} });
+stub('helpers/restartHandoff.js', { endAll() {} });
 stub('config/config.js', {});
 stub('config/keys.js', { botToken: 'not-a-token' });
 

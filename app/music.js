@@ -19,6 +19,7 @@ module.exports = function(client, bot) {
   const bookButtons = require('../helpers/bookButtons.js');
   const { createReadAlong } = require('../helpers/readAlong.js');
   const readAlongButtons = require('../helpers/readAlongButtons.js');
+  const restartHandoff = require('../helpers/restartHandoff.js');
 
   // At module init, not on ready: the music gate and utils.stop's shutdown both need it before
   // the gateway is up. !restart builds a new Bot and runs this again; utils.stop shut the old
@@ -91,13 +92,31 @@ module.exports = function(client, bot) {
   // when bot is ready
   client.once('clientReady', async function() {
     logger.info(`Bot ready — logged in as ${client.user.tag}`);
-    startHealthMonitor(client);
+    // Each start is wrapped on its own, so one that throws cannot skip those after it. Above all
+    // the Archipelago monitor's: after !restart its relay holds every line until it is attached.
+    try {
+      startHealthMonitor(client);
+    } catch (err) {
+      logger.error('Health monitor failed to start:', err.message || err);
+    }
     // Inbound listener for Kometa run + Playnite game-launch pushes. No-op unless enabled.
-    startEventServer(client);
+    try {
+      startEventServer(client);
+    } catch (err) {
+      logger.error('Event server failed to start:', err.message || err);
+    }
     // Broadcast games detected via Discord activity ("Playing X"). No-op unless enabled.
-    startGamePresence(client);
+    try {
+      startGamePresence(client);
+    } catch (err) {
+      logger.error('Game presence failed to start:', err.message || err);
+    }
     // "Kometa Theater" — narrate runs in-character by tailing meta.log. No-op unless enabled.
-    startKometaTheater(client);
+    try {
+      startKometaTheater(client);
+    } catch (err) {
+      logger.error('Kometa Theater failed to start:', err.message || err);
+    }
     // Re-opens any Archipelago watches saved in data/archipelago_watches.json. No-op
     // unless config.archipelagoEnabled is set.
     try {
@@ -114,6 +133,8 @@ module.exports = function(client, bot) {
     }
     // Announce boot to the broadcast channel so it's easy to confirm the bot is live.
     broadcast.broadcastStartup(client).catch((err) => logger.error('Startup broadcast failed:', err.message || err));
+    // Games that a !restart ended say so through this client, the old one being gone.
+    restartHandoff.deliver(client).catch((err) => logger.error('Restart notices failed:', err.message || err));
     // Slash command registration: commands declaring a `slash` block in commands/index.js
     // get registered with Discord on each boot. Fast in test-guild mode, slow globally.
     try {
@@ -291,6 +312,14 @@ module.exports = function(client, bot) {
       if (said) {
         commandLog.recordOutput({ id: logId, kind: 'message', channelId: interaction.channelId, payload: said });
       }
+      return;
+    }
+
+    // A restart stopped this client while the defer was in flight. Whatever the command set up
+    // now would start on the destroyed client, after the restart had already ended everything.
+    if (restartHandoff.isRetired(client)) {
+      interaction.editReply('🔄 The bot is restarting. Try that again in a moment.').catch(() => {});
+      commandLog.finishInvocation(logId, { ok: false, ms: Date.now() - startedAt, error: new Error('the bot restarted before the command ran') });
       return;
     }
 

@@ -6,6 +6,7 @@ const { getPlex } = require('../helpers/plexClient.js');
 const handleAIError = require('../helpers/aiErrorHandler.js');
 const clueCache = require('../helpers/clueCache.js');
 const logger = require('../helpers/logger.js');
+const restartHandoff = require('../helpers/restartHandoff.js');
 
 const model = getModel();
 const plex = getPlex();
@@ -170,6 +171,8 @@ Output STRICTLY a raw, valid JSON object with NO markdown formatting, NO markdow
                     msg.channel.send(`🕦 **Part 3:** *${clues.sentence3}*`);
                 }, 120000);
 
+                restartHandoff.trackCollector(collector);
+
                 // Listen for guesses without stopping the timer
                 collector.on('collect', m => {
                     // Ignore if they already guessed it correctly
@@ -189,7 +192,12 @@ Output STRICTLY a raw, valid JSON object with NO markdown formatting, NO markdow
                 });
 
                 // End the game and tally the scores
-                collector.on('end', () => {
+                collector.on('end', (collected, reason) => {
+                    clearTimeout(clue2Timer);
+                    clearTimeout(clue3Timer);
+                    const post = restartHandoff.poster(msg.channel, reason);
+                    const preamble = reason === restartHandoff.REASON ? `🔄 **THE BOT RESTARTED!** 🔄` : `🕰️ **TIME'S UP!** 🕰️`;
+
                     if (gameWinnersData.length > 0) {
                         const board = loadLeaderboard();
                         let winnerNames = [];
@@ -206,9 +214,9 @@ Output STRICTLY a raw, valid JSON object with NO markdown formatting, NO markdow
 
                         saveLeaderboard(board);
 
-                        msg.channel.send(`🕰️ **TIME'S UP!** 🕰️\nThe terribly-explained ${targetType.toLowerCase()} was:\n🎬 **${target.title}** (${target.year})\n\n🎉 **Points awarded to:** ${winnerNames.join(", ")}!`);
+                        post(`${preamble}\nThe terribly-explained ${targetType.toLowerCase()} was:\n🎬 **${target.title}** (${target.year})\n\n🎉 **Points awarded to:** ${winnerNames.join(", ")}!`);
                     } else {
-                        msg.channel.send(`🕰️ **TIME'S UP!** 🕰️\nNobody guessed it! The terribly-explained ${targetType.toLowerCase()} was:\n\n🎬 **${target.title}** (${target.year})\n> *${target.summary.substring(0, 200)}...*`);
+                        post(`${preamble}\nNobody guessed it! The terribly-explained ${targetType.toLowerCase()} was:\n\n🎬 **${target.title}** (${target.year})\n> *${target.summary.substring(0, 200)}...*`);
                     }
                 });
 

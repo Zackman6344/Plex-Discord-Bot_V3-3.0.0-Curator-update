@@ -6,6 +6,7 @@ const hitsterTurn = require('../helpers/hitsterTurn.js');
 const channelClaims = require('../helpers/channelClaims.js');
 const voiceClaims = require('../helpers/voiceClaims.js');
 const longForm = require('../helpers/longForm.js');
+const restartHandoff = require('../helpers/restartHandoff.js');
 
 const plex = getPlex();
 
@@ -34,6 +35,51 @@ voiceClaims.register('hitster', (guildId) => {
     }
     return null;
 });
+
+// By identity, not by channel: once !restart has ended a game, a newer one can hold the same
+// channel, and a late path of the old game (its turn timeout, a turn resuming after an await)
+// would otherwise delete the new one and leave it running but unstoppable.
+function endGame(game) {
+    if (activeGames.get(game.channelId) === game) activeGames.delete(game.channelId);
+    clearTimeout(game.nextTurnTimer);
+    if (game.forgetRestart) game.forgetRestart();
+}
+
+// Checked after every await: the game may have been stopped or ended by !restart meanwhile.
+function isLive(game) {
+    return activeGames.get(game.channelId) === game && game.state === 'playing';
+}
+
+// !restart ends every game, lobbies included. Its collector, timers, channel and Bot all belong to
+// the client being destroyed, so a game left in place could never take another guess, yet would
+// keep the channel and voice claimed. The new client posts how it stood.
+function endForRestart(game) {
+    const turn = game.activeTurn;
+    const wasLobby = game.state === 'lobby';
+    game.state = 'ended';
+    endGame(game);
+    // An open turn posts its own notice as it resolves, with the track it was playing.
+    if (turn && !turn.resolved) return turn.collector.stop(restartHandoff.REASON);
+    restartHandoff.notice(game.channelId, restartNotice(game, null, wasLobby));
+}
+
+function restartNotice(game, track, wasLobby) {
+    // Standings name players with <@id>; after a restart that must not ping the whole table.
+    const allowedMentions = { parse: [] };
+    if (wasLobby) {
+        return { content: '🔄 **The bot restarted, so this Hitster lobby closed.** `/hitster create` opens a new one.', allowedMentions };
+    }
+    let content = '🔄 **The bot restarted, so this Hitster game ended.**';
+    if (track) content += `\nThe track was 📅 **${track.year}** - *${track.title}* by ${track.artist}.`;
+    if (game.playerOrder.some((id) => (game.timelines[id] || []).length)) {
+        const lines = game.playerOrder.map((id) => {
+            const name = id.startsWith('local:') ? `**${game.localPlayers[id]}**` : `<@${id}>`;
+            return `${name}: ${game.timelines[id].length} on the timeline, ${game.scores[id] || 0} bonus pts`;
+        });
+        content += `\n\n**Where it stood:**\n${lines.join('\n')}`;
+    }
+    return { content, allowedMentions };
+}
 
 // Hitster clips run through bot.playSong, which a book's gate would refuse turn after turn.
 function refuseForBook(message, guildId) {
@@ -334,7 +380,7 @@ if (commandArg === 'stop') {
 
                 if (game.activeTurn && game.activeTurn.collector) game.activeTurn.collector.stop('stopped');
                 if (bot.isPlaying) bot.stop();
-                activeGames.delete(channelId);
+                endGame(game);
                 return message.channel.send("🛑 Hitster terminated.");
             }
 
@@ -374,6 +420,7 @@ if (commandArg === 'stop') {
                 // the host moves between lobby and game.
                 game.voiceChannel = message.member.voice.channel;
                 activeGames.set(channelId, game);
+                game.forgetRestart = restartHandoff.track(() => endForRestart(game), client);
 
                 const instructions = `🎵 **HITSTER LOBBY INITIALIZED!** 🎵\n` +
                     `Host: <@${message.author.id}>\n\n` +
@@ -414,15 +461,17 @@ if (commandArg === 'stop') {
                     const sections = await plex.query('/library/sections');
                     const musicSec = sections.MediaContainer.Directory.filter(s => s.type === 'artist');
                     const tracksData = await plex.query(`/library/sections/${musicSec[0].key}/all?type=10`);
+                    if (!isLive(game)) return;
                     let allTracks = tracksData.MediaContainer.Metadata.filter(t => (t.year || t.parentYear) && !longForm.isLongFormTrack(t));
                     game.playerOrder.forEach(p => {
                         const a = allTracks.splice(Math.floor(Math.random() * allTracks.length), 1)[0];
                         game.timelines[p].push({ year: a.year || a.parentYear, title: a.title, artist: a.grandparentTitle, album: a.parentTitle, plexKey: a.Media[0].Part[0].key });
                     });
-                    executeTurn(game, bot, message, allTracks, client);
+                    executeTurn(game, bot, message, allTracks, client).catch(err => logger.error('hitster turn failed:', err));
                 } catch (err) {
+                    if (!isLive(game)) return;
                     message.channel.send("❌ Plex Error.");
-                    activeGames.delete(channelId);
+                    endGame(game);
                 }
             }
         }
@@ -431,7 +480,8 @@ if (commandArg === 'stop') {
 
 async function executeTurn(game, bot, message, allTracks, client) {
     const channel = message.channel;
-    if (game.state !== 'playing' || allTracks.length === 0) return activeGames.delete(game.channelId);
+    if (!isLive(game)) return;
+    if (allTracks.length === 0) return endGame(game);
 
     const currentPlayerId = game.getCurrentPlayer();
     const isLocalTurn = currentPlayerId.startsWith('local:');
@@ -450,8 +500,17 @@ async function executeTurn(game, bot, message, allTracks, client) {
         `*Or use \`/hitster guess\` / \`/hitster bonus\` — set \`player:\` to act for someone else in the call.*`;
 
     const turnMsg = await channel.send(baseMessageText);
-    bot.songQueue.unshift({ key: targetObj.plexKey, title: "Secret Track", artist: "???" });
+    if (!isLive(game)) return;
+    const clip = { key: targetObj.plexKey, title: "Secret Track", artist: "???" };
+    bot.songQueue.unshift(clip);
     await bot.playSong(message, targetObj.duration ? Math.floor(targetObj.duration / 2) : 60000);
+    // Stopped while the clip was joining or loading: without this the turn would open anyway,
+    // with a collector on a channel whose game is gone. Only the clip is stopped: !hitster stop
+    // may already have skipped it, and the music it had interrupted is playing again by now.
+    if (!isLive(game)) {
+        if (bot.isPlaying && bot.songQueue[0] === clip) bot.stop();
+        return;
+    }
     // Cleared in resolveTurn. If left dangling (turn ended early by a guess), a
     // long clipLength timer fires during a LATER turn and cuts its clip short.
     const clipTimer = setTimeout(() => { if (bot.isPlaying) bot.stop(); }, game.settings.clipLength);
@@ -588,8 +647,15 @@ async function executeTurn(game, bot, message, allTracks, client) {
         // turn no one is watching.
         if (reason === 'time' || reason === 'idle') {
             channel.send(`⏳ **Hitster turn timed out** — no guess in ${TURN_TIMEOUT_MS / 60000} minutes. Game ended.`).catch(() => {});
-            activeGames.delete(game.channelId);
+            endGame(game);
             if (bot.isPlaying) bot.stop();
+            return;
+        }
+        // endForRestart has already ended the game. This turn's Bot is the old one, and the new
+        // client posts the reveal.
+        if (reason === restartHandoff.REASON) {
+            if (bot.isPlaying) bot.stop();
+            restartHandoff.notice(game.channelId, restartNotice(game, targetObj, false));
             return;
         }
         // Host/admin ended the game elsewhere; just make sure the clip is stopped.
@@ -646,12 +712,12 @@ async function executeTurn(game, bot, message, allTracks, client) {
             });
 
             channel.send(resultText + `\n🏆 **WE HAVE A WINNER!** 🏆\n${displayPlayerName} has reached ${game.settings.timelineGoal} tracks and won the game!` + finalScores);
-            return activeGames.delete(game.channelId);
+            return endGame(game);
         }
 
         saveStats(stats);
         channel.send(resultText);
-        setTimeout(() => {
+        game.nextTurnTimer = setTimeout(() => {
             game.nextTurn();
             executeTurn(game, bot, message, allTracks, client).catch(err => logger.error('hitster turn failed:', err));
         }, 3000);

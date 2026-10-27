@@ -13,6 +13,9 @@ function stop(bot, client) {
     try { require('../helpers/eventServer.js').stopEventServer(); } catch (_) {}
     try { require('../helpers/healthMonitor.js').stopHealthMonitor(); } catch (_) {}
     try { require('../helpers/kometaTheater.js').stopKometaTheater(); } catch (_) {}
+    try { require('../helpers/archipelagoMonitor.js').detachArchipelagoMonitor(); } catch (_) {}
+    // Before the music stops: a Hitster game ending here stops its own clip first.
+    try { require('../helpers/restartHandoff.js').endAll(client); } catch (_) {}
     bot.songQueue = [];
     bot.stop();
     bot.destroy();

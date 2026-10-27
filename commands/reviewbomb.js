@@ -6,6 +6,7 @@ const { getPlex } = require('../helpers/plexClient.js');
 const handleAIError = require('../helpers/aiErrorHandler.js');
 const clueCache = require('../helpers/clueCache.js');
 const logger = require('../helpers/logger.js');
+const restartHandoff = require('../helpers/restartHandoff.js');
 
 const model = getModel();
 const plex = getPlex();
@@ -166,6 +167,8 @@ module.exports = {
                     msg.channel.send(`😤 **Part 3:** *"${clues.clue3}"*`);
                 }, 120000);
 
+                restartHandoff.trackCollector(collector);
+
                 // Listen for guesses without stopping the timer
                 collector.on('collect', m => {
                     if (currentWinners.has(m.author.id)) return;
@@ -184,7 +187,12 @@ module.exports = {
                 });
 
                 // End the game and tally the scores
-                collector.on('end', () => {
+                collector.on('end', (collected, reason) => {
+                    clearTimeout(clue2Timer);
+                    clearTimeout(clue3Timer);
+                    const post = restartHandoff.poster(msg.channel, reason);
+                    const preamble = reason === restartHandoff.REASON ? `🔄 **THE BOT RESTARTED!** 🔄` : `🕰️ **TIME'S UP!** 🕰️`;
+
                     if (gameWinnersData.length > 0) {
                         const board = loadLeaderboard();
                         let winnerNames = [];
@@ -201,9 +209,9 @@ module.exports = {
 
                         saveLeaderboard(board);
 
-                        msg.channel.send(`🕰️ **TIME'S UP!** 🕰️\nThe review was utterly ridiculous, but it was actually about:\n🎬 **${target.title}** (${target.year})\n\n🎉 **Points awarded to:** ${winnerNames.join(", ")}!`);
+                        post(`${preamble}\nThe review was utterly ridiculous, but it was actually about:\n🎬 **${target.title}** (${target.year})\n\n🎉 **Points awarded to:** ${winnerNames.join(", ")}!`);
                     } else {
-                        msg.channel.send(`🕰️ **TIME'S UP!** 🕰️\nNobody could decipher the troll's rambling! The review was actually about:\n\n🎬 **${target.title}** (${target.year})\n> *${target.summary.substring(0, 200)}...*`);
+                        post(`${preamble}\nNobody could decipher the troll's rambling! The review was actually about:\n\n🎬 **${target.title}** (${target.year})\n> *${target.summary.substring(0, 200)}...*`);
                     }
                 });
 

@@ -33,8 +33,9 @@ const WATCH_FILE = process.env.PLEXBOT_AP_WATCHES_FILE || path.join(__dirname, '
 // commandLog.js and tagSidecar.js use. The real file holds a room password, and a test run has
 // no business reading or rewriting it.
 const usable = !process.env.NODE_TEST_CONTEXT || !!process.env.PLEXBOT_AP_WATCHES_FILE;
-// Overridable so the tests can use a flush window shorter than the one second a user can set.
-const relayTiming = { minFlushMs: 1000 };
+// Overridable so the tests can use a flush window shorter than the one second a user can set,
+// and a hold shorter than five minutes (see detachArchipelagoMonitor).
+const relayTiming = { minFlushMs: 1000, holdLimitMs: 5 * 60 * 1000 };
 // Read per flush rather than captured at load, so the /config wizard's change to
 // archipelagoBatchSeconds applies to the next batch instead of the next boot.
 function flushDelayMs() {
@@ -70,6 +71,13 @@ const MAX_LOADING_RETRIES = 6;
 const MAX_REFUSALS = 3;
 
 let discord = null;
+// Set while !restart is between clients: utils.stop() detaches the destroyed one, and the next
+// clientReady attaches its replacement. Every Discord call waits on it in between, so a watch's
+// chain holds its lines instead of failing them through a client with no token. Failed, the
+// chat and joins among them were lost for good, and on host:port watches the items too.
+let reattached = null;
+let holdGivenUp = false;
+let configBound = false;
 let savedWatchesLoaded = false;
 const states = new Map();
 
@@ -238,13 +246,26 @@ function describeTarget(target) {
     return target.kind === 'room' ? target.roomUrl : `${target.host}:${target.port}`;
 }
 
+async function discordClient() {
+    while (!discord && reattached) await reattached;
+    return discord;
+}
+
 async function resolveChannel(state) {
-    if (state.channel) return state.channel;
-    if (!discord) return null;
+    // Only a channel of the current client. Clearing the states in the map is not enough: a flush
+    // or catch-up still running on a state that restartWatch replaced holds the old client's channel.
+    if (state.channel && state.channelClient === discord) return state.channel;
+    const client = await discordClient();
+    if (!client) return null;
     try {
-        state.channel = await discord.channels.fetch(state.watch.channelId);
+        const channel = await client.channels.fetch(state.watch.channelId);
+        // Detached while fetching: this is the old client's channel, so fetch it again from the next.
+        if (client !== discord) return resolveChannel(state);
+        state.channel = channel;
+        state.channelClient = client;
         return state.channel;
     } catch (err) {
+        if (client !== discord) return resolveChannel(state);
         logger.warn(`[AP:${state.watch.label}] channel ${state.watch.channelId} unavailable:`, err.message);
         return null;
     }
@@ -260,8 +281,9 @@ async function resolveChannel(state) {
  * @returns {Promise<boolean>} whether Discord accepted it. Lines are recorded as reported only
  *   on true, which is what lets a catch-up repost whatever a failed send lost.
  */
-async function send(state, content, mentionUsers = null) {
+async function send(state, content, mentionUsers = null, retried = false) {
     const channel = await resolveChannel(state);
+    const client = state.channelClient;
     if (!channel || typeof channel.send !== 'function') return false;
     try {
         const allowedMentions = mentionUsers && mentionUsers.length
@@ -270,6 +292,9 @@ async function send(state, content, mentionUsers = null) {
         await channel.send({ content, allowedMentions });
         return true;
     } catch (err) {
+        // Detached while this went out through the old client: send it through the next instead.
+        // Once only, so a channel that keeps failing can never turn this into a loop.
+        if (!retried && client !== discord) return send(state, content, mentionUsers, true);
         logger.warn(`[AP:${state.watch.label}] post failed:`, err.message);
         state.channel = null;
         return false;
@@ -588,12 +613,15 @@ async function announceHints(state) {
  * Falls back to nothing rather than to the channel: someone who chose `dm` chose it to keep this
  * out of the channel, and a closed-DM fallback would defeat the setting they picked.
  */
-async function dmClaimant(state, userId, body) {
-    if (!discord) return;
+async function dmClaimant(state, userId, body, retried = false) {
+    const client = await discordClient();
+    if (!client) return;
     try {
-        const user = await discord.users.fetch(userId);
+        const user = await client.users.fetch(userId);
         await user.send({ content: body, allowedMentions: { parse: [] } });
     } catch (err) {
+        // Detached mid-DM, as in resolveChannel and send: try again, once, through the next client.
+        if (!retried && client !== discord) return dmClaimant(state, userId, body, true);
         logger.warn(`[AP:${state.watch.label}] could not DM ${userId} about a hint:`, err.message);
     }
 }
@@ -1357,6 +1385,7 @@ function restartWatch(id, { sameRoom = true } = {}) {
     stopWatch(id);
     const state = makeState(existing.watch);
     state.channel = existing.channel;
+    state.channelClient = existing.channelClient;
     // Carried across only when the new socket is going to the SAME room. A /config re-point
     // reuses this path with a different multiworld, where every one of these is a lie: the goal
     // key would keep the old seed, so a slot name shared by both rooms is deduped against the old
@@ -1555,8 +1584,40 @@ function applyConfig({ boot = false } = {}) {
     }
 }
 
+// Repeat calls are harmless: utils.stop() runs again on every login retry.
+//
+// The hold is bounded. Login retries never give up, and a Discord outage of hours would otherwise
+// buffer every line in memory and then post them all at once. Past relayTiming.holdLimitMs the
+// waits are released with no client, so lines fail the way they did before the hold: chat and
+// joins are dropped and a catch-up rebuilds the rest. Later detaches in the same outage do not
+// hold again; the next attach resets that.
+function detachArchipelagoMonitor() {
+    discord = null;
+    for (const state of states.values()) state.channel = null;
+    if (reattached || holdGivenUp) return;
+    let release;
+    const holding = new Promise((resolve) => { release = resolve; });
+    holding.release = release;
+    reattached = holding;
+    setTimeout(() => {
+        if (reattached !== holding) return;
+        // Cleared before the release, here and in startArchipelagoMonitor: a waiter woken while
+        // `reattached` still names a settled promise would spin on it without ever yielding.
+        reattached = null;
+        holdGivenUp = true;
+        logger.warn(`Archipelago relay: no Discord client for ${Math.round(relayTiming.holdLimitMs / 60000)} min, so lines are no longer held; catch-up rebuilds what it can.`);
+        holding.release();
+    }, relayTiming.holdLimitMs).unref();
+}
+
 function startArchipelagoMonitor(client) {
     discord = client;
+    holdGivenUp = false;
+    if (reattached) {
+        const waiting = reattached;
+        reattached = null;
+        waiting.release();
+    }
     // `!restart` runs stop and start in the same process, so the sockets survive and no
     // 'connected' fires to schedule a catch-up. The cached channels belong to the Discord client
     // that was just destroyed, and whatever failed to post while it logged back in needs a run.
@@ -1564,14 +1625,18 @@ function startArchipelagoMonitor(client) {
         state.channel = null;
         if (state.status === 'connected') scheduleCatchupRetry(state.watch.id);
     }
-    configStore.onChange((key) => {
-        if (typeof key !== 'string' || !key.startsWith('archipelago')) return;
-        try {
-            applyConfig();
-        } catch (err) {
-            logger.error('Archipelago monitor could not apply a config change:', err.message || err);
-        }
-    });
+    // Once per process, like processPriority and voiceHealth: each !restart used to add another.
+    if (!configBound) {
+        configBound = true;
+        configStore.onChange((key) => {
+            if (typeof key !== 'string' || !key.startsWith('archipelago')) return;
+            try {
+                applyConfig();
+            } catch (err) {
+                logger.error('Archipelago monitor could not apply a config change:', err.message || err);
+            }
+        });
+    }
     applyConfig({ boot: true });
 }
 
@@ -2392,6 +2457,7 @@ function getStatus() {
 
 module.exports = {
     startArchipelagoMonitor,
+    detachArchipelagoMonitor,
     applyConfig,
     syncConfigWatch,
     configTarget,

@@ -6,6 +6,7 @@ const { getPlex } = require('../helpers/plexClient.js');
 const handleAIError = require('../helpers/aiErrorHandler.js');
 const logger = require('../helpers/logger.js');
 const longForm = require('../helpers/longForm.js');
+const restartHandoff = require('../helpers/restartHandoff.js');
 
 const model = getModel();
 const plex = getPlex();
@@ -321,6 +322,7 @@ module.exports = {
                 const clue5Timer = setTimeout(() => msg.channel.send(`🕤 **Clue 5:** *${aiData.clue5}*`), 240000);
 
                 const timers = [clue2Timer, clue3Timer, clue4Timer, clue5Timer];
+                restartHandoff.trackCollector(collector);
 
                 collector.on('collect', m => {
                     if (m.content.startsWith('!')) return;
@@ -345,6 +347,8 @@ module.exports = {
 
                     let preamble = `🕰️ **TIME'S UP!** 🕰️`;
                     if (reason === 'skip') preamble = `⏭️ **SKIPPED!**`;
+                    if (reason === restartHandoff.REASON) preamble = `🔄 **THE BOT RESTARTED!** 🔄`;
+                    const post = restartHandoff.poster(msg.channel, reason);
 
                     if (gameWinnersData.length > 0) {
                         const board = loadLeaderboard();
@@ -358,9 +362,9 @@ module.exports = {
                         });
                         saveLeaderboard(board);
 
-                        msg.channel.send(`${preamble}\nThe translated song was:\n🎵 **${aiData.title}** by **${aiData.artist}**\n\n📜 **Original Verse:**\n> *"${aiData.original_lyrics}"*\n\n🎉 **Points awarded to:** ${winnerNames.join(", ")}!`);
+                        post(`${preamble}\nThe translated song was:\n🎵 **${aiData.title}** by **${aiData.artist}**\n\n📜 **Original Verse:**\n> *"${aiData.original_lyrics}"*\n\n🎉 **Points awarded to:** ${winnerNames.join(", ")}!`);
                     } else {
-                        msg.channel.send(`${preamble}\nAlas, nobody guessed it! The secret song was:\n🎵 **${aiData.title}** by **${aiData.artist}**\n\n📜 **Original Verse:**\n> *"${aiData.original_lyrics}"*`);
+                        post(`${preamble}\nAlas, nobody guessed it! The secret song was:\n🎵 **${aiData.title}** by **${aiData.artist}**\n\n📜 **Original Verse:**\n> *"${aiData.original_lyrics}"*`);
                     }
                 });
 
