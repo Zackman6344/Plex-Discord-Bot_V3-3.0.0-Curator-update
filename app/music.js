@@ -17,6 +17,7 @@ module.exports = function(client, bot) {
   const interactionFallback = require('../helpers/interactionFallback.js');
   const { createBookDirector } = require('../helpers/bookEngine.js');
   const bookButtons = require('../helpers/bookButtons.js');
+  const bookLibraryButtons = require('../helpers/bookLibraryButtons.js');
   const { createReadAlong } = require('../helpers/readAlong.js');
   const readAlongButtons = require('../helpers/readAlongButtons.js');
   const restartHandoff = require('../helpers/restartHandoff.js');
@@ -258,6 +259,36 @@ module.exports = function(client, bot) {
       } catch (err) {
         commandLog.finishInvocation(buttonLogId, { ok: false, ms: Date.now() - buttonStartedAt, error: err });
         logger.error('Button dispatch threw:', err.message || err);
+      }
+      return;
+    }
+
+    // Select menus: only the audiobook library's (book:lib:*) are answered here. Every other menu
+    // belongs to a per-message collector (/config, buildcharacter) that answers it itself, and a
+    // second answer from here would make its own fail.
+    if (interaction.isStringSelectMenu && interaction.isStringSelectMenu()) {
+      if (!bookLibraryButtons.owns(interaction.customId)) return;
+      const selectLogId = commandLog.startInvocation({
+        path: 'select',
+        command: String(interaction.customId || '').split(':').slice(0, 3).join(':'),
+        args: `${interaction.customId} ${(interaction.values || []).join(',')}`,
+        user: interaction.user && interaction.user.username,
+        userId: interaction.user && interaction.user.id,
+        channel: interaction.channel && interaction.channel.name,
+        channelId: interaction.channelId,
+        guildId: interaction.guildId
+      });
+      recentInvocations.set(interaction.channelId, selectLogId);
+      const selectStartedAt = Date.now();
+      const onInteractionResponse = (payload) => commandLog.recordOutput({
+        id: selectLogId, kind: 'interaction-reply', channelId: interaction.channelId, payload
+      });
+      try {
+        await bookButtons.handle(interaction, bot, client, { onInteractionResponse });
+        commandLog.finishInvocation(selectLogId, { ok: true, ms: Date.now() - selectStartedAt });
+      } catch (err) {
+        commandLog.finishInvocation(selectLogId, { ok: false, ms: Date.now() - selectStartedAt, error: err });
+        logger.error('Select menu dispatch threw:', err.message || err);
       }
       return;
     }

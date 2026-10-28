@@ -16,6 +16,9 @@
 
 const path = require('path');
 const { createStore } = require('./jsonStore.js');
+// A tagger that wrote "&#169;2012" for "©2012" broke the catalog's split of "Author/Narrator/©"
+// credits. Entries cached before this was decoded are decoded again where the catalog reads them.
+const { decodeEntities } = require('./bookCatalog.js');
 
 const DAY = 24 * 60 * 60 * 1000;
 const KEEP_TAGS = Object.freeze(['album', 'album_artist', 'artist', 'composer', 'genre', 'copyright', 'comment', 'narrator', 'publisher', 'title', 'track', 'date', 'asin', 'audible_asin']);
@@ -47,12 +50,12 @@ function parseProbe(text) {
 		const m = line.match(/^\s{4}(\S[^:]*?)\s*:\s?(.*)$/);
 		if (m && m[1].trim() !== '') {
 			lastKey = m[1].trim().toLowerCase();
-			if (KEEP.has(lastKey) && !Object.prototype.hasOwnProperty.call(tags, lastKey)) tags[lastKey] = m[2].slice(0, MAX_VALUE);
+			if (KEEP.has(lastKey) && !Object.prototype.hasOwnProperty.call(tags, lastKey)) tags[lastKey] = decodeEntities(m[2]).slice(0, MAX_VALUE);
 			continue;
 		}
 		const c = line.match(/^\s{6,}:\s?(.*)$/);
 		if (c && lastKey && KEEP.has(lastKey) && Object.prototype.hasOwnProperty.call(tags, lastKey)) {
-			tags[lastKey] = `${tags[lastKey]}\n${c[1]}`.slice(0, MAX_VALUE);
+			tags[lastKey] = `${tags[lastKey]}\n${decodeEntities(c[1])}`.slice(0, MAX_VALUE);
 		}
 	}
 	if (Object.prototype.hasOwnProperty.call(tags, 'comment')) {

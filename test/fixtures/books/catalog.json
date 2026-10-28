@@ -1,7 +1,7 @@
 {
 	"meta": {
 		"builtAt": 1760000000000,
-		"rulesVersion": 4,
+		"rulesVersion": 5,
 		"sections": {
 			"1": {
 				"scannedAt": 1760000000,
@@ -31,6 +31,8 @@
 			"dirs": [
 				"M:/Music/Avery Quill"
 			],
+			"root": null,
+			"genres": [],
 			"detectedBy": "median",
 			"orderMethod": "interleaved-volumes",
 			"notes": [
@@ -230,7 +232,7 @@
 			"title": "The Ember Throne",
 			"author": "Avery Quill",
 			"narrator": null,
-			"edition": "Mara Lindqvist",
+			"edition": null,
 			"publisher": null,
 			"series": "Ashfall",
 			"sequence": 1,
@@ -243,6 +245,10 @@
 			"dirs": [
 				"M:/Music/Avery Quill/1.The Ember Throne/The Ember Throne 1",
 				"M:/Music/Avery Quill/1.The Ember Throne/The Ember Throne 2"
+			],
+			"root": null,
+			"genres": [
+				"English ABook"
 			],
 			"detectedBy": "median",
 			"orderMethod": "path-natural",
@@ -298,7 +304,7 @@
 				"title": "The Ember Throne",
 				"author": "Avery Quill",
 				"narrator": null,
-				"edition": "Mara Lindqvist",
+				"edition": null,
 				"publisher": null,
 				"series": "Ashfall",
 				"sequence": 1,
@@ -306,7 +312,7 @@
 					"title": "folder",
 					"author": "plex-artist",
 					"narrator": null,
-					"edition": "album",
+					"edition": null,
 					"publisher": null,
 					"series": "album",
 					"sequence": "folder"
@@ -319,7 +325,7 @@
 			"title": "The Salt Crown",
 			"author": "Avery Quill",
 			"narrator": null,
-			"edition": "Mara Lindqvist",
+			"edition": null,
 			"publisher": null,
 			"series": "Ashfall",
 			"sequence": 2,
@@ -332,6 +338,10 @@
 			"dirs": [
 				"M:/Music/Avery Quill/2.The Salt Crown/The Salt Crown 1",
 				"M:/Music/Avery Quill/2.The Salt Crown/The Salt Crown 2"
+			],
+			"root": null,
+			"genres": [
+				"English ABook"
 			],
 			"detectedBy": "median",
 			"orderMethod": "path-natural",
@@ -387,7 +397,7 @@
 				"title": "The Salt Crown",
 				"author": "Avery Quill",
 				"narrator": null,
-				"edition": "Mara Lindqvist",
+				"edition": null,
 				"publisher": null,
 				"series": "Ashfall",
 				"sequence": 2,
@@ -395,7 +405,7 @@
 					"title": "folder",
 					"author": "plex-artist",
 					"narrator": null,
-					"edition": "album",
+					"edition": null,
 					"publisher": null,
 					"series": "album",
 					"sequence": "folder"
@@ -408,7 +418,7 @@
 			"title": "The Last Lantern",
 			"author": "Avery Quill",
 			"narrator": null,
-			"edition": "Mara Lindqvist",
+			"edition": null,
 			"publisher": null,
 			"series": "Ashfall",
 			"sequence": 3,
@@ -420,6 +430,10 @@
 			"folderKey": "M:/Music/Avery Quill/3.The Last Lantern",
 			"dirs": [
 				"M:/Music/Avery Quill/3.The Last Lantern/The Last Lantern 1"
+			],
+			"root": null,
+			"genres": [
+				"English ABook"
 			],
 			"detectedBy": "median",
 			"orderMethod": "path-natural",
@@ -464,7 +478,7 @@
 				"title": "The Last Lantern",
 				"author": "Avery Quill",
 				"narrator": null,
-				"edition": "Mara Lindqvist",
+				"edition": null,
 				"publisher": null,
 				"series": "Ashfall",
 				"sequence": 3,
@@ -472,7 +486,7 @@
 					"title": "folder",
 					"author": "plex-artist",
 					"narrator": null,
-					"edition": "album",
+					"edition": null,
 					"publisher": null,
 					"series": "album",
 					"sequence": "folder"
@@ -485,7 +499,7 @@
 			"title": "The Iron Wake",
 			"author": "Avery Quill",
 			"narrator": null,
-			"edition": "Mara Lindqvist",
+			"edition": null,
 			"publisher": null,
 			"series": "Ashfall",
 			"sequence": 4,
@@ -497,6 +511,10 @@
 			"folderKey": "M:/Music/Avery Quill/4.The Iron Wake",
 			"dirs": [
 				"M:/Music/Avery Quill/4.The Iron Wake"
+			],
+			"root": null,
+			"genres": [
+				"English ABook"
 			],
 			"detectedBy": "median",
 			"orderMethod": "path-natural",
@@ -550,7 +568,7 @@
 				"title": "The Iron Wake",
 				"author": "Avery Quill",
 				"narrator": null,
-				"edition": "Mara Lindqvist",
+				"edition": null,
 				"publisher": null,
 				"series": "Ashfall",
 				"sequence": 4,
@@ -558,7 +576,7 @@
 					"title": "folder",
 					"author": "plex-artist",
 					"narrator": null,
-					"edition": "album",
+					"edition": null,
 					"publisher": null,
 					"series": "album",
 					"sequence": "folder"
@@ -571,7 +589,7 @@
 			"title": "Shadows of Glass",
 			"author": "Avery Quill",
 			"narrator": null,
-			"edition": "Mara Lindqvist",
+			"edition": null,
 			"publisher": null,
 			"series": "Ashfall",
 			"sequence": 5,
@@ -583,6 +601,10 @@
 			"folderKey": "M:/Music/Avery Quill/5.Shadows of Glass",
 			"dirs": [
 				"M:/Music/Avery Quill/5.Shadows of Glass"
+			],
+			"root": null,
+			"genres": [
+				"English ABook"
 			],
 			"detectedBy": "median",
 			"orderMethod": "path-natural",
@@ -627,7 +649,7 @@
 				"title": "Shadows of Glass",
 				"author": "Avery Quill",
 				"narrator": null,
-				"edition": "Mara Lindqvist",
+				"edition": null,
 				"publisher": null,
 				"series": "Ashfall",
 				"sequence": 5,
@@ -635,7 +657,7 @@
 					"title": "folder",
 					"author": "plex-artist",
 					"narrator": null,
-					"edition": "album",
+					"edition": null,
 					"publisher": null,
 					"series": "album",
 					"sequence": "folder"
@@ -648,7 +670,7 @@
 			"title": "The Copper Bells",
 			"author": "Avery Quill",
 			"narrator": null,
-			"edition": "Mara Lindqvist",
+			"edition": "GraphicAudio",
 			"publisher": "GraphicAudio",
 			"series": "Ashfall",
 			"sequence": 6,
@@ -661,6 +683,10 @@
 			"dirs": [
 				"M:/Music/Avery Quill/6.The Copper Bells/The Copper Bells 1",
 				"M:/Music/Avery Quill/6.The Copper Bells/The Copper Bells 2"
+			],
+			"root": null,
+			"genres": [
+				"English ABook"
 			],
 			"detectedBy": "median",
 			"orderMethod": "path-natural",
@@ -719,7 +745,7 @@
 				"title": "The Copper Bells",
 				"author": "Avery Quill",
 				"narrator": null,
-				"edition": "Mara Lindqvist",
+				"edition": "GraphicAudio",
 				"publisher": "GraphicAudio",
 				"series": "Ashfall",
 				"sequence": 6,
@@ -727,7 +753,7 @@
 					"title": "folder",
 					"author": "plex-artist",
 					"narrator": null,
-					"edition": "album",
+					"edition": "plex-artist",
 					"publisher": "plex-artist",
 					"series": "album",
 					"sequence": "folder"
@@ -740,7 +766,7 @@
 			"title": "Ashfall - Collected Tales",
 			"author": "Avery Quill",
 			"narrator": null,
-			"edition": "Mara Lindqvist",
+			"edition": null,
 			"publisher": null,
 			"series": "Ashfall",
 			"sequence": 7,
@@ -752,6 +778,10 @@
 			"folderKey": "M:/Music/Avery Quill/7.Ashfall - Collected Tales",
 			"dirs": [
 				"M:/Music/Avery Quill/7.Ashfall - Collected Tales"
+			],
+			"root": null,
+			"genres": [
+				"English ABook"
 			],
 			"detectedBy": "median",
 			"orderMethod": "path-natural",
@@ -809,7 +839,7 @@
 				"title": "Ashfall - Collected Tales",
 				"author": "Avery Quill",
 				"narrator": null,
-				"edition": "Mara Lindqvist",
+				"edition": null,
 				"publisher": null,
 				"series": "Ashfall",
 				"sequence": 7,
@@ -817,7 +847,7 @@
 					"title": "folder",
 					"author": "plex-artist",
 					"narrator": null,
-					"edition": "album",
+					"edition": null,
 					"publisher": null,
 					"series": "album",
 					"sequence": "folder"
@@ -845,6 +875,8 @@
 				"M:/Music/Corin Vale/The Long Tide [02]",
 				"M:/Music/Corin Vale/The Long Tide [03]"
 			],
+			"root": null,
+			"genres": [],
 			"detectedBy": "median",
 			"orderMethod": "path-natural",
 			"notes": [
@@ -964,6 +996,8 @@
 			"dirs": [
 				"M:/Music/Ilse Moreau/1990 - The Far Shore (Harlow) 600mb"
 			],
+			"root": null,
+			"genres": [],
 			"detectedBy": "median",
 			"orderMethod": "path-natural",
 			"notes": [],
@@ -1096,6 +1130,8 @@
 			"dirs": [
 				"M:/Music/Ilse Moreau/1990 - The Far Shore (Penrose) 540mb"
 			],
+			"root": null,
+			"genres": [],
 			"detectedBy": "median",
 			"orderMethod": "path-natural",
 			"notes": [],
@@ -1214,7 +1250,7 @@
 			"kind": "book",
 			"title": "The Glass Sea",
 			"author": "Ilse Moreau",
-			"narrator": "Various",
+			"narrator": null,
 			"edition": "Various",
 			"publisher": null,
 			"series": null,
@@ -1228,6 +1264,8 @@
 			"dirs": [
 				"M:/Music/Ilse Moreau/1989 - The Glass Sea (Various) 500mb"
 			],
+			"root": null,
+			"genres": [],
 			"detectedBy": "median",
 			"orderMethod": "path-natural",
 			"notes": [],
@@ -1292,7 +1330,7 @@
 			"detected": {
 				"title": "The Glass Sea",
 				"author": "Ilse Moreau",
-				"narrator": "Various",
+				"narrator": null,
 				"edition": "Various",
 				"publisher": null,
 				"series": null,
@@ -1300,7 +1338,7 @@
 				"sources": {
 					"title": "album",
 					"author": "plex-artist",
-					"narrator": "folder",
+					"narrator": null,
 					"edition": "folder",
 					"publisher": null,
 					"series": null,
@@ -1327,6 +1365,8 @@
 			"dirs": [
 				"M:/Music/Ilse Moreau/1997 - The Night Gate (Harlow) 822mb"
 			],
+			"root": null,
+			"genres": [],
 			"detectedBy": "median",
 			"orderMethod": "path-natural",
 			"notes": [],
@@ -1393,6 +1433,8 @@
 			"dirs": [
 				"M:/Music/Ilse Moreau/1997 - The Night Gate (Penrose) 844mb"
 			],
+			"root": null,
+			"genres": [],
 			"detectedBy": "median",
 			"orderMethod": "path-natural",
 			"notes": [],
@@ -1459,6 +1501,8 @@
 			"dirs": [
 				"M:/Music/Lantern Hollow"
 			],
+			"root": null,
+			"genres": [],
 			"detectedBy": "episodes",
 			"orderMethod": "episode-number",
 			"notes": [
@@ -1598,6 +1642,8 @@
 				"M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/04.The Candle Wind.Book 4",
 				"M:/Music/Ashdown R.J/Ashdown R.J. - The Hollow King (Tomas Brandt ) -  2011(64kbps)/05.The Book of Ash.Book 5"
 			],
+			"root": null,
+			"genres": [],
 			"detectedBy": "name-signal",
 			"orderMethod": "path-natural",
 			"notes": [],

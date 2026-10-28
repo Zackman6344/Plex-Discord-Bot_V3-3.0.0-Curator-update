@@ -208,7 +208,7 @@ function silentLogger() {
 	return { lines, info: rec('info'), warn: rec('warn'), error: rec('error'), debug: rec('debug') };
 }
 
-function make({ works = [work()], books = {}, calibre = true, cfg = {}, dir, parse, client, catalog, fs: fsDep } = {}) {
+function make({ works = [work()], books = {}, calibre = true, cfg = {}, dir, parse, client, catalog, fs: fsDep, indexPick } = {}) {
 	const clock = { t: T0 };
 	const c = client || (calibre ? fakeCalibre(books) : null);
 	const cat = catalog || fakeCatalog(works);
@@ -224,7 +224,8 @@ function make({ works = [work()], books = {}, calibre = true, cfg = {}, dir, par
 		cfg: { audiobookTextEnabled: true, audiobookTextSidecars: true, commandPrefix: '!', ...cfg },
 		now: () => clock.t,
 		logger,
-		...(fsDep ? { fs: fsDep } : {})
+		...(fsDep ? { fs: fsDep } : {}),
+		...(indexPick ? { indexPick } : {})
 	});
 	return { source, client: c, catalog: cat, parse: p, clock, dir: bookDir, cacheDir: pathMod.join(bookDir, 'cache'), logger };
 }
@@ -937,4 +938,38 @@ test('a sidecar pointer carries no metadata', async () => {
 	const h = make({ works: [w], calibre: false });
 	assert.ok((await h.source.open(w, { explicit: true })).ok);
 	assert.strictEqual('meta' in store.works.all()[w.id], false);
+});
+
+// --- the catalog's Calibre index -----------------------------------------------------------------
+
+// The bug: "The Eye of the World: Book One of the Wheel of Time" against Calibre's "The Eye of the
+// World: Book 1 of the Wheel of Time (Now a Major TV Series)" scored 0.45 and was never matched.
+test('a title with "Book One of ..." and a bracketed tail still matches, and a series-name title does not', () => {
+	const eye = work({ title: 'The Lantern Road: Book One of the Tidewater Cycle', series: 'Tidewater Cycle', sequence: 1 });
+	const scored = bookTextSource.calibreScore(cbook({ title: 'The Lantern Road: Book 1 of the Tidewater Cycle (Now a Major TV Series)', series: 'The Tidewater Cycle', series_index: 1 }), eye);
+	assert.ok(scored.titleScore >= 0.8, String(scored.titleScore));
+	assert.strictEqual(scored.accepted, true);
+	const tales = work({ title: 'Ashfall - Collected Tales', series: 'Ashfall', sequence: 7 });
+	assert.strictEqual(bookTextSource.calibreScore(cbook({ title: 'Ashfall', series: 'The Ashfall Saga', series_index: 1 }), tales).accepted, false);
+});
+
+test('a work with no pointer opens the Calibre index\'s exact match before searching', async () => {
+	const asked = [];
+	const h = make({ books: { 11: cbook({ title: 'Something Calibre Calls It' }) }, indexPick: (w) => { asked.push(w.id); return { id: 11 }; } });
+	const res = await h.source.open(work(), { explicit: true });
+	assert.strictEqual(res.handle.source.id, 11);
+	assert.deepStrictEqual(asked, [work().id]);
+	assert.deepStrictEqual(h.client.calls.search, [], 'no search when the index already knows');
+});
+
+// The bug: taking the index's match for a work that already reads an ebook would switch its text
+// and orphan the sync marks made against the old one.
+test('a work that already has a pointer never asks the Calibre index', async () => {
+	const h = make({ books: { 11: cbook(), 12: cbook({ title: 'Another Record' }) } });
+	await h.source.open(work(), { explicit: true });
+	const asked = [];
+	const again = make({ client: h.client, dir: h.dir, indexPick: () => { asked.push(1); return { id: 12 }; } });
+	const res = await again.source.open(work(), { explicit: true });
+	assert.strictEqual(res.handle.source.id, 11);
+	assert.deepStrictEqual(asked, []);
 });

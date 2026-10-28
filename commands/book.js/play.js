@@ -2,6 +2,7 @@
 // the caller once with where it started.
 
 const logger = require('../../helpers/logger.js');
+const bookSearch = require('../../helpers/bookSearch.js');
 
 const RESTART_FLAGS = new Set(['--restart', '--from-start', '--fromstart']);
 const CUSTOM_ID_MAX = 100;
@@ -41,13 +42,18 @@ function clip(text, max) {
 	return s.length <= max ? s : s.slice(0, max - 1) + '…';
 }
 
-/** "Which one?" as buttons, one per edition; each plays that work for whoever clicks it. */
+/**
+ * "Which one?" or "Did you mean ...?" as buttons, one per work; each plays that work for whoever
+ * clicks it.
+ */
 function choiceRow(choices) {
 	const buttons = (choices || []).slice(0, 5).map((c) => {
 		const voice = c.narrator || c.edition;
 		const pct = c.percent !== null && c.percent !== undefined ? ` · ${c.percent}%` : '';
-		return { type: 2, style: 2, custom_id: `book:play:${c.id}`, label: clip(`${c.title}${voice ? ` (${voice})` : ''}${pct}`, 80) };
-	}).filter(b => b.custom_id.length <= CUSTOM_ID_MAX);
+		const full = `book:play:${c.id}`;
+		const custom_id = full.length <= CUSTOM_ID_MAX ? full : `book:play:${bookSearch.shortKey(c.id)}`;
+		return { type: 2, style: 2, custom_id, label: clip(`${c.title}${voice ? ` (${voice})` : ''}${pct}`, 80) };
+	});
 	return buttons.length ? [{ type: 1, components: buttons }] : [];
 }
 
@@ -66,7 +72,7 @@ async function run(ctx) {
 		query,
 		fromStart
 	});
-	if (r.code === 'ambiguous') return ctx.say({ content: r.text, components: choiceRow(r.choices) });
+	if (r.code === 'ambiguous' || r.code === 'suggest') return ctx.say({ content: r.text, components: choiceRow(r.choices) });
 	return ctx.say(withStale(r.text, r.info));
 }
 

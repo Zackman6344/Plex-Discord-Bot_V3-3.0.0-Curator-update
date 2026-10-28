@@ -100,11 +100,48 @@ function write(event) {
     }
 }
 
+// A slash command whose option was picked from autocomplete arrives with only the chosen value
+// (a book id), so a wrong pick could not be told from a typo afterwards. Autocomplete notes the
+// text typed so far here, in memory only, and the next slash invocation of that command by that
+// user carries the latest note in its args. One log line per keystroke would bury everything else.
+const TYPED_TTL_MS = 2 * 60 * 1000;
+const TYPED_MAX = 100;
+const TYPED_KEEP = 500;
+const typed = new Map();
+
+/**
+ * @param {{ userId: string, command: string, sub?: string|null, text: string }} note `sub`, when
+ *   given, must be the first word of the invocation's args for the note to be attached
+ */
+function noteTyped({ userId, command, sub = null, text } = {}) {
+    if (!userId || !command) return;
+    const now = Date.now();
+    for (const [k, v] of typed) if (now - v.at > TYPED_TTL_MS) typed.delete(k);
+    const value = String(text || '').trim().slice(0, TYPED_MAX);
+    const k = `${userId}::${command}`;
+    typed.delete(k);
+    if (!value) return;
+    if (typed.size >= TYPED_KEEP) typed.delete(typed.keys().next().value);
+    typed.set(k, { text: value, sub: sub ? String(sub) : null, at: now });
+}
+
+function withTyped(info) {
+    if (info.path !== 'slash' || !info.userId || !info.command) return info.args;
+    const k = `${info.userId}::${info.command}`;
+    const note = typed.get(k);
+    typed.delete(k);
+    if (!note || Date.now() - note.at > TYPED_TTL_MS) return info.args;
+    const args = info.args === null || info.args === undefined ? '' : String(info.args);
+    if (note.sub && args.split(' ')[0] !== note.sub) return info.args;
+    if (args.toLowerCase().includes(note.text.toLowerCase())) return info.args;
+    return `${args} [typed "${note.text}"]`.trim();
+}
+
 /**
  * Record that a command was invoked. The returned id ties the outcome and any output back to it.
  *
  * @param {Object} info
- * @param {string} info.path - 'prefix' | 'slash' | 'button' | 'autocomplete'
+ * @param {string} info.path - 'prefix' | 'slash' | 'button' | 'select' | 'autocomplete'
  * @returns {string} invocation id
  */
 function startInvocation(info = {}) {
@@ -114,7 +151,7 @@ function startInvocation(info = {}) {
         id,
         path: info.path || 'unknown',
         command: info.command || null,
-        args: scrub(info.args, MAX_ARGS),
+        args: scrub(withTyped(info), MAX_ARGS),
         user: scrub(info.user, 80),
         userId: info.userId || null,
         channel: scrub(info.channel, 80),
@@ -383,9 +420,10 @@ function _reset() {
     // test files call this expecting a clean module and silently kept an hour-old throttle.
     logPrune.resetThrottle();
     counter = 0;
+    typed.clear();
 }
 
 module.exports = {
-    startInvocation, finishInvocation, recordOutput, recordEvent, readEventLog, readEvents, readInvocations, stats,
+    startInvocation, noteTyped, finishInvocation, recordOutput, recordEvent, readEventLog, readEvents, readInvocations, stats,
     summarise, carriesPrivateText, payloadOfMessage, _reset, _dir: DIR, countOr, windowInfo, RETENTION_DAYS, DEFAULT_READ_DAYS
 };

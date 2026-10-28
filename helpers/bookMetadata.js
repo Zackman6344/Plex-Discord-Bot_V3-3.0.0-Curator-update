@@ -8,7 +8,10 @@
 //      then by each alias, so an edit survives a rename) and per author (`authors[slug]` with a
 //      series and an order, which names a whole series at once);
 //   2. embedded tags, then Plex, then the folder, already decided by detection;
-//   3. the Calibre book the read-along uses for this work (title, authors, series and number);
+//   3. Calibre (title, authors, series and number): while audiobookCalibreSort is on, the owner's
+//      Calibre pin (a pin to none gives nothing), else the index's current copy of the book the
+//      read-along uses, else an exact index match (helpers/calibreIndex.js); with it off, the
+//      read-along pointer's own copy;
 //   4. the online lookup.
 // Calibre and online only FILL what every source above left blank. A Calibre record can be titled
 // in lower case or after its series (a record "Ashfall" holding book one), and an online answer can
@@ -17,6 +20,13 @@
 // title once case and punctuation are ignored AND is itself properly cased (smartTitle leaves it
 // as it is): "Words Of The Tide" becomes "Words of the Tide", never the other way round. A series
 // number online disagrees with stays (0.5 against 2.5), and so does a series spelled differently.
+//
+// The section a book is listed under (its genre) has its own order in helpers/bookSections.js:
+// the owner's edits, then the owner's folders, then Calibre tags of an exact match, then embedded
+// genres, then Calibre tags of a likely match. That is the one place Calibre outranks a local
+// source: the owner curates Calibre, while an embedded genre is whatever the uploader wrote.
+// Those keys (works[id].genre, authors[slug].genre, works[id].calibreId) are not display fields
+// and stay out of FIELDS; extrasFor() reads them by id and every alias.
 //
 // Only the display fields change. Ids, aliases, folder keys, parts, kind and confidence are never
 // touched: a work's id is built from detection alone, so bookmarks, read-along links and sync
@@ -76,22 +86,56 @@ function overrideFor(work, overrides) {
 }
 
 /**
+ * The owner's section and Calibre pin for a work, found like overrideFor (id first, then each
+ * alias), so both survive an id move. `calibre` is undefined with no pin, { id: null } for a pin
+ * to none, else { id, uuid, library }.
+ * @returns {{ genre: string|null, calibre: { id: number|null, uuid?: string|null, library?: string|null }|undefined }}
+ */
+function extrasFor(work, overrides) {
+	const works = isObject(overrides) && isObject(overrides.works) ? overrides.works : null;
+	const out = { genre: null, calibre: undefined };
+	if (!works) return out;
+	for (const id of idsOf(work)) {
+		const e = has(works, id) ? works[id] : undefined;
+		if (!isObject(e)) continue;
+		if (out.genre === null && nonEmpty(e.genre)) out.genre = text(e.genre);
+		if (out.calibre === undefined && has(e, 'calibreId')) {
+			const n = numberOf(e.calibreId);
+			if (e.calibreId === null) out.calibre = { id: null };
+			else if (n !== undefined && Number.isInteger(n) && n > 0) out.calibre = { id: n, uuid: text(e.calibreUuid), library: text(e.calibreLibrary) };
+		}
+	}
+	return out;
+}
+
+/**
  * The author-level entry, `authors[slug(author)]` = { series, order: { title: n } }, as
  * applyOverrides reads it. Keyed by the detected author, so a displayed author changed by an edit
- * or by Calibre keeps the entry; a hand-written key that is not a slug still counts.
+ * or by Calibre keeps the entry; a hand-written key that is not a slug still counts. An entry
+ * written before a rule change cleaned the detected author is keyed by the old one, which is the
+ * first half of each alias, so it is found through those, after the current author.
  */
 function authorOverrideFor(work, overrides) {
 	const authors = isObject(overrides) && isObject(overrides.authors) ? overrides.authors : null;
 	if (!authors || !work) return null;
 	const d = isObject(work.detected) ? work.detected : {};
-	for (const name of [d.author, work.author]) {
-		if (blank(name)) continue;
-		const s = bookCatalog.slug(name);
+	const slugs = [d.author, work.author].filter((name) => !blank(name)).map((name) => bookCatalog.slug(name));
+	for (const id of idsOf(work).slice(1)) {
+		const i = id.indexOf('/');
+		if (i > 0) slugs.push(id.slice(0, i));
+	}
+	for (const s of slugs) {
 		if (has(authors, s) && isObject(authors[s])) return authors[s];
 		const key = Object.keys(authors).find((k) => bookCatalog.slug(k) === s && isObject(authors[k]));
 		if (key !== undefined) return authors[key];
 	}
 	return null;
+}
+
+// The titles an alias carries ("author/title~edition"), for an author order keyed by a title
+// detection gave before a rule change.
+function aliasTitles(work) {
+	return idsOf(work).slice(1).map((id) => id.slice(id.indexOf('/') + 1).replace(/~.*$/, '')).filter(Boolean);
 }
 
 /** Calibre's metadata as the read-along pointer stores it, as catalog fields. */
@@ -171,7 +215,7 @@ function resolve(work, layers = {}) {
 	const o = isObject(layers.override) ? layers.override : {};
 	const a = isObject(layers.authorOverride) ? layers.authorOverride : null;
 	if (a && isObject(a.order)) {
-		const n = orderHit(a.order, [work.detected && work.detected.title, v.title, o.title]);
+		const n = orderHit(a.order, [work.detected && work.detected.title, v.title, o.title, ...aliasTitles(work)]);
 		if (n !== undefined) {
 			if (nonEmpty(a.series)) { set('series', text(a.series), 'override'); locked.add('series'); }
 			set('sequence', n, 'override');
@@ -254,6 +298,7 @@ module.exports = {
 	resolveWith,
 	layersFor,
 	overrideFor,
+	extrasFor,
 	authorOverrideFor,
 	calibreFields,
 	differs,

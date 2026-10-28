@@ -281,6 +281,42 @@ test('with DMs closed the guild reply says how to see the paths instead', async 
 	assert.ok(!/[A-Za-z]:[\\/]/.test(out));
 });
 
+// The bug: "!book link auto" took "auto" as a title and answered 'Nothing in the audiobook
+// library matches "auto"'.
+test('a link target with no book applies to the book playing here, else your newest bookmark, and says which', async () => {
+	const h = harness();
+	const GUILD = '200000000000000001';
+	let playing = 'test-author/fahrenheit';
+	h.books.session = (guildId) => (guildId === GUILD && playing ? { workId: playing, work: catalog.work(playing) } : null);
+	const here = await run(h, OWNER, 'link auto');
+	assert.match(here, /^📖 For \*\*Fahrenheit\*\*, the book playing here:\n🔗 Linked Fahrenheit/);
+	await run(h, OWNER, 'link id:12');
+	playing = null;
+	bookmarks.record(OWNER, catalog.work('test-author/fahrenheit-451'), { absoluteMs: 600000 }, { force: true });
+	bookmarks.record(OWNER, catalog.work('test-author/the-final-empire'), { absoluteMs: 900000 }, { force: true });
+	const mine = await run(h, OWNER, 'link off');
+	assert.match(mine, /^📖 For \*\*The Final Empire\*\*, your most recent book:/);
+	const links = h.source.calls.filter(c => c[0] === 'link').map(c => [c[1], c[2]]);
+	assert.deepStrictEqual(links, [
+		['test-author/fahrenheit', { type: 'auto' }],
+		['test-author/fahrenheit', { type: 'calibre', id: 12 }],
+		['test-author/the-final-empire', { type: 'off' }]
+	]);
+	bookmarks.reset();
+	fs.rmSync(process.env.PLEXBOT_BOOK_BOOKMARKS_FILE, { force: true });
+	const none = await run(h, OWNER, 'link auto');
+	assert.match(none, /^Which book\? Nothing is playing here and you have no bookmarked book\.\nUsage/);
+	assert.strictEqual(h.source.calls.filter(c => c[0] === 'link').length, 3, 'nothing more was linked');
+});
+
+test('a title named "Off" is still described, never read as a target', async () => {
+	catalog.replace({ meta: { builtAt: 1 }, works: JSON.parse(JSON.stringify(WORKS.concat([work('test-author/off', 'Off')]))) });
+	const h = harness();
+	await run(h, OWNER, 'link off');
+	assert.ok(h.source.calls.some(c => c[0] === 'describe' && c[1] === 'test-author/off'));
+	assert.ok(!h.source.calls.some(c => c[0] === 'link'));
+});
+
 test('the sub-help lists the read-along and still fits an embed', async () => {
 	const sent = [];
 	await book.command.process({ config: { commandPrefix: '!' } }, null, { channel: { async send(p) { sent.push(p); } } }, '?');

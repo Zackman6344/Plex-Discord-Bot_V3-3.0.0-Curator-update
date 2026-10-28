@@ -152,7 +152,7 @@ function fakeLookup(answer = () => ({ enabled: true, counts: {}, changed: [], re
 	return state;
 }
 
-function setup({ enabled = true, tags = fakeTags(), online = false, lookup = fakeLookup(), query = null } = {}) {
+function setup({ enabled = true, tags = fakeTags(), online = false, lookup = fakeLookup(), query = null, calibreIndex = undefined } = {}) {
 	const plex = fakePlex();
 	const cfg = { audiobooksEnabled: enabled, audiobookOnlineLookup: online };
 	const clock = { now: T0 };
@@ -177,6 +177,7 @@ function setup({ enabled = true, tags = fakeTags(), online = false, lookup = fak
 			return handle;
 		},
 		clearTimeout: (h) => { h.cleared = true; },
+		...(calibreIndex ? { calibreIndex } : {}),
 	});
 	return { plex, cfg, clock, timers, timeouts, tags, lookup, lib };
 }
@@ -713,6 +714,34 @@ test('a broken overrides file keeps what the build applied rather than resolving
 	assert.strictEqual(store.work('avery-quill/the-salt-crown').title, 'The Salt Crown');
 });
 
+// The bug: a Calibre check run inside the build would hold every rebuild for as long as a closed
+// Calibre GUI takes to time out.
+test('each build hands the Calibre index the new catalog without waiting for it, and start and stop reach it', async () => {
+	const calls = [];
+	const calibreIndex = {
+		start() { calls.push('start'); return new Promise(() => {}); },
+		stop() { calls.push('stop'); },
+		afterRebuild() { calls.push('afterRebuild'); return new Promise(() => {}); },
+	};
+	const { lib, timers } = setup({ calibreIndex });
+	const first = await lib.start();
+	assert.strictEqual(first.action, 'rebuilt', 'the build finished with the index still pending');
+	assert.deepStrictEqual(calls, ['start', 'afterRebuild']);
+	await lib.rebuild();
+	assert.deepStrictEqual(calls.filter((c) => c === 'afterRebuild').length, 2);
+	lib.stop();
+	assert.strictEqual(calls[calls.length - 1], 'stop');
+	assert.strictEqual(timers[0].cleared, true);
+});
+
+test('an index that throws never fails a build', async () => {
+	const calibreIndex = { start() { throw new Error('boom'); }, stop() { throw new Error('boom'); }, afterRebuild() { throw new Error('boom'); } };
+	const { lib } = setup({ calibreIndex });
+	assert.strictEqual((await lib.start()).action, 'rebuilt');
+	assert.strictEqual((await lib.rebuild()).ok, true);
+	lib.stop();
+});
+
 test('with the online lookup off a build queues no batch', async () => {
 	const { lib, lookup } = setup({ online: false });
 	const report = await lib.rebuild();
@@ -900,6 +929,24 @@ test('a work split into loose books hands its id, its aliases and their bookmark
 		const r = bookModel.resumeStart(w, mark);
 		assert.deepStrictEqual([r.partIndex, r.partMs], [0, at], `${who} resumes where it stopped`);
 	}
+});
+
+// The bug (catalog rules version 5): interleaved volumes are now placed by each file's album tag,
+// so their files are read one by one; a 396-song upload bucket also shares track numbers, and only
+// the album genres the build hands to tagSamples keep it from 396 ffmpeg reads.
+test('interleaved volumes are read file by file, and a song bucket sharing track numbers is not', async () => {
+	const tags = fakeTags();
+	const { plex, lib } = setup({ tags });
+	const rock = { ratingKey: '4101', parentRatingKey: '94101', type: 'album', title: 'Loud Hits', parentTitle: 'Kid Ferro', Genre: [{ tag: 'Rock' }] };
+	plex.lib.albums.push(rock);
+	for (let i = 1; i <= 40; i++) {
+		for (const side of ['A', 'B']) plex.lib.tracks.push({ ...looseTrack(41000 + i * 2 + (side === 'B' ? 1 : 0), rock, `M:/Music/Kid Ferro/Loud Hits/${String(i).padStart(2, '0')} Song ${side}.mp3`, 4), index: i });
+	}
+	await lib.rebuild();
+	const perFile = tags.calls[0].samples.filter((s) => s.album === undefined).map((s) => s.file);
+	assert.ok(perFile.includes('M:/Music/Avery Quill/04 The Glass Road (Grahpic Audio) - Chapter 1.mp3'), 'a file of the interleaved volumes');
+	assert.ok(!perFile.some((f) => f.includes('Loud Hits')), 'no song of the bucket');
+	assert.ok(store.work('avery-quill/the-glass-road'), 'and the build goes on as before');
 });
 
 test('no request ever went to a Plex search endpoint', () => {

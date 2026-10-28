@@ -17,14 +17,18 @@
 // GraphicAudio book has no author and comes out as "untitled/<title>", to be renamed on the next
 // build; warm builds read from the cache in milliseconds, so only the first build of a large
 // library, about 30 s, ever waits for long. Folders that may hold loose single-file books have
-// every file read, about 0.3 s each, so the first build after rules version 4 also waits. Reads
-// still running when the budget ends finish in the background and trigger one more build.
+// every file read, about 0.3 s each, so the first build after rules version 4 also waits; version 5
+// adds every long mp3 file and every file of interleaved volumes (about 400 on the owner's library),
+// so its first build is the one rebuilt again when the reads finish. Reads still running when the
+// budget ends finish in the background and trigger one more build.
 //
 // Displayed metadata goes through helpers/bookMetadata.js before the catalog is replaced, so a
 // build shows the owner's edits, Calibre's and the online lookup's fills at once instead of the
 // raw detection until the next refresh. With the online lookup on, every build queues a lookup
 // batch afterwards; it is never awaited here (21 books take up to half a minute at one request a
-// second), and its fills reach the catalog through refreshMetadata() when it finishes.
+// second), and its fills reach the catalog through refreshMetadata() when it finishes. The Calibre
+// index (helpers/calibreIndex.js) follows each build the same way: it matches the new works from
+// its saved copy at once and checks Calibre in the background.
 
 const logger = require('./logger.js');
 const bookCatalog = require('./bookCatalog.js');
@@ -75,6 +79,8 @@ function rootsOf(sections) {
  * @param {Function} [deps.clearTimeout]
  * @param {{ refresh: Function }} [deps.lookup] the online lookup (bookLookup.instance())
  * @param {{ resolveWith: Function, overrideFor: Function }} [deps.metadata] helpers/bookMetadata.js
+ * @param {{ start: Function, stop: Function, afterRebuild: Function }} [deps.calibreIndex] the
+ *   Calibre index (helpers/calibreIndex.js), which is off under the test runner by default
  */
 function createLibrary(deps = {}) {
 	const query = deps.query || ((p) => require('./plexClient.js').getPlex().query(p));
@@ -83,6 +89,7 @@ function createLibrary(deps = {}) {
 	const tagReader = () => deps.tags || require('./bookTags.js');
 	const lookupOf = () => deps.lookup || require('./bookLookup.js').instance();
 	const metadataLayer = () => deps.metadata || require('./bookMetadata.js');
+	const calibreIndex = () => deps.calibreIndex || require('./calibreIndex.js').instance();
 	const now = deps.now || Date.now;
 	const setTimer = deps.setInterval || setInterval;
 	const clearTimer = deps.clearInterval || clearInterval;
@@ -255,7 +262,7 @@ function createLibrary(deps = {}) {
 		}
 
 		const roots = rootsOf(sections);
-		const samples = bookCatalog.tagSamples(tracks, { roots });
+		const samples = bookCatalog.tagSamples(tracks, { roots, albums });
 		const tagRead = await tagReader().read(samples, { budgetMs: TAG_BUDGET_MS, concurrency: TAG_CONCURRENCY });
 		const tags = (tagRead && tagRead.byAlbum) || {};
 		const trackTags = (tagRead && tagRead.byTrack) || {};
@@ -287,10 +294,11 @@ function createLibrary(deps = {}) {
 		const notes = [
 			...carry.carried.map((c) => `overrides for ${c.from} (${c.fields.join(', ')}) now apply to ${c.to}, the id detection gives it now`),
 			...built.notes,
+			...bookCatalog.authorOverrideNotes(written, matched.works),
 		];
 		// Every build, the automatic ones included: an override that stopped applying would otherwise
 		// be told only in the reply to a manual rescan.
-		for (const note of notes) logger.warn(`Audiobook overrides: ${note}`);
+		for (const note of notes) logger.warn(`Audiobook catalog: ${note}`);
 
 		const works = resolveMetadata(matched.works);
 		const persisted = store.replace({
@@ -335,6 +343,13 @@ function createLibrary(deps = {}) {
 			(report.removed.length ? `, removed ${report.removed.length}` : '') +
 			(Object.keys(moved).length ? `, ${Object.keys(moved).length} renamed` : ''));
 		if (onlineOn()) batchOf.set(report, queueLookup());
+		// Never awaited: Calibre may be closed, and the build is done without it.
+		try {
+			const pending = calibreIndex().afterRebuild();
+			if (pending && typeof pending.catch === 'function') pending.catch(() => {});
+		} catch (err) {
+			logger.warn('Audiobook Calibre index could not follow the rebuild:', messageOf(err));
+		}
 		return report;
 	}
 
@@ -444,12 +459,19 @@ function createLibrary(deps = {}) {
 			timer = setTimer(tick, CHECK_INTERVAL_MS);
 			if (timer && typeof timer.unref === 'function') timer.unref();
 		}
+		try {
+			const first = calibreIndex().start();
+			if (first && typeof first.catch === 'function') first.catch(() => {});
+		} catch (err) {
+			logger.warn('Audiobook Calibre index failed to start:', messageOf(err));
+		}
 		return ensureFresh({ reason: 'start' });
 	}
 
 	function stop() {
 		if (timer) clearTimer(timer);
 		timer = null;
+		try { calibreIndex().stop(); } catch (_) { /* nothing armed */ }
 		if (tagRebuildTimer) cancelLater(tagRebuildTimer);
 		tagRebuildTimer = null;
 	}

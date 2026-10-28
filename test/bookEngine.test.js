@@ -927,6 +927,34 @@ test('view().text comes from setTextInfo, is null without it, and a throwing one
 	assert.strictEqual(h.director.view(s).text, null);
 });
 
+// The bug: pickWork chose by title alone, so a query naming a whole series started whichever
+// title began with the word instead of the listener's own book in progress; and a one-letter
+// typo answered only "Nothing ... matches".
+test('a series query resumes the listener\'s book there, and a typo is suggested without joining', async (t) => {
+	const one = Object.assign({}, SHORT, { series: 'The Test Saga', sequence: 1 });
+	const two = Object.assign({}, LONG, { series: 'The Test Saga', sequence: 2 });
+	const list = [one, two, CHAPTERED];
+	const h = harness({ deps: { catalog: {
+		works: () => list,
+		work: id => list.find(w => w.id === id) || null,
+		findWorks: q => list.filter(w => `${w.title} ${w.series || ''}`.toLowerCase().includes(String(q).toLowerCase())),
+		partKeyFor: (workId, p) => p.partKey
+	} } });
+	t.after(() => h.done());
+
+	const typo = await h.play({ workId: undefined, query: 'chaptred bok' });
+	assert.strictEqual(typo.code, 'suggest');
+	assert.match(typo.text, /Did you mean \*\*Chaptered Book\*\*\?$/);
+	assert.deepStrictEqual(typo.choices.map(c => c.id), [CHAPTERED.id]);
+	assert.strictEqual(h.bot.joins.length, 0, 'a suggestion never joins');
+	assert.strictEqual(h.session(), null);
+
+	bookmarks.record('u1', two, { absoluteMs: 100 * S, guildId: 'g1' });
+	const r = await h.play({ workId: undefined, query: 'test saga' });
+	assert.strictEqual(r.ok, true, r.text);
+	assert.strictEqual(h.session().workId, LONG.id, 'the book in progress, not #1');
+});
+
 test('refreshCard edits the live card (coalesced) and ignores a session that is gone', async (t) => {
 	const h = harness();
 	t.after(() => h.done());

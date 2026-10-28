@@ -149,6 +149,7 @@ module.exports = {
   'audiobookTextSidecars'        : true,   // also look for .epub files next to a book's audio
   'audiobookOnlineLookup'        : false,  // fill blank series, narrators and publishers from Audible (see "Looking books up online")
   'audiobookLookupRegion'        : 'us',   // which Audible store: 'us' 'ca' 'uk' 'au' 'fr' 'de' 'jp' 'it' 'in' 'es'
+  'audiobookCalibreSort'         : false,  // match books to Calibre records for sections and blank details (see "Sorting with Calibre")
 
   // Voice (see "If voice audio stutters"). Both editable from /config → Voice, both live.
   'processPriority'    : 'above_normal',   // or 'normal' if a game running beside the bot suffers
@@ -187,7 +188,8 @@ its own. Changes save instantly and **persist across restarts**.
   Every Audiobooks and Voice setting applies at once, with no restart: turning
   `audiobooksEnabled` on makes `/book` work on its next use, and `processPriority` and
   `voiceHealthEnabled` switch over as soon as they are saved.
-- Integrations holds the four Calibre settings for the read-along. `calibrePassword` is masked in
+- Integrations holds the four Calibre settings for the read-along and the Calibre index, which
+  Audiobooks turns on with `audiobookCalibreSort`. `calibrePassword` is masked in
   the panel like the Tautulli API key and never written to the logs, and a `calibreUrl` with a
   login typed into it is refused.
 - Discord/Gemini/Plex tokens (in `config/keys.js` and `config/plex.js`) are **not** editable
@@ -389,8 +391,9 @@ list is under **Command Directory** below.
 enable **Audiobooks and podcasts (/book)**. No restart. The first `/book play` or `/book library`
 after that (or the next boot) reads your music library once in the background (about 20 seconds
 on a large library) to work out which albums are books; until that finishes, `/book play` says it
-is still reading. The first read also opens one file of every long album to read its tags, which
-can add up to 45 seconds once; later reads take them from a cache. After that it checks Plex for changes once an
+is still reading. The first read also opens one file of every long album to read its tags (every
+file, in a folder of long files or of several volumes mixed together), which can add up to 45
+seconds once; later reads take them from a cache. After that it checks Plex for changes once an
 hour, so a book you add shows up within the hour, and `/book rescan` (owner only) re-reads it on
 demand.
 
@@ -400,9 +403,19 @@ when its tracks are long (a median of 15 minutes or more), when at least half it
 albums with an audiobook genre, when its name says so ("unabridged", "audiobook", "read by", GraphicAudio), or
 when it is a long run of low-bitrate mono files. A folder whose tracks are mostly numbered episodes
 of 20 minutes or more is a podcast. Hour-long music mixes stay music: nothing is decided by track
-length alone. `/book library` shows what it found, and `/book rescan` also names the five longest
-folders of 2 hours or more that it left as music, so you can pull one in, and the books whose part
-order it is unsure of.
+length alone. `/book library` shows what it found, and `/book rescan` also names up to five of the
+long folders it left as music, so you can pull one in, and the books whose part order it is unsure
+of.
+
+- **Short works.** A folder under 2 hours becomes a book when it holds at least 40 minutes and its
+  median track is 15 minutes or more (a single play such as Lysistrata or Medea on long tracks). A
+  folder of at least 40 minutes with a median track of 5 minutes or more, and no music genre, is
+  taken when the folder above it holds 3 or more books (one LP of Antigone among other Greek
+  plays). Both still lose to the music rule below.
+- **One folder, several plays.** A folder of mp3s splits into one book per album tag when every
+  file has an album tag that its own file name repeats, and at least one of those books holds 2 or
+  more files. The Aristophanes "The Birds" folder becomes The Birds, The Clouds and The Frogs. A
+  lecture course or a podcast whose file names do not repeat the album tag stays one book.
 
 - **Genres.** An album counts as a book album when its Plex genre or the genre tag in its files
   says audiobook, podcast, audio drama, radio play or full cast. It counts as music when it names
@@ -429,8 +442,9 @@ from the first of these that has it:
 1. Your own edits (`!book edit` below, or `data/book_overrides.json` by hand), for one book or,
    with numbers, for all of an author's books.
 2. The tags inside the files, then Plex's album and artist, then the folder names.
-3. The Calibre book the read-along found for it, then the optional online lookup. **These two
-   only fill a detail every source above left blank.**
+3. Calibre (a book you tied with `!book edit <book> calibre <id>`, else the read-along's Calibre
+   book, else an exact match from the Calibre index while `audiobookCalibreSort` is on), then the
+   optional online lookup. **These two only fill a detail every source above left blank.**
 
 An author-wide series with no numbers sits between 2 and 3: it names that author's books that
 have no series of their own. A few rules decide what detection reads:
@@ -442,8 +456,24 @@ have no series of their own. A few rules decide what detection reads:
   it ("The Children's Adventure"). Only capitals and apostrophes change, so the book's id does not.
 - **A cast list is not a narrator.** A bracket that is cut short with "..." (the GraphicAudio
   Mistborn albums), or a tag that lists several names, "full cast" or "various", gives no
-  narrator. The bracket text still shows as the edition. "Various" in a folder name is still
-  shown, as before.
+  narrator, and a cut-short cast is not shown as the edition either. "Various" in a folder
+  bracket shows as the edition and never as the narrator.
+- **A bracket has to look like a person to be the narrator.** Years ("(1942)"), "Various", casts,
+  translator credits, publishers and words of the title are refused, and "Abr", "Vinyl" and "LP"
+  in front of a name are dropped. The narrator then comes from the narrator tag, the comment,
+  "read by X" in a folder or album name, the second name of an "Author/Narrator" artist, or a
+  composer tag naming one person. A year or a format word is never the edition.
+- **Authors are cleaned up.** An artist such as "BBC/Sophocles/John Lynch" or "Madeline Miller,
+  Frazer Douglas, ©2012 by HarperCollins" shows as Sophocles or Madeline Miller: houses, a bare
+  "BBC", copyright fragments and role credits are dropped, and an all-capitals name gets proper
+  capitals. A shelf folder holding three or more authors ("Mythology") is never the author. A work
+  with no author at all shows its publisher's name, such as BBC Radio 4.
+- **Titles lose their tails.** "- A Novel", ": Penguin Classics", "read by ...", "(1855)", a
+  "BBC " prefix, "by <author>" and a series tail such as "Book One of the Wheel of Time" are
+  removed. A trailing "Vol 1" or "Book 2" is kept.
+- **Series in the name.** "Series, Book N", "- X Series, Book N" and "Book One of Series" are
+  read, and a folder such as "Murderbot Diaries 03 Rogue Protocol" joins the series that a
+  sibling by the same author names.
 - Calibre and the online lookup may fix a title's capitals, and only when their title is the same
   once case and punctuation are ignored, is itself properly capitalised and has a lower-case
   letter. An online "Words Of Radiance" never replaces "Words of Radiance", and a Calibre record
@@ -452,6 +482,13 @@ have no series of their own. A few rules decide what detection reads:
 
 None of these sources ever changes a book's id, so bookmarks, read-along links and sync marks stay
 where they are.
+
+**The one-time id move (rules version 5).** The author and title clean-up above changes what
+detection reads, so the first start after this update rebuilds the catalog once and about 19 books
+on the reference library get a new id (`ovid/metamorphoses-penguin-classics` becomes
+`ovid/metamorphoses`). Each old id stays as an alias of the new one, so bookmarks, read-along
+links, sync marks, your overrides and Calibre pins follow. If two books would come out with the
+same id, the later one by folder order gets its folder's name as its id and the rebuild says so.
 
 **Looking books up online (optional).** Off by default. With `audiobookOnlineLookup` on (`/config`
 → Audiobooks), each catalog rebuild is followed by a lookup on Audible's catalog search of every
@@ -485,7 +522,9 @@ additions, removals and renames ("bookmarks follow"), and:
 
 - `⚠️ Doubtful groups, catalogued anyway`: books whose grouping looks wrong, each with the reason
   (tracks by several artists, a music genre on one of its albums, a generic folder name such as
-  "Music" spread over several albums, a title that looks like a folder name, no author found) and
+  "Music" spread over several albums, a title that looks like a folder name, no author found, a
+  title or author that still reads like a credit, an author taken from a shelf folder, a narrator
+  that does not look like a person) and
   the fix, `!book edit <id> exclude` or a title or author edit. A doubtful book is still
   catalogued and playable, and is not looked up online. **Once you set its title or author by
   hand it is not warned about again, and the online lookup takes it too.**
@@ -494,8 +533,11 @@ additions, removals and renames ("bookmarks follow"), and:
 - `🌐 Online lookup`, when it is on: how many books matched an edition or a book, were not found,
   were already looked up, were skipped or failed, then the blanks this rescan filled. "Online
   lookups are still running" means the minute ran out; they finish in the background.
-- `🗂 Long groups not taken as books`, as before. Each folder is shown from below its music
-  section's own folder, so the drive and the folders above it stay out of the channel.
+- `🗂 Long groups not taken as books`: folders of 2 hours or more, and shorter ones whose median
+  track is 10 minutes or more ("X (1.2 h, tracks of 10 min)"), likeliest books first (music genres,
+  upload folders, generic folders and single files last), five at most and then "N more". Each
+  folder is shown from below its music section's own folder, so the drive and the folders above
+  it stay out of the channel.
 
 **Books stay out of music.** While `audiobooksExcludeFromMusic` is on (the default), catalogued
 books and podcasts never come up in `!random`, `!mood`, `/vibe`, `/sonic`, Hitster, `/quotethebard`,
@@ -536,6 +578,70 @@ never finishes it for you. Playing a finished book starts it again; playing a po
 caught up on starts at its first new episode. A podcast plays in episode order, and a new season
 added to the same folder that numbers its episodes from 1 again plays after the season before it.
 
+**Finding a book by name.** `/book play <words>` tries these in order and stops at the first that
+finds something:
+
+1. The exact title, ignoring a leading "the", "a" or "an" on either side: `the mythos` starts
+   Mythos, and `odyssey` asks between Fry's Odyssey and Homer's The Odyssey.
+2. A series and number: `mistborn 3`, `murderbot #2`, `stormlight book three`. A number the
+   library lacks lists the numbers it has ("The Murderbot Diaries has no #2 in the library. It has
+   #1, #6, #7. Pick one:").
+3. **A whole series or author** (`mistborn`, `murderbot`, `sanderson`, `stephen fry`) when every
+   hit belongs to it: your newest book in progress there resumes, else the lowest unfinished
+   number of a single series starts (finishing one narration of a number counts for all of
+   them), else you get a list to pick from.
+4. A title that starts with the words, ignoring articles.
+5. Titles whose words start with the words, then every hit.
+
+When several books are left and you have exactly one of them in progress, that one plays. Accents
+do not matter.
+
+**Typos ask first.** When nothing matches, the bot looks for a near miss (one wrong letter in a
+word of 4 to 7 letters, two in a longer one, a swapped pair counting as one, spaces ignored) and
+answers "Nothing in the audiobook library matches "rouge protocol". Did you mean **Rogue
+Protocol**?" with a play button, or a list of up to 5 with a button each. **It never starts a book
+on a guess.** A single word only matches an author by their whole surname, so `auto` does not
+find Autumn Bardot. The same near misses fill the `/book play` autocomplete, and `finish`,
+`forget`, `link`, `marks` and `unmark` name them as text with the id to copy, with no button. A
+misspelt
+subcommand gets "Did you mean `!book pause`?", and `!book read Artifical Condition` gets
+"Unknown book command "read". Did you mean `!book play Artificial Condition`?" with a button. A
+title typed with no verb (`!book whale fall`, `!book mistborn`) is tried whole first, the same
+way, and offered with play buttons; nothing starts until you press one. `!book exit strategy`
+offers both the book and `!book edit strategy`.
+
+**Browsing the library: `/book library`.** With no filter it shows one line per section (name,
+number of books, hours), Podcasts last, an **Open a section** menu, and a **▶ Play a book in
+progress…** menu of your unfinished books, newest first. A section or a filter lists books 25 to a
+page: books outside a series by title, then each series under a "*Series* · Author" heading in
+series order, with your progress beside each one. Each page has a **▶ Play one of these…** menu,
+◀ and ▶ page buttons and **📚 All sections**. Picking from a Play menu plays the book for whoever
+picked it, answers privately and redraws the list with the new mark.
+
+| Filter | Lists |
+| ------ | ----- |
+| `fantasy` | A section by its exact name. A section at either end of other words narrows by it: `fantasy sanderson`. |
+| `author:sanderson`, `series:mistborn`, `section:myth` | By author, series or section (`genre:` is the same as `section:`). A value runs to the next keyword, so quote one that contains a keyword: `series:"the long earth"`. |
+| `unread`, `listening`, `finished` | Your own progress. |
+| `short`, `long` | Under 5 hours, or 20 hours or more. |
+| `podcasts` | Podcasts only. |
+| any other words | A title, author or series search. |
+
+Filters combine (`fantasy unread`, `author:sanderson listening`). A filter that finds nothing gets
+the same "Did you mean" buttons as `play`, or the list of sections and keywords. A list's buttons
+work for an hour after the last click and until the bot process restarts (lists survive `/restart`,
+which runs in the same process); after that a click says "This list has expired. Run
+`/book library` again." privately.
+
+**Sections.** Each book is listed under the first of these that names a section: Podcasts for a
+podcast; your `!book edit <book> genre` for the title; your `author-genre` for the author; your
+own folder (a folder holding books by 3 or more authors, such as "Mythology" or "Myth
+Retellings"); the tags of the Calibre record it matches; the genres in its files or in Plex; the
+tags of a likely Calibre match; the section most of its series has; the section all of its
+author's other books agree on; else "More books". Tags and genres count only when a whole part of
+the tag names one of Fantasy, Science Fiction, Mythology, Horror, Mystery & Thriller, Classics or
+Nonfiction ("Fiction", "Audiobook" and "Epic" count for nothing).
+
 **Fixing a book's details from Discord: `!book edit`.** Owner only, and `ownerId` must be set:
 unlike `/book rescan` there is no bootstrap mode while it is blank. Edits are written to
 `data/book_overrides.json` and show at once, with no rescan, except `exclude` and `include`, which
@@ -543,12 +649,15 @@ rebuild the catalog. `!book edit` on its own lists the forms.
 
 | Command | What it does |
 | ------- | ------------ |
-| `!book edit Hyperion` | Each detail and where it came from (your edit, your author-wide edit, file tags, Plex, folder name, Calibre, online), and any doubts. |
+| `!book edit Hyperion` | Each detail and where it came from (your edit, your author-wide edit, file tags, Plex, folder name, Calibre, online), its section and what decided it, its Calibre match, and any doubts. |
 | `!book edit <book> title <text>` | Sets the title. `author`, `narrator` and `publisher` work the same way. |
 | `!book edit dan-simmons/hyperion narrator none` | Explicitly no narrator, where the folder name says "Various". `publisher none` works too. |
 | `!book edit The Fall of Hyperion series Hyperion Cantos 2` | This title's series and number. The number can be `2`, `0.5` or `#2`; a range such as `1-5` is kept as no number, and leaving the number out keeps the detected one. `series none` means no series. Quote a name that ends in a number: `series "Area 51"`. |
 | `!book edit Hyperion author-series Hyperion Cantos 1` | One series for all of the author's books, numbered one book per command (below). |
-| `!book edit <book> clear series` | Drops your edit, so the detail shows what the next source gives. Also `title`, `author`, `narrator`, `publisher`, `author-series`, or `all`, which keeps an exclude, a part order and a pinned id. |
+| `!book edit Hyperion genre Science Fiction` | The library section for every recording of this title. Any name works; one that matches an existing section apart from case joins it. |
+| `!book edit Hyperion author-genre Science Fiction` | The section for all of the author's books that have no `genre` of their own. |
+| `!book edit dan-simmons/hyperion calibre 42` | Ties this recording to Calibre book 42 (the number in Calibre's Id column), for its details, its section and `!book calibre`. `calibre none` stops any match. A title with two recordings needs the id. |
+| `!book edit <book> clear series` | Drops your edit, so the detail shows what the next source gives. Also `title`, `author`, `narrator`, `publisher`, `author-series`, `genre`, `author-genre`, `calibre`, or `all`, which keeps an exclude, a part order, a pinned id, the sections and the Calibre pin. |
 | `!book edit <book> exclude` | Takes the book out of the catalog and gives its tracks back to music. Rebuilds the catalog (about 20 s). Saved places are kept, and the reply counts the listeners in this server who have one. |
 | `!book edit <id> include` | Brings an excluded book back, by the id the exclude reply gave. Rebuilds too. |
 | `!book edit <book> lookup` | Asks the online lookup about this book again now. Needs `audiobookOnlineLookup` on. While a batch of lookups runs it waits for that batch, up to a minute. |
@@ -557,9 +666,14 @@ rebuild the catalog. `!book edit` on its own lists the forms.
   the first detail word (`title`, `series`, `clear`, `exclude` and the rest) whose text before it
   names a book, preferring an exact title. Quote a title to be certain: `!book edit "The
   Narrator" narrator Sam Reader`.
-- **Title and series edits reach every recording of a title** (both narrations of The Fall of
-  Hyperion), and the reply names them. `author`, `narrator`, `publisher`, `clear all`, `exclude`
-  and `include` change one recording, so for a title with two they ask for the id.
+- **Title, series and genre edits reach every recording of a title** (both narrations of The Fall
+  of Hyperion), and the reply names them. `author`, `narrator`, `publisher`, `calibre`,
+  `clear all`, `exclude` and `include` change one recording, so for a title with two they ask for
+  the id.
+- `calibre <id>` works with the Calibre index off or Calibre closed: the pin is saved, and the
+  reply says it applies once the index is on. A pin keeps the record's Calibre uuid and library,
+  so if that id later holds another book, or the book is deleted, or you switch libraries,
+  `!book calibre` lists the pin as one to check and nothing replaces it.
 - **A whole series (`author-series`).** Run it once per book, each with its number:
 
   ```
@@ -581,6 +695,32 @@ rebuild the catalog. `!book edit` on its own lists the forms.
 - On `/`: `/book edit title:<book> field:<detail> value:<value> position:<number>`. `value` is
   taken whole, so `field:series value:Area 51` needs no quotes and the number goes in `position`.
   With no `field` it shows the details.
+
+**Sorting with Calibre: `!book calibre`.** Off by default. With `calibreUrl` set and
+`audiobookCalibreSort` on (`/config` → Audiobooks, "Sort and fill details from Calibre"), the bot
+keeps a copy of your Calibre library's titles, authors, series, tags, ISBNs and formats in
+`data/book_calibre.json` and matches each audiobook to a record. It only reads from Calibre: a
+full read is 3 requests plus 1 per 100 books (7 for a 335-book library), and an unchanged library
+costs 2. It reads after every
+catalog rebuild and checks every 15 minutes. With Calibre closed it keeps using the saved copy and
+tries again after 15, 30 and 60 minutes, then every 2 hours at most, with one log line per outage.
+
+- **A match is exact** by your pin, a `!book link`, the read-along's own Calibre book, the ISBN,
+  the title and the author's surname, or the series, number and author. A title that is only a
+  series name ("Mistborn") is never matched to a book in that series by title alone, and two
+  translations of one book each take the record that names their translator. **Two records that
+  fit equally well match neither**; `!book edit <book> calibre <id>` settles it. A record that only
+  shares most of the title words is a likely match.
+- An exact or pinned match fills blank details (never the publisher) and gives the book its
+  section from the record's tags. A likely match only gives the section, and only when nothing
+  better does.
+- `!book calibre` (owner only, `ownerId` set) answers from the saved copy, so it never waits on
+  Calibre: counts of exact, pinned, likely, ambiguous and unmatched books, how many records the
+  copy holds and when it was read, whether Calibre answered at the last check, then pins to check,
+  ambiguous books with the candidate ids, and **the audiobooks with no Calibre match**. `!book
+  calibre all` adds the matched books, and `!book calibre refresh` reads Calibre again in the
+  background and replies at once. Long reports run to 5 messages at most.
+- With the setting off or `calibreUrl` blank, `!book calibre` says how to turn it on.
 
 **Fixing the catalog by hand.** `!book edit` writes `data/book_overrides.json` for you, and you can
 also edit it yourself to correct series, order, titles or what counts as a book. Every key is
@@ -622,6 +762,9 @@ optional:
 - `authors` sets a series for every book by that author, with `order` giving each title its
   number. The key is the author as detected, in id form (`dan-simmons`). Without `order`, the
   series only names that author's books that have none.
+- `!book edit` also writes `works[id].genre`, `authors[slug].genre`, and for a Calibre pin
+  `works[id].calibreId` (a number, or `null` for none) with `calibreUuid` and `calibreLibrary`.
+  All of them are found under a book's old ids too.
 
 Run `/book rescan` after editing it. A typo in the JSON is logged and reported by `/book rescan`,
 and the file is ignored until it parses; `!book edit` refuses to touch it meanwhile, so a hand edit
@@ -637,7 +780,7 @@ shows a warning and the command log gets a `book-save-failed` line (`npm run log
 `data/book_tags.json` caches the tags read from the files, keyed by each file's path, size and
 date, so only new or changed files are opened again; a file that cannot be opened is remembered
 too and tried again after 30 days or when it changes. `data/book_lookup.json` holds the online
-answers. Both are gitignored, as are `book_overrides.json.bak` and the `.tmp` an edit writes
+answers, and `data/book_calibre.json` the Calibre index's copy and matches. All three are gitignored, as are `book_overrides.json.bak` and the `.tmp` an edit writes
 through; the tag cache is keyed by file paths on this PC.
 
 ### 📜 Reading along: the book's text in your DMs
@@ -737,8 +880,10 @@ Marks are kept in `data/book_text/marks.json` (gitignored).
 1. A link the owner set with `!book link`.
 2. Calibre's content server, at `calibreUrl` (default `http://127.0.0.1:8080`; `/config` →
    Integrations). The bot only reads from it. It finds a book by its title, or by its series number
-   and author, so The Final Empire finds the Calibre book titled "Mistborn" (series Mistborn, book
-   1). The content server runs only while the Calibre app is open with its server started.
+   and author, so The Final Empire finds a Calibre book titled "Mistborn" (series Mistborn, book
+   1). A volume number written as a word ("Book Two") counts as the number. While the Calibre
+   index is on, a book with no ebook yet takes the index's exact match when that record has an
+   EPUB. The content server runs only while the Calibre app is open with its server started.
 3. `.epub` files in the folders that hold the book's audio files (`audiobookTextSidecars`, on by
    default). The file name has to match the title; a companion book or another title in the same
    folder is skipped.
@@ -758,6 +903,7 @@ this PC):
 | `!book link The Final Empire off` | No read-along for this book. |
 | `!book link The Final Empire auto` | Forget the link and search again. |
 | `!book link The Final Empire` | What it uses now, and the Calibre books and files it considered. Typed in a server channel, the reply names Calibre ids and file names only, and the full paths go to you by DM. |
+| `!book link auto` | With no title, `auto`, `off`, `id:N`, `isbn:N` or a path applies to the book playing in this server, else your most recent book, and the reply starts "📖 For **Title**, the book playing here:" or "…, your most recent book:". A book whose title is exactly "Off" is still described, not linked. |
 
 Every link echoes what it linked, such as "Linked The Final Empire to Calibre #299 “Mistborn”
 (EPUB).", so a wrong id shows at once. An ebook that could not be read (DRM, damaged) is not tried
@@ -931,7 +1077,7 @@ is playing.
 
 | Command | What it does |
 | ------- | ------------ |
-| `/book play [title] [from-start]` | Start or resume a book or podcast in your voice channel. No title resumes your latest. Prefix: `!book play <title> --restart`, also `!book start` / `!book listen`. |
+| `/book play [title] [from-start]` | Start or resume a book or podcast in your voice channel. No title resumes your latest. A series or author name resumes your book in progress there; a typo asks "Did you mean …?" with a button and never starts anything. See **Finding a book by name**. Prefix: `!book play <title> --restart`, also `!book start` / `!book listen`. |
 | `/book pause` / `resume` / `stop` | Stop saves your place and leaves voice, and starts any music queued during the book. |
 | `/book back [seconds]` / `forward [seconds]` | Jump 10 s to 10 min from the list (default 30 s), across part boundaries. Prefix takes any length, such as `90`, `1:30` or `2m`, and `!book rewind` / `!book fwd`. |
 | `/book goto <time>` | `1:23:45` from the start, or `+5m` / `-90` from here. |
@@ -940,7 +1086,7 @@ is playing.
 | `/book sleep <after>` | Stop after 5–90 minutes of listening (prefix: any whole number of minutes up to 1440), or at the end of the chapter, or `off`. Paused time does not count. |
 | `/book now` | Post the book card again at the bottom of the channel. |
 | `/book shelf` | Your books in progress and finished, with Resume buttons; podcasts say "caught up" or "new episodes". |
-| `/book library [filter]` | Every book and podcast the bot found, by series, with your progress. |
+| `/book library [filter]` | The sections, with menus to open one or to play a book you are partway through. A section name or a filter (`author:x`, `series:x`, `section:x`, `unread`, `listening`, `finished`, `short`, `long`, `podcasts`, or words) lists books by series with your progress, 25 to a page, with a Play menu. See **Browsing the library**. |
 | `/book stats [user]` | Hours listened, book hours covered, books finished, top three. |
 | `/book leaderboard` | Hours listened in this server. Public. |
 | `/book finish [title]` | Mark a book finished (default: the one you are listening to). |
@@ -950,7 +1096,8 @@ is playing.
 | `/book marks [title]` | The read-along's sync marks on a book (default: the one playing): audio time, chapter, who and when. See **Sync marks**. |
 | `/book unmark [which] [title]` | Remove your latest sync mark, or `which:3` for a listed one of yours. `which:all` is the owner's and says what it would clear; `which:all confirm` clears the book. |
 | `/book rescan` | Owner only (anyone while `ownerId` is blank, as with `/config`): re-read the library from Plex now and report what changed, doubtful groups, music split off book folders and the online lookup. See **What `/book rescan` reports**. |
-| `/book edit <title> [field] [value] [position]` | Owner only, and `ownerId` must be set: fix a book's title, author, narrator, publisher or series, name a whole series, take a book out of the catalog or bring it back, or look it up online again. No field shows where each detail came from. See **Fixing a book's details from Discord**. |
+| `/book edit <title> [field] [value] [position]` | Owner only, and `ownerId` must be set: fix a book's title, author, narrator, publisher or series, name a whole series, set its library section (`genre`, `author-genre`), tie it to a Calibre record (`calibre <id\|none>`), take a book out of the catalog or bring it back, or look it up online again. No field shows where each detail came from. See **Fixing a book's details from Discord**. |
+| `/book calibre [show]` | Owner only, and `ownerId` must be set: the audiobooks with no Calibre match, ambiguous ones and pins to check. `show:all` adds the matched books, `show:refresh` reads Calibre again. Needs `audiobookCalibreSort`. See **Sorting with Calibre**. |
 
 The card has Previous chapter, −30 s, Pause/Resume, +30 s and Next chapter, a speed button that
 cycles 1x–2x, a sleep button that cycles off, 15, 30, 60 minutes and end of chapter, 📖 Text (only

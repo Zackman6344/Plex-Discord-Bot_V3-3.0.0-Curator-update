@@ -8,6 +8,7 @@
 // told apart from the live one. Ended-card ids carry the work id instead: the session is gone.
 
 const bookModel = require('./bookModel.js');
+const bookSearch = require('./bookSearch.js');
 
 const COLOR = {
 	playing: 0x2ecc71,
@@ -119,6 +120,13 @@ function saveWarning(v) {
 	return v.saveHealthy === false ? '⚠️ Your place could not be written to disk just now. It is kept in memory and retried.' : null;
 }
 
+// Some work ids built from long folder names push a custom_id past Discord's 100 characters; the
+// engine finds the work again from its short key.
+function fitId(head, workId, tail) {
+	const full = `${head}${workId}${tail}`;
+	return full.length <= CUSTOM_ID_MAX ? full : `${head}${bookSearch.shortKey(workId)}${tail}`;
+}
+
 function button(customId, label, emoji, style, disabled) {
 	if (customId.length > CUSTOM_ID_MAX) return null;
 	const b = { type: 2, style, custom_id: customId, label: clip(label, LIMITS.label) };
@@ -217,10 +225,12 @@ function endedCard(v) {
 	lines.push(saveWarning(v));
 	const finished = v.endReason === 'finished';
 	const offerFinish = !!v.nearEnd && !finished && v.endReason !== 'forgotten';
+	const resumeId = fitId(`book:resume:`, v.workId, '');
+	const finishId = fitId(`book:finish:`, v.workId, `:${v.userId}`);
 	const buttons = row([
-		v.endReason === 'forgotten' ? null : button(`book:resume:${v.workId}`, finished ? 'Listen again' : 'Resume', '▶️', STYLE.primary),
+		v.endReason === 'forgotten' ? null : button(resumeId, finished ? 'Listen again' : 'Resume', '▶️', STYLE.primary),
 		button('book:shelf', 'My shelf', '📚', STYLE.secondary),
-		offerFinish ? button(`book:finish:${v.workId}:${v.userId}`, 'Mark finished', '✅', STYLE.success) : null
+		offerFinish ? button(finishId, 'Mark finished', '✅', STYLE.success) : null
 	]);
 	const footer = `🎧 ${v.listener ? v.listener.name : 'someone'}'s book`;
 	return payload(embed(v, finished ? COLOR.finished : COLOR.ended, lines, footer), [buttons]);

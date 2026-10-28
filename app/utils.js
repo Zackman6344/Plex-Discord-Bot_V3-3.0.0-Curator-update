@@ -10,6 +10,9 @@ function stop(bot, client) {
     // read-along DM page. On a signal the process exits before that edit is sent, and the left-over
     // page is stubbed or adopted when it is next clicked.
     try { if (bot.readAlong) bot.readAlong.shutdown(); } catch (_) {}
+    // bot.books.shutdown stops it too, last; repeated here so a books shutdown that threw before
+    // reaching it still disarms the 15-minute Calibre check before !restart starts the next bot.
+    try { require('../helpers/calibreIndex.js').instance().stop(); } catch (_) {}
     try { require('../helpers/eventServer.js').stopEventServer(); } catch (_) {}
     try { require('../helpers/healthMonitor.js').stopHealthMonitor(); } catch (_) {}
     try { require('../helpers/kometaTheater.js').stopKometaTheater(); } catch (_) {}

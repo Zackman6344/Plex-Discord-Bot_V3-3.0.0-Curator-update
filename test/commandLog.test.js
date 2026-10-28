@@ -208,3 +208,22 @@ test('the Calibre password is redacted like the other secrets', () => {
         commandLog._reset();
     }
 });
+
+// The bug: a slash command filled from autocomplete logged only the chosen id, so a wrong pick
+// could not be told from a typo afterwards.
+test('text typed into autocomplete rides on the next slash invocation of that command, briefly', (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: 1790000000000 });
+    const argsOf = () => commandLog.readInvocations({}).invocations.map(i => i.args);
+    commandLog.noteTyped({ userId: 'u1', command: 'book', sub: 'play', text: 'rouge prot' });
+    commandLog.startInvocation({ path: 'prefix', command: 'book', args: 'play x', userId: 'u1' });
+    commandLog.startInvocation({ path: 'slash', command: 'book', args: 'play a/rogue-protocol', userId: 'u2' });
+    commandLog.startInvocation({ path: 'slash', command: 'book', args: 'play a/rogue-protocol', userId: 'u1' });
+    commandLog.noteTyped({ userId: 'u1', command: 'book', sub: 'play', text: 'a/rogue' });
+    commandLog.startInvocation({ path: 'slash', command: 'book', args: 'play a/rogue-protocol', userId: 'u1' });
+    commandLog.noteTyped({ userId: 'u1', command: 'book', sub: 'play', text: 'old text' });
+    t.mock.timers.tick(2 * 60 * 1000 + 1);
+    commandLog.startInvocation({ path: 'slash', command: 'book', args: 'play a/old', userId: 'u1' });
+    assert.deepStrictEqual(argsOf().sort(), [
+        'play x', 'play a/rogue-protocol', 'play a/rogue-protocol [typed "rouge prot"]', 'play a/rogue-protocol', 'play a/old'
+    ].sort(), 'not on prefix or for another user; not when the args already hold it; gone after two minutes');
+});

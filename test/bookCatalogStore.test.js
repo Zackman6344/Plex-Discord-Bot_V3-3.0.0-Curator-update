@@ -230,6 +230,21 @@ test('findWorks puts an id, then an exact title, then title words, then other fi
 	assert.strictEqual(ids('').length, Object.keys(CATALOG.works).length);
 });
 
+// The bug: "the mythos" found nothing for a work titled "Mythos", and "penelope" nothing for
+// "Pénélope", whose accents norm() turned into word breaks.
+test('findWorks drops a leading article only when the query finds nothing with it, and folds accents', () => {
+	const c = fixture();
+	const base = c.works['avery-quill/the-salt-crown'];
+	c.works['noor-vasquez/lanterns'] = Object.assign(JSON.parse(JSON.stringify(base)), { id: 'noor-vasquez/lanterns', title: 'Lanterns', author: 'Noor Vasquez', series: null, sequence: null });
+	c.works['noor-vasquez/penelope'] = Object.assign(JSON.parse(JSON.stringify(base)), { id: 'noor-vasquez/penelope', title: 'Pénélope', author: 'Noor Vásquez', series: null, sequence: null });
+	store.replace(c);
+	const ids = (text) => store.findWorks(text).map((w) => w.id);
+	assert.deepStrictEqual(ids('the lanterns'), ['noor-vasquez/lanterns']);
+	assert.deepStrictEqual(ids('the glass'), ['avery-quill/the-glass-road', 'ilse-moreau/the-glass-sea'], 'the article still narrows while it matches');
+	assert.deepStrictEqual(ids('penelope'), ['noor-vasquez/penelope']);
+	assert.deepStrictEqual(ids('vasquez pen'), ['noor-vasquez/penelope']);
+});
+
 const SEA = 'ilse-moreau/the-glass-sea';
 
 function identity(part) {
@@ -498,6 +513,29 @@ test('refreshMetadata lays Calibre and the online lookup under the overrides', (
 	const linkedElsewhere = { works: textStore.works, links: { get: () => ({ type: 'calibre', id: 12 }) } };
 	store.refreshMetadata({ overrides: {}, lookup: null, textStore: linkedElsewhere });
 	assert.strictEqual(store.work(id).series, null, 'a pointer made under another link is not this book\'s');
+});
+
+// The bug: the read-along pointer's copy of Calibre's metadata was refreshed only when someone
+// opened the read-along, so a series fixed in Calibre stayed wrong in the catalog.
+test('with the Calibre index on, its current record for the pointer\'s id wins over the pointer\'s copy', () => {
+	store.replace(fixture());
+	const id = 'avery-quill/the-glass-road';
+	const pointer = { base: 'abcd', via: 'auto', source: { type: 'calibre', id: 11 }, meta: { title: 'The Glass Road', authors: ['Avery Quill'], series: 'Old Name', seriesIndex: 1 } };
+	const textStore = { works: { peek: (w) => (w.id === id ? pointer : null) }, links: { get: () => null } };
+	const asked = [];
+	const answers = { [id]: { title: 'The Glass Road', authors: ['Avery Quill'], series: 'New Name', seriesIndex: 1 } };
+	const calibreIndex = { metadataFor: (w, pointerId) => { asked.push([w.id, pointerId]); return answers[w.id]; } };
+	store.refreshMetadata({ overrides: {}, lookup: null, textStore, calibreIndex });
+	assert.strictEqual(store.work(id).series, 'New Name');
+	assert.ok(asked.some(([w, p]) => w === id && p === 11), 'the pointer\'s Calibre id is handed to the index');
+	assert.ok(asked.some(([w, p]) => w !== id && p === null));
+
+	answers[id] = undefined;
+	store.refreshMetadata({ overrides: {}, lookup: null, textStore, calibreIndex });
+	assert.strictEqual(store.work(id).series, 'Old Name', 'an index with no say leaves the pointer\'s copy');
+	answers[id] = null;
+	store.refreshMetadata({ overrides: {}, lookup: null, textStore, calibreIndex });
+	assert.strictEqual(store.work(id).series, null, 'a pin to none takes Calibre away');
 });
 
 test('refreshMetadata with its real sources reads nothing online while the setting is off', () => {

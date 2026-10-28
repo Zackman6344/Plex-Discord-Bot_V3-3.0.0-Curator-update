@@ -206,7 +206,37 @@ async function describe(ctx, work) {
 	return ctx.say(`${short}\n${tail}`);
 }
 
-async function doLink(ctx, work, target) {
+/**
+ * `!book link auto` names no book: it is for the book playing in this server, else the caller's
+ * most recently played one, and the reply says which, so a wrong guess shows at once.
+ */
+async function linkWithoutBook(ctx, target) {
+	let work = null;
+	let which = '';
+	try {
+		const books = ctx.bot.books;
+		const s = ctx.guildId && books && typeof books.session === 'function' ? books.session(ctx.guildId) : null;
+		if (s && s.work) {
+			work = catalogStore().work(s.workId || s.work.id) || s.work;
+			which = 'the book playing here';
+		}
+		if (!work) {
+			for (const mark of require('../../helpers/bookmarks.js').forUser(String(ctx.userId))) {
+				work = catalogStore().work(mark.workId);
+				if (work) {
+					which = 'your most recent book';
+					break;
+				}
+			}
+		}
+	} catch (err) {
+		logger.warn('!book link could not find the current book:', (err && err.message) || err);
+	}
+	if (!work) return ctx.say(`Which book? Nothing is playing here and you have no bookmarked book.\n${linkUsage()}`);
+	return doLink(ctx, work, target, `📖 For **${esc(work.title)}**, ${which}:`);
+}
+
+async function doLink(ctx, work, target, lead = '') {
 	let r;
 	try {
 		r = await ctx.bot.readAlong.source.link(work, target, { by: ctx.userId });
@@ -217,6 +247,8 @@ async function doLink(ctx, work, target) {
 	// The link picks the Calibre book that fills the catalog's blanks, so they change now rather
 	// than at the next rebuild.
 	if (r.ok) {
+		// The Calibre index ranks a link above its own guesses; it matches again from its saved copy.
+		try { require('../../helpers/calibreIndex.js').instance().rematch({ refresh: false }); } catch (_) {}
 		try {
 			const fresh = catalogStore().refreshMetadata();
 			if (fresh && !fresh.ok) logger.warn(`!book link: saved, but the catalog could not be refreshed: ${fresh.error}`);
@@ -224,7 +256,7 @@ async function doLink(ctx, work, target) {
 			logger.warn('!book link: saved, but the catalog could not be refreshed:', (err && err.message) || err);
 		}
 	}
-	return ctx.say(`${r.ok ? '🔗' : '⛔'} ${r.text}`);
+	return ctx.say(`${lead ? `${lead}\n` : ''}${r.ok ? '🔗' : '⛔'} ${r.text}`);
 }
 
 async function link(ctx) {
@@ -246,6 +278,8 @@ async function link(ctx) {
 	// "Fahrenheit 451" must describe that book, never link "Fahrenheit" to Calibre #451.
 	const whole = exactWork(rd.whole);
 	if (whole) return describe(ctx, whole);
+	const lone = targetOf(rd.whole);
+	if (lone && lone.explicit) return linkWithoutBook(ctx, lone.target);
 	if (rd.split) {
 		const found = ctx.resolveWork(rd.split.workText, ctx.userId);
 		if (found.work) return doLink(ctx, found.work, rd.split.target);

@@ -197,6 +197,21 @@ test('search sends the query and the page size and returns book ids', async () =
 	}
 });
 
+test('searchPage sends the sort and gives the total beside the page of ids', async () => {
+	const s = await server();
+	try {
+		const c = createCalibreClient({ url: s.url });
+		assert.deepStrictEqual(await c.searchPage('authors:"Quill"', { num: 1, sort: 'last_modified', order: 'desc' }), { ids: [2, 1], total: 2 });
+		const q = new URL(s.requests[s.requests.length - 1].url, 'http://x').searchParams;
+		assert.deepStrictEqual([q.get('num'), q.get('sort'), q.get('sort_order')], ['1', 'last_modified', 'desc']);
+		await c.searchPage('x');
+		const plain = new URL(s.requests[s.requests.length - 1].url, 'http://x').searchParams;
+		assert.deepStrictEqual([plain.has('sort'), plain.has('sort_order')], [false, false]);
+	} finally {
+		await s.close();
+	}
+});
+
 test('books answers every id asked for, null for one Calibre does not have, and asks nothing for none', async () => {
 	const s = await server();
 	try {
