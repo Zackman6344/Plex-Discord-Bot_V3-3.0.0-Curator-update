@@ -184,6 +184,19 @@ test('mark finished appears only within 120 s of the end', () => {
 	assert.strictEqual(buttons(done).find(b => b.custom_id.startsWith('book:resume:')).label, 'Listen again');
 });
 
+// The bug: a work id built from a long folder name pushed book:resume and book:finish past
+// Discord's 100 characters, so the ended card dropped both buttons and showed only "My shelf".
+test('a long work id still gets Resume and Mark finished, by its short key', () => {
+	const bookSearch = require('../helpers/bookSearch.js');
+	const longId = `some-author-with-a-long-name/${'the-orchard-of-glass-and-a-subtitle-'.repeat(3)}unabridged`;
+	const total = bookModel.totalMs(WORK);
+	const card = bookCard.endedCard(view({ workId: longId, state: 'ended', endReason: 'explicit', positionMs: total - 60000, nearEnd: true }));
+	assertDiscordShape(card, 'ended with a long id');
+	const key = bookSearch.shortKey(longId);
+	assert.deepStrictEqual(ids(card), [`book:resume:${key}`, 'book:shelf', `book:finish:${key}:${USER}`]);
+	assert.strictEqual(bookSearch.byShortKey(key, [{ id: longId }]).id, longId);
+});
+
 test('the ended card names the reason and where the place was saved', () => {
 	const reasons = {
 		explicit: /⏹ Stopped/, generic: /⏹ Stopped/, sleep: /😴 Sleep timer/, idle: /💤 Left voice/,
@@ -225,11 +238,11 @@ test('titles are escaped and nothing overflows Discord limits', () => {
 	assert.strictEqual(d.title, '📚 A \\*b\\* \\_c\\_');
 });
 
-test('a button whose id would pass 100 chars is left off instead of breaking the card', () => {
+test('a button whose id would pass 100 chars never breaks the card', () => {
 	const workId = `${'a'.repeat(60)}/${'b'.repeat(40)}`;
 	const p = bookCard.endedCard(view({ state: 'ended', endReason: 'explicit', workId, nearEnd: true }));
 	assertDiscordShape(p, 'long work id');
-	assert.ok(!ids(p).some(id => id.startsWith('book:resume:') || id.startsWith('book:finish:')));
+	assert.ok(ids(p).every(id => id.length <= 100));
 	assert.ok(ids(p).includes('book:shelf'));
 });
 

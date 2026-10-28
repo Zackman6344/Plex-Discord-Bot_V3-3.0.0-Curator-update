@@ -2,6 +2,7 @@
 //
 // The book:* button namespace: the live card's controls, the ended card's Resume / My shelf /
 // Mark finished, the shelf's Resume buttons, the "Which one?" picks and the forget confirm.
+// book:lib:* (the library's pager and menus) belongs to helpers/bookLibraryButtons.js.
 //
 // Every click is acknowledged exactly once within Discord's 3 s. A control click runs the engine
 // action synchronously (a resource build starts unawaited) and answers with interaction.update,
@@ -98,10 +99,11 @@ async function answerDeferred(interaction, opts, replace, content, extra = {}) {
 	}
 }
 
-async function play(interaction, bot, workId, opts) {
+async function play(interaction, bot, workId, opts, fromList = false) {
 	let replace;
 	try {
-		replace = await deferFor(interaction);
+		if (fromList) await interaction.deferUpdate();
+		else replace = await deferFor(interaction);
 	} catch (err) {
 		logger.warn(`Book button ${interaction.customId} could not defer:`, (err && err.message) || err);
 		return;
@@ -119,7 +121,16 @@ async function play(interaction, bot, workId, opts) {
 		logger.error('Audiobook play from a button failed:', (err && err.message) || err);
 		r = { text: '❌ That did not work; check the bot log.' };
 	}
-	await answerDeferred(interaction, opts, replace, withStale(r.text, r.info));
+	if (fromList) await say(interaction, opts, withStale(r.text, r.info), 'followUp');
+	else await answerDeferred(interaction, opts, replace, withStale(r.text, r.info));
+}
+
+/**
+ * The library's "▶ Play" pick: the play path above, acknowledged on the list (the caller renders
+ * it again, which also clears the menu's pick) and answered privately.
+ */
+function playFromList(interaction, bot, workId, opts = {}) {
+	return play(interaction, bot, workId, opts, true);
 }
 
 async function forget(interaction, bot, workId, opts) {
@@ -207,6 +218,7 @@ async function handle(interaction, bot, client, opts = {}) {
 		else if (action === 'finish') await finish(interaction, bot, rest[0], rest[1], opts);
 		else if (action === 'forget') await forget(interaction, bot, rest[0], opts);
 		else if (action === 'shelf') await shelf(interaction, opts);
+		else if (action === 'lib') await require('./bookLibraryButtons.js').handle(interaction, bot, opts);
 		else await say(interaction, opts, '❌ Unknown book button.');
 	} catch (err) {
 		logger.error(`Book button ${interaction.customId} threw:`, (err && err.message) || err);
@@ -216,4 +228,4 @@ async function handle(interaction, bot, client, opts = {}) {
 	return true;
 }
 
-module.exports = { handle, NAMESPACE };
+module.exports = { handle, playFromList, NAMESPACE };

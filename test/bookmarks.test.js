@@ -319,6 +319,42 @@ test('a bookmark under a renamed work id moves to the new id on first read', (t)
 	assert.strictEqual(bookmarks.get(BOB, renamed), null, 'another listener has nothing to inherit');
 });
 
+// The bug: markFinished and record built their key from the new id alone, so finishing a work
+// whose bookmark still sat under an old id wrote a blank finished mark beside it and left the real
+// one open: the book showed as both finished and in progress, and its listening time was stranded.
+test('finishing or saving a work moves a bookmark under an old id first', (t) => {
+	setup(t);
+	const old = book({ id: 'synthetic-author/old-folder-name' });
+	bookmarks.record(ALICE, old, { absoluteMs: 33 * MIN, guildId: GUILD_A, addListenedMs: 120 * MIN });
+	bookmarks.record(BOB, old, { absoluteMs: 10 * MIN, guildId: GUILD_A, addListenedMs: 5 * MIN });
+	bookmarks.reset();
+	const renamed = book({ id: 'synthetic-author/new-name', aliases: [old.id] });
+	bookmarks.markFinished(ALICE, renamed);
+	const alice = bookmarks.forUser(ALICE);
+	assert.deepStrictEqual(alice.map((m) => [m.workId, m.finished, m.listenedMs]), [[renamed.id, true, 120 * MIN]]);
+	bookmarks.record(BOB, renamed, { absoluteMs: 12 * MIN, addListenedMs: 1 * MIN }, { force: true });
+	assert.deepStrictEqual(bookmarks.forUser(BOB).map((m) => [m.workId, m.absoluteMs, m.listenedMs]), [[renamed.id, 12 * MIN, 6 * MIN]]);
+});
+
+// The bug: a split gave the old id to the piece holding its first part, and a bookmark saved in a
+// later piece moved there too, resuming at the clamped end of the wrong play.
+test('a bookmark in a later piece of a split work follows its own track', (t) => {
+	setup(t);
+	const dir = 'Some Author/Three Plays';
+	const all = [part(1, 20 * MIN, dir), part(2, 30 * MIN, dir), part(3, 40 * MIN, dir)];
+	const old = book({ id: 'some-author/three-plays', parts: all, totalMs: 90 * MIN });
+	bookmarks.record(ALICE, old, { absoluteMs: 60 * MIN, guildId: GUILD_A });
+	bookmarks.record(BOB, old, { absoluteMs: 5 * MIN, guildId: GUILD_A });
+	bookmarks.reset();
+	const heir = book({ id: 'some-author/play-one', aliases: [old.id], splitFrom: [old.id], parts: [all[0]], totalMs: 20 * MIN });
+	const later = book({ id: 'some-author/play-three', splitFrom: [old.id], parts: [all[2]], totalMs: 40 * MIN });
+	assert.strictEqual(bookmarks.get(ALICE, heir), null, 'the heir does not take a mark saved in the third play');
+	const moved = bookmarks.get(ALICE, later);
+	assert.strictEqual(moved && moved.workId, later.id);
+	assert.strictEqual(bookmarks.get(BOB, later), null, 'a mark in the first play stays for the heir');
+	assert.strictEqual(bookmarks.get(BOB, heir).workId, heir.id);
+});
+
 test('markFinished puts the place and hint at the last part end and counts once', (t) => {
 	const { tick } = setup(t);
 	const w = book();

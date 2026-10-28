@@ -644,14 +644,17 @@ test('the shelf lists books in progress with Resume buttons and collapses finish
 	assert.match(contentOf(empty[0]), /Your shelf is empty/);
 });
 
-test('the library is grouped by series and split under 1,900 characters', async () => {
+test('the library opens on its sections and lists a series under its own heading', async () => {
 	const w = world();
 	const calls = await runPrefix({ books: recordingBooks().books }, w, member(w, ANA, 'Ana'), 'library');
-	assert.ok(calls.length >= 1);
-	for (const c of calls) assert.ok(contentOf(c).length <= 1900);
-	const text = calls.map(contentOf).join('\n');
-	assert.match(text, /\*\*Ashfall\*\* · Avery Quill\n• #1 The Ember Throne \(Mara Lindqvist\) · 4 h 08 m/);
-	assert.match(text, /🎙 podcast/);
+	assert.strictEqual(calls.length, 1, 'one message');
+	assert.ok(contentOf(calls[0]).length <= 1900);
+	assert.match(contentOf(calls[0]), /\*\*More books\*\* · 15 works, .*\n\*\*Podcasts\*\* · 1 work/);
+	assert.match(calls[0][1].components[0].components[0].custom_id, /^book:lib:open:/, 'the prefix reply carries its menu');
+	const series = await runPrefix({ books: recordingBooks().books }, w, member(w, ANA, 'Ana'), 'library ashfall');
+	assert.match(contentOf(series[0]), /\*Ashfall\* · Avery Quill\n• #1 The Ember Throne · 4 h 08 m/);
+	const pods = await runPrefix({ books: recordingBooks().books }, w, member(w, ANA, 'Ana'), 'library podcasts');
+	assert.match(contentOf(pods[0]), /🎙 podcast/);
 	const filtered = await runPrefix({ books: recordingBooks().books }, w, member(w, ANA, 'Ana'), 'library far shore');
 	const f = filtered.map(contentOf).join('\n');
 	assert.match(f, /2 works/);
@@ -809,7 +812,283 @@ test('the library lists a series book with no number without "#null", after the 
 		{ id: 'a/loose', title: 'Loose', author: 'A', series: 'S', sequence: null, parts: [], totalMs: 0 },
 		{ id: 'a/one', title: 'One', author: 'A', series: 'S', sequence: 1, parts: [], totalMs: 0 }
 	];
-	const chunks = require('../commands/book.js/library.js').libraryChunks('u', '', { bookmarks: { get: () => null }, catalog: { works: () => works, findWorks: () => works } });
-	const lines = chunks.join('\n').split('\n').filter(l => l.startsWith('•'));
+	const reply = require('../commands/book.js/library.js').libraryReply('u', '', {}, { bookmarks: { get: () => null }, catalog: { works: () => works, findWorks: () => works }, sections: () => new Map() });
+	const lines = reply.content.split('\n').filter(l => l.startsWith('•'));
 	assert.deepStrictEqual(lines.map(l => l.split(' · ')[0]), ['• #1 One', '• #2 Two', '• Loose']);
+});
+
+// ---- matching what was typed ------------------------------------------------------------------
+
+const EMBER = 'avery-quill/the-ember-throne';
+const LANTERN = 'avery-quill/the-last-lantern';
+const IRON = 'avery-quill/the-iron-wake';
+const GLASS = 'avery-quill/the-glass-road';
+
+function buttonIds(call) {
+	const rows = (call[1] && call[1].components) || [];
+	return rows.flatMap(r => r.components.map(b => b.custom_id));
+}
+
+function withWorks(extra) {
+	const c = JSON.parse(JSON.stringify(fixture));
+	const base = c.works[SALT];
+	for (const [id, fields] of Object.entries(extra)) {
+		c.works[id] = Object.assign(JSON.parse(JSON.stringify(base)), { id, series: null, sequence: null, narrator: null, edition: null, aliases: [] }, fields);
+	}
+	catalog.replace(c);
+}
+
+async function playAs(who, query) {
+	const w = world();
+	const bot = realBot();
+	const calls = await runPrefix(bot, w, member(w, who, 'Reader'), query);
+	const s = bot.books.session(G);
+	return { calls, reply: contentOf(calls.find(c => c[0] === 'reply')), workId: s ? s.workId : null, bot, w };
+}
+
+// The bug: "!book start artifical condition", "!book play Artifical Conditioon" and "!book play
+// Rouge Protocol" each answered "Nothing in the audiobook library matches", and the owner gave up
+// typing titles.
+test('a typo is answered "Did you mean ...?" with a play button, and starts nothing', async () => {
+	for (const query of ['play the slat crown', 'start Slat Crwon']) {
+		const r = await playAs(ANA, query);
+		assert.strictEqual(r.workId, null, query);
+		assert.match(r.reply, /^Nothing in the audiobook library matches ".*"\. Did you mean \*\*The Salt Crown\*\*\?$/, query);
+		assert.deepStrictEqual(buttonIds(r.calls.find(c => c[0] === 'reply')), [`book:play:${SALT}`], query);
+	}
+	const w = world();
+	const bot = realBot();
+	const slashed = await runSlash(bot, w, member(w, ANA, 'Ana'), 'play', { title: 'slat crwn' });
+	assert.strictEqual(slashed.length, 1);
+	assert.match(slashed[0][1].content, /Did you mean \*\*The Salt Crown\*\*\?/);
+	assert.deepStrictEqual(buttonIds(slashed[0]), [`book:play:${SALT}`]);
+	assert.strictEqual(bot.books.session(G), null);
+	const none = await playAs(ANA, 'play zzkk qqxx');
+	assert.match(none.reply, /Nothing in the audiobook library matches "zzkk qqxx"\. `\/book library` lists what is there\./);
+	assert.strictEqual(buttonIds(none.calls[0]).length, 0);
+});
+
+// The bug: "mistborn" started Mistborn - Collected Tales (#7), the one title starting with the
+// word, while the owner had The Final Empire in progress.
+test('a series name resumes your book in progress there, else the lowest number you have not finished', async () => {
+	assert.strictEqual((await playAs(ANA, 'play ashfall')).workId, EMBER, 'nothing started: #1');
+	bookmarks.markFinished(BEN, catalog.work(EMBER));
+	assert.strictEqual((await playAs(BEN, 'play ashfall')).workId, SALT, '#1 finished: #2');
+	bookmarks.record(OWNER, catalog.work(IRON), { absoluteMs: 600000, guildId: G }, { force: true });
+	bookmarks.record(OWNER, catalog.work(SALT), { absoluteMs: 600000, guildId: G }, { force: true });
+	bookmarks.record(OWNER, catalog.work(IRON), { absoluteMs: 700000, guildId: G }, { force: true });
+	assert.strictEqual((await playAs(OWNER, 'play the ashfall')).workId, IRON, 'the newest book in progress');
+});
+
+test('"<series> <n>" plays that number, and a number the series lacks lists the series', async () => {
+	assert.strictEqual((await playAs(ANA, 'play ashfall 3')).workId, LANTERN);
+	assert.strictEqual((await playAs(ANA, 'play ashfall #3')).workId, LANTERN);
+	assert.strictEqual((await playAs(ANA, 'play ashfall book three')).workId, LANTERN);
+	const missing = await playAs(ANA, 'play ashfall 9');
+	assert.strictEqual(missing.workId, null);
+	assert.match(missing.reply, /^Ashfall has no #9 in the library\. It has #1, #2, #3, #4, #5, #6, #7\. Pick one:/);
+	assert.match(missing.reply, /…and 2 more; `\/book library Ashfall` lists them all\.$/);
+	assert.strictEqual(buttonIds(missing.calls[0]).length, 5);
+});
+
+// The bug: "stephen fry" started the one of his four books whose title holds his name.
+test('an author\'s name resumes their book you have in progress, else lists their books', async () => {
+	const list = await playAs(ANA, 'play avery quill');
+	assert.strictEqual(list.workId, null);
+	assert.match(list.reply, /^Which one\?\n/);
+	assert.match(list.reply, /…and 3 more; `\/book library Avery Quill` lists them all\.$/);
+	assert.strictEqual(buttonIds(list.calls[0]).length, 5);
+	bookmarks.record(BEN, catalog.work(GLASS), { absoluteMs: 600000, guildId: G }, { force: true });
+	assert.strictEqual((await playAs(BEN, 'play quill')).workId, GLASS, 'the surname alone');
+	assert.strictEqual((await playAs(BEN, 'play avery quill')).workId, GLASS);
+});
+
+test('of several editions with one title, the one you have in progress plays', async () => {
+	bookmarks.record(BEN, catalog.work('ilse-moreau/the-far-shore~penrose'), { absoluteMs: 600000, guildId: G }, { force: true });
+	assert.strictEqual((await playAs(BEN, 'play the far shore')).workId, 'ilse-moreau/the-far-shore~penrose');
+	assert.strictEqual((await playAs(ANA, 'play the far shore')).workId, null, 'yours only');
+});
+
+// The bug: "odyssey" started Odyssey: Stephen Fry's Greek Myths without asking about The Odyssey,
+// and "the mythos" started a book whose author field held both words over Mythos itself.
+test('a leading article is ignored for the prefix tier, and names a title exactly when typed', async () => {
+	withWorks({
+		'ilka-varo/the-voyage': { title: 'The Voyage', author: 'Ilka Varo' },
+		'perrin-hale/voyage-retold-tales': { title: 'Voyage: Retold Tales', author: 'Perrin Hale' },
+		'noor-vasquez/lanterns': { title: 'Lanterns', author: 'Noor Vasquez' },
+		'the-lanterns-collective/songs': { title: 'Songs', author: 'The Lanterns Collective' }
+	});
+	const asks = await playAs(ANA, 'play voyage');
+	assert.strictEqual(asks.workId, null);
+	assert.deepStrictEqual(buttonIds(asks.calls[0]).sort(), ['book:play:ilka-varo/the-voyage', 'book:play:perrin-hale/voyage-retold-tales']);
+	assert.strictEqual((await playAs(ANA, 'play the voyage')).workId, 'ilka-varo/the-voyage');
+	assert.strictEqual((await playAs(ANA, 'play the lanterns')).workId, 'noor-vasquez/lanterns');
+	assert.strictEqual((await playAs(ANA, 'play final empire')).workId, null, 'nothing of that name in the fixture');
+	assert.strictEqual((await playAs(ANA, 'play salt crown')).workId, SALT);
+});
+
+// The bug: a choice row dropped every work whose id made the button's custom_id longer than
+// Discord's 100 characters, so a reply could list four books and offer three buttons.
+test('a work with a long id gets a short button key that plays it', async () => {
+	const longId = `some-author-with-a-long-name/${'the-orchard-of-glass-and-a-subtitle-'.repeat(2)}unabridged`;
+	withWorks({ [longId]: { title: 'The Orchard of Glass', author: 'Some Author' } });
+	const r = await playAs(ANA, 'play orchrd of glass');
+	assert.strictEqual(r.workId, null);
+	const [id] = buttonIds(r.calls[0]);
+	assert.ok(id.length <= 100 && /^book:play:~[0-9a-f]{16}$/.test(id), id);
+	const w = world();
+	const bot = realBot();
+	const res = await bot.books.play({ guild: w.guild, member: member(w, ANA, 'Ana'), userId: ANA, textChannel: w.channel, workId: id.slice('book:play:'.length) });
+	assert.strictEqual(res.ok, true, res.text);
+	assert.strictEqual(bot.books.session(G).workId, longId);
+});
+
+// The bug: "!book read Artifical Condition" answered only 'Unknown book command "read"'.
+test('an unknown subcommand offers the rest of the line as a book to play, or the command it misspells', async () => {
+	const w = world();
+	const ana = member(w, ANA, 'Ana');
+	const r = recordingBooks();
+	const read = await runPrefix({ books: r.books }, w, ana, 'read the slat crown');
+	assert.strictEqual(read.length, 1);
+	assert.strictEqual(contentOf(read[0]), 'Unknown book command "read". Did you mean `!book play The Salt Crown`?');
+	assert.deepStrictEqual(buttonIds(read[0]), [`book:play:${SALT}`]);
+	const bare = await runPrefix({ books: r.books }, w, ana, 'ashfall');
+	assert.match(contentOf(bare[0]), /^Unknown book command "ashfall"\. Did you mean `!book play The Ember Throne`\?$/, 'the series, from its lowest number');
+	assert.match(contentOf((await runPrefix({ books: r.books }, w, ana, 'pasue'))[0]), /^Unknown book command "pasue"\. Did you mean `!book pause`\?$/);
+	assert.match(contentOf((await runPrefix({ books: r.books }, w, ana, 'speeed 2'))[0]), /Did you mean `!book speed 2`\?$/);
+	const plain = await runPrefix({ books: r.books }, w, ana, 'read zzkk');
+	assert.strictEqual(contentOf(plain[0]), 'Unknown book command "read". `!book ?` lists them.');
+	assert.ok(!r.calls.some(c => c[0] === 'play'), 'nothing was played');
+	config.audiobooksEnabled = false;
+	assert.strictEqual(contentOf((await runPrefix({ books: r.books }, w, ana, 'read the salt crown'))[0]), 'Unknown book command "read". `!book ?` lists them.');
+});
+
+// The bug: v5 shortened "Odyssey: Stephen Fry's Greek Myths" to "Odyssey", and the exact tier took
+// the one title that matched letter for letter, so "odyssey" started it without asking about
+// The Odyssey.
+test('a bare title asks between itself and the same title with an article', async () => {
+	withWorks({
+		'perrin-hale/odyssey': { title: 'Odyssey', author: 'Perrin Hale' },
+		'ilka-varo/the-odyssey': { title: 'The Odyssey', author: 'Ilka Varo' }
+	});
+	const asks = await playAs(ANA, 'play odyssey');
+	assert.strictEqual(asks.workId, null);
+	assert.deepStrictEqual(buttonIds(asks.calls[0]).sort(), ['book:play:ilka-varo/the-odyssey', 'book:play:perrin-hale/odyssey']);
+	bookmarks.record(BEN, catalog.work('perrin-hale/odyssey'), { absoluteMs: 600000, guildId: G }, { force: true });
+	assert.strictEqual((await playAs(BEN, 'play odyssey')).workId, 'perrin-hale/odyssey', 'the one you have in progress');
+});
+
+// The bug: a bare "!book <title>" tried the rest of the line after the first word before the
+// whole line, so "!book whale fall" offered The Fall of Hyperion, "murderbot 2" a Vol 2 of
+// something else and "oath bringer" nothing at all.
+test('a bare title with no verb is tried whole first, offered with play buttons, and never started', async () => {
+	withWorks({
+		'ida-moss/whalefall': { title: 'Whalefall', author: 'Ida Moss' },
+		'kel-ash/the-fall-of-kings': { title: 'The Fall of Kings', author: 'Kel Ash' },
+		'kel-ash/saltbringer': { title: 'Saltbringer', author: 'Kel Ash' }
+	});
+	const w = world();
+	const ana = member(w, ANA, 'Ana');
+	const r = recordingBooks();
+	const ask = async (q) => (await runPrefix({ books: r.books }, w, ana, q))[0];
+	const whale = await ask('whale fall');
+	assert.strictEqual(contentOf(whale), 'Unknown book command "whale". Did you mean `!book play Whalefall`?');
+	assert.deepStrictEqual(buttonIds(whale), ['book:play:ida-moss/whalefall']);
+	assert.strictEqual(contentOf(await ask('ashfall 2')), 'Unknown book command "ashfall". Did you mean `!book play The Salt Crown`?');
+	assert.strictEqual(contentOf(await ask('salt bringer')), 'Unknown book command "salt". Did you mean `!book play Saltbringer`?');
+	const author = await ask('avery quill');
+	assert.strictEqual(buttonIds(author).length, 5);
+	bookmarks.record(ANA, catalog.work(IRON), { absoluteMs: 600000, guildId: G }, { force: true });
+	assert.strictEqual(contentOf(await ask('avery quill')), 'Unknown book command "avery". Did you mean `!book play The Iron Wake`?', 'your book in progress first');
+	assert.strictEqual(contentOf(await ask('ashfall')), 'Unknown book command "ashfall". Did you mean `!book play The Iron Wake`?');
+	assert.ok(!r.calls.some(c => c[0] === 'play'), 'nothing was played');
+});
+
+// The bug: a first word one edit from a subcommand was always offered as that subcommand, so
+// "!book exit strategy" suggested the owner-only `!book edit strategy` and never the book.
+test('a title whose first word looks like a subcommand is offered as the book too', async () => {
+	withWorks({ 'kel-ash/exit-strategy': { title: 'Exit Strategy', author: 'Kel Ash' } });
+	const w = world();
+	const r = recordingBooks();
+	const calls = await runPrefix({ books: r.books }, w, member(w, ANA, 'Ana'), 'exit strategy');
+	assert.strictEqual(contentOf(calls[0]), 'Unknown book command "exit". Did you mean `!book play Exit Strategy` or `!book edit strategy`?');
+	assert.deepStrictEqual(buttonIds(calls[0]), ['book:play:kel-ash/exit-strategy']);
+	assert.strictEqual(contentOf((await runPrefix({ books: r.books }, w, member(w, ANA, 'Ana'), 'exit zzkk'))[0]), 'Unknown book command "exit". Did you mean `!book edit zzkk`?');
+});
+
+// The bug: "???" or "潘" normalises to nothing, findWorks of nothing is every work, and with one
+// book open the prefix tier picked it: "!book play ???" resumed it and "!book finish ?" marked it
+// finished, losing the listener's place.
+test('a query of only punctuation matches nothing, and starts or finishes nothing', async () => {
+	bookmarks.record(ANA, catalog.work(SALT), { absoluteMs: 600000, guildId: G }, { force: true });
+	for (const q of ['???', '潘']) {
+		const r = await playAs(ANA, `play ${q}`);
+		assert.strictEqual(r.workId, null, q);
+		assert.match(r.reply, /^Nothing in the audiobook library matches/, q);
+	}
+	const w = world();
+	const books = recordingBooks();
+	const calls = await runPrefix({ books: books.books }, w, member(w, ANA, 'Ana'), 'finish ?');
+	assert.match(contentOf(calls[0]), /^Nothing in the audiobook library matches "\?"/);
+	assert.ok(!books.calls.some(c => c[0] === 'finish'));
+	const mark = bookmarks.get(ANA, catalog.work(SALT));
+	assert.deepStrictEqual([mark.finished, mark.absoluteMs], [false, 600000]);
+});
+
+// The bug: each narration of a numbered book counted on its own, so after one edition of #2 was
+// finished the other edition of #2 still counted as the lowest unfinished number, and a series
+// query started it from the beginning ahead of #3.
+test('a series number counts as read once any edition of it is', async () => {
+	withWorks({
+		'jo-quell/kettle-one': { title: 'Kettle One', author: 'Jo Quell', series: 'Kettle Tales', sequence: 1 },
+		'jo-quell/kettle-two~ash': { title: 'Kettle Two', author: 'Jo Quell', series: 'Kettle Tales', sequence: 2, narrator: 'Ash' },
+		'jo-quell/kettle-two~birch': { title: 'Kettle Two', author: 'Jo Quell', series: 'Kettle Tales', sequence: 2, narrator: 'Birch' },
+		'jo-quell/kettle-three': { title: 'Kettle Three', author: 'Jo Quell', series: 'Kettle Tales', sequence: 3 }
+	});
+	bookmarks.markFinished(ANA, catalog.work('jo-quell/kettle-one'));
+	bookmarks.markFinished(ANA, catalog.work('jo-quell/kettle-two~ash'));
+	assert.strictEqual((await playAs(ANA, 'play kettle tales')).workId, 'jo-quell/kettle-three');
+});
+
+// The bug: a "Mark finished" or Resume button whose work id was too long carried a short key the
+// engine's finish could not resolve.
+test('the engine finishes a work named by its short key', async () => {
+	const longId = `some-author-with-a-long-name/${'the-orchard-of-glass-and-a-subtitle-'.repeat(3)}unabridged`;
+	withWorks({ [longId]: { title: 'The Orchard of Glass', author: 'Some Author' } });
+	const bot = realBot();
+	const r = bot.books.finish(ANA, require('../helpers/bookSearch.js').shortKey(longId), {});
+	assert.strictEqual(r.ok, true, r.text);
+	assert.strictEqual(bookmarks.get(ANA, catalog.work(longId)).finished, true);
+});
+
+test('finish and forget answer a typo with the ids it probably meant', async () => {
+	const w = world();
+	const r = recordingBooks();
+	const calls = await runPrefix({ books: r.books }, w, member(w, ANA, 'Ana'), 'finish the slat crown');
+	assert.strictEqual(contentOf(calls[0]), `Nothing in the audiobook library matches "the slat crown". Did you mean **The Salt Crown** (\`${SALT}\`)?`);
+	assert.ok(!r.calls.some(c => c[0] === 'finish'));
+});
+
+test('title autocomplete forgives typos and reads "<series> <n>"', async () => {
+	const w = world();
+	const ana = member(w, ANA, 'Ana');
+	assert.deepStrictEqual((await complete({ books: null }, ana, 'play', 'title', 'slat crwn')).map(c => c.value), [SALT]);
+	assert.deepStrictEqual((await complete({ books: null }, ana, 'play', 'title', 'ashfall 3')).map(c => c.value), [LANTERN]);
+	assert.strictEqual((await complete({ books: null }, ana, 'play', 'title', 'ashfall 9')).length, 7, 'the series, when it has no such number');
+	assert.deepStrictEqual(await complete({ books: null }, ana, 'play', 'title', 'zzkk qqxx'), []);
+});
+
+// The bug: a /book play picked from autocomplete arrived as a bare id, so a wrong pick could not
+// be told from a typo when reading the log afterwards.
+test('the text typed into autocomplete is logged with the slash command that follows', async () => {
+	const commandLog = require('../helpers/commandLog.js');
+	const w = world();
+	const ana = member(w, ANA, 'Ana');
+	for (const typed of ['s', 'sl', 'slat cr']) await complete({ books: null }, ana, 'play', 'title', typed);
+	commandLog.startInvocation({ path: 'slash', command: 'book', args: `play ${SALT}`, userId: ANA });
+	commandLog.startInvocation({ path: 'slash', command: 'book', args: `play ${SALT}`, userId: ANA });
+	await complete({ books: null }, ana, 'play', 'title', 'glass');
+	commandLog.startInvocation({ path: 'slash', command: 'book', args: 'shelf', userId: ANA });
+	const args = commandLog.readInvocations({ command: 'book' }).invocations.map(i => i.args);
+	assert.deepStrictEqual(args.sort(), [`play ${SALT}`, `play ${SALT} [typed "slat cr"]`, 'shelf'].sort(), 'once, the last text, and only on the subcommand it was typed for');
 });

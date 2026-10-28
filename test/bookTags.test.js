@@ -156,6 +156,14 @@ test('a comment keeps only the credit and GraphicAudio lines the catalog reads, 
 	assert.ok(late.startsWith('written by Wren Halloway, read by Kit Moss.') && late.length <= 120, late);
 });
 
+// The bug (catalog rules version 5): a tagger wrote "&#169;2012" for "©2012", and the catalog's
+// split of an "Author/Narrator/©2012 by House" artist tag then kept the house as a third name.
+test('html entities in tag values are decoded, continuation lines included', () => {
+	const { tags } = parseProbe(banner('N:/a.m4b', '    composer        : Wren Halloway/Kit Moss/&#169;2012 by Harbour &amp; Sons\r\n    publisher       : Harbour\r\n                    : &#x2117; 2013'));
+	assert.strictEqual(tags.composer, 'Wren Halloway/Kit Moss/©2012 by Harbour & Sons');
+	assert.strictEqual(tags.publisher, 'Harbour\n\u2117 2013');
+});
+
 test('a tag value is capped at 300 characters, continuation lines included', () => {
 	const long = 'x'.repeat(400);
 	const { tags } = parseProbe(banner('N:/a.m4b', `    narrator        : ${long}\r\n    publisher       : short\r\n                    : ${long}`));

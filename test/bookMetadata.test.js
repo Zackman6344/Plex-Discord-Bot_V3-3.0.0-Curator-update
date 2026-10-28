@@ -176,6 +176,22 @@ test('an author-level series and order names every book of that author and chang
 	assert.deepStrictEqual([display.author, display.series, display.sequence], ['C. Vale', 'The Tide Cantos', 1], 'keyed by the detected author; a hand-written unslugged key still counts');
 });
 
+// The bug: an author series written against the author and titles detection gave before the
+// version 5 cleanup (a credit list for an author, a store tail on a title) stopped applying
+// silently once the work's detected author and title changed.
+test('an author-series written against a v4 author and title follows the work through its aliases', () => {
+	const oldAuthor = 'corin-vale-jo-reed-169-2012-by-harbour-books';
+	const overrides = { authors: { [oldAuthor]: { series: 'Owner Tides', order: { 'The Long Tide: Book One of the Tides': 9 } } } };
+	const moved = work({ id: 'corin-vale/the-long-tide', aliases: [`${oldAuthor}/the-long-tide-book-one-of-the-tides`] },
+		{ title: 'The Long Tide', author: 'Corin Vale', series: null, sequence: null });
+	const out = meta.resolveWith(moved, { overrides });
+	assert.deepStrictEqual([out.series, out.sequence, out.sources.series], ['Owner Tides', 9, 'override']);
+	const now = { authors: { ...overrides.authors, 'corin-vale': { series: 'Newer' } } };
+	assert.strictEqual(meta.authorOverrideFor(moved, now).series, 'Newer', 'an entry under the current author comes first');
+	const notes = bookCatalog.authorOverrideNotes({ authors: { ...overrides.authors, 'nobody-here': { series: 'X' }, 'corin-vale': { order: { 'Gone Title': 1 } } } }, [moved]);
+	assert.deepStrictEqual(notes, ['overrides name an author no work has: nobody-here', 'overrides for corin-vale order 1 title(s) no work of theirs has: Gone Title']);
+});
+
 test('an author-level series without an order only fills books with no series', () => {
 	const overrides = { authors: { 'avery-quill': { series: 'The Quill Books' } } };
 	const none = meta.resolveWith(work({}, { series: null, sequence: null }), { overrides });

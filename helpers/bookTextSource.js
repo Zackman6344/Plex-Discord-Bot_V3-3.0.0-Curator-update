@@ -4,8 +4,9 @@
 //
 // Sources, in order: a link the owner set with `!book link` (a Calibre id or an EPUB path, or
 // "off"); the Calibre content server (GET only, matched by title, or by series number and
-// author); then EPUB files sitting in the folders that hold the work's audio. Calibre comes before
-// the sidecars because its copy is the one the user curates.
+// author; a work with no pointer yet first tries the exact match of the catalog's Calibre index,
+// helpers/calibreIndex.js, when it has an EPUB); then EPUB files sitting in the folders that hold
+// the work's audio. Calibre comes before the sidecars because its copy is the one the user curates.
 //
 // The parse itself never runs here. A 115 MB image-heavy EPUB would stall the voice timer, so it
 // goes to helpers/epubTextWorker.js, which parses in a separate Below Normal process and writes
@@ -38,6 +39,7 @@ const crypto = require('crypto');
 const path = require('path');
 const { createCalibreClient, hasEpub } = require('./calibreClient.js');
 const { norm, basename } = require('./bookCatalog.js');
+const calibreMatch = require('./calibreMatch.js');
 
 const DEFAULT_DIR = path.join(__dirname, '..', 'data', 'book_text');
 const MAX_EPUB_BYTES = 300 * 1024 * 1024;
@@ -132,8 +134,16 @@ function surnameOf(author) {
 	return parts.length ? parts[parts.length - 1] : '';
 }
 
+// The best of the titles as given, cleaned of brackets, "Book One of ..." and "A Novel", and their
+// main titles before a subtitle, with number words as digits: "The Eye of the World: Book One of
+// the Wheel of Time" against "The Eye of the World: Book 1 of the Wheel of Time (Now a Major TV
+// Series)" scored 0.45 on the raw words. calibreMatch keeps a main title that is only a series
+// name ("Ashfall - Collected Tales" cut to "Ashfall") from matching a record titled "Ashfall".
 function calibreScore(book, work) {
-	const titleScore = jaccard(significant(work.title), significant(book.title));
+	const titleScore = Math.max(
+		jaccard(significant(work.title), significant(book.title)),
+		calibreMatch.titleScore(work.title, work.series, book.title, book.series)
+	);
 	const surname = norm(surnameOf(work.author));
 	const authorMatch = !!surname && (Array.isArray(book.authors) ? book.authors : []).some((a) => words(a).includes(surname));
 	const ws = seriesWords(work.series);
@@ -280,6 +290,8 @@ function createBookTextSource(deps = {}) {
 	const parse = deps.parse || require('./epubTextWorker.js');
 	const catalog = deps.catalog || (() => require('./bookCatalogStore.js'));
 	const calibre = deps.calibre || (() => calibreFromConfig(cfg));
+	// The catalog's Calibre index (helpers/calibreIndex.js), off under the test runner by default.
+	const indexPick = deps.indexPick || ((work) => require('./calibreIndex.js').instance().readAlongPick(work));
 	const store = deps.store || require('./bookTextStore.js');
 	const fs = deps.fs || require('fs');
 	const fsp = fs.promises;
@@ -535,6 +547,8 @@ function createBookTextSource(deps = {}) {
 		return {
 			source: {
 				type: 'calibre', libraryId: lib, id: Number(id),
+				// Not part of the fingerprint: only lets the Calibre index tell a reused id apart.
+				uuid: typeof book.uuid === 'string' && book.uuid ? book.uuid : null,
 				epubSize: own ? fm.size : null, epubMtime: own ? fm.mtime : null, fingerprint
 			},
 			via,
@@ -580,7 +594,7 @@ function createBookTextSource(deps = {}) {
 		return out;
 	}
 
-	async function calibreMatch(client, work) {
+	async function matchCalibre(client, work) {
 		let list;
 		try {
 			list = await calibreCandidates(client, work);
@@ -630,12 +644,28 @@ function createBookTextSource(deps = {}) {
 		return { file: files[0] };
 	}
 
-	async function search(work) {
+	function pickFromIndex(work) {
+		try {
+			return indexPick(work) || null;
+		} catch (_) {
+			return null;
+		}
+	}
+
+	async function search(work, { noPointer = false } = {}) {
 		let calibreError = null;
 		let ambiguous = false;
 		const client = calibre();
-		if (client) {
-			const m = await calibreMatch(client, work);
+		// Only for a work with no pointer: taking the index's match could switch the EPUB of an
+		// existing pointer, and sync marks belong to the text they were made against.
+		const pick = client && noPointer ? pickFromIndex(work) : null;
+		if (pick) {
+			const r = await fromCalibre(pick.id, 'auto');
+			if (r.source) return r;
+			if (r.unreachable) calibreError = r;
+		}
+		if (client && !calibreError) {
+			const m = await matchCalibre(client, work);
 			if (m.id) {
 				let r;
 				try {
@@ -671,13 +701,14 @@ function createBookTextSource(deps = {}) {
 		if (link && link.type === 'calibre') return fromCalibre(link.id, 'link');
 		if (link && link.type === 'file') return fromFile(link.path, 'link');
 		const ptr = store.works.get(work);
-		if (ptr && pointerUsable(ptr, link)) {
+		const usable = !!ptr && pointerUsable(ptr, link);
+		if (usable) {
 			const r = ptr.source.type === 'calibre'
 				? await fromCalibre(ptr.source.id, ptr.via)
 				: await fromFile(ptr.source.path, ptr.via);
 			if (r.source || r.unreachable) return r;
 		}
-		return search(work);
+		return search(work, { noPointer: !usable });
 	}
 
 	// --- parsing ---
@@ -1115,6 +1146,7 @@ module.exports = {
 	isbnForms,
 	localPathProblem,
 	calibreScore,
+	calibreFromConfig,
 	sidecarScore,
 	pointerUsable,
 	calibreMetaFrom,

@@ -452,8 +452,8 @@ test('the slash spec offers edit with its field choices, under the budget the va
 	assert.ok(sub);
 	assert.deepStrictEqual(sub.options.map((o) => o.name), ['title', 'field', 'value', 'position']);
 	const field = sub.options.find((o) => o.name === 'field');
-	assert.deepStrictEqual(field.choices.map((c) => c.value), ['title', 'author', 'narrator', 'publisher', 'series', 'author-series', 'clear', 'exclude', 'include', 'lookup']);
-	assert.match(book.command.usage, /\|edit>/);
+	assert.deepStrictEqual(field.choices.map((c) => c.value), ['title', 'author', 'narrator', 'publisher', 'series', 'author-series', 'genre', 'author-genre', 'calibre', 'clear', 'exclude', 'include', 'lookup']);
+	assert.match(book.command.usage, /\|edit\|/);
 	assert.match(book._internal.helpEmbed({ config }).data.description, /book edit <title>/);
 });
 

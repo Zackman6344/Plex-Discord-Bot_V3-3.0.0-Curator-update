@@ -229,6 +229,33 @@ test('shownKey strips the music section folder, and never shows a drive, a host 
 	assert.strictEqual(shownKey('/srv/media/Music/Ida Marsh'), 'Ida Marsh');
 });
 
+// The bug (catalog rules version 5): a 72-minute LP of 10-minute scenes was dropped and never
+// shown, because only groups of 2 h or more were listed, and the list itself was filled by song
+// folders under a music upload bucket. Rules version 5 also raises doubts that had no wording.
+test('a short group of long tracks is listed, the likeliest book first and the line capped at five', () => {
+	const rejected = [
+		{ folderKey: 'N:/Media/Music/music-uploads/Untagged', tracks: 396, hours: 28.1, medianMin: 3.7, reason: 'no long-form signal' },
+		{ folderKey: 'N:/Media/Music/Kid Ferro', tracks: 79, hours: 5.5, medianMin: 4, reason: 'music genre' },
+		{ folderKey: 'N:/Media/Music/Plays/The Kettle LP', tracks: 8, hours: 1.2, medianMin: 10.2, reason: 'under 2 h' },
+		{ folderKey: 'N:/Media/Music/Kid Ferro/Single Mix', tracks: 1, hours: 0.2, medianMin: 11.5, reason: 'under 2 h' },
+		{ folderKey: 'N:/Media/Music/Rhea Stone/Live', tracks: 16, hours: 2.2, medianMin: 4.4, reason: 'no long-form signal' },
+		{ folderKey: 'N:/Media/Music/Battle Music Vol', tracks: 50, hours: 3.1, medianMin: 3.5, reason: 'no long-form signal' },
+		{ folderKey: 'N:/Media/Music/Kid Ferro/Short Songs', tracks: 12, hours: 1.0, medianMin: 4.8, reason: 'under 2 h' },
+	];
+	const line = rescanText(report(), fakeCatalog({ rejected, roots: ROOTS })).find(l => l.startsWith('🗂'));
+	assert.strictEqual(line, '🗂 Long groups not taken as books (add one under `include` in book_overrides.json): '
+		+ 'Plays/The Kettle LP (1.2 h, tracks of 10 min), Rhea Stone/Live (2.2 h), Battle Music Vol (3.1 h), Kid Ferro/Single Mix (0.2 h, tracks of 12 min), '
+		+ 'music-uploads/Untagged (28.1 h) and 1 more');
+	assertPrivate(line);
+});
+
+test('the doubts rules version 5 raises each have their own reason', () => {
+	assert.strictEqual(admin.doubtReason({ code: 'title-credit', title: 'Tin Crown by Rhea Stone' }), 'the title "Tin Crown by Rhea Stone" still carries a credit');
+	assert.strictEqual(admin.doubtReason({ code: 'author-credit', author: 'Jo Vale translator' }), 'the author "Jo Vale translator" looks like a list of credits');
+	assert.strictEqual(admin.doubtReason({ code: 'author-shelf', author: 'Myths' }), 'the author "Myths" is a folder of many authors\' books');
+	assert.strictEqual(admin.doubtReason({ code: 'narrator-not-person', narrator: '1942' }), 'the narrator "1942" does not look like a person');
+});
+
 test('a group at the top of a music section is shown by the section folder\'s name, not its drive path', () => {
 	const rejected = [
 		{ folderKey: 'P:/Music', tracks: 17, hours: 17, reason: 'music genre' },

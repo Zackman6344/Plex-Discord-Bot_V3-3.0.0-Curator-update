@@ -29,6 +29,7 @@ const {
 } = require('@discordjs/voice');
 const bookModel = require('./bookModel.js');
 const bookChapterLabel = require('./bookChapterLabel.js');
+const bookSearch = require('./bookSearch.js');
 const logger = require('./logger.js');
 
 // An AudioPlayer in Buffering has no timeout of its own, and ffmpeg waits forever on an upstream
@@ -54,6 +55,8 @@ const DEFAULT_IDLE_LEAVE_MINUTES = 10;
 const UNEDITABLE_CARD = new Set([10008, 50001]);
 
 const STILL_JOINING = 'Still joining the voice channel, one moment.';
+// Discord shows at most 5 buttons in a row, and the choice row is one row.
+const CHOICES_MAX = 5;
 const ACTIONS = new Set(['pause', 'resume', 'stop', 'back', 'fwd', 'goto', 'chapter', 'nextch', 'prevch', 'speed', 'sleep']);
 const ALIASES = { forward: 'fwd', next: 'nextch', prev: 'prevch', skip: 'nextch' };
 // What someone other than the listener may do (plan 3.11).
@@ -1196,13 +1199,7 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 
 	// ---- play -----------------------------------------------------------------------------
 
-	function norm(text) {
-		try {
-			return require('./bookCatalog.js').norm(text);
-		} catch (_) {
-			return String(text || '').toLowerCase().trim();
-		}
-	}
+	const norm = bookSearch.key;
 
 	function percentFor(userId, work) {
 		try {
@@ -1214,29 +1211,150 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 		}
 	}
 
-	// findWorks ranks but does not say by how much, so a clear winner is found by title tiers:
-	// one exact title, then one title prefix, then one title whose words all the tokens prefix.
-	function pickWork(hits, query) {
-		if (hits.length === 1) return { work: hits[0] };
+	function openMark(userId, work) {
+		try {
+			const mark = bookmarks().get(userId, work);
+			return mark && !mark.finished ? mark : null;
+		} catch (_) {
+			return null;
+		}
+	}
+
+	function finishedBy(userId, work) {
+		try {
+			const mark = bookmarks().get(userId, work);
+			return !!(mark && mark.finished);
+		} catch (_) {
+			return false;
+		}
+	}
+
+	function newestOpen(userId, works) {
+		let best = null;
+		for (const w of works) {
+			const mark = openMark(userId, w);
+			if (mark && (!best || (Number(mark.updatedAt) || 0) > best.at)) best = { work: w, at: Number(mark.updatedAt) || 0 };
+		}
+		return best ? best.work : null;
+	}
+
+	// Editions that share a title stay a question unless only one of them is yours in progress.
+	function settle(userId, works) {
+		if (works.length === 1) return { work: works[0] };
+		const mine = works.filter(w => openMark(userId, w));
+		return mine.length === 1 ? { work: mine[0] } : { choices: works };
+	}
+
+	// Whole numbers first: a 0.5 or 2.5 novella is usually read after the books around it. A number
+	// counts as read once any edition of it is, so another narration of it is not offered next.
+	function nextInSeries(userId, works) {
+		const done = new Set(works.filter(w => Number.isFinite(bookSearch.seqOf(w)) && finishedBy(userId, w)).map(w => bookSearch.seqOf(w)));
+		const numbered = works.filter(w => Number.isFinite(bookSearch.seqOf(w)) && !done.has(bookSearch.seqOf(w)));
+		if (!numbered.length) return null;
+		const whole = numbered.filter(w => Number.isInteger(bookSearch.seqOf(w)));
+		const pool = whole.length ? whole : numbered;
+		const low = Math.min(...pool.map(w => bookSearch.seqOf(w)));
+		return settle(userId, pool.filter(w => bookSearch.seqOf(w) === low));
+	}
+
+	function catalogList() {
+		try {
+			const list = catalog().works();
+			return Array.isArray(list) ? list : [];
+		} catch (_) {
+			return [];
+		}
+	}
+
+	/**
+	 * findWorks ranks but does not say by how much, so a clear winner is found in tiers:
+	 *   1. an exact title, ignoring a leading the/a/an on both sides ("odyssey" asks between
+	 *      The Odyssey and Odyssey, and with Odyssey: ... when only the article made it exact);
+	 *   2. "<series> <n>": that number of the series, or the series' books when it has none;
+	 *   3. a whole series or author, when every hit belongs to it: the asker's newest book in
+	 *      progress there, else the lowest unfinished number of a series, else a list;
+	 *   4. a title the query starts, ignoring a leading the/a/an on both sides;
+	 *   5. a title whose words all the query's words start;
+	 *   6. everything findWorks found.
+	 * A tier with several works picks the one the asker has in progress, if only one is.
+	 * @returns {{ work?: object, choices?: object[], text?: string, filter?: string }}
+	 */
+	function pickWork(hits, query, userId) {
 		const q = norm(query);
+		const list = catalogList();
+		// Articles are dropped on both sides, so "odyssey" names Odyssey and The Odyssey alike and
+		// asks: taking the one whose title matched letter for letter would hide the other. A match
+		// found only by dropping the title's article ("voyage" for The Voyage) is no more certain
+		// than a title the query starts, so those ask with it (Voyage: Retold Tales).
+		const qb = bookSearch.bare(q);
+		const listed = new Set(list.map(w => w.id));
+		const pool = list.concat(hits.filter(w => !listed.has(w.id)));
+		let named = pool.filter(w => bookSearch.bare(norm(w.title)) === qb);
+		if (q === qb && named.some(w => norm(w.title) !== qb)) {
+			named = named.concat(pool.filter(w => !named.includes(w) && bookSearch.bare(norm(w.title)).startsWith(`${qb} `)));
+		}
+		if (named.length) return settle(userId, named);
+		const group = bookSearch.namedGroup(query, list);
+		if (group && group.number !== null) {
+			const at = group.works.filter(w => bookSearch.seqOf(w) === group.number);
+			if (at.length) return settle(userId, at);
+			const have = [...new Set(group.works.map(w => bookSearch.seqOf(w)).filter(Number.isFinite))].map(n => `#${n}`);
+			const tail = have.length ? ` It has ${have.join(', ')}.` : '';
+			return { choices: group.works, filter: group.name, text: `${group.name} has no #${group.number} in the library.${tail}` };
+		}
+		if (hits.length === 1) return { work: hits[0] };
+		const ids = group ? new Set(group.works.map(w => w.id)) : null;
+		if (group && hits.every(w => ids.has(w.id))) {
+			const mine = newestOpen(userId, group.works);
+			if (mine) return { work: mine };
+			const next = group.oneSeries ? nextInSeries(userId, group.works) : null;
+			return next || { choices: group.works, filter: group.name };
+		}
 		const tokens = q.split(' ').filter(Boolean);
 		const tiers = [
-			w => norm(w.title) === q,
-			w => norm(w.title).startsWith(q),
+			w => bookSearch.bare(norm(w.title)).startsWith(qb),
 			w => { const words = norm(w.title).split(' '); return tokens.every(t => words.some(x => x.startsWith(t))); }
 		];
 		for (const match of tiers) {
 			const inTier = hits.filter(match);
-			if (inTier.length === 1) return { work: inTier[0] };
-			if (inTier.length > 1) return { choices: inTier };
+			if (inTier.length) return settle(userId, inTier);
 		}
-		return { choices: hits };
+		return settle(userId, hits);
+	}
+
+	function choiceOf(userId, w) {
+		return {
+			id: w.id, title: w.title, author: w.author || null, narrator: w.narrator || null,
+			edition: w.edition || null, percent: percentFor(userId, w)
+		};
+	}
+
+	function choiceLines(choices) {
+		return choices.map(c => {
+			const by = c.narrator ? ` (read by ${c.narrator})` : c.edition ? ` (${c.edition})` : '';
+			const pct = c.percent !== null ? ` · ${c.percent}%` : '';
+			return `• \`${c.id}\` ${c.title}${by}${pct}`;
+		});
+	}
+
+	// Never starts anything: the buttons do, for whoever presses one.
+	function didYouMean(q, userId) {
+		const list = catalogList();
+		const found = bookSearch.suggest(q, list, { rank: w => (openMark(userId, w) ? 0 : 1) });
+		const missing = `Nothing in the audiobook library matches "${q}".`;
+		if (!found.length) return result(false, 'not-found', `${missing} \`/book library\` lists what is there.`);
+		const choices = found.map(w => choiceOf(userId, w));
+		const text = choices.length === 1
+			? `${missing} Did you mean **${choices[0].title}**?`
+			: `${missing} Did you mean one of these?\n${choiceLines(choices).join('\n')}`;
+		return result(false, 'suggest', text, { choices });
 	}
 
 	function resolveWork(ctx, userId) {
 		if (ctx.work && typeof ctx.work === 'object') return { work: catalog().work(ctx.work.id) || ctx.work };
 		if (ctx.workId) {
-			const w = catalog().work(String(ctx.workId));
+			const id = String(ctx.workId);
+			const w = catalog().work(id) || bookSearch.byShortKey(id, catalogList());
 			return w ? { work: w } : { error: result(false, 'not-found', 'That book is not in the library any more.') };
 		}
 		const q = String(ctx.query || '').trim();
@@ -1249,20 +1367,16 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 		}
 		const exact = catalog().work(q);
 		if (exact) return { work: exact };
+		// "???" or "潘" normalises to nothing, and findWorks of nothing is every work.
+		if (!bookSearch.key(q)) return { error: didYouMean(q, userId) };
 		const hits = catalog().findWorks(q) || [];
-		if (!hits.length) return { error: result(false, 'not-found', `Nothing in the audiobook library matches "${q}". \`/book library\` lists what is there.`) };
-		const picked = pickWork(hits, q);
+		const picked = pickWork(hits, q, userId);
 		if (picked.work) return { work: picked.work };
-		const choices = picked.choices.slice(0, 5).map(w => ({
-			id: w.id, title: w.title, author: w.author || null, narrator: w.narrator || null,
-			edition: w.edition || null, percent: percentFor(userId, w)
-		}));
-		const lines = choices.map(c => {
-			const by = c.narrator ? ` (read by ${c.narrator})` : c.edition ? ` (${c.edition})` : '';
-			const pct = c.percent !== null ? ` · ${c.percent}%` : '';
-			return `• \`${c.id}\` ${c.title}${by}${pct}`;
-		});
-		return { error: result(false, 'ambiguous', `Which one?\n${lines.join('\n')}`, { choices }) };
+		if (!picked.choices.length) return { error: didYouMean(q, userId) };
+		const choices = picked.choices.slice(0, CHOICES_MAX).map(w => choiceOf(userId, w));
+		const more = picked.choices.length > CHOICES_MAX ? `\n…and ${picked.choices.length - CHOICES_MAX} more; \`/book library ${picked.filter || q}\` lists them all.` : '';
+		const head = picked.text ? `${picked.text} Pick one:` : 'Which one?';
+		return { error: result(false, 'ambiguous', `${head}\n${choiceLines(choices).join('\n')}${more}`, { choices }) };
 	}
 
 	function catalogReady() {
@@ -1408,8 +1522,9 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 	 * @param {object} ctx { guild, member, userId?, textChannel, query?, workId?, work?, fromStart? }
 	 * @returns {Promise<{ ok, code, text, view?, sessionId?, choices?, info? }>} code: playing,
 	 *   disabled, closed, no-guild, no-voice, catalog-building, no-title, missing, not-found,
-	 *   ambiguous (with choices [{ id, title, author, narrator, edition, percent }]), claimed,
-	 *   music-busy, other-listener, starting, join-failed, cancelled
+	 *   ambiguous (with choices [{ id, title, author, narrator, edition, percent }]), suggest
+	 *   (nothing matched; choices as ambiguous, the likely typos), claimed, music-busy,
+	 *   other-listener, starting, join-failed, cancelled
 	 */
 	async function play(ctx = {}) {
 		const c = cfg();
@@ -1579,7 +1694,7 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 	 * with its listening time saved and no smaller position after the finish.
 	 */
 	function finish(userId, workOrId, { guildId } = {}) {
-		const work = workOrId && typeof workOrId === 'object' ? workOrId : catalog().work(String(workOrId || ''));
+		const work = workOrId && typeof workOrId === 'object' ? workOrId : (catalog().work(String(workOrId || '')) || bookSearch.byShortKey(String(workOrId || ''), catalogList()));
 		if (!work) return result(false, 'not-found', 'That book is not in the library.');
 		const uid = String(userId);
 		const s = liveSessionOf(uid, work.id);

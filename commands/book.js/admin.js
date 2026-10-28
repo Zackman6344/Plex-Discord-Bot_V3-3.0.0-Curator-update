@@ -11,6 +11,9 @@ const CUSTOM_ID_MAX = 100;
 const LIST_MAX = 10;
 const CHUNK = 1900;
 const LONG_GROUP_HOURS = 2;
+// A short play on 10-minute scenes was missed and never listed: the 2 h test alone hid it.
+const LONG_TRACK_MIN = 10;
+const REJECTED_MAX = 5;
 const DOUBT_MAX = 5;
 const NAME_MAX = 80;
 const DRIVE_RE = /^[A-Za-z]:$/;
@@ -108,6 +111,18 @@ function plural(n, one, many = `${one}s`) {
 
 const albumName = (title) => (title ? esc(title) : 'an untitled album');
 
+// The likeliest missed book first, so a short play is not buried under song folders: a music
+// genre goes last, then an upload bucket, a generic folder or a lone file, and within each, the
+// longer the median track the likelier speech.
+function likelihood(r, roots) {
+	const key = String(r.folderKey || '');
+	const leaf = shownKey(key, roots).split('/').pop();
+	let tier = 2;
+	if (r.reason === 'music genre') tier = 0;
+	else if (/music-uploads|untagged/i.test(key) || bookCatalog.isGenericName(leaf) || Number(r.tracks) < 2) tier = 1;
+	return tier * 1000 + Math.min(Number(r.medianMin) || 0, 120);
+}
+
 // A 'split' doubt is told on the split line instead, and a code added later is left out rather
 // than printed raw.
 function doubtReason(d) {
@@ -128,6 +143,10 @@ function doubtReason(d) {
 		}
 		case 'generic-title': return `the title "${esc(d.title)}" looks like a folder name`;
 		case 'no-author': return 'no author found';
+		case 'title-credit': return `the title "${esc(d.title)}" still carries a credit`;
+		case 'author-credit': return `the author "${esc(d.author)}" looks like a list of credits`;
+		case 'author-shelf': return `the author "${esc(d.author)}" is a folder of many authors' books`;
+		case 'narrator-not-person': return `the narrator "${esc(d.narrator)}" does not look like a person`;
 		default: return null;
 	}
 }
@@ -228,6 +247,10 @@ function rescanText(report, catalog) {
 	const works = catalog.works() || [];
 	const low = works.filter(w => w.confidence === 'low');
 	if (low.length) lines.push(`🔍 Check the part order of (${low.length}): ${list(low.map(w => w.title))}. A \`partOrder\` override fixes a wrong one.`);
+	// The two rules that take groups under 2 h with no audiobook genre: listed every time, so a mix
+	// or an ambient album taken by mistake is seen and excluded.
+	const short = works.filter(w => w.detectedBy === 'median-short' || w.detectedBy === 'sibling-books');
+	if (short.length) lines.push(`⏱ Taken as short works (\`${config.commandPrefix || '!'}book edit <title> exclude\` takes one out): ${list(short.map(w => w.title))}`);
 	lines.push(...doubtLines(works));
 	lines.push(...splitLines(report.splits, works));
 	lines.push(...onlineLines(report.online, works));
@@ -237,11 +260,15 @@ function rescanText(report, catalog) {
 		const stored = catalog.load();
 		roots = (stored.meta && stored.meta.roots) || [];
 		// A split piece is already named on the split line.
-		rejected = (stored.rejected || []).filter(r => Number(r.hours) >= LONG_GROUP_HOURS && r.reason !== 'excluded by override' && !String(r.folderKey).includes('#album:'));
+		rejected = (stored.rejected || []).filter(r => (Number(r.hours) >= LONG_GROUP_HOURS || Number(r.medianMin) >= LONG_TRACK_MIN) && r.reason !== 'excluded by override' && !String(r.folderKey).includes('#album:'));
 	} catch (_) {}
 	if (rejected.length) {
-		const top = rejected.sort((a, b) => b.hours - a.hours).slice(0, 5).map(r => `${shownKey(r.folderKey, roots)} (${Number(r.hours).toFixed(1)} h)`);
-		lines.push(`🗂 Long groups not taken as books (add one under \`include\` in book_overrides.json): ${list(top, 5)}${rejected.length > 5 ? ` and ${rejected.length - 5} more` : ''}`);
+		const top = rejected
+			.map(r => ({ r, score: likelihood(r, roots) }))
+			.sort((a, b) => b.score - a.score || b.r.hours - a.r.hours)
+			.slice(0, REJECTED_MAX)
+			.map(({ r }) => `${shownKey(r.folderKey, roots)} (${Number(r.hours).toFixed(1)} h${Number(r.hours) < LONG_GROUP_HOURS ? `, tracks of ${Math.round(Number(r.medianMin))} min` : ''})`);
+		lines.push(`🗂 Long groups not taken as books (add one under \`include\` in book_overrides.json): ${list(top, REJECTED_MAX)}${rejected.length > REJECTED_MAX ? ` and ${rejected.length - REJECTED_MAX} more` : ''}`);
 	}
 	for (const note of (report.notes || []).slice(0, LIST_MAX)) lines.push(`📝 ${note}`);
 	return lines;

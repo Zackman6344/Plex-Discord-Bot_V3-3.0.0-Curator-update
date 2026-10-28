@@ -105,6 +105,7 @@ const SETTINGS = [
     { key: 'audiobookResumeRewindSeconds', label: 'Rewind on resume (seconds)', group: 'Audiobooks', type: 'int', min: 0, max: 120 },
     { key: 'audiobookTextEnabled', label: 'Read-along (!book text, 📖)', group: 'Audiobooks', type: 'bool' },
     { key: 'audiobookTextSidecars', label: 'Read EPUBs next to the audio', group: 'Audiobooks', type: 'bool' },
+    { key: 'audiobookCalibreSort', label: 'Sort and fill details from Calibre', group: 'Audiobooks', type: 'bool' },
     {
         key: 'audiobookOnlineLookup', label: 'Look up series and narrators online', group: 'Audiobooks', type: 'bool',
         warn: 'Sends each book\'s title and author to Audible\'s unofficial catalog search after every catalog rebuild: at start-up or hourly when the library changed, on a rescan, and after an exclude or include edit.',

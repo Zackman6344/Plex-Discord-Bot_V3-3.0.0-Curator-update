@@ -221,6 +221,13 @@ const defaults = {
   // Which Audible store to ask; also picks the language a match must be in. One of 'us' 'ca'
   // 'uk' 'au' 'fr' 'de' 'jp' 'it' 'in' 'es'.
   'audiobookLookupRegion' : 'us',
+  // Match each book to a record in your Calibre library (calibreUrl above) and use it: an exact
+  // match fills a title, author or series that nothing else gave, and its tags pick the library
+  // section (Fantasy, Science Fiction, ...) when your own folders and edits do not. The bot keeps a
+  // copy of the library's titles, authors, series and tags in data/book_calibre.json, checks it for
+  // changes every 15 minutes while Calibre is open, and only reads. `!book calibre` lists the books
+  // with no match. Off by default.
+  'audiobookCalibreSort' : false,
 
   // --- Voice (the Voice page of /config) ---
   // Priority of the bot process. Above normal stops a game, VR stream or Plex transcode on this PC

@@ -5,7 +5,9 @@ repeatable sweep to run after any change that touches dispatch, commands, or dep
 and 9 are the first live pass of the audiobook suite, of the voice-health log and process
 priority, and of the audiobook read-along, none of which has met a real voice channel yet.
 Phase 10 is the first live pass of the catalog's rules version 3: embedded tags, book metadata,
-`!book edit`, the optional online lookup and the card's chapter words.
+`!book edit`, the optional online lookup and the card's chapter words. Phase 11 is the first live
+pass of rules version 5 and what came with it: the one-time id move, short works, typo and series
+plays, the sectioned library, the Calibre index and `!book calibre`.
 
 The bot now persists its own logs to `data/logs/`, so a failure you didn't happen to be watching
 is still there afterwards:
@@ -230,7 +232,7 @@ cannot reach. Watch `npm run logs -- --raw` for `music-gated-by-book`, `book-str
 - [ ] Before enabling: `/book play` and every other subcommand answer "📚 Audiobooks are turned
       off…", the help embed has no AUDIOBOOKS line, and nothing about music has changed.
 - [ ] `/config` → Audiobooks → enable. No restart. The first `/book play` says "Reading the
-      library (about 20 s)"; a minute later `/book library` lists the books and podcasts. The help
+      library (about 20 s)"; a minute later `/book library` lists the sections. The help
       embed now has the AUDIOBOOKS line.
 - [ ] `/book rescan` as the owner reports works, parts, hours, any low-confidence part orders and
       the long folders left as music. As anyone else it is refused. During a Plex library scan it
@@ -533,6 +535,10 @@ has set one yet.
 Built and unit-tested offline (`npm test` 1,727 of 1,727 on 2026-10-16), and checked by scratch
 gates against a read-only snapshot of this library with every store on temp files. None of it has
 run in the live bot. The first start after the update rebuilds the catalog once (rules version 3).
+**After rules version 5 some expectations here read differently:** a bare `!book library` opens
+the section landing (use `!book library series:mistborn` and the like for the series lists below),
+the Mistborn works show no edition rather than "(Terence Aselford)", and Hyperion shows edition
+"Various" with no narrator. Phase 11 covers those changes.
 Run everything as the owner with prefix commands, and keep the bot log open for "Audiobook tag
 reads still running" and "Online book lookup ... failed".
 
@@ -646,6 +652,195 @@ reads still running" and "Online book lookup ... failed".
       batch ends (within a minute), with no "try again".
 - [ ] Turn the setting off, `!book rescan`: no 🌐 line, and the online fills (those publishers,
       the T. H. White series) are gone from `!book library` and `!book edit`. The cache file stays.
+
+---
+
+## Phase 11: Rules version 5, search, the sectioned library and the Calibre index (live)
+
+Built and unit-tested offline on 2026-10-27 (the last full run 1,939 of 1,940; the one failure is
+the contention-sensitive read-along stall test, which passes alone). Checked against a rebuilt
+copy of this library and, for the Calibre index, against the live Calibre server read-only. None
+of it has run in the live bot. The first start after the update rebuilds the catalog once and
+moves about 19 ids. Run as the owner with prefix commands unless a step says otherwise, and keep
+`npm run logs -- --raw` and the bot log open.
+
+**Before updating**
+
+- [ ] `!book shelf` as each listener with a place saved (14 places on 2026-10-27). Note each
+      book's title and time, in particular Whalefall, The Eye of the World and The Way of Kings
+      (in Prologue, about 38:43).
+- [ ] Copy `data/book_bookmarks.json`, `data/book_overrides.json` and `data/book_text/links.json`
+      somewhere outside the bot folder, so a bad move can be undone.
+
+**The first rebuild**
+
+- [ ] Start the bot. The start-up check rebuilds with "rules changed". The log line reads
+      "Audiobook catalog rebuilt: 81 works (80 books, 1 podcasts), N parts, N renamed", with about
+      19 renamed. If the tag reads pass 45 s (about 340 new files) the log says so and one more
+      rebuild follows. At most two `ffmpeg.exe` children run at once, at Below normal.
+- [ ] The bot log has no "Audiobook catalog: two works came out as ..." line. If one appears,
+      note both ids: one of them now carries its folder's name.
+- [ ] `!book rescan`: 81 works, no "↪ Renamed" line (the start-up build made them), no drive
+      letter anywhere. The doubtful line names 3 books: Myths Reimagined (no author found), The
+      Odyssey (tracks by Homer and Anthony Quayle) and Matt Bates' The Greek Myths (title reads
+      like a credit).
+- [ ] The rescan's "🗂 Long groups not taken as books" line shows 5 entries and "N more", with
+      shorter groups written like "X (1.2 h, tracks of 10 min)", Bo Burnham's "what" first, and
+      music-genre folders last.
+- [ ] A second `!book rescan` renames nothing and takes about 20 s.
+- [ ] `git status` in the bot folder lists nothing under `data/` (`book_calibre.json` included).
+
+**Short works and the split**
+
+- [ ] `!book library section:myth` (or the Mythology section) lists Lysistrata, Medea,
+      Theogony, Galatea and Antigone, and The Birds, The Clouds and The Frogs by Aristophanes as
+      three books. `!book play the clouds` starts at its first file.
+- [ ] `!album lysistrata` (or any of those plays) shows no music hit and the "📚 Also in your
+      books" line instead; `!random` never picks their tracks.
+- [ ] The Story of Theseus LP is in the catalog, shown as by Anthony Quayle. Decide whether to
+      keep it: `!book edit <its id> author Nathaniel Hawthorne` and a title edit, or `exclude`.
+- [ ] Euripides stays one book (titled "Alcestis [438 B.C.]") and the Quayle Odyssey LP one book.
+
+**Bookmarks after the id move**
+
+- [ ] Every listener's `!book shelf` lists the same books at the noted times, under the new
+      titles (Whalefall, not "Whalefall - A Novel"; The Eye of the World, not "... Book One of the
+      Wheel of Time").
+- [ ] `!book play whalefall` resumes at the noted place, less the usual rewind. Same for The Eye
+      of the World.
+- [ ] The Way of Kings: `!book play the way of kings` resumes in the Prologue at the noted time.
+      `!book chapter` now lists the volume-1 intro first and Prelude second.
+- [ ] `data/book_bookmarks.json` now keys those places by the new ids (the re-key happens on the
+      first read of each).
+- [ ] The Eye of the World read-along: with it playing, `!book text` names its Calibre book (#7) though the link in
+      `links.json` is still under the old id.
+- [ ] `!book edit Hyperion` still shows the Dan Simmons author-wide series from your overrides.
+
+**Typo plays**
+
+- [ ] `!book play Rouge Protocol`: "Nothing in the audiobook library matches "Rouge Protocol".
+      Did you mean **Rogue Protocol**?" with one ▶ button, and nothing starts. Press the button:
+      the book starts for you.
+- [ ] `!book play artifical condition` and `!book start Artifical Conditioon`: Did you mean
+      Artificial Condition, nothing starts.
+- [ ] `!book play oddysey`: up to 3 suggestions, each with a button. `!book play auto`: plain
+      "Nothing in the audiobook library matches", no suggestion.
+- [ ] `!book pasue`: "Did you mean `!book pause`?". `!book read Artifical
+      Condition`: 'Unknown book command "read". Did you mean `!book play Artificial Condition`?'
+      with a button.
+- [ ] `!book finish rouge protocol`: text only, with the id to copy, no button.
+- [ ] On `/` in the test guild: `/book play title:rouge prot` autocomplete offers Rogue Protocol.
+      Then `npm run logs -- --command=book` shows that invocation with `[typed "rouge prot"]`.
+
+**Series and author plays**
+
+- [ ] `!book play murderbot` resumes your newest Murderbot book in progress; with none in progress
+      it starts the lowest unfinished number. `!book play murderbot 2` starts Artificial
+      Condition, and `!book play murderbot #9` says the series has no #9 and lists the numbers it
+      has, with buttons.
+- [ ] `!book play mistborn` resumes The Final Empire (or your Mistborn book in progress).
+      `!book play mistborn 3` starts The Hero of Ages.
+- [ ] `!book play sanderson`: resumes your newest Sanderson book in progress.
+- [ ] `!book play stephen fry`: "Which one?" with all 4 of his books and 4 buttons (one button
+      used to be missing for an id over 100 characters).
+- [ ] `!book play odyssey` asks between Fry's Odyssey and Homer's The Odyssey. `!book play the
+      mythos` starts Mythos, not Heroes.
+- [ ] With nothing typed but a title: `!book whale fall` offers Whalefall, `!book murderbot 2`
+      Artificial Condition, `!book oath bringer` Oathbringer, `!book mistborn` your Mistborn book,
+      each with a play button and nothing started. `!book exit strategy` offers the book and
+      `!book edit strategy`.
+- [ ] `!book play ???` and `!book finish ?` with one book in progress: "Nothing in the audiobook
+      library matches"; nothing starts and the book stays unfinished.
+- [ ] Finish one narration of The Fall of Hyperion and Hyperion: `!book play hyperion cantos`
+      offers Endymion (#3), not the other Fall of Hyperion.
+- [ ] `!book link auto` with your book playing: "📖 For **<Title>**, the book playing here:" and
+      then the link reply. With nothing playing it names "your most recent book".
+
+**The library landing, sections, pager and play menu**
+
+- [ ] `!book library`: one line per section, about Mythology 42, Fantasy 14, Science Fiction 14,
+      Myth Retellings 9, Mystery & Thriller 1, Podcasts 1 (last), no "More books". Below it an
+      "Open a section" menu and "▶ Play a book in progress…" listing your unfinished books, newest
+      first.
+- [ ] Open Mythology from the menu: page 1 of 2, 25 books, "◀ 1/2 ▶" and "📚 All sections". ▶
+      shows page 2; a series that runs over the page break repeats its heading with "(cont.)".
+      "📚 All sections" goes back to the landing.
+- [ ] Fantasy lists books outside a series first, then "*Mistborn* · Brandon Sanderson" and
+      "*The Stormlight Archive* · Brandon Sanderson" (under S) in series order, with your marks.
+- [ ] Pick a book from "▶ Play one of these…": it starts for you, a private reply says so, and the
+      list redraws with the pick cleared. Pick the same book again: it answers again.
+- [ ] Someone else picks from your prefix list: the book plays for them, and the list keeps
+      showing your marks.
+- [ ] `/book library` in the test guild: the reply is private. `/restart`, then click ▶: the page
+      turns (the list lives in the same process).
+- [ ] Stop and start the bot process, then click one of that list's buttons: "This list has
+      expired. Run `/book library` again." privately.
+- [ ] Leave a list alone for over an hour, click ▶: the same expired line (with `!book library`
+      for a prefix list).
+
+**Library filters**
+
+- [ ] `!book library author:sanderson` (12), `author:wells` (7), `series:murderbot` (7),
+      `unread`, `listening`, `finished`, `short`, `long`, `podcasts` (1): each list matches its
+      name.
+- [ ] Combined: `!book library fantasy unread`, `!book library short unread`, `!book library
+      author:sanderson listening`, `!book library fantasy sanderson` and `!book library sanderson
+      fantasy` (both 12).
+- [ ] `!book library oddysey`: Did you mean, with buttons. `!book library zzqq`: the section names
+      and the filter keywords, no buttons.
+- [ ] `!book library series:"the long earth"` quoted reads the whole name; unquoted, "long" is
+      taken as the length keyword (a known gap).
+
+**`!book calibre` with Calibre open**
+
+- [ ] With `audiobookCalibreSort` off: `!book calibre` says the Calibre index is off and how to
+      turn it on, and `data/book_calibre.json` does not exist.
+- [ ] `/config` → Audiobooks → "Sort and fill details from Calibre" on. Within a few seconds of
+      the next rebuild (or `!book calibre refresh`, which replies at once) the file appears.
+- [ ] `!book calibre`: "📚 Calibre matches · 80 audiobooks: 4 exact, 0 pinned, 0 likely, 0 ambiguous, 76 with no
+      match" on 2026-10-27, the number of Calibre books and when they were read, "Calibre
+      answered at the last check", then the list of books with no match, in up to 3 messages, each
+      under 2,000 characters, with no path. Today's counts may differ if Calibre was edited.
+- [ ] `!book calibre all` adds the 4 matched books: The Final Empire (#299), The Way of Kings
+      (#1), The Eye of the World (#7, by link) and The Once and Future King (#350).
+- [ ] The Calibre access log, or a second `!book calibre refresh` a minute later, shows an
+      unchanged library costs 2 requests and no full read.
+- [ ] As a non-owner, `!book calibre` is refused.
+
+**`!book calibre` with Calibre closed**
+
+- [ ] Close the Calibre app. `!book calibre refresh`: the reply comes at once; a later
+      `!book calibre` says Calibre did not answer at the last check, that the saved copy is used,
+      and when the next automatic try is. The counts are unchanged.
+- [ ] The bot log has one line for the outage, not one per 15-minute check.
+- [ ] `!book library` and `!book edit The Way of Kings` still show its section and Calibre line
+      from the saved copy.
+- [ ] Open Calibre again. Within 15 to 30 minutes, or at once with `!book calibre refresh`, the
+      report says Calibre answered.
+
+**`!book edit genre` and `calibre`**
+
+- [ ] `!book edit Hyperion genre Space Opera`: the reply names every recording of the title.
+      `!book library` shows a new "Space Opera" section holding them; `!book edit Hyperion` shows
+      "Section: Space Opera" and that your edit decided it. `!book edit Hyperion clear genre`
+      puts them back in Science Fiction.
+- [ ] `!book edit Hyperion author-genre Horror`: every Dan Simmons book without its own genre
+      moves to Horror. `!book edit Hyperion clear author-genre` undoes it.
+- [ ] `!book edit Hyperion genre none` is refused and names `clear genre`.
+- [ ] `!book edit "The Fall of Hyperion" calibre 42`: refused with both recordings' ids. Then
+      `!book edit <one id> calibre <a real Calibre id>`: the reply names the record;
+      `!book edit <that id>` shows "Calibre: #N … · your pin"; `!book calibre` counts 1 pinned.
+- [ ] `!book edit <that id> calibre none`: "Calibre: none, by your edit", and `!book calibre`
+      counts it as set to none. `!book edit <that id> clear calibre` returns it to no match.
+- [ ] Pin a book to an id the saved copy lacks (`calibre 999999`): the reply says the saved copy
+      has no such book and that `!book calibre` will show whether the pin holds; the report lists
+      it under pins to check.
+- [ ] With `audiobookCalibreSort` off, `!book edit <book> calibre 1` still saves and says it
+      applies once the index is on.
+- [ ] `!book edit <book> clear all` keeps the genre and the Calibre pin.
+- [ ] `data/book_overrides.json` holds `genre`, `calibreId`, `calibreUuid` and `calibreLibrary`
+      under the work ids, and `genre` under `authors` for the author-wide one. Clean up the test
+      edits afterwards.
 
 ---
 

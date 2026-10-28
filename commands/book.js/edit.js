@@ -5,6 +5,11 @@
 // feed a work's id, so bookmarks, read-along links and sync marks stay where they are. exclude
 // and include change what counts as a book, so only those two rebuild the catalog.
 //
+// genre, author-genre and calibre are not display fields: genre names the library section
+// (helpers/bookSections.js) and calibre pins the Calibre record (helpers/calibreIndex.js), stored
+// as works[id].genre, authors[slug].genre and works[id].calibreId with the record's uuid and
+// library. bookMetadata.extrasFor reads them by id and alias, so they follow an id move.
+//
 // `!book edit` can answer in an open channel: replies name works by title and id only, never a
 // folder or the overrides file's path (editOverrides' errors are already path-free).
 
@@ -15,12 +20,20 @@ const VALUE_MAX = 300;
 const NAME_MAX = 80;
 const LIST_MAX = 5;
 const LOOKUP_WAIT_MS = 60 * 1000;
-const FIELDS = ['title', 'author', 'narrator', 'publisher', 'series', 'author-series', 'clear', 'exclude', 'include', 'lookup'];
-const CLEARABLE = ['title', 'author', 'narrator', 'publisher', 'series', 'author-series', 'all'];
+const GENRE_MAX = 40;
+const FIELDS = ['title', 'author', 'narrator', 'publisher', 'series', 'author-series', 'genre', 'author-genre', 'calibre', 'clear', 'exclude', 'include', 'lookup'];
+const CLEARABLE = ['title', 'author', 'narrator', 'publisher', 'series', 'author-series', 'genre', 'author-genre', 'calibre', 'all'];
 const METADATA_KEYS = ['title', 'author', 'narrator', 'edition', 'publisher', 'series', 'sequence'];
-// Two narrations of one title share its name and series, but not a narrator, a publisher or the
-// decision to drop one of them.
-const ONE_RECORDING = new Set(['author', 'narrator', 'publisher', 'exclude', 'include']);
+const CALIBRE_KEYS = ['calibreId', 'calibreUuid', 'calibreLibrary'];
+// Two narrations of one title share its name, series and section, but not a narrator, a
+// publisher, the decision to drop one of them, or a Calibre record: two translations of one title
+// are two books.
+const ONE_RECORDING = new Set(['author', 'narrator', 'publisher', 'exclude', 'include', 'calibre']);
+const SECTION_SOURCES = {
+	override: 'your edit', 'author-override': 'your author-wide edit', folder: 'your folder', calibre: 'Calibre tags',
+	tags: 'file tags', 'calibre-likely': 'Calibre tags of a likely match', series: 'its series', author: 'its author',
+	podcast: 'a podcast', none: 'no source'
+};
 const SOURCE_NAMES = { override: 'your edit', calibre: 'Calibre', online: 'online', tag: 'file tags', plex: 'Plex', folder: 'folder name' };
 const POSITION_RE = /^#?(\d+(?:\.\d+)?)(?:\s*[-–]\s*(\d+(?:\.\d+)?))?$/;
 const CLEAR = Symbol('clear');
@@ -28,6 +41,8 @@ const CLEAR = Symbol('clear');
 const catalogStore = () => require('../../helpers/bookCatalogStore.js');
 const bookCatalog = () => require('../../helpers/bookCatalog.js');
 const bookMetadata = () => require('../../helpers/bookMetadata.js');
+const bookSections = () => require('../../helpers/bookSections.js');
+const calibreIndex = () => require('../../helpers/calibreIndex.js').instance();
 const isObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const has = (obj, k) => Object.prototype.hasOwnProperty.call(obj, k);
 const norm = (text) => bookCatalog().norm(text);
@@ -55,6 +70,8 @@ function usage(p = prefix()) {
 		`\`${p}book edit <book> title|author|narrator|publisher <value>\` (\`narrator none\` for none).`,
 		`\`${p}book edit <book> series <name> [number]\` or \`series none\`. Quote a name that ends in a number: \`series "Area 51"\`.`,
 		`\`${p}book edit <book> author-series <name> [number]\`: one series for all of the author's books, numbered book by book.`,
+		`\`${p}book edit <book> genre <section>\` / \`author-genre <section>\`: the library section for this title, or for all of the author's books.`,
+		`\`${p}book edit <book> calibre <id>\` / \`calibre none\`: tie the book to a Calibre record by its id, or stop any match.`,
 		`\`${p}book edit <book> clear <${CLEARABLE.join('|')}>\`: back to the detected value.`,
 		`\`${p}book edit <book> exclude\` / \`include\`: take a book out of the catalog or bring it back (rebuilds the catalog).`,
 		`\`${p}book edit <book> lookup\`: look it up online again, when the online lookup is on.`,
@@ -115,6 +132,18 @@ function parseArgs(field, toks) {
 			if (name.length > VALUE_MAX) return bad(`That series name is longer than ${VALUE_MAX} characters.`);
 			if (field === 'author-series' && position && position.sequence === null) return bad('`author-series` numbers one book at a time, so it needs a single number such as 2 or 0.5.');
 			return ok({ action: field, name, position });
+		}
+		case 'genre':
+		case 'author-genre':
+			if (none) return bad(`A section needs a name. \`${p}book edit <book> clear ${field}\` goes back to the section the book gets on its own.`);
+			if (!text) return bad(`\`${field}\` needs a section: \`${p}book edit <book> ${field} <section>\`, such as Fantasy.`);
+			if (text.length > GENRE_MAX) return bad(`A section name is at most ${GENRE_MAX} characters.`);
+			return ok({ action: field, value: text.replace(/\s+/g, ' ') });
+		case 'calibre': {
+			if (none) return ok({ action: 'calibre', id: null });
+			const m = toks.length === 1 ? /^#?(\d{1,9})$/.exec(toks[0].text) : null;
+			if (!m || Number(m[1]) < 1) return bad(`\`calibre\` takes a Calibre book id (the number in Calibre's Id column) or none: \`${p}book edit <book> calibre 42\`.`);
+			return ok({ action: 'calibre', id: Number(m[1]) });
 		}
 		case 'clear': {
 			const f = text.toLowerCase();
@@ -193,7 +222,7 @@ function parseSlash(interaction) {
 	if (!field) return { workText, req: { action: 'show' } };
 	if (!FIELDS.includes(field)) return { error: `Unknown detail "${esc(field)}".` };
 	const toks = [];
-	if (value) toks.push({ text: value, quoted: !(field === 'clear' || /^none$/i.test(value)) });
+	if (value) toks.push({ text: value, quoted: !(field === 'clear' || field === 'calibre' || /^none$/i.test(value)) });
 	if (position && (field === 'series' || field === 'author-series')) toks.push({ text: position, quoted: false });
 	if (position && field.endsWith('series') && !value) return { error: `\`${field}\` needs a name in \`value\`, with the number in \`position\`.` };
 	const r = parseArgs(field, toks);
@@ -414,14 +443,24 @@ async function editFields(ctx, t, req) {
 async function clearField(ctx, t, req) {
 	const targets = t.groupWide ? t.group : [t.work];
 	if (req.field === 'author-series') return authorSeries(ctx, t, { none: true });
-	const keys = req.field === 'all' ? METADATA_KEYS : req.field === 'series' ? ['series', 'sequence'] : [req.field];
+	if (req.field === 'author-genre') return authorGenre(ctx, t, { none: true });
+	const keys = req.field === 'all' ? METADATA_KEYS : req.field === 'series' ? ['series', 'sequence'] : req.field === 'calibre' ? CALIBRE_KEYS : [req.field];
 	const patch = Object.fromEntries(keys.map((k) => [k, CLEAR]));
 	const saved = save((raw) => { for (const w of targets) writeFields(raw, w, patch); });
 	if (!saved.ok) return ctx.say(saved.text);
 	if (!saved.changed) return ctx.say(`There was no ${req.field === 'all' ? '' : `${req.field} `}edit on ${who(t)} to clear.`);
 	logger.info(`!book edit: ${targets.map((w) => w.id).join(', ')} ${req.field} cleared by the owner.`);
 	const w = current(t.work);
-	if (req.field === 'all') return ctx.say(`✏️ ${who(t)}: your edits to its details are cleared. An exclude, a part order or a pinned id stays.${saved.refreshNote}`);
+	if (req.field === 'all') return ctx.say(`✏️ ${who(t)}: your edits to its details are cleared. An exclude, a part order, a pinned id, a section or a Calibre pin stays.${saved.refreshNote}`);
+	if (req.field === 'genre') {
+		const now = sectionText(w);
+		return ctx.say(`✏️ ${who(t)}: your section edit is cleared${now ? `; it is listed under ${now}` : ''}.`);
+	}
+	if (req.field === 'calibre') {
+		try { calibreIndex().rematch(); } catch (_) {}
+		const line = calibreLine(w);
+		return ctx.say(`✏️ ${who(t)}: your Calibre pin is cleared${line ? `; ${line.replace(/^Calibre: /, 'Calibre now: ')}` : ''}.${saved.refreshNote}`);
+	}
 	const src = sourceName(w, req.field);
 	return ctx.say(`✏️ ${who(t)}: your ${req.field} edit is cleared; it shows ${valueText(w, req.field)}${src ? ` (${src})` : ''}.${saved.refreshNote}`);
 }
@@ -451,6 +490,125 @@ async function authorSeries(ctx, t, req) {
 	const own = mine.filter((w) => sourceName(w, 'series') === 'your edit' && norm(w.series) !== norm(req.name));
 	const note = own.length ? `\nThese have a series edit of their own, which wins: ${own.slice(0, LIST_MAX).map((w) => `\`${w.id}\``).join(', ')}. \`clear series\` on one drops it.` : '';
 	return ctx.say(`✏️ ${esc(req.name)}, for every ${esc(author)} book${rows.length ? `: ${rows.join(', ')}` : ''} ${WINS}.${note}${saved.refreshNote}`);
+}
+
+// ---- sections and Calibre --------------------------------------------------------------------
+
+function sectionsNow() {
+	try {
+		return bookSections().sectionsNow();
+	} catch (err) {
+		logger.warn('!book edit: the library sections could not be worked out:', (err && err.message) || err);
+		return new Map();
+	}
+}
+
+function sectionName(typed) {
+	const known = [...sectionsNow().values()].map((s) => s.section);
+	return bookSections().canonicalSection(typed, known);
+}
+
+function sectionText(work) {
+	const hit = sectionsNow().get(work.id);
+	if (!hit) return null;
+	return `${esc(hit.section)} · ${SECTION_SOURCES[hit.source] || hit.source}`;
+}
+
+async function editGenre(ctx, t, req) {
+	if (t.work.kind === 'podcast') return ctx.say(`**${esc(t.work.title)}** is a podcast, and podcasts are always listed under Podcasts.`);
+	const targets = t.groupWide ? t.group : [t.work];
+	const name = sectionName(req.value);
+	const saved = save((raw) => { for (const w of targets) writeFields(raw, w, { genre: name }); });
+	if (!saved.ok) return ctx.say(saved.text);
+	logger.info(`!book edit: ${targets.map((w) => w.id).join(', ')} genre set by the owner.`);
+	return ctx.say(`✏️ ${who(t)}: listed under **${esc(name)}** in the library ${WINS}.${saved.refreshNote}`);
+}
+
+/** authors[slug(detected author)].genre, beside any author-wide series the same entry holds. */
+function writeAuthorGenre(raw, work, name) {
+	const bc = bookCatalog();
+	const key = bc.slug(detectedOf(work).author);
+	if (raw.authors !== undefined && !isObject(raw.authors)) throw new Error('"authors" is not an object');
+	const authors = isObject(raw.authors) ? raw.authors : {};
+	let entry = isObject(authors[key]) ? authors[key] : null;
+	for (const k of Object.keys(authors)) {
+		if (k === key || bc.slug(k) !== key) continue;
+		if (!entry && isObject(authors[k])) entry = authors[k];
+		delete authors[k];
+	}
+	entry = Object.assign({}, entry || {});
+	if (name === null) delete entry.genre;
+	else entry.genre = name;
+	if (Object.keys(entry).length) authors[key] = entry;
+	else delete authors[key];
+	if (Object.keys(authors).length) raw.authors = authors;
+	else delete raw.authors;
+}
+
+async function authorGenre(ctx, t, req) {
+	const { author } = detectedOf(t.work);
+	const name = req.none ? null : sectionName(req.value);
+	const saved = save((raw) => writeAuthorGenre(raw, t.work, name));
+	if (!saved.ok) return ctx.say(saved.text);
+	logger.info(`!book edit: author-genre for ${bookCatalog().slug(author)} ${name === null ? 'removed' : 'set'} by the owner.`);
+	if (name === null) {
+		if (!saved.changed) return ctx.say(`There was no author-wide section for ${esc(author)} to clear.`);
+		return ctx.say(`✏️ ${esc(author)}: the author-wide section is cleared; each book gets its own again.`);
+	}
+	const key = bookCatalog().slug(author);
+	const sections = sectionsNow();
+	const own = (catalogStore().works() || []).filter((w) => bookCatalog().slug(detectedOf(w).author) === key && (sections.get(w.id) || {}).source === 'override');
+	const note = own.length ? `\nThese have a section edit of their own, which wins: ${own.slice(0, LIST_MAX).map((w) => `\`${w.id}\``).join(', ')}. \`clear genre\` on one drops it.` : '';
+	return ctx.say(`✏️ Every ${esc(author)} book is listed under **${esc(name)}** ${WINS}.${note}`);
+}
+
+function calibreOffNote() {
+	const index = calibreIndex();
+	if (index.enabled()) return '';
+	const p = prefix();
+	return index.configured()
+		? `\nThe Calibre index is off, so this applies once it is on: \`${p}config\`, under Audiobooks (\`audiobookCalibreSort\`).`
+		: `\nCalibre is not set up, so this applies once \`calibreUrl\` is set (\`${p}config\`, Integrations) and \`audiobookCalibreSort\` is on.`;
+}
+
+function recordText(id, rec) {
+	if (!rec) return `Calibre book #${id}`;
+	const formats = Array.isArray(rec.formats) && rec.formats.length ? rec.formats.map((f) => f.toUpperCase()).join(', ') : 'no file';
+	return `Calibre #${id} “${esc(rec.title || 'untitled')}”${rec.authors && rec.authors.length ? ` by ${esc(rec.authors.join(' & '))}` : ''} (${formats})`;
+}
+
+async function pinCalibre(ctx, t, req) {
+	const index = calibreIndex();
+	const rec = req.id === null ? null : index.recordOf(req.id);
+	const lib = index.status().libraryId;
+	const patch = req.id === null
+		? { calibreId: null, calibreUuid: CLEAR, calibreLibrary: CLEAR }
+		: { calibreId: req.id, calibreUuid: rec && rec.uuid ? rec.uuid : CLEAR, calibreLibrary: lib || CLEAR };
+	const saved = save((raw) => writeFields(raw, t.work, patch));
+	if (!saved.ok) return ctx.say(saved.text);
+	logger.info(`!book edit: ${t.work.id} Calibre ${req.id === null ? 'none' : `#${req.id}`} set by the owner.`);
+	try { index.rematch(); } catch (err) { logger.warn('!book edit: Calibre matching failed:', (err && err.message) || err); }
+	const off = calibreOffNote();
+	if (req.id === null) return ctx.say(`✏️ **${esc(t.work.title)}**: no Calibre book from now on, so nothing from Calibre fills its details or picks its section.${off}${saved.refreshNote}`);
+	let missing = '';
+	if (!rec && !off) {
+		missing = `\nThe saved copy of the Calibre library has no book #${req.id}. It is read again now; \`${prefix()}book calibre\` shows whether the pin holds.`;
+		index.refresh({ force: true }).catch(() => {});
+	}
+	return ctx.say(`✏️ **${esc(t.work.title)}**: ${recordText(req.id, rec)} from now on ${WINS}. It fills only details nothing else gave, and its tags can pick the section.${missing}${off}${saved.refreshNote}`);
+}
+
+function calibreLine(work) {
+	const index = calibreIndex();
+	if (!index.enabled()) return null;
+	const m = index.matchFor(work);
+	if (!m) return 'Calibre: not matched yet';
+	if (m.method === 'pin' && m.id === null) return 'Calibre: none, by your edit';
+	if (m.problem) return `Calibre: your pin to #${m.id} no longer holds (${m.problem === 'missing' ? 'the book is gone' : m.problem === 'uuid-changed' ? 'that id is another book now' : 'it is in another library'})`;
+	if (m.verdict === 'ambiguous') return `Calibre: ambiguous between ${(m.candidates || []).map((id) => `#${id}`).join(', ')}`;
+	if (m.id === null) return 'Calibre: no match';
+	const how = m.method === 'pin' ? 'your pin' : m.method === 'link' ? 'your ebook link' : m.method === 'read-along' ? 'the read-along\'s ebook' : `${m.verdict}, ${m.method}`;
+	return `Calibre: ${recordText(m.id, index.recordOf(m.id))} · ${how}`;
 }
 
 // ---- exclude, include, lookup ----------------------------------------------------------------
@@ -628,11 +786,15 @@ function showText(work, group) {
 		const empty = f === 'series' ? !w.series : !w[f];
 		lines.push(`${label}: ${empty ? '-' : valueText(w, f)}${both && !empty ? ` · ${both}` : ''}${empty && src === 'your edit' ? ' · none, by your edit' : ''}`);
 	}
+	const section = sectionText(w);
+	if (section) lines.push(`Section: ${section}`);
+	const calibre = calibreLine(w);
+	if (calibre) lines.push(calibre);
 	const reasons = (Array.isArray(w.doubts) ? w.doubts : []).map(doubtReason).filter(Boolean);
 	if (reasons.length) lines.push(`⚠️ Doubts: ${reasons.join('; ')}.`);
 	const others = group.filter((x) => x.id !== w.id);
-	if (others.length) lines.push(`Other recordings of this title (title and series edits reach them too): ${others.slice(0, LIST_MAX).map((x) => `\`${x.id}\`${suffixOf(x)}`).join(', ')}`);
-	lines.push(`Change: \`${p}book edit ${w.id} title|author|narrator|publisher <value>\`, \`series <name> [number]\`, \`author-series <name> [number]\`, \`clear <detail|all>\`, \`exclude\`, \`lookup\`. \`${p}book edit\` explains each.`);
+	if (others.length) lines.push(`Other recordings of this title (title, series and section edits reach them too): ${others.slice(0, LIST_MAX).map((x) => `\`${x.id}\`${suffixOf(x)}`).join(', ')}`);
+	lines.push(`Change: \`${p}book edit ${w.id} title|author|narrator|publisher <value>\`, \`series <name> [number]\`, \`author-series <name> [number]\`, \`genre <section>\`, \`calibre <id|none>\`, \`clear <detail|all>\`, \`exclude\`, \`lookup\`. \`${p}book edit\` explains each.`);
 	return lines.join('\n');
 }
 
@@ -673,6 +835,9 @@ async function run(ctx) {
 		case 'set':
 		case 'series': return editFields(ctx, t, req);
 		case 'author-series': return authorSeries(ctx, t, req);
+		case 'genre': return editGenre(ctx, t, req);
+		case 'author-genre': return authorGenre(ctx, t, req);
+		case 'calibre': return pinCalibre(ctx, t, req);
 		case 'clear': return clearField(ctx, t, req);
 		case 'exclude': return exclude(ctx, t);
 		case 'lookup': return lookup(ctx, t);
@@ -680,4 +845,4 @@ async function run(ctx) {
 	}
 }
 
-module.exports = { names: ['edit'], run, usage, parsePrefix, parseSlash, parseArgs, tokenize, writeFields, writeAuthorSeries, waitForBatch, CLEAR };
+module.exports = { names: ['edit'], run, usage, parsePrefix, parseSlash, parseArgs, tokenize, writeFields, writeAuthorSeries, writeAuthorGenre, waitForBatch, CLEAR };

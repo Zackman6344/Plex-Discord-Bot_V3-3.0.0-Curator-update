@@ -20,6 +20,7 @@ const { createStore } = require('./jsonStore.js');
 const logger = require('./logger.js');
 const bookCatalog = require('./bookCatalog.js');
 const bookMetadata = require('./bookMetadata.js');
+const bookSearch = require('./bookSearch.js');
 
 const OVERRIDES_ENV = 'PLEXBOT_BOOK_OVERRIDES_FILE';
 const OVERRIDES_DEFAULT = path.join(__dirname, '..', 'data', 'book_overrides.json');
@@ -127,27 +128,35 @@ function work(id) {
 }
 
 function words(text) {
-	return bookCatalog.norm(text).split(' ').filter(Boolean);
+	return bookSearch.key(text).split(' ').filter(Boolean);
 }
 
 /**
  * Works matching what someone typed, best first: an id or alias, then an exact title, then a
  * title prefix, then every word starting a title word, then every word starting a word of the
- * title, author, series, series number, narrator or edition. Empty text gives every work.
+ * title, author, series, series number, narrator or edition. When that finds nothing, a leading
+ * the/a/an is dropped and the search runs again ("the mythos" for Mythos); while it finds
+ * something the article still narrows ("the glass" is not Shadows of Glass). Empty text gives
+ * every work. Typos find nothing here; bookSearch.suggest is the fallback for those.
  */
 function findWorks(text) {
 	const list = works();
-	const q = bookCatalog.norm(text);
+	const q = bookSearch.key(text);
 	if (!q) return [...list];
-	const raw = String(text).trim();
+	const found = rank(list, q, String(text).trim());
+	const loose = bookSearch.bare(q);
+	return found.length || loose === q ? found : rank(list, loose, null);
+}
+
+function rank(list, q, raw) {
 	const tokens = q.split(' ');
 	const scored = [];
 	list.forEach((w, i) => {
-		const title = bookCatalog.norm(w.title);
+		const title = bookSearch.key(w.title);
 		const titleWords = title.split(' ');
 		const all = words([w.title, w.author, w.series, w.sequence, w.narrator, w.edition].filter((x) => x !== null && x !== undefined).join(' '));
 		let score = 0;
-		if (raw === w.id || (Array.isArray(w.aliases) && w.aliases.includes(raw))) score = 100;
+		if (raw && (raw === w.id || (Array.isArray(w.aliases) && w.aliases.includes(raw)))) score = 100;
 		else if (title === q) score = 90;
 		else if (title.startsWith(q)) score = 80;
 		else if (tokens.every((t) => titleWords.some((x) => x.startsWith(t)))) score = 70;
@@ -384,23 +393,41 @@ function optional(load) {
 
 /**
  * What the metadata layer reads beside the catalog: the overrides file, the online lookup's cache
- * (empty while the setting is off) and the Calibre book behind each read-along pointer. Exported
- * so a fresh build can be resolved with the same layers before replace().
+ * (empty while the setting is off) and Calibre. Exported so a fresh build can be resolved with the
+ * same layers before replace().
+ *
+ * Calibre, while the Calibre index is on (helpers/calibreIndex.js): the owner's pin, then the
+ * index's current record for the read-along pointer's Calibre id (the pointer's own copy is only
+ * refreshed when the read-along checks the ebook again), then an exact index match. With the index
+ * off, or silent about a work, the pointer's copy stands, as before the index existed.
  * @param {object} [deps] test seams; each omitted one is the real module
  * @param {object} [deps.overrides] the parsed overrides, instead of reading the file
  * @param {{ get: (work: object) => object|null }|null} [deps.lookup]
  * @param {object|null} [deps.textStore] bookTextStore's shape: works.peek, links.get
  * @param {(pointer: object|null, link: object|null) => object|null} [deps.calibreMeta]
+ * @param {{ metadataFor: (work: object, pointerId: number|null) => object|null|undefined }|null} [deps.calibreIndex]
  */
 function metadataContext(deps = {}) {
 	const read = Object.prototype.hasOwnProperty.call(deps, 'overrides') ? { overrides: deps.overrides || {}, error: null } : readOverrides();
 	const lookup = deps.lookup !== undefined ? deps.lookup : optional(() => require('./bookLookup.js').instance());
 	const textStore = deps.textStore !== undefined ? deps.textStore : optional(() => require('./bookTextStore.js'));
 	const calibreMeta = deps.calibreMeta || optional(() => require('./bookTextSource.js').calibreMetaOf);
+	const index = deps.calibreIndex !== undefined ? deps.calibreIndex : optional(() => require('./calibreIndex.js').instance());
+	function calibreOf(w) {
+		const ptr = textStore ? textStore.works.peek(w) : null;
+		const meta = textStore && calibreMeta ? calibreMeta(ptr, textStore.links.get(w)) : null;
+		if (index && typeof index.metadataFor === 'function') {
+			const pointerId = meta && ptr && ptr.source ? Number(ptr.source.id) || null : null;
+			const pointer = pointerId ? { libraryId: ptr.source.libraryId || null, uuid: ptr.source.uuid || null } : {};
+			const fromIndex = index.metadataFor(w, pointerId, pointer);
+			if (fromIndex !== undefined) return fromIndex;
+		}
+		return meta;
+	}
 	return {
 		error: read.error,
 		overrides: read.overrides,
-		calibreOf: (w) => (textStore && calibreMeta ? calibreMeta(textStore.works.peek(w), textStore.links.get(w)) : null),
+		calibreOf,
 		onlineOf: (w) => (lookup && typeof lookup.get === 'function' ? lookup.get(w) : null),
 	};
 }

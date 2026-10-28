@@ -60,7 +60,7 @@ test('seven books sharing one album title are seven works, numbered from their f
 	]);
 	for (const w of ashfall) {
 		assert.strictEqual(w.author, 'Avery Quill');
-		assert.strictEqual(w.edition, 'Mara Lindqvist');
+		assert.strictEqual(w.edition, w.publisher, 'a cast cut short is no edition name');
 		assert.strictEqual(w.kind, 'book');
 	}
 	assert.deepStrictEqual(titles(BASE.works['avery-quill/the-ember-throne']), [
@@ -127,7 +127,8 @@ test('narrator editions get the narrator in the id only where two would collide'
 	]);
 	assert.strictEqual(BASE.works['ilse-moreau/the-far-shore~penrose'].narrator, 'Penrose');
 	assert.strictEqual(BASE.works['ilse-moreau/the-far-shore~penrose'].title, 'The Far Shore');
-	assert.strictEqual(BASE.works['ilse-moreau/the-glass-sea'].narrator, 'Various');
+	assert.strictEqual(BASE.works['ilse-moreau/the-glass-sea'].narrator, null, '"(Various)" names a cast');
+	assert.strictEqual(BASE.works['ilse-moreau/the-glass-sea'].edition, 'Various', 'and still tells the edition apart');
 	assert.strictEqual(BASE.works['avery-quill/the-glass-road'].narrator, null, 'a publisher is an edition, not a narrator');
 });
 
@@ -374,10 +375,11 @@ test('a pinId already used by another work is ignored with a note', () => {
 });
 
 test('an album include carves that album out of a bucket folder', () => {
-	const drama = WITH.works['studio-kiseki/drama-cd-vol'];
+	const drama = WITH.works['studio-kiseki/drama-cd-vol-1'];
 	assert.ok(drama, 'the drama album is a work');
-	assert.strictEqual(drama.detectedBy, 'override');
-	assert.strictEqual(drama.title, 'Drama CD Vol', 'a trailing number reads as a part marker; a title override fixes it');
+	assert.strictEqual(drama.detectedBy, 'median-short', 'carved out, its two long tracks (55 min) read as a short drama');
+	assert.ok(!Object.values(BASE.works).some((w) => w.parts.some((p) => p.albumRatingKey === '1090')), 'left in the bucket it is music');
+	assert.strictEqual(drama.title, 'Drama CD Vol 1', 'a volume number tells volumes apart, so it stays');
 	assert.deepStrictEqual(titles(drama), ['Drama Track 1', 'Drama Track 2']);
 	assert.ok(WITH.index.albumKeys.includes('1090'));
 	assert.ok(!WITH.index.albumKeys.includes('1091'), 'the rest of the bucket stays music');
@@ -544,7 +546,7 @@ test('folders keep the path as Plex wrote it: a POSIX path keeps its leading sla
 
 test('the publisher is kept apart from the edition, so a narrated GraphicAudio edition stays recognisable', () => {
 	const bells = BASE.works['avery-quill/the-copper-bells'];
-	assert.deepStrictEqual([bells.edition, bells.narrator, bells.publisher], ['Mara Lindqvist', null, 'GraphicAudio'], 'the album names a cut-off cast, so no single narrator');
+	assert.deepStrictEqual([bells.edition, bells.narrator, bells.publisher], ['GraphicAudio', null, 'GraphicAudio'], 'the album names a cut-off cast, so no single narrator and no edition name');
 	assert.strictEqual(BASE.works['corin-vale/the-long-tide'].publisher, 'GraphicAudio');
 	assert.strictEqual(BASE.works['avery-quill/the-ember-throne'].publisher, null);
 	assert.strictEqual(BASE.works['r-j-ashdown/the-hollow-king'].publisher, null);
@@ -592,8 +594,8 @@ function noPaths(value) {
 
 test('a stray disc folder under the library root stays apart from a loose book file there, even with no tags', () => {
 	const out = buildCatalog({ ...strayDisc(), roots: ROOTS });
-	assert.deepStrictEqual(Object.keys(out.works), ['untitled/cold-iron']);
-	const w = out.works['untitled/cold-iron'];
+	assert.deepStrictEqual(Object.keys(out.works), ['graphic-audio/cold-iron'], 'with no author found, the house the artist field names stands in');
+	const w = out.works['graphic-audio/cold-iron'];
 	assert.deepStrictEqual(w.parts.map((p) => p.trackRatingKey), ['30020']);
 	assert.strictEqual(w.title, 'Cold Iron', 'a library root is never a title');
 	assert.deepStrictEqual([w.series, w.sequence, w.publisher], ['The Rust Ledger', 1, 'GraphicAudio']);
@@ -791,10 +793,10 @@ test('a publisher learned from tags never changes a collision suffix', () => {
 	assert.deepStrictEqual([archived.publisher, archived.edition, archived.narrator], ['GraphicAudio', 'GraphicAudio', null], 'the display edition may use the tag publisher');
 });
 
-test('a cast list cut short is no single narrator, and the ids stay as they were', () => {
+test('a cast list cut short is no single narrator nor an edition, and the ids stay as they were', () => {
 	for (const w of Object.values(BASE.works).filter((x) => x.series === 'Ashfall')) {
 		assert.strictEqual(w.narrator, null, w.id);
-		assert.strictEqual(w.edition, 'Mara Lindqvist', w.id);
+		assert.notStrictEqual(w.edition, 'Mara Lindqvist', w.id);
 	}
 	assert.deepStrictEqual(Object.keys(BASE.works).sort(), Object.keys(CATALOG.works).sort());
 	const ellipsis = String.fromCharCode(0x2026);
@@ -896,12 +898,12 @@ test('tag samples are one file per album, only from groups long enough to be a b
 		{ track: '30033', file: 'N:/Media/Music/Wren Halloway/Grey Tides/03.m4b', sizeBytes: 1030033 },
 	], 'two long m4b files could be two books, so the one the album sample missed is read for itself');
 	const mp3s = lib.tracks.map((t) => (t.ratingKey === '30032' || t.ratingKey === '30033' ? track(t.ratingKey, sample, t.Media[0].Part[0].file.replace('.m4b', '.mp3'), 70, { index: t.index }) : t));
-	assert.deepStrictEqual(bookCatalog.tagSamples(mp3s, { roots: ROOTS }).map((s) => s.track), ['30020', '30032'], 'long mp3 files are one book, so only the album is sampled');
+	assert.deepStrictEqual(bookCatalog.tagSamples(mp3s, { roots: ROOTS }).map((s) => s.track), ['30020', '30032', '30033'], 'long mp3 files are read one by one too: a collection of plays tags each file with its play');
 	assert.deepStrictEqual(bookCatalog.tagSamples([]), []);
 });
 
-test('the rules version is 4', () => {
-	assert.strictEqual(bookCatalog.RULES_VERSION, 4);
+test('the rules version is 5', () => {
+	assert.strictEqual(bookCatalog.RULES_VERSION, 5);
 });
 
 // The bug (review): the music genre pattern matched words inside book genres ("Space Opera",
@@ -1214,7 +1216,7 @@ test('long mp3 files are never books of their own, however they are named or tag
 	oneBookEach({ albums: [plain], tracks: bare, trackTags: perEpisodeTags(bare) }, [6], 'one album tag per episode, no genre');
 	const chaptered = bare.map((t) => ({ ...t, chapterSource: 'media' }));
 	oneBookEach({ albums: [plain], tracks: chaptered, trackTags: perEpisodeTags(chaptered) }, [6], 'mp3 chapter marks make no file a book of its own');
-	assert.strictEqual(bookCatalog.tagSamples(chaptered, { roots: ROOTS }).filter((s) => s.album === undefined).length, 0, 'nor are they read one by one');
+	assert.strictEqual(bookCatalog.tagSamples(chaptered, { roots: ROOTS }).filter((s) => s.album === undefined).length, 5, 'they are read one by one, and still never split');
 
 	const lec = album(61, 'Understanding Tides', 'Ida Marsh', ['Audiobook']);
 	const lectures = Array.from({ length: 12 }, (_, i) => track(6100 + i, lec, `N:/Media/Music/Ida Marsh/Understanding Tides/Lecture ${i + 1}.mp3`, 31, { index: i + 1 }));

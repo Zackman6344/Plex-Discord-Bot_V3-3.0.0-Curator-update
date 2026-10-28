@@ -109,9 +109,10 @@ test('the real command tree passes, /book included and under budget', () => {
 	assert.deepStrictEqual(problems, []);
 	const bookSpec = specs.find(s => s.name === 'book');
 	assert.ok(bookSpec, '/book is registered');
-	assert.strictEqual(bookSpec.options.length, 23, '18 plus text, link, marks and unmark (the read-along) and edit');
+	assert.strictEqual(bookSpec.options.length, 24, '18 plus text, link, marks and unmark (the read-along), edit and calibre');
 	// An early warning well inside Discord's 4000, not the limit itself. The sync marks' two
 	// subcommands took /book from 1,833 to 2,086, so the warning moved from 2000 to 2400; edit, with
-	// its ten field choices, took it to about 2,560, so it moved to 2700.
-	assert.ok(commandChars(bookSpec) < 2700, `/book uses ${commandChars(bookSpec)} of 4000`);
+	// its ten field choices, took it to about 2,560, so it moved to 2700; calibre and three more
+	// edit fields took it to about 2,850, so it moved to 3100.
+	assert.ok(commandChars(bookSpec) < 3100, `/book uses ${commandChars(bookSpec)} of 4000`);
 });

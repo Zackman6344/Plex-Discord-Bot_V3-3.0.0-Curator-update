@@ -2,7 +2,8 @@
 //
 // A GET-only client for the Calibre content server (the one the Calibre app runs while it is
 // open, http://127.0.0.1:8080 by default). The read-along uses it to find a book's EPUB and
-// download it once; it never calls anything that writes to the library.
+// download it once, and helpers/calibreIndex.js to copy the library's metadata; it never calls
+// anything that writes to the library.
 //
 // Credentials are the part worth care. fetch puts a URL's userinfo, password included, into its
 // own error message ("Request cannot be constructed from a URL that includes credentials:
@@ -205,13 +206,22 @@ function createCalibreClient({
 		return libraryPromise;
 	}
 
-	async function search(query, { num = 50 } = {}) {
+	/** @returns {Promise<{ ids: number[], total: number }>} total counts every hit, not only the page */
+	async function searchPage(query, { num = 50, sort = '', order = '' } = {}) {
 		const lib = await getLibraryId();
 		const q = new URLSearchParams({ query: String(query || ''), num: String(num) });
+		if (sort) q.set('sort', String(sort));
+		if (order) q.set('sort_order', String(order));
 		const body = await getJson(`/ajax/search/${seg(lib)}?${q}`, 'a search');
 		const ids = body && Array.isArray(body.book_ids) ? body.book_ids : null;
 		if (!ids) throw new CalibreError('bad-response', `Calibre at ${host} sent a search result without book ids.`, { host });
-		return ids.map(Number).filter((n) => Number.isInteger(n) && n > 0);
+		const clean = ids.map(Number).filter((n) => Number.isInteger(n) && n > 0);
+		const total = Number(body.total_num);
+		return { ids: clean, total: Number.isInteger(total) && total >= 0 ? total : clean.length };
+	}
+
+	async function search(query, { num = 50 } = {}) {
+		return (await searchPage(query, { num })).ids;
 	}
 
 	async function books(ids) {
@@ -285,6 +295,7 @@ function createCalibreClient({
 		host,
 		libraryId: getLibraryId,
 		search,
+		searchPage,
 		books,
 		book,
 		downloadEpub

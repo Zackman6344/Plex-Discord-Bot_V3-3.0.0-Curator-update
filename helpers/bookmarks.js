@@ -140,10 +140,23 @@ function get(userId, work) {
 	const all = store.load();
 	const k = keyOf(userId, id);
 	if (has(all, k)) return copy(all[k]);
-	const aliases = work && typeof work === 'object' && Array.isArray(work.aliases) ? work.aliases : [];
-	for (const alias of aliases) {
+	const obj = work && typeof work === 'object' ? work : null;
+	const aliases = obj && Array.isArray(obj.aliases) ? obj.aliases : [];
+	const split = new Set(obj && Array.isArray(obj.splitFrom) ? obj.splitFrom : []);
+	// An old id cut into several works: its marks belong to whichever piece holds the track they
+	// were saved in, and the heir that took the id holds only the first.
+	const pieceHolds = (mark) => {
+		const h = mark && mark.hint;
+		if (!h || (h.trackRatingKey === undefined && !h.file)) return true;
+		const name = String(h.file || '').toLowerCase();
+		return (obj.parts || []).some((p) => (h.trackRatingKey !== undefined && h.trackRatingKey !== null && String(p.trackRatingKey) === String(h.trackRatingKey))
+			|| (name && String(p.file || '').split(/[\\/]/).pop().toLowerCase() === name));
+	};
+	const candidates = aliases.concat([...split].filter((a) => !aliases.includes(a)));
+	for (const alias of candidates) {
 		const old = keyOf(userId, alias);
 		if (typeof alias !== 'string' || !has(all, old)) continue;
+		if (split.has(alias) && !pieceHolds(all[old])) continue;
 		const mark = Object.assign(all[old], { workId: id, title: work.title || all[old].title });
 		all[k] = mark;
 		delete all[old];
@@ -186,6 +199,7 @@ function record(userId, work, fields, { force = false } = {}) {
 		logger.error('Not saving an Audiobook bookmark without a listener and a catalog work.');
 		return result(false);
 	}
+	get(userId, work);
 	const all = store.load();
 	const k = keyOf(userId, id);
 	const now = Date.now();
@@ -232,6 +246,9 @@ function flush() {
 function markFinished(userId, work, { guildId } = {}) {
 	const id = idOf(work);
 	if (!userId || !id || typeof work !== 'object') return result(false);
+	// A place still under an old id moves first, or the finish would land on a blank mark and the
+	// real one would stay open beside it.
+	get(userId, work);
 	const all = store.load();
 	const k = keyOf(userId, id);
 	const now = Date.now();
