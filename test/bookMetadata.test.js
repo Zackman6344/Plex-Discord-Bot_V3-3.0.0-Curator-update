@@ -331,6 +331,14 @@ test('calibreFields joins several authors and drops a series number with no seri
 	assert.deepStrictEqual(meta.calibreFields(null), {});
 });
 
+// The bug: Calibre stores "Vale, Jo", and that filled a blank author field as written.
+test('calibreFields shows an author calibre keeps surname first as given name first', () => {
+	assert.deepStrictEqual(meta.calibreFields({ title: 'The Red Planet', authors: ['Vale, Jo'], series: null, seriesIndex: 1 }), { title: 'The Red Planet', author: 'Jo Vale' });
+	assert.strictEqual(meta.calibreFields({ authors: ['Avery Quill', 'Marsh, J.R.R.'] }).author, 'Avery Quill & J.R.R. Marsh');
+	const filled = meta.resolve(work({ author: null }, { author: null }), { calibre: { title: 'The Red Planet', authors: ['Vale, Jo'], series: null, seriesIndex: null } });
+	assert.deepStrictEqual([filled.author, filled.sources.author], ['Jo Vale', 'calibre']);
+});
+
 test('differs notices a changed field or source and nothing else', () => {
 	const w = meta.resolve(work());
 	assert.strictEqual(meta.differs(w, meta.resolve(work())), false);

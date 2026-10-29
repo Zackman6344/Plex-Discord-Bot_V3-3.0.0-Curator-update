@@ -36,6 +36,7 @@
 
 const bookCatalog = require('./bookCatalog.js');
 const bookLookup = require('./bookLookup.js');
+const calibreMatch = require('./calibreMatch.js');
 
 // The display fields, which are also the metadata keys a per-work override may carry. partOrder,
 // pinId and exclude are structural and stay with bookCatalog.applyOverrides, inside the build.
@@ -144,8 +145,8 @@ function calibreFields(meta) {
 	const out = {};
 	const title = text(meta.title);
 	if (title) out.title = title;
-	const authors = Array.isArray(meta.authors) ? meta.authors.map(text).filter(Boolean) : [];
-	if (authors.length) out.author = authors.join(' & ');
+	const author = calibreMatch.displayAuthors(Array.isArray(meta.authors) ? meta.authors.map(text).filter(Boolean) : []);
+	if (author) out.author = author;
 	const series = text(meta.series);
 	// Calibre gives every book a series index (1 by default), so the number counts only beside a
 	// series name.

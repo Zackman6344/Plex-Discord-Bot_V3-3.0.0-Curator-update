@@ -169,3 +169,60 @@ test('the read-along title score drops a main title that is only the series name
 	assert.ok(calibreMatch.titleScore('The Lantern Road: Book One of the Tidewater Cycle', null, 'The Lantern Road: Book 1 of the Tidewater Cycle (Now a Major TV Series)', 'Tidewater Cycle') >= 0.8);
 	assert.ok(calibreMatch.titleScore('Ashfall - Collected Tales', 'Ashfall', 'Ashfall', 'The Ashfall Saga') < 0.8);
 });
+
+// The bug: Calibre stores authors surname first ("Weir, Andy"), and the last word of that is the
+// given name, so a work by the same person never matched its record, even with the title equal.
+test("a calibre author written surname first is read as the person", () => {
+	const w = work({ title: "The Red Planet", author: "Jo Vale" });
+	const m = match(w, { 351: rec({ title: "The Red Planet", authors: ["Vale, Jo"] }) });
+	assert.deepStrictEqual([m.id, m.verdict, m.method], [351, "exact", "title and author"]);
+	assert.deepStrictEqual(calibreMatch.recordSurnames(["Vale, Jo"]), ["vale"]);
+	assert.deepStrictEqual(calibreMatch.recordSurnames(["Marsh, J.R.R."]), ["marsh"]);
+	assert.deepStrictEqual(calibreMatch.recordSurnames(["Marsh, Ida K."]), ["marsh"]);
+	assert.strictEqual(match(work({ title: "Tin Crown", author: "J. R. R. Marsh" }), { 2: rec({ title: "Tin Crown", authors: ["Marsh, J.R.R."] }) }).id, 2);
+});
+
+test("a particle surname and a jr. suffix written surname first keep the last name", () => {
+	assert.deepStrictEqual(calibreMatch.recordSurnames(["Le Vale, Ida K."]), ["vale"]);
+	assert.deepStrictEqual(calibreMatch.authorSurnames("Ida K. Le Vale"), ["vale"]);
+	assert.strictEqual(match(work({ title: "The Salt Road", author: "Ida K. Le Vale" }), { 5: rec({ title: "The Salt Road", authors: ["Le Vale, Ida K."] }) }).id, 5);
+	for (const a of ["Marsh, Corin Abel, Jr.", "Marsh, Jr., Corin Abel", "Corin Abel Marsh, Jr.", "Corin Abel Marsh Jr."]) {
+		assert.deepStrictEqual(calibreMatch.recordSurnames([a]), ["marsh"], a);
+	}
+	assert.deepStrictEqual(calibreMatch.recordSurnames(["Ida Marsh, LCSW"]), ["marsh"]);
+	assert.strictEqual(match(work({ title: "Tide", author: "Corin Abel Marsh Jr." }), { 6: rec({ title: "Tide", authors: ["Marsh, Corin Abel, Jr."] }) }).id, 6);
+});
+
+test("several authors on one record, only one of them surname first, all count", () => {
+	assert.deepStrictEqual(calibreMatch.recordSurnames(["Ida Marsh", "Vale, Jo"]), ["marsh", "vale"]);
+	assert.deepStrictEqual(calibreMatch.recordSurnames(["Vale, Jo; Marsh, Ida"]), ["vale", "marsh"]);
+	assert.deepStrictEqual(calibreMatch.recordSurnames(["Ida Marsh, Corin Vale"]), ["marsh", "vale"]);
+	const books = { 9: rec({ title: "The Red Planet", authors: ["Ida Marsh", "Vale, Jo"] }) };
+	assert.strictEqual(match(work({ title: "The Red Planet", author: "Jo Vale" }), books).id, 9);
+	assert.strictEqual(match(work({ title: "The Red Planet", author: "Ida Marsh" }), books).id, 9);
+});
+
+test("surname first never turns a given name or a credit list into a surname", () => {
+	const books = { 4: rec({ title: "The Red Planet", authors: ["Vale, Jo"] }) };
+	assert.strictEqual(match(work({ title: "The Red Planet", author: "Jo Valentine" }), books).verdict, "none");
+	assert.strictEqual(match(work({ title: "The Red Planet", author: "Vale Jo" }), books).verdict, "none");
+	assert.deepStrictEqual(calibreMatch.recordSurnames(["Homer, Corin Vale"]), ["homer", "vale"]);
+	assert.deepStrictEqual(calibreMatch.recordSurnames(["Homer, C. Vale - translator"]), ["homer", "vale"]);
+	assert.deepStrictEqual(calibreMatch.recordSurnames(["Unknown", "Various"]), []);
+});
+
+test("calibre authors are shown given name first", () => {
+	assert.strictEqual(calibreMatch.displayAuthors(["Vale, Jo"]), "Jo Vale");
+	assert.strictEqual(calibreMatch.displayAuthors(["Le Vale, Ida K.", "Corin Marsh"]), "Ida K. Le Vale & Corin Marsh");
+	assert.strictEqual(calibreMatch.displayAuthors(["Marsh, Corin Abel, Jr."]), "Corin Abel Marsh Jr.");
+	assert.strictEqual(calibreMatch.displayAuthors(["Vale, Jo; Marsh, J.R.R."]), "Jo Vale & J.R.R. Marsh");
+	assert.strictEqual(calibreMatch.displayAuthors(["Homer, Corin Vale", "Ida Marsh, LCSW"]), "Homer, Corin Vale & Ida Marsh, LCSW");
+	assert.strictEqual(calibreMatch.displayAuthors([]), "");
+});
+
+// Pins a known gap (see the header of helpers/calibreMatch.js) so that changing it is deliberate.
+test("a one-word author then an initialed second name with no role reads as one person", () => {
+	assert.deepStrictEqual(calibreMatch.recordSurnames(["Homer, J. Vale"]), ["homer"]);
+	assert.strictEqual(calibreMatch.displayAuthors(["Homer, J. Vale"]), "J. Vale Homer");
+	assert.deepStrictEqual(calibreMatch.recordSurnames(["Homer, J. Vale - translator"]), ["homer", "vale"]);
+});

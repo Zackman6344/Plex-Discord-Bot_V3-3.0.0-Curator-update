@@ -953,6 +953,13 @@ test('a title with "Book One of ..." and a bracketed tail still matches, and a s
 	assert.strictEqual(bookTextSource.calibreScore(cbook({ title: 'Ashfall', series: 'The Ashfall Saga', series_index: 1 }), tales).accepted, false);
 });
 
+// Calibre's authors:"Vale" search is a contains match, so it finds "Vale, Jo"; the score then has
+// to see the surname in a name written surname first.
+test('the read-along score finds the surname of a calibre author written surname first', () => {
+	const scored = bookTextSource.calibreScore(cbook({ title: 'The Red Planet', authors: ['Vale, Jo'] }), work({ title: 'The Red Planet', author: 'Jo Vale' }));
+	assert.deepStrictEqual([scored.authorMatch, scored.accepted], [true, true]);
+});
+
 test('a work with no pointer opens the Calibre index\'s exact match before searching', async () => {
 	const asked = [];
 	const h = make({ books: { 11: cbook({ title: 'Something Calibre Calls It' }) }, indexPick: (w) => { asked.push(w.id); return { id: 11 }; } });

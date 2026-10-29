@@ -273,6 +273,20 @@ const SURNAME_RE = /^(?:(?:[Ll][ae]|[Dd][aeiu]|[Dd]el|[Vv][ao]n|[Dd]e[nr]|[Ss]t\
 const GIVEN_RE = /^(?:(?:\p{Lu}\.){1,3}|\p{Lu}[\p{Ll}'’\-]*\.?)(?:\s+(?:(?:\p{Lu}\.){1,3}|\p{Lu}[\p{Ll}'’\-]*\.?))*$/u;
 
 /**
+ * "Le Guin, Ursula K." as "Ursula K. Le Guin": one person written surname first, as Calibre and
+ * many taggers store authors. Null for anything else. `onePerson` says the text is known to name
+ * one person (a "Jr." followed it), so several given words need no initial.
+ */
+function unsortName(text, { onePerson = false } = {}) {
+	const sorted = String(text || '').trim().match(/^([^,]+?)\s*,\s*([^,]+)$/);
+	if (!sorted || !SURNAME_RE.test(sorted[1]) || !GIVEN_RE.test(sorted[2])) return null;
+	const given = sorted[2].split(/\s+/);
+	// Several given words need an initial among them: "Homer, Robert Fagles" is two people.
+	if (given.length > 3 || (!onePerson && given.length > 1 && !given.some((g) => /\./.test(g)))) return null;
+	return `${sorted[2]} ${sorted[1]}`;
+}
+
+/**
  * The person who wrote a book, out of an artist field that credits more than the author:
  * "Ida Marsh/Jo Vale/©2019 by Harbour Books", "BBC/Ida Marsh/Jo Vale", "Ida Marsh, Jo Vale -
  * translator", "Ida Marsh; Jo Vale", "Tin Crown II; The Saga Retold by Ida Marsh", "MARSH".
@@ -290,11 +304,9 @@ function cleanAuthor(raw) {
 	for (const re of ROLE_TAIL_RES) s = s.replace(re, '');
 	// "Le Guin, Ursula K." is one person written surname first, and "Le Guin" and "Ursula K." would
 	// each pass as a name below.
-	// Several given words need an initial among them: "Homer, Robert Fagles" is two people.
-	const sorted = s.match(/^([^,]+?)\s*,\s*([^,]+)$/);
-	const given = sorted ? sorted[2].split(/\s+/) : [];
-	if (sorted && SURNAME_RE.test(sorted[1]) && GIVEN_RE.test(sorted[2]) && given.length <= 3 && (given.length === 1 || given.some((g) => /\./.test(g)))) {
-		s = `${sorted[2]} ${sorted[1]}`;
+	const unsorted = unsortName(s);
+	if (unsorted) {
+		s = unsorted;
 	} else {
 		const people = s.split(/\s*,\s*/);
 		if (people.length >= 2 && people.every((p) => personName(p))) s = people[0];
@@ -2219,6 +2231,7 @@ function tagSamples(tracks = [], { roots = [], albums = [] } = {}) {
 module.exports = {
 	RULES_VERSION,
 	cleanAuthor,
+	unsortName,
 	decodeEntities,
 	storeSeriesReading,
 	DETECT,

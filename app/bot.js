@@ -974,7 +974,7 @@ class Bot extends EventEmitter{
 							content: language.BOT_PLAYSONG_SUCCES,
 							embeds: [embedObj],
 							components: [playbackButtons.buildRow(this)]
-						});
+						}).catch((err) => logger.warn('Now-playing message failed:', (err && err.message) || err));
 					}
 				});
 				// No dispatcherFunc here. The AudioPlayer emits 'error' only for a resource whose stream

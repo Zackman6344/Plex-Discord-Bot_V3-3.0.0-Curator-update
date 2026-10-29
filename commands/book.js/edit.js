@@ -43,6 +43,7 @@ const bookCatalog = () => require('../../helpers/bookCatalog.js');
 const bookMetadata = () => require('../../helpers/bookMetadata.js');
 const bookSections = () => require('../../helpers/bookSections.js');
 const calibreIndex = () => require('../../helpers/calibreIndex.js').instance();
+const calibreMatch = () => require('../../helpers/calibreMatch.js');
 const isObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const has = (obj, k) => Object.prototype.hasOwnProperty.call(obj, k);
 const norm = (text) => bookCatalog().norm(text);
@@ -574,7 +575,8 @@ function calibreOffNote() {
 function recordText(id, rec) {
 	if (!rec) return `Calibre book #${id}`;
 	const formats = Array.isArray(rec.formats) && rec.formats.length ? rec.formats.map((f) => f.toUpperCase()).join(', ') : 'no file';
-	return `Calibre #${id} “${esc(rec.title || 'untitled')}”${rec.authors && rec.authors.length ? ` by ${esc(rec.authors.join(' & '))}` : ''} (${formats})`;
+	const by = calibreMatch().displayAuthors(rec.authors);
+	return `Calibre #${id} “${esc(rec.title || 'untitled')}”${by ? ` by ${esc(by)}` : ''} (${formats})`;
 }
 
 async function pinCalibre(ctx, t, req) {

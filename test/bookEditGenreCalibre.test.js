@@ -77,7 +77,8 @@ test.beforeEach(() => {
 	catalog.replace(JSON.parse(JSON.stringify(fixture)));
 	config.audiobooksEnabled = true;
 	config.ownerId = OWNER;
-	index = fakeIndex({ records: { 42: { uuid: 'uuid-42', title: 'The Far Shore', authors: ['Ilse Moreau'], formats: ['epub'], tags: [] } } });
+	// Calibre keeps authors surname first; the pin reply shows "Ilse Moreau".
+	index = fakeIndex({ records: { 42: { uuid: 'uuid-42', title: 'The Far Shore', authors: ['Moreau, Ilse'], formats: ['epub'], tags: [] } } });
 	calibreIndex.instance = () => index;
 	bookLookup.instance = () => ({ isRunning: () => false, get: () => null, refresh() { throw new Error('no lookup expected'); } });
 });
