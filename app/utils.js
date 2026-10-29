@@ -106,6 +106,8 @@ function start(attempt = 0){
 
     const client = new Client({
        intents,
+       // Holds sends through the PC's Wi-Fi drops; see helpers/discordRetry.js.
+       rest: require('../helpers/discordRetry.js').restOptions(),
        partials: [
           Partials.Channel, // <-- Forces the bot to listen to uncached DM channels
           Partials.Message

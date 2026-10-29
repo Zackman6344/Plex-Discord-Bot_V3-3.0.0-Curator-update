@@ -31,7 +31,7 @@ When you run `node index.js`:
 
 1. `index.js` claims the single-instance lock (`helpers/singleInstance.js`): a named pipe on Windows, an abstract socket on Linux, keyed by a hash of the bot token. If another copy already holds it, this one logs the holder's PID, exits with code 1 and never logs in. Otherwise it calls `start()` from `app/utils.js`.
 2. `start()` applies the process priority (`helpers/processPriority.js`, `above_normal` by default, logged as `Process priority: <name>`) and switches the voice-health log on or off (`helpers/voiceHealth.js`, off by default). Both happen before the login so the first track already runs at the chosen priority, both subscribe to `/config` changes, and both are safe to repeat when `!restart` runs `start()` again. See "Voice health and process priority".
-3. `start()` creates the Discord `Client` with the needed gateway intents (`Guilds`, `GuildMessages`, `GuildVoiceStates`, `MessageContent`, `DirectMessages`) and `Channel`/`Message` partials for DMs.
+3. `start()` creates the Discord `Client` with the needed gateway intents (`Guilds`, `GuildMessages`, `GuildVoiceStates`, `MessageContent`, `DirectMessages`) and `Channel`/`Message` partials for DMs. Its `rest` options come from `helpers/discordRetry.js`, which holds sends through a lost connection; see "Discord sends through a connection drop".
 4. Constructs a `new Bot(client)` (`app/bot.js`). The Bot's constructor instantiates the Plex API client and initializes empty state (`songQueue`, `cache_library`, `books = null`, `loadingRuns = 0`, etc.).
 5. Calls `require('./music.js')(client, bot)`. This:
    - Requires `commands/` (the loader runs and logs `Loaded N commands (M aliases)`).
@@ -203,6 +203,7 @@ Two signature styles coexist in the codebase:
 | `readAlong.js`             | The pager: one DM page per listener, edited as the narration advances and never skipping a page; the 📖 ephemeral; `!book text` on, off, now and its status reply; the one closed-DMs line per session. Hooks into the engine through `onChange` and `setTextInfo`. |
 | `readAlongButtons.js`      | The `bookread:<sid>` (📖) and `bookpage:*` buttons. Acknowledges each click at once; 📖 answers the listener, and anyone in the book's voice channel at the time of the click. |
 | `processPriority.js`       | Sets the bot process to `above_normal` (default) or `normal` priority from `config.processPriority`, and again whenever `/config` changes it. Never throws; a refused raise warns once. |
+| `discordRetry.js`          | The Client's `rest` options: a `makeRequest` that holds a Discord REST request while discord.com cannot be reached and sends it once it can, with a 30 s attempt window. See "Discord sends through a connection drop". |
 | `voiceHealth.js`           | The opt-in voice-health sampler behind `!voicehealth`: per-packet send gaps, source underruns, connection and networking changes, event-loop delay, CPU, memory and GC, rolled into one record per active minute in `data/logs/voice-<date>.jsonl`. Every hook returns on its first line while `config.voiceHealthEnabled` is off. |
 | `voiceHealthFormat.js`     | Renders a `voiceHealth.snapshot()` as one Discord message inside 2,000 characters, dropping the oldest minutes first. |
 
@@ -2616,6 +2617,18 @@ fingerprint), so a switched or rebuilt library leaves the pointer's own copy sta
   "Heroes: Y" stay two books.
 - **Surnames.** The surname must be the last word of one of the record's authors (an author
   "Jordan" no longer finds Jordan Weisman).
+- **Authors written surname first.** Calibre stores authors as "Weir, Andy" or "Snell, D.L.",
+  whose last word is the given name, so until 2026-10-29 The Martian (record #351, "Weir, Andy")
+  never matched the catalog's Andy Weir. Each Calibre author now goes through the same reading
+  as a catalog author (`authorNames`, with `bookCatalog.unsortName` shared with `cleanAuthor`):
+  one surname (a particle such as "Le" allowed) and up to 3 given words, with an initial among
+  them when there are several, is one person written surname first. A "Jr." or a credential such
+  as "LCSW" is dropped first, a role word makes the text a credit list, and "Homer, Robert
+  Fagles" stays two people. `displayAuthors` shows and fills them given name first ("Andy
+  Weir"). Known gap: "Homer, R. Fagles" with no role word reads as one person, "R. Fagles
+  Homer", as `cleanAuthor` reads it too; no record in the owner's library has that form. Every
+  refresh and rebuild rematches from the saved copy, so a change to this rule needs no cache
+  version bump.
 - **Translations.** A record naming the work's translator outranks the others; a record claimed by
   two translations stays with the one it names, or is ambiguous for both. Several narrations may
   share one record. Comments are not read, so a translator named only in a blurb is not seen.
@@ -3478,6 +3491,62 @@ Nothing here writes to Plex. The store is `data/inferred_tags.json` (atomic writ
 reviews persisted so a restart doesn't strand a card), with `PLEXBOT_TAGS_FILE` overriding the
 path for tests or an externally managed sidecar.
 
+## Discord sends through a connection drop (`helpers/discordRetry.js`)
+
+The PC is on Wi-Fi only and regularly cannot open a connection to discord.com:443 for seconds to
+minutes. undici then throws `ConnectTimeoutError` (`UND_ERR_CONNECT_TIMEOUT`, after its 10 s
+connect timeout), and `@discordjs/rest` 2.6.1 retries only `AbortError` and `ECONNRESET`, so
+every send in that window failed at once. The logs for 2026-10-24 to 10-29 show what was lost: 5
+to 14 audiobook card updates a day, `!book` and `!ap` replies, interaction defers, AP relay posts,
+and on 10-27 12 of about 24 music now-playing messages in one hour, each also an unhandled
+rejection because that send had no catch. It has one now (`Now-playing message failed:`).
+
+`app/utils.js` builds the Client with `rest: discordRetry.restOptions()`, a `makeRequest` that
+wraps discord.js's own undici strategy:
+
+- **Only a failure that proves nothing reached Discord is held** (`isConnectFailure`): a connect
+  timeout, a refused connection, no route, a DNS failure. A socket error mid-request, a header or
+  body timeout and any HTTP status go back to discord.js unchanged, because a second try of a POST
+  that did arrive posts it twice. Interaction callbacks are never held (the token dies 3 s after
+  the click), nor are stream bodies (the first try used them up).
+- **Holding.** Tries repeat after 1, 2 and 4 s, then every 8 s, and the first success wakes every
+  held request. Each attempt is a 30 s window (`REST_TIMEOUT_MS`, the REST `timeout`). When it
+  closes on a held request the wrapper returns an `AbortError`, which discord.js answers with its
+  next attempt. Its default 3 retries give 4 windows, about 2 minutes, which covers the outages in
+  the logs. The retries were left alone: every `AbortError` retry of a POST whose answer was only
+  slow can post it twice, and a longer window means fewer of them.
+- **The start margin.** No held try starts in the last 15 s of a window (`START_MARGIN_MS`), except
+  in a request's last attempt: discord.js never retries that one, so a try cut off there cannot be
+  sent twice, and a connection that comes back late in it is still used. A try
+  that connected and sent its POST just before the window closed got the `AbortError` too, and
+  discord.js sent the message again; a review harness on 2026-10-29 got 2 POSTs from one send that
+  way. undici's 10 s connect timeout covers DNS, TCP and the TLS handshake, so a try that starts at
+  the margin may connect only after 10 s and then has at least 5 s for the answer. That is the
+  cushion stock discord.js gives its own first try (its 15 s timeout minus the same 10 s
+  connect), so a late held try is never more likely than stock to be cut off after its body went
+  out. The cost: after the connection comes back, a held send can wait up to 15 s for its next
+  window. The wait before a try is cut to end at the margin; a try that fails at or after it ends
+  that window's tries, so a fast failure (refused, DNS, Wi-Fi off) does not retry back to back;
+  and a request woken inside the margin by another request's success waits for the window to
+  close instead. `test/discordRetryRest.test.js` covers these against a real `REST` instance.
+- **429s.** discord.js re-runs a request after a 429 without counting a retry, so the wrapper
+  does not count that call as an attempt either. Otherwise a request that met a rate limit before
+  an outage would give up one window early.
+- **Order.** `@discordjs/rest` runs one route bucket's requests one at a time, and a request's
+  retries happen inside its turn, so a held message delays the ones behind it in that channel and
+  is never overtaken.
+- **Giving up.** On the last attempt, a window that closes while the request waits fails it with
+  the connect error and logs `Discord send gave up after N s: <route> (<error>)`. A window that
+  closes during a try may have cut off a request already sent, so that one fails with the
+  `AbortError` and logs `Discord send timed out after N s and may have gone through: <route>`.
+- **Log lines.** An outage logs `Discord is unreachable; holding sends and retrying` once, then
+  `Discord reachable again after N s; K sends went through late` (with `, J gave up`) once the
+  held requests have drained, or 15 s after the first success. Routes carry no ids or webhook
+  tokens. Every Client shares one `makeRequest`, so a `!restart` during an outage logs it once.
+
+Still lost: anything held past about 2 minutes, and an interaction defer sent during a drop. The
+AP relay rebuilds missed keyed lines through its catch-up.
+
 ## Logging
 
 Every log line goes through `helpers/logger.js`. Format:
@@ -3577,3 +3646,4 @@ them as a transcript, with `--errors`, `--command=`, `--user=`, `--since=`, `--n
 | Music and books sharing voice    | `app/bot.js` `runPlayback` gate, `musicBusy()` | `helpers/voiceClaims.js`, `bookEngine.blocksMusic` / `routeGeneric` |
 | Voice-health log                 | `commands/voicehealth.js`            | `helpers/voiceHealth.js`, `voiceHealthFormat.js`; hooks in `app/bot.js` and `bookEngine.js` |
 | Process priority                 | `app/utils.js` `start()`             | `helpers/processPriority.js`                                |
+| Sends through a connection drop  | `app/utils.js` `start()` (`rest`)    | `helpers/discordRetry.js`                                   |

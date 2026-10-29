@@ -7,7 +7,8 @@ priority, and of the audiobook read-along, none of which has met a real voice ch
 Phase 10 is the first live pass of the catalog's rules version 3: embedded tags, book metadata,
 `!book edit`, the optional online lookup and the card's chapter words. Phase 11 is the first live
 pass of rules version 5 and what came with it: the one-time id move, short works, typo and series
-plays, the sectioned library, the Calibre index and `!book calibre`.
+plays, the sectioned library, the Calibre index and `!book calibre`. Phase 12 checks that sends
+made while the PC has lost Discord arrive late, and once.
 
 The bot now persists its own logs to `data/logs/`, so a failure you didn't happen to be watching
 is still there afterwards:
@@ -806,6 +807,8 @@ moves about 19 ids. Run as the owner with prefix commands unless a step says oth
 - [ ] The Calibre access log, or a second `!book calibre refresh` a minute later, shows an
       unchanged library costs 2 requests and no full read.
 - [ ] As a non-owner, `!book calibre` is refused.
+- [ ] The Martian (Calibre #351, author "Weir, Andy") is an exact match after
+      `!book calibre refresh`, and `!book edit The Martian` shows "Calibre: #351".
 
 **`!book calibre` with Calibre closed**
 
@@ -841,6 +844,29 @@ moves about 19 ids. Run as the owner with prefix commands unless a step says oth
 - [ ] `data/book_overrides.json` holds `genre`, `calibreId`, `calibreUuid` and `calibreLibrary`
       under the work ids, and `genre` under `authors` for the author-wide one. Clean up the test
       edits afterwards.
+
+## Phase 12: Sends through a connection drop (live)
+
+Before 2026-10-29 every send made while the PC could not reach discord.com failed at once:
+now-playing messages, book card updates, command replies and AP relay posts. They are now held
+for up to about 2 minutes. To drop the connection, turn Wi-Fi off (or pull the cable) for about
+30 seconds; the voice audio stops too, which is expected.
+
+- [ ] Start a book. Type `!book rescan` and drop the network the moment it is sent, so the bot
+      has the command and its reply goes out during the drop (a command typed during the drop
+      only reaches the bot after it). Restore the network after about 30 s.
+- [ ] The bot log shows `Discord is unreachable; holding sends and retrying` once, and after the
+      network is back `Discord reachable again after N s; K sends went through late` with K of 1
+      or more and no `gave up`.
+- [ ] The `!book rescan` reply arrives once, late. Scroll up: no second copy.
+- [ ] The book card catches up to the current chapter and position within about 15 s of the
+      network coming back (a held send can wait up to 15 s for its next try), and there is no
+      `Audiobook card update failed` line.
+- [ ] Repeat with music: a track that starts during the drop gets its `**Playing :**` message
+      once, late, and the log has no `Unhandled promise rejection`.
+- [ ] Drop the network for over 2 minutes: the log has `Discord send gave up after N s` lines
+      (or `may have gone through`) and the reachable line ends with `, J gave up`. The bot stays
+      up.
 
 ---
 

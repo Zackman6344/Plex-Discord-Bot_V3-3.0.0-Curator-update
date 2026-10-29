@@ -27,6 +27,15 @@
 //   - Author strings with roles, houses and narrators in them ("Homer, Richmond Lattimore -
 //     translator"). A surname must be the LAST word of one of the record's authors: Calibre's
 //     search for "Jordan" also finds a Jordan Weisman.
+//   - Calibre authors written surname first ("Weir, Andy", "Snell, D.L."), where the last word
+//     is the given name. One surname and given names that bookCatalog.cleanAuthor would also
+//     swap are one person; "Homer, Robert Fagles" stays two, a role in the text means a credit
+//     list, and a trailing "Jr." or "LCSW" is dropped before either reading. One Calibre author
+//     can hold several people ("Vale, Jo; Marsh, Ida").
+//     Known gap: a one-word ancient author and an initialed translator with no role word
+//     ("Homer, R. Fagles") reads as one person, "R. Fagles Homer", as cleanAuthor already reads
+//     it. Telling them apart needs a list of mononyms in bookCatalog.unsortName; refusing an
+//     initial before a full word instead would break "Hubbard, L. Ron".
 //   - Two translations of one text (the Fitzgerald and Lattimore Iliads). A record naming the
 //     work's translator ranks first; a record claimed by works with different translators stays
 //     with the one whose translator it names, and is ambiguous for all of them when it names
@@ -56,6 +65,10 @@ const VOLUME_RE = new RegExp(`[,:-]?\\s*\\b(?:vol(?:ume)?|part|book)\\.?\\s*${NU
 const MAIN_SPLIT = /\s*[:;]\s*|\s+-\s+|\s+by\s+/i;
 const ROLE_RE = /\b(?:translator|translated|transl|illustrator|illustrated|editor|edited|narrator|narrated|foreword|introduction)\b\.?/gi;
 const NOT_A_PERSON = /^(?:bbc\b.*|unknown|various|various authors|anonymous|mythology|full cast)$/i;
+const SUFFIX_RE = /^(?:jr|sr|ii|iii|iv|phd|md|esq|etc|etal)$/;
+const SUFFIX_TAIL = /[\s,]+(?:jr|sr|ii|iii|iv|ph\.?\s?d|m\.?d|esq|etc|et\.?\s?al)\.?\s*$/i;
+// A credential after a name is in capitals without dots: "Jo Vale, LCSW".
+const CREDENTIAL_RE = /^\p{Lu}{2,6}$/u;
 const TRANSLATOR_RES = [
 	/([A-Z][\w.'’-]*(?:\s+[A-Z][\w.'’-]*){0,3})\s*,?\s*(?:transl\b\.?|translator\b|trans\.)/,
 	/\b(?:translated|transl\.?|translation)\s+by\s+([A-Z][\w.'’-]*(?:\s+[A-Z][\w.'’-]*){0,3})/i
@@ -109,23 +122,44 @@ function seriesKey(series) {
 	return nonEmpty(series) ? key(String(series).replace(SERIES_FILLER, ' ')) : '';
 }
 
+// The last word of a name, past a "Jr." or "III": "Martin Luther King Jr." is a King.
 function lastWord(name) {
-	const ws = bookCatalog.norm(deaccent(String(name || '').replace(/\./g, '. '))).split(' ').filter(Boolean);
+	let s = String(name || '');
+	while (SUFFIX_TAIL.test(s)) s = s.replace(SUFFIX_TAIL, '');
+	const ws = bookCatalog.norm(deaccent(s.replace(/\./g, '. '))).split(' ').filter(Boolean);
 	return ws.length ? ws[ws.length - 1] : '';
 }
 
-/** The people in a catalog author string, with roles, houses, copyright notes and placeholders dropped. */
+const trimDashes = (s) => s.replace(/[-–\s]+$/g, '').replace(/^[-–\s]+/g, '').trim();
+
+// "Jo Vale, LCSW", "Jo Vale, Jr." and "Jill Balcon, Etc." name one person, and a "Jr." in front
+// of the given names ("King, Jr., Martin Luther") still leaves one.
+function isSuffix(part) {
+	return SUFFIX_RE.test(bookCatalog.norm(part).replace(/ /g, '')) || CREDENTIAL_RE.test(part);
+}
+
+/**
+ * The people in an author string, each as written in its own order or, when it is written surname
+ * first ("Weir, Andy", "King, Martin Luther, Jr."), as "Given Surname". Roles, houses, copyright
+ * notes, suffixes and placeholders are dropped. Catalog authors and each of a Calibre record's
+ * authors go through here alike.
+ */
 function authorNames(raw) {
 	if (!nonEmpty(raw)) return [];
 	const out = [];
-	for (const part of deaccent(raw).replace(/&#\d+;.*$|©.*$/g, '').split(/\s*(?:&|,|\/|;|\band\b)\s*/i)) {
-		const name = part.replace(ROLE_RE, ' ').replace(/[-–\s]+$/g, '').replace(/^[-–\s]+/g, '').trim();
-		if (name && !NOT_A_PERSON.test(name)) out.push(name);
+	for (const chunk of String(raw).replace(/&#\d+;.*$|©.*$/g, '').split(/\s*(?:&|\/|;|\band\b)\s*/i)) {
+		const credited = chunk.replace(ROLE_RE, ' ');
+		// A role in the chunk makes it a credit list: "Homer, E. V. Rieu - translator" is two people.
+		const role = credited !== chunk;
+		const parts = credited.replace(/^\s*by\s+/i, '').split(/\s*,\s*/).map(trimDashes).filter(Boolean);
+		const kept = parts.filter((p, i) => i === 0 || !isSuffix(p));
+		const one = !role && kept.length === 2 ? bookCatalog.unsortName(kept.join(', '), { onePerson: kept.length < parts.length }) : null;
+		for (const name of one ? [one] : kept) if (!NOT_A_PERSON.test(name)) out.push(name);
 	}
 	return out;
 }
 
-/** Surnames from a catalog author string. */
+/** Surnames from an author string. */
 function authorSurnames(raw) {
 	const out = [];
 	for (const name of authorNames(raw)) {
@@ -138,11 +172,31 @@ function authorSurnames(raw) {
 function recordSurnames(authors) {
 	const out = [];
 	for (const a of Array.isArray(authors) ? authors : []) {
-		if (!nonEmpty(a) || NOT_A_PERSON.test(a.trim())) continue;
-		const s = lastWord(a);
-		if (s && !out.includes(s)) out.push(s);
+		for (const s of authorSurnames(a)) if (!out.includes(s)) out.push(s);
 	}
 	return out;
+}
+
+/**
+ * Calibre's authors as people write them, for showing or for filling a catalog field: "Weir, Andy"
+ * as "Andy Weir", "King, Martin Luther, Jr." as "Martin Luther King Jr.". Text that is not one
+ * person written surname first stays as Calibre has it.
+ * @param {string[]} authors
+ * @returns {string}
+ */
+function displayAuthors(authors) {
+	const out = [];
+	for (const a of Array.isArray(authors) ? authors : []) {
+		if (!nonEmpty(a)) continue;
+		for (const one of a.replace(/\s+/g, ' ').trim().split(/\s*;\s*/).filter(Boolean)) {
+			const parts = one.split(/\s*,\s*/);
+			const suffixes = parts.filter((p, i) => i > 0 && isSuffix(p));
+			const rest = parts.filter((p, i) => i === 0 || !isSuffix(p));
+			const name = rest.length === 2 ? bookCatalog.unsortName(rest.join(', '), { onePerson: suffixes.length > 0 }) : null;
+			out.push(name ? [name, ...suffixes].join(' ') : one);
+		}
+	}
+	return out.join(' & ');
 }
 
 /** The surname of a translator named in the work's edition or titles, or null. */
@@ -388,6 +442,7 @@ module.exports = {
 	seriesKey,
 	authorSurnames,
 	recordSurnames,
+	displayAuthors,
 	translatorOf,
 	isbn13,
 	key,

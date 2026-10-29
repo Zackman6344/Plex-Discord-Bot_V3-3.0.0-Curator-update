@@ -711,6 +711,8 @@ tries again after 15, 30 and 60 minutes, then every 2 hours at most, with one lo
   translations of one book each take the record that names their translator. **Two records that
   fit equally well match neither**; `!book edit <book> calibre <id>` settles it. A record that only
   shares most of the title words is a likely match.
+- Calibre's own way of writing authors, surname first ("Weir, Andy"), matches a book by Andy
+  Weir, and a blank author it fills reads "Andy Weir".
 - An exact or pinned match fills blank details (never the publisher) and gives the book its
   section from the record's tags. A likely match only gives the section, and only when nothing
   better does.
@@ -974,6 +976,14 @@ console mirror.
 Pages of a book are the exception: a read-along DM or private page is logged as
 `[book text not logged]`, and the read-along's bot-log lines carry only ids, error codes, counts
 and timings.
+
+**When the PC loses Discord for a while**, the bot holds its messages, card updates and replies
+for up to about 2 minutes and sends each one within about 15 seconds of the connection coming
+back, so they arrive late.
+The bot log says `Discord is unreachable; holding sends and retrying` when it starts and
+`Discord reachable again after N s; K sends went through late` when it ends. A send that never got
+through logs `Discord send gave up`. A slash command or button used during the drop can still
+fail, because Discord gives the bot only 3 seconds to acknowledge it.
 
 ## 🔊 If voice audio stutters
 
