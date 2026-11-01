@@ -148,6 +148,59 @@ test('the preference is kept per user in the readers store, across books, until 
 	assert.strictEqual(textStore.readers.isOn(ANA), false);
 });
 
+// The bug: Calibre had the playing book only as AZW3, and `!book text` gave no hint that its text
+// would be converted on first open, or why there was no 📖 when it could not be.
+test('text status says when the book is converted from MOBI or AZW3 on its first open', async () => {
+	const h = harness();
+	h.source.statusValue = 'available';
+	h.source.probeValue = 'available';
+	h.source.pendingConversion = () => 'azw3';
+	const out = await run(h, ANA, 'text');
+	assert.match(out, /an ebook was found/);
+	assert.match(out, /\n🔄 Calibre has this book as AZW3; it is converted to EPUB the first time its text opens, which takes from a few seconds to a minute\.$/);
+	h.source.pendingConversion = () => null;
+	assert.doesNotMatch(await run(h, ANA, 'text'), /🔄/);
+	assert.doesNotMatch(out, /—/);
+});
+
+// The bug: after a conversion timed out, a plain `!book text` opened the book explicitly, which
+// skips the 10-minute back-off, so asking for the status started another conversion of up to 5
+// minutes and the reply waited for it.
+test('text status during a conversion timeout\'s back-off reports it without opening the book', async () => {
+	const h = harness();
+	h.source.statusValue = 'unknown';
+	h.source.probeValue = 'unknown';
+	h.source.lastFailure = () => ({ code: 'convert-timeout', text: 'Converting this ebook to EPUB took too long. Try again in a few minutes.' });
+	const out = await run(h, ANA, 'text');
+	assert.match(out, /: Converting this ebook to EPUB took too long\. Try again in a few minutes\.$/);
+	assert.ok(!h.source.calls.some((c) => c[0] === 'open'), h.source.calls.map((c) => c[0]).join(','));
+	h.source.lastFailure = () => ({ code: 'calibre-unreachable', text: 'Calibre isn\'t answering.' });
+	await run(h, ANA, 'text');
+	assert.ok(h.source.calls.some((c) => c[0] === 'open'), 'any other failure is asked again, as before');
+});
+
+test('the link details name each Calibre candidate\'s format and whether ebook-convert can run', () => {
+	const base = {
+		workId: 'test-author/the-final-empire', title: 'The Final Empire', status: 'available', link: null, cache: null, lastError: null,
+		candidates: {
+			calibre: [
+				{ id: 352, title: 'Hollow Book', epub: false, format: 'mobi', accepted: true },
+				{ id: 12, title: 'Scanned', epub: false, format: null, accepted: false },
+				{ id: 7, title: 'Plain', epub: true, format: 'epub', accepted: false }
+			],
+			sidecars: [], calibreError: null
+		}
+	};
+	const ready = text.formatDescribe({ ...base, converter: { ok: true } }, '!');
+	assert.match(ready, /#352 “Hollow Book” \(MOBI, converted to EPUB\) ✅ · #12 “Scanned” \(no EPUB, and no format that converts\) · #7 “Plain”/);
+	assert.match(ready, /🔄 A book Calibre has only as MOBI, AZW3 or similar is converted to EPUB with Calibre's ebook-convert the first time its text opens/);
+	assert.match(text.formatDescribe({ ...base, converter: { ok: false, code: 'convert-off' } }, '!'), /🔄 Converting MOBI or AZW3 ebooks to EPUB is turned off \(audiobookTextConvert in `!config` → Audiobooks\)/);
+	assert.match(text.formatDescribe({ ...base, converter: { ok: false, code: 'convert-missing', reason: 'not-found' } }, '!'), /🔄 Calibre's ebook-convert wasn't found on this PC/);
+	assert.match(text.formatDescribe({ ...base, converter: { ok: false, code: 'convert-missing', reason: 'not-converter' } }, '!'), /🔄 calibreConvertPath doesn't point at Calibre's ebook-convert/);
+	const epubOnly = { ...base, converter: { ok: true }, candidates: { calibre: [base.candidates.calibre[2]], sidecars: [], calibreError: null } };
+	assert.doesNotMatch(text.formatDescribe(epubOnly, '!'), /🔄/);
+});
+
 test('text now with nothing playing says so', async () => {
 	const h = harness({ playing: false });
 	await run(h, ANA, 'text on');

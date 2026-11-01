@@ -197,8 +197,9 @@ Two signature styles coexist in the codebase:
 | `epubTextWorker.js`        | The parse child and its queue. Forks itself with `--epub-text-child` and sets the child to Below Normal priority; one parse at a time, single flight per cache base, 120 s timeout. The child writes `<base>.txt`, then `<base>.json` (or `<base>.fail.json`), and sends back counts only. `shutdown()` leaves the queue usable for `!restart`. |
 | `readAlongModel.js`        | Pure: chapter keys from track titles and table-of-contents labels, front, body and back matter, the anchor map from audio time to word and back, pages of about 180 words, and the "approximate" labels. |
 | `bookTextStore.js`         | The read-along's four small stores in `data/book_text/`: `links.json` (`!book link`), `readers.json` (who has the read-along on), `works.json` (which cache files each work uses) and `marks.json` (the sync marks). Looked up by work id, then by alias. |
-| `calibreClient.js`         | GET-only client for Calibre's content server: library info, search, book metadata, and the EPUB download streamed to a file. Answers Digest logins, and Basic ones over https only; refuses redirects and any URL with a login in it, caps a download at 300 MB, and names only `host:port` in its errors. |
-| `bookTextSource.js`        | Finds a work's ebook (a link, then the Calibre index's exact match for a work with no pointer, then a Calibre search, then EPUBs beside the audio), fingerprints it, keeps the content-addressed cache, and hands out text handles that read one section at a time. Remembers failures (stable ones until a catalog rebuild or `!book link`, transient ones for 30 s), serves a cached copy while Calibre is closed, re-checks in the background, and runs `!book link` and its report. |
+| `calibreClient.js`         | GET-only client for Calibre's content server: library info, search, book metadata, and a format's download (`downloadFormat`, `/get/<FORMAT>/<id>/<lib>`; `downloadEpub` is its EPUB case) streamed to a file. Answers Digest logins, and Basic ones over https only; refuses redirects and any URL with a login in it, caps a download at 300 MB, and names only `host:port` in its errors. |
+| `bookTextSource.js`        | Finds a work's ebook (a link, then the Calibre index's exact match for a work with no pointer, then a Calibre search, then EPUBs beside the audio), converts a MOBI/AZW3-only Calibre record to EPUB through `ebookConvert.js`, fingerprints it, keeps the content-addressed cache, and hands out text handles that read one section at a time. Remembers failures (stable ones until a catalog rebuild or `!book link`, transient ones for 30 s, a conversion timeout for 10 minutes), serves a cached copy while Calibre is closed, re-checks in the background, and runs `!book link` and its report. |
+| `ebookConvert.js`          | Calibre's `ebook-convert`: `pickFormat` (which format of a record the read-along reads), `findConverter` (`calibreConvertPath`, else Calibre's install folder, else PATH; a configured path must be a local file named `ebook-convert(.exe)`), and the converter: one conversion at a time for the whole bot, Below Normal, no shell, a 5-minute timeout, `taskkill /T` on timeout and shutdown. |
 | `readAlongCard.js`         | Pure: the DM and ephemeral page payloads, the no-text page and the stubs a page turns into. Every payload with book text carries the `bookpage:` row the command log redacts by, and no other payload does. |
 | `readAlong.js`             | The pager: one DM page per listener, edited as the narration advances and never skipping a page; the 📖 ephemeral; `!book text` on, off, now and its status reply; the one closed-DMs line per session. Hooks into the engine through `onChange` and `setTextInfo`. |
 | `readAlongButtons.js`      | The `bookread:<sid>` (📖) and `bookpage:*` buttons. Acknowledges each click at once; 📖 answers the listener, and anyone in the book's voice channel at the time of the click. |
@@ -243,19 +244,23 @@ out-of-range value cannot break playback.
 | `audiobookOnlineLookup` | bool | `false` | After each catalog rebuild, ask Audible's unofficial catalog search for every eligible book's series, number, narrators and publisher, sending the title and author only. The answers fill blanks and nothing else. The panel shows a warning line saying what is sent. Read on every call. See "Online lookup". |
 | `audiobookLookupRegion` | choice `us` `ca` `uk` `au` `fr` `de` `jp` `it` `in` `es` | `'us'` | Which Audible store to ask (`api.audible.<tld>`), which also sets the language a candidate must be in. Changing it changes every work's query key, so the next batch asks again. |
 | `audiobookCalibreSort` | bool | `false` | The Calibre index ("Sort and fill details from Calibre"): match every audiobook to a Calibre record for its section and blank details, and `!book calibre`. Needs `calibreUrl` too. Read on every call; the 15-minute check returns early while it is off. See "The Calibre index". |
+| `audiobookControls` | choice `started` `voice` `listener` `everyone` | `'started'` | Who besides the listener may use a book card's buttons and the gated `!book` commands. Read on every click; a blank or unknown value reads as `started`. See "Permissions" under "The engine". |
 
-**Read-along settings.** The first two are under `/config` → Audiobooks, the four Calibre ones
+**Read-along settings.** The first three are under `/config` → Audiobooks, the five Calibre ones
 under Integrations. All are read at call time, and the Calibre client is rebuilt whenever any of
-the four Calibre values changes, so none needs a restart.
+the four Calibre server values changes, so none needs a restart. Where `ebook-convert` is, is
+remembered for a minute per `calibreConvertPath` value, since a card render asks on every redraw.
 
 | Key | Type | Default | What it does |
 | --- | ---- | ------- | ------------ |
 | `audiobookTextEnabled` | bool | `true` | `!book text`, `!book link` and the card's 📖. Nothing is downloaded or parsed until someone uses it; the only background work is the read-only probe when a book starts (a Calibre search and a folder listing). Off: the commands refuse, no card shows 📖, and an open DM page says so on its next event. |
 | `audiobookTextSidecars` | bool | `true` | Also look for `.epub` files in the folders that hold a book's audio. |
+| `audiobookTextConvert` | bool | `true` | Convert a Calibre record with no EPUB but a MOBI, AZW3 or similar to EPUB on its first open. Off: no new conversion, such a record shows no 📖 and the replies say why; a text converted earlier still opens from the cache. |
 | `calibreUrl` | string | `'http://127.0.0.1:8080'` | Calibre's content server. Blank turns Calibre off. Must be http(s); a URL with a login in it is refused by `/config` and again by the client, and the refusal never repeats the value. |
 | `calibreLibraryId` | string | `''` | Blank uses the server's default library (`/ajax/library-info`). |
 | `calibreUsername` | string | `''` | Only when Calibre's "Require username and password" is on. |
 | `calibrePassword` | string, secret | `''` | Masked in `/config` like `tautulliApiKey`, and redacted from the command log. |
+| `calibreConvertPath` | string | `''` | Calibre's `ebook-convert`. Blank finds it in `Program Files\Calibre2` (or `Calibre`) or on PATH. A set value must be a local file named `ebook-convert` or `ebook-convert.exe`; a `\\host\share` path is refused before any file access, so Windows never sends the bot account's NTLM hash to that host. |
 
 **Voice settings** (`/config` → Voice). Both apply at once through `configStore.onChange`.
 
@@ -1704,11 +1709,41 @@ fires early (a blip, a slow start) it re-arms for the remainder instead of actin
 | Who | May |
 | --- | --- |
 | The listener (who ran `/book play`) | everything |
-| The bot owner (`config.ownerId`) | pause, stop |
-| Anyone in the book's voice channel while the listener is not in it | pause, stop |
+| Others, while the listener is in the book's voice channel | what `audiobookControls` allows (below) |
+| The bot owner (`config.ownerId`) | pause, stop, in every mode |
+| Anyone in the book's voice channel while the listener is not in it | pause, stop, in every mode, and nothing more |
 | Anyone | their own shelf, `/book library`, `/book stats`, `/book leaderboard` |
 
 Bookmarks always follow the listener, never the person who clicked.
+
+`bookEngine.canControl(s, member, action)` decides every card button and every gated command
+(`!book pause/resume/stop`, the moving-around commands, and `!pause`, `!resume`, `!skip`, `!stop`
+delegated to a playing book). It reads `audiobookControls` on every call through
+`controlsMode`, which turns a blank or unknown value into `started`, so a `/config` change applies
+to the next click:
+
+| Mode | Besides the listener, may use every control |
+| ---- | ------------------------------------------- |
+| `started` (default) | Anyone in `s.startedWith` who is in the book's channel now |
+| `voice` | Anyone in the book's channel now |
+| `listener` | Nobody |
+| `everyone` | Anyone |
+
+`s.startedWith` is `voiceSnapshot(guild, channelId, userId)`, taken once as the session is made:
+the listener plus every human whose cached voice state is in that channel, keyed by the cache's
+own keys, with this bot and any `user.bot` left out. A later join is never added, and a member in
+it who leaves is refused until they come back. "In the channel" is `channelIdOf`: the guild's
+voice-state cache first, then the member's own `voice`.
+
+**While the listener is out of the channel (`listenerAway`), everyone else is held to pause and
+stop, whatever the mode.** The first version let the mode's rights run on: in `started` or
+`voice` a starting member could toggle a `listener-left` park into a resume, and nothing parked it
+again (only the listener's own moves park a book), so it played on the listener's bookmark, speed
+and listened time and could mark the book finished for them. `listenerAway` is true only when the
+guild has a voice-state cache that says so; with no cache it can't tell and takes no rights away.
+`controlRule(s)` writes the refusal after "This is <listener>'s book.": the away case first ("…
+has left 🔊 Room, so the book waits for them to come back. Until then anyone in it may pause or
+stop."), then the mode's rule. `!book play` and `!book now` are not gated.
 
 **The card.** One public message per session, sent with `textChannel.send` rather than as an
 interaction reply, so it stays editable after the 15-minute interaction token expires. It is
@@ -2946,16 +2981,17 @@ two in Calibre and three as EPUBs beside their audio.
    its own source.
 3. Calibre's content server, when `calibreUrl` is set. GET only, five endpoints:
    `/ajax/library-info`, `/ajax/search/<lib>`, `/ajax/books/<lib>`, `/ajax/book/<id>/<lib>` and
-   `/get/EPUB/<id>/<lib>`. It searches by the author's surname and reads the hits in one batch. A
-   book with an EPUB is accepted when its title scores 0.8 or more (Jaccard of the significant
+   `/get/<FORMAT>/<id>/<lib>`. It searches by the author's surname and reads the hits in one batch. A
+   book with an EPUB, or with a format `ebook-convert` reads (below), is accepted when its title
+   scores 0.8 or more (Jaccard of the significant
    words), or when its series words and series index match the work's series and sequence and the
    author matches. The Final Empire reached Calibre #299, then titled "Mistborn", through the
    series rule, because the catalog files it as Mistborn #1. Two equal best scores are `ambiguous`,
    and nothing is linked. Since version 5, `calibreScore`'s title score is the best of the old
    Jaccard and `calibreMatch.titleScore` over the raw, cleaned and main titles, with number words
    read as digits. Before searching, a work with no pointer takes the Calibre index's exact match
-   when that record has an EPUB (`deps.indexPick`, default `calibreIndex.instance().readAlongPick`);
-   existing pointers are untouched.
+   when that record has an EPUB or a convertible format (`deps.indexPick`, default
+   `calibreIndex.instance().readAlongPick`); existing pointers are untouched.
 4. EPUBs in the folders that hold the work's audio (`audiobookTextSidecars`), read
    non-recursively from `work.dirs`. Each file name is scored against the title with the series
    words, numbers and stop words removed; 0.6 or more, and unique, wins. Words of Radiance's folders
@@ -2963,6 +2999,53 @@ two in Calibre and three as EPUBs beside their audio.
    taken. The same file in two part folders counts once.
 
 Calibre comes before the sidecars because the Calibre copy is the one the user curates.
+
+**MOBI and AZW3: converting with Calibre's `ebook-convert`** (`helpers/ebookConvert.js`).
+**The bug it fixed (2026-10-31): the owner added Hyperion (#352, MOBI) and Whalefall (#353, AZW3),
+the two books they were listening to. The Calibre index matched both exactly, and the card still
+never showed 📖**, because `readAlongPick` and the search both kept EPUB records only, so the
+probe said `none`. Now:
+
+- `pickFormat(formats)` takes `epub` when there is one, else the first of `azw3`, `kepub`, `mobi`,
+  `azw`, `prc`, `fb2`, `fbz`, `docx`, `htmlz`, `odt`, `lit`, `pdb`. PDF, AZW4, comics, KFX, djvu,
+  TXT and RTF never: their text comes out as page furniture, pictures, or with no headings to
+  place by. `unreadableKind` names why for a message.
+- A record to convert counts only while `audiobookTextConvert` is on and `findConverter` finds
+  `ebook-convert`, unless its text is already cached (`convertBlock`). **The search drops a blocked
+  record before ranking** (`matchCalibre`), so with converting off a lower-ranked EPUB record of
+  the same book is read, as before conversion existed; the first block is kept, and the answer is
+  `convert-off` or `convert-missing` (with the reason) only when nothing else is found. At equal
+  rank an EPUB beats a record to convert. With converting on, a higher-ranked MOBI record is still
+  preferred over an EPUB record; whether an EPUB should always win there is an open owner
+  decision.
+- The first open downloads the format into `<base>.convert/` in the cache, converts it to
+  `book.epub` there and parses that like any other EPUB, then deletes the folder; Calibre's own
+  temp folder is pointed inside it (`CALIBRE_TEMP_DIR=<base>.convert/tmp`), because Calibre
+  removes its working copy (a full HTML copy of the book) only at a normal exit, and a killed
+  conversion used to leave it in `%TEMP%` for good (measured: 6.2 MB after one timeout). The
+  start-up sweep deletes any `<base>.convert/` a killed bot left.
+- One conversion at a time for the whole bot (a shared queue, also across `!restart`), spawned
+  with an argument array and no shell; the paths are the cache's own names, so no title reaches a
+  command line. `ebook-convert` runs at Below Normal; its `calibre-parallel` worker is started by
+  Calibre at Normal, measured at 0.2 s of CPU against 4.6 s for `ebook-convert` itself on a 2.7 MB
+  AZW3, so it is left alone. Measured on this PC: 3.0 s for a 0.9 MB MOBI, 6.0 s for a 2.7 MB
+  AZW3. The timeout is 5 minutes; a timeout or a shutdown kills the tree with `taskkill /T /F`
+  first and the launcher after, since the launcher gone first leaves taskkill no tree to walk.
+- A converted copy's fingerprint is
+  `calibre:<lib>:<id>:<format>:<size>:<mtime>:cv<CONVERT_VERSION>`, from that format's own
+  `format_metadata`, so a replaced MOBI converts again, a tag edit does not, and changing how the
+  bot calls `ebook-convert` (`CONVERT_VERSION`) converts every such book again. An EPUB's
+  fingerprint is unchanged, so no existing cache is read again.
+- Failures: Calibre's DRM error is `drm` and a non-zero exit or empty output `convert-error`, both
+  stable and written as `<base>.fail.json`, so a locked or damaged file is never converted twice. A
+  timeout is `convert-timeout`, transient but remembered for 10 minutes so a background open does
+  not start another 5-minute run every 30 s. `!book text` with that memo active reports it and
+  opens nothing (`source.lastFailure`); `!book text on` and `now` retry at once. A failure also
+  drops the probe's `available` record, so `!book text` never adds "converted the first time its
+  text opens" under a failure (`pendingConversion` returns null while a failure is remembered).
+- `!book calibre` notes each matched record without an EPUB: converted on first open, converted
+  earlier (its pointer names that record, so it still opens with converting off), or no text and
+  why. `!book link <title>` shows each candidate's format and whether the converter is there.
 
 **The trap: `part.file` is a basename.** The catalog kept only file names, and `folderKey` is a
 grouping key that need not exist on disk. Rhythm of War's EPUB sits in its `part 1/` and `part 3/`
@@ -2974,10 +3057,11 @@ session that started before the rebuild still sees the new fields.
 
 **What is remembered, and for how long.**
 
-- Stable failures (`no-ebook`, `ambiguous`, `drm`, `parse-error`, `too-large`, `off`) are kept in
-  memory until the catalog is rebuilt or `!book link` touches the work.
+- Stable failures (`no-ebook`, `ambiguous`, `drm`, `parse-error`, `convert-error`, `too-large`,
+  `off`) are kept in memory until the catalog is rebuilt or `!book link` touches the work.
 - Transient ones (Calibre unreachable, login refused, Calibre off, a bad URL, a timeout, a crashed
-  parse) are kept for 30 s.
+  parse, converting off, `ebook-convert` missing) are kept for 30 s, so turning the setting on or
+  installing Calibre works without a rebuild; a conversion timeout for 10 minutes.
 - Only background callers (the card's probe) honour that memo. Anything a person does
   (`!book text`, 📖, a page button) asks again, so "open Calibre and try again" works at once.
 - With Calibre closed the answer is never "no ebook", only "Calibre isn't answering", and a text
@@ -2997,9 +3081,11 @@ in the name:
 - `<base>.fail.json`: a parse that failed because of the file (DRM, damaged, too large). A
   known-bad 115 MB file is then not re-read after every restart; `!book link` deletes it.
 - `<base>.download.tmp`: a Calibre download in flight, deleted after its parse.
+- `<base>.convert/`: a conversion in flight (the downloaded MOBI or AZW3, the EPUB made from it and
+  Calibre's own `tmp/`), deleted when it ends, and by the start-up sweep after a killed bot.
 
 A Calibre fingerprint is `calibre:<library>:<id>:<epub size>:<epub mtime>`, from the book's
-`format_metadata.epub`; a file's is `file:<path>:<size>:<mtimeMs>`. **The trap: Calibre's
+`format_metadata.epub` (a converted copy's names its format too; see above); a file's is `file:<path>:<size>:<mtimeMs>`. **The trap: Calibre's
 `last_modified` moves on every tag, rating or cover edit**, which would re-download and re-parse
 an unchanged EPUB, and the downloaded size is no fingerprint either, because Calibre embeds its
 metadata on the way out (3,801,114 bytes served for an EPUB stored at 3,801,014). The EPUB's own
@@ -3231,9 +3317,11 @@ presses 📖, and nowhere else.
 - The check runs again on every ◀ ▶ 📍 of an ephemeral page (`onEphemeralButton`), so a member who
   left the voice channel gets their page replaced by the same refusal and no new text.
 - Someone other than the listener gets a page rendered with `isListener: false`: ◀ ▶ 📍 and no ↪
-  or 📩. A forged ↪ or 📩 from them is refused by the pager before it reaches anything; the engine's
-  `canControl` refuses a goto from anyone but the listener as well. DM follow-along
-  (`!book text on`, automatic DM pages, `bookpage:*:d:*`) stays the listener's alone.
+  or 📩. A forged ↪ or 📩 from them is refused by the pager (`onEphemeralButton`) before it
+  reaches anything. ↪ stays the listener's whatever `audiobookControls` says, even though
+  `canControl` may allow that member a goto: someone allowed to move the book does it with the
+  card's buttons. DM follow-along (`!book text on`, automatic DM pages, `bookpage:*:d:*`) stays
+  the listener's alone.
 - DMs closed (Discord error 50007): `!book text on` answers with the reason and points at 📖. On an
   automatic open the bot posts one line in the card's channel instead, at most once per session,
   with no text and `allowedMentions: { parse: [] }`.

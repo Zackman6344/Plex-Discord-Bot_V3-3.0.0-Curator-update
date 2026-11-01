@@ -8,7 +8,8 @@ Phase 10 is the first live pass of the catalog's rules version 3: embedded tags,
 `!book edit`, the optional online lookup and the card's chapter words. Phase 11 is the first live
 pass of rules version 5 and what came with it: the one-time id move, short works, typo and series
 plays, the sectioned library, the Calibre index and `!book calibre`. Phase 12 checks that sends
-made while the PC has lost Discord arrive late, and once.
+made while the PC has lost Discord arrive late, and once. Phase 13 is the first live pass of the
+read-along's MOBI and AZW3 conversion and of `audiobookControls`, who may use a book card.
 
 The bot now persists its own logs to `data/logs/`, so a failure you didn't happen to be watching
 is still there afterwards:
@@ -288,10 +289,11 @@ cannot reach. Watch `npm run logs -- --raw` for `music-gated-by-book`, `book-str
       during a Hitster game: refused.
 - [ ] `!pause`, `!resume`, `!skip 3` (moves **one** chapter) and `!stop` during a book act on the
       book. `!stop` also clears the music queue and does not start it. Someone not allowed to
-      control the book gets the music command as before.
+      control the book is told whose book it is, and the book plays on.
 - [ ] The old now-playing card's Pause/Resume on a parked book resumes it.
-- [ ] Someone else clicking the card's controls gets the private "This is …'s book" refusal; the
-      owner, and someone in the channel after the listener left, can pause and stop.
+- [ ] Someone the `audiobookControls` setting leaves out, clicking the card's controls, gets the
+      private "This is …'s book" refusal; the owner, and someone in the channel after the listener
+      left, can pause and stop. Phase 13 goes through each mode.
 - [ ] Clicking a card from an earlier session strips its buttons and says so privately.
 
 **Bookmarks and finishing**
@@ -867,6 +869,56 @@ for up to about 2 minutes. To drop the connection, turn Wi-Fi off (or pull the c
 - [ ] Drop the network for over 2 minutes: the log has `Discord send gave up after N s` lines
       (or `may have gone through`) and the reachable line ends with `, J gave up`. The bot stays
       up.
+
+## Phase 13: MOBI and AZW3 read-along, and who may use a book card (live)
+
+Built and unit-tested offline on 2026-10-31 with a fake `ebook-convert` (a Node script that
+writes a synthetic EPUB, or hangs, fails or prints Calibre's DRM error) and synthetic books.
+The real `ebook-convert` ran only in measurements: 3.0 s for a 0.9 MB MOBI and 6.0 s for a
+2.7 MB AZW3 at Below Normal. Watch `npm run logs -- --raw` for `Read-along:` lines while you go.
+
+**📖 on Hyperion and Whalefall** (Calibre #352, MOBI, and #353, AZW3; Calibre open, its
+content server started)
+
+- [ ] `!book calibre all` lists Hyperion "MOBI only, converted to EPUB the first time its text
+      opens" and Whalefall the same with AZW3. Neither is under "Matched, but Calibre gives the
+      read-along no text".
+- [ ] Start Whalefall. The card shows 📖. `!book text` says an ebook was found and adds "🔄 Calibre
+      has this book as AZW3; it is converted to EPUB the first time its text opens…". Nothing has
+      been converted yet: no `converted the AZW3` line in the log.
+- [ ] Press 📖. A private page arrives within about 10 s. The log has exactly one
+      `Read-along: converted the AZW3 of Calibre #353 (cache <16 hex>) to EPUB in N ms, N bytes.`
+      and then `Read-along: read the ebook for cache <16 hex>: N sections, N words in N ms.`
+      Task Manager shows `ebook-convert.exe` at Below normal while it runs, and no
+      `ebook-convert.exe` afterwards.
+- [ ] `!book text` now says "text from Calibre #353 (AZW3, converted to EPUB)". Press 📖 again,
+      `!restart`, start the book again and press 📖: no second `converted` line.
+- [ ] `data/book_text/cache/` holds the `.txt` and `.json` pair and no `.convert` folder; `%TEMP%`
+      has no new `calibre-*` folder from the conversion.
+- [ ] In Calibre, Whalefall (#353) still has only its AZW3: no EPUB was added to the record.
+- [ ] Repeat with Hyperion (#352, MOBI): 📖 shows, the first open converts once, the text is
+      English.
+- [ ] `/config` → Audiobooks → turn "Convert MOBI/AZW3 ebooks for read-along" off. Whalefall and
+      Hyperion still open from the cache. `!book calibre all` says "converted earlier, so its text
+      still opens; new conversions are off". Turn it back on.
+
+**Who may use a book card** (`/config` → Audiobooks → "Who can use a book card's buttons").
+Needs a second account (B) in the voice channel before the book starts and a third (C) that joins
+after it starts.
+
+- [ ] Default `started`: A starts a book with B already in the channel. B's ⏩, chapter, speed and
+      Pause work. C joins, presses ⏩: a private "This is A's book. Only people who were in 🔊 …
+      when this book started, and are still in it, can use its buttons. …". The book help embed
+      says the same at the end of MOVING AROUND.
+- [ ] B leaves the channel and presses ⏩: refused with the same text. B rejoins: ⏩ works again.
+- [ ] A leaves the channel: the book parks. B (and C) press ⏯, ⏩ and speed: each is refused
+      with "A has left 🔊 …, so the book waits for them to come back. Until then anyone in it may
+      pause or stop." A rejoins: B's ⏯ now resumes it. Last, with A away again, B's Stop ends it.
+- [ ] `voice`: C, who joined late, may seek; someone in another channel may not.
+- [ ] `listener`: B and C are refused everything but, once A has left, pause and stop.
+- [ ] `everyone`: someone in no voice channel at all may seek while A is in the channel.
+- [ ] Each change applies to the next click, with no restart and no new card.
+- [ ] In every mode B's 📖 page has no ↪ or 📩, and the owner (not in voice) may pause and stop.
 
 ---
 

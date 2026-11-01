@@ -91,6 +91,7 @@ module.exports = {
   'calibreLibraryId' : '',                 // blank = the server's default library
   'calibreUsername'  : '',                 // only if you turn on Calibre's login
   'calibrePassword'  : '',                 // never put the login in the URL; it is refused there
+  'calibreConvertPath' : '',               // Calibre's ebook-convert(.exe); blank = find it in Calibre's install folder or on PATH
 
   // --- Automated broadcasts (Kometa runs + Playnite game launches) — see below ---
   'broadcastChannelId'  : '',              // fallback channel used when the two below are blank
@@ -147,6 +148,8 @@ module.exports = {
   'audiobookResumeRewindSeconds' : 10,     // rewind after 5+ min away, 3x after a day (0-120)
   'audiobookTextEnabled'         : true,   // !book text and the card's 📖 (see "Reading along")
   'audiobookTextSidecars'        : true,   // also look for .epub files next to a book's audio
+  'audiobookTextConvert'         : true,   // convert a MOBI/AZW3-only Calibre ebook to EPUB on its first open
+  'audiobookControls'            : 'started', // who may use a book card's buttons: 'started' 'voice' 'listener' 'everyone' (see "Who controls a book")
   'audiobookOnlineLookup'        : false,  // fill blank series, narrators and publishers from Audible (see "Looking books up online")
   'audiobookLookupRegion'        : 'us',   // which Audible store: 'us' 'ca' 'uk' 'au' 'fr' 'de' 'jp' 'it' 'in' 'es'
   'audiobookCalibreSort'         : false,  // match books to Calibre records for sections and blank details (see "Sorting with Calibre")
@@ -564,10 +567,25 @@ its own. While a book plays, `!pause`, `!resume`, `!skip` (one chapter forward) 
 the book for anyone allowed to control it, and `!stop` also clears the music queue. Hitster cannot
 start during a book, and a book cannot start during a Hitster game.
 
-**Who controls a book.** The person who started it controls everything. The bot owner, and anyone
-in the book's voice channel while the listener has left it, may pause or stop it. Everyone has
-their own shelf and stats, and a place is always saved to the listener, never to whoever pressed
-a button.
+**Who controls a book.** The person who started it (the listener) controls everything, from
+anywhere. Who else may use the card's buttons and the same commands (`!book pause`, `resume`,
+`stop`, `back`, `forward`, `goto`, `chapter`, `next`, `prev`, `speed`, `sleep`, and `!pause`,
+`!resume`, `!skip`, `!stop` during a book) is the owner's choice, `audiobookControls` in `/config`
+→ Audiobooks, read on every click:
+
+| `audiobookControls` | Besides the listener |
+| ------------------- | -------------------- |
+| `started` (default) | Anyone who was in the book's voice channel when it started, while they are still in it. Someone who joins later, or who leaves and comes back, is checked against that list. |
+| `voice` | Anyone in the book's voice channel. |
+| `listener` | Nobody. |
+| `everyone` | Anyone who can see the card. |
+
+In every mode the bot owner may pause or stop the book, and so may anyone in the book's voice
+channel once the listener has left it. **While the listener is out of the channel, nobody else may
+do more than pause or stop**: a book parked because they left waits for them to come back and
+resume it. A refusal is a private reply that names the rule in force. `!book play` and `!book now`
+are open to everyone as before. Everyone has their own shelf and stats, and a place is always saved
+to the listener, never to whoever pressed a button.
 
 **Your place.** It is saved every 15 seconds while playing and on every pause, jump, stop and
 shutdown, so a crash loses at most 15 seconds, and resuming after more than 5 minutes rewinds 10
@@ -828,7 +846,8 @@ of Kings (first time only)…" and turns into the page when it is done. After th
 can see. The button appears only on a book whose ebook was found. **The listener can use it from
 anywhere; anyone else only while they are in the book's voice channel**, since they hear the same
 words. The listener's page has ◀ ▶ 📍 ↪ and 📩 Follow in DMs in place of ✖ Off. Anyone else gets
-◀ ▶ 📍 only: they cannot move the listener's book, and DM follow-along stays the listener's. Every
+◀ ▶ 📍 only: ↪ and DM follow-along stay the listener's whatever `audiobookControls` says, and
+someone allowed to move the book does it with the card's buttons. Every
 click checks the voice channel again, so someone who leaves it gets "🔊 Join `<channel>` to read
 along." in place of their page, and anyone outside it gets that line and no text from the start.
 
@@ -884,14 +903,32 @@ Marks are kept in `data/book_text/marks.json` (gitignored).
    Integrations). The bot only reads from it. It finds a book by its title, or by its series number
    and author, so The Final Empire finds a Calibre book titled "Mistborn" (series Mistborn, book
    1). A volume number written as a word ("Book Two") counts as the number. While the Calibre
-   index is on, a book with no ebook yet takes the index's exact match when that record has an
-   EPUB. The content server runs only while the Calibre app is open with its server started.
+   index is on, a book with no ebook yet takes the index's exact match. The content server runs
+   only while the Calibre app is open with its server started.
 3. `.epub` files in the folders that hold the book's audio files (`audiobookTextSidecars`, on by
    default). The file name has to match the title; a companion book or another title in the same
    folder is skipped.
 
-DRM-free EPUBs only. If two ebooks fit equally well, none is picked, and `!book link` settles it.
+DRM-free ebooks only. If two ebooks fit equally well, none is picked, and `!book link` settles it.
 Podcasts have no text.
+
+**MOBI and AZW3 books in Calibre.** A Calibre record with no EPUB but a MOBI, AZW3 or another
+format Calibre's `ebook-convert` reads (KEPUB, AZW, PRC, FB2, FBZ, DOCX, HTMLZ, ODT, LIT, PDB) counts
+too, while `audiobookTextConvert` is on (the default) and `ebook-convert` is found (in Calibre's
+install folder, on PATH, or at `calibreConvertPath`). The card shows 📖 for it. **The first open
+downloads that file with a GET, converts it to EPUB in the bot's own cache at Below Normal
+priority, and reads it**: about 3 s for a 0.9 MB MOBI and 6 s for a 2.7 MB AZW3 on this PC, 5
+minutes at most. The DM page says "⏳ Preparing the text" meanwhile, and `!book text` says
+beforehand that the book will be converted. One book converts at a time for the whole bot, once
+per copy: the text is kept like any other, so it opens again with the converter gone or the
+setting off, and only a replaced file in Calibre converts again (a tag or title edit does not).
+**The Calibre library is never changed**: no format is added to the record. An EPUB in the same
+record, or an EPUB record of the same book, is read first. PDF, AZW4, KFX, comics, TXT and RTF
+are not converted. A DRM-locked or damaged file fails once with the reason and is not tried again
+until the file changes. A conversion that runs out of time is tried again when someone runs
+`!book text on` or `!book text now`, and on its own after 10 minutes; `!book text` alone only
+reports it. With the setting off or `ebook-convert` missing, such a book shows no 📖,
+and `!book text`, `!book link <title>` and `!book calibre` say why.
 
 **Linking by hand** (owner only; `ownerId` must be set, because a link can point at any EPUB on
 this PC):

@@ -131,6 +131,32 @@ function statusText(st) {
 	}
 }
 
+function candidateFormat(b) {
+	if (b.epub) return '';
+	if (b.format) return ` (${String(b.format).toUpperCase()}, converted to EPUB)`;
+	return ' (no EPUB, and no format that converts)';
+}
+
+function converterLine(conv, p = prefix()) {
+	if (!conv || conv.ok) return '🔄 A book Calibre has only as MOBI, AZW3 or similar is converted to EPUB with Calibre\'s ebook-convert the first time its text opens, which takes from a few seconds to a minute. The Calibre library is not changed.';
+	if (conv.code === 'convert-off') return `🔄 Converting MOBI or AZW3 ebooks to EPUB is turned off (audiobookTextConvert in \`${p}config\` → Audiobooks), so those books have no text.`;
+	if (conv.reason && conv.reason !== 'not-found') return `🔄 calibreConvertPath doesn't point at Calibre's ebook-convert (\`${p}config\` → Integrations; blank finds it), so MOBI or AZW3 books have no text.`;
+	return `🔄 Calibre's ebook-convert wasn't found on this PC, so MOBI or AZW3 books have no text. Install Calibre here, or set calibreConvertPath (\`${p}config\` → Integrations).`;
+}
+
+/** The format the caller's book is converted from on its first open, from the source's last probe. */
+function pendingFormat(ctx, ra) {
+	try {
+		const books = ctx.bot.books;
+		const list = books && typeof books.sessions === 'function' ? books.sessions() || [] : [];
+		const s = list.find(x => String(x.userId) === String(ctx.userId) && x.state !== 'ended' && x.state !== 'starting');
+		if (!s || !s.work || typeof ra.source.pendingConversion !== 'function') return null;
+		return ra.source.pendingConversion(s.work);
+	} catch (_) {
+		return null;
+	}
+}
+
 function sourceText(src) {
 	if (!src) return 'unknown';
 	if (src.type === 'calibre') return `Calibre #${src.id}`;
@@ -154,9 +180,12 @@ function formatDescribe(d, p = prefix()) {
 	const cands = d.candidates || {};
 	if (cands.calibreError) lines.push(`📚 Calibre: ${cands.calibreError}.`);
 	else if ((cands.calibre || []).length) {
-		const list = cands.calibre.slice(0, LIST_MAX).map(b => `#${b.id} “${esc(b.title || '?')}”${b.epub ? '' : ' (no EPUB)'}${b.accepted ? ' ✅' : ''}`);
+		const list = cands.calibre.slice(0, LIST_MAX).map(b => `#${b.id} “${esc(b.title || '?')}”${candidateFormat(b)}${b.accepted ? ' ✅' : ''}`);
 		lines.push(`📚 Calibre: ${list.join(' · ')}${cands.calibre.length > LIST_MAX ? ` and ${cands.calibre.length - LIST_MAX} more` : ''}`);
 	}
+	const converts = (c && c.source && c.source.type === 'calibre' && c.source.format && c.source.format !== 'epub')
+		|| (cands.calibre || []).slice(0, LIST_MAX).some(b => b.format && !b.epub);
+	if (converts) lines.push(converterLine(d.converter, p));
 	if ((cands.sidecars || []).length) {
 		const list = cands.sidecars.slice(0, LIST_MAX).map(f => `${esc(f.file)} (${f.score})${f.accepted ? ' ✅' : ''}`);
 		lines.push(`🗂 Next to the audio: ${list.join(' · ')}`);
@@ -174,7 +203,12 @@ async function text(ctx) {
 	const mode = (String(ctx.rest || '').split(/\s+/)[0] || '').toLowerCase();
 	let r;
 	try {
-		if (!mode || mode === 'status') return ctx.say(await ra.status(ctx.userId));
+		if (!mode || mode === 'status') {
+			const report = await ra.status(ctx.userId);
+			const format = pendingFormat(ctx, ra);
+			if (!format) return ctx.say(report);
+			return ctx.say(`${report}\n🔄 Calibre has this book as ${String(format).toUpperCase()}; it is converted to EPUB the first time its text opens, which takes from a few seconds to a minute.`);
+		}
 		if (mode === 'on') r = await ra.turnOn({ userId: ctx.userId });
 		else if (mode === 'off') r = await ra.turnOff(ctx.userId);
 		else if (mode === 'now') r = await ra.sendNow(ctx.userId);

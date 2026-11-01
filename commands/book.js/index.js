@@ -16,6 +16,7 @@ const commandLog = require('../../helpers/commandLog.js');
 const bookModel = require('../../helpers/bookModel.js');
 const bookSearch = require('../../helpers/bookSearch.js');
 const { chapterLabel } = require('../../helpers/bookChapterLabel.js');
+const { controlsMode } = require('../../helpers/bookEngine.js');
 
 const play = require('./play.js');
 const controls = require('./controls.js');
@@ -321,8 +322,17 @@ function unknownCommand(bot, word, rest, whole, userId) {
 	};
 }
 
+const CONTROLS_WHO = {
+	started: 'the listener and anyone who was in voice when the book started and is still there',
+	voice: 'the listener and anyone in the book\'s voice channel',
+	listener: 'only the listener',
+	everyone: 'anyone'
+};
+
 function helpEmbed(bot) {
 	const p = (bot && bot.config && bot.config.commandPrefix) || config.commandPrefix;
+	const given = bot && bot.config && bot.config.audiobookControls !== undefined ? bot.config.audiobookControls : config.audiobookControls;
+	const who = CONTROLS_WHO[controlsMode(given)];
 	return new EmbedBuilder()
 		.setColor('#2ECC71')
 		.setTitle('📚 AUDIOBOOKS AND PODCASTS')
@@ -336,7 +346,8 @@ function helpEmbed(bot) {
 			`> \`${p}book back [90|1:30|2m]\` / \`${p}book forward [...]\`: Jump (default 30 s).\n` +
 			`> \`${p}book goto [1:23:45|+5m|-90]\`: Go to a time, or move relative to here.\n` +
 			`> \`${p}book chapter [n]\` / \`${p}book next\` / \`${p}book prev\`: Chapters (no number lists them).\n` +
-			`> \`${p}book speed [0.75-3]\` / \`${p}book sleep [minutes|chapter|off]\`: Speed and sleep timer.\n\n` +
+			`> \`${p}book speed [0.75-3]\` / \`${p}book sleep [minutes|chapter|off]\`: Speed and sleep timer.\n` +
+			`> Pause, resume, stop, the card's buttons and these moving-around commands: ${who}. While the listener is out of the channel, others may only pause or stop. The bot owner can change who.\n\n` +
 			'**📜 READ ALONG**\n' +
 			`> \`${p}book text on\` / \`${p}book text off\`: The book's text in your DMs, a page at a time, turning with the narration. Approximate: chapter-level at best.\n` +
 			`> \`${p}book text\`: Is there text for your book, and where it comes from. \`${p}book text now\` sends the page again.\n` +

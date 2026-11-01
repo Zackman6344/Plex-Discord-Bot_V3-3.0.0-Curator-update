@@ -423,14 +423,16 @@ function createCalibreIndex(deps = {}) {
 
 	/**
 	 * A record the read-along may open for a work that has no pointer yet: an exact match with an
-	 * EPUB. Never a likely one.
-	 * @returns {{ id: number }|null}
+	 * EPUB, or with a format helpers/ebookConvert.js turns into one (its pickFormat order). Never a
+	 * likely one.
+	 * @returns {{ id: number, format: string }|null}
 	 */
 	function readAlongPick(work) {
 		const m = matchFor(work);
 		if (!m || m.verdict !== 'exact' || m.id === null) return null;
 		const r = recordFor(m);
-		return r && Array.isArray(r.formats) && r.formats.includes('epub') ? { id: m.id } : null;
+		const format = r ? require('./ebookConvert.js').pickFormat(r.formats) : null;
+		return format ? { id: m.id, format } : null;
 	}
 
 	function status() {

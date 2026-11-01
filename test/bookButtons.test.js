@@ -255,11 +255,30 @@ test('someone else gets a private refusal and the book is untouched', async () =
 		assert.strictEqual(acks(i), 1, action);
 		const r = only(i, 'reply');
 		assert.strictEqual(r.flags, EPHEMERAL, `${action} refusal is private`);
-		assert.match(r.content, /Ana's book: only they can control it/);
+		assert.match(r.content, /^This is Ana's book\. Only people who were in 🔊 Lounge when this book started, and are still in it, can use its buttons\./);
 	}
 	assert.strictEqual(s.state, 'playing');
 	assert.strictEqual(h.books.position(s), pos);
 	assert.strictEqual(s.speed, 1);
+});
+
+test('someone in the channel when the book started may seek from the card; a later join may not', async () => {
+	const h = harness();
+	const ana = member(h, ANA, 'Ana', VC);
+	const ben = member(h, BEN, 'Ben', VC);
+	const s = await start(h, ana);
+	const pos = h.books.position(s);
+	const seek = click(h, `book:fwd:${s.id}`, ben);
+	await bookButtons.handle(seek, h.bot, null);
+	only(seek, 'update');
+	assert.ok(h.books.position(s) > pos, 'Ben moved the book on');
+
+	const late = member(h, '200000000000000009', 'Cy', VC);
+	const refused = click(h, `book:fwd:${s.id}`, late);
+	await bookButtons.handle(refused, h.bot, null);
+	const r = only(refused, 'reply');
+	assert.strictEqual(r.flags, EPHEMERAL);
+	assert.match(r.content, /when this book started, and are still in it, can use its buttons/);
 });
 
 test('with the listener gone, someone in the channel may pause or stop but not seek', async () => {
@@ -270,7 +289,7 @@ test('with the listener gone, someone in the channel may pause or stop but not s
 	const ben = member(h, BEN, 'Ben', VC);
 	const seek = click(h, `book:fwd:${s.id}`, ben);
 	await bookButtons.handle(seek, h.bot, null);
-	assert.match(only(seek, 'reply').content, /only they can control it/);
+	assert.match(only(seek, 'reply').content, /Ana has left 🔊 Lounge, so the book waits for them to come back\. Until then anyone in it may pause or stop\./);
 	const pause = click(h, `book:toggle:${s.id}`, ben);
 	await bookButtons.handle(pause, h.bot, null);
 	assert.strictEqual(s.state, 'paused');

@@ -34,10 +34,21 @@
 //     text read earlier is served from the cache (stale) instead.
 //   - A failed parse leaves `<base>.fail.json`, so a known-bad 115 MB file is not re-read after
 //     every restart; `!book link` clears it.
+//
+// A Calibre record with no EPUB but a MOBI, AZW3 or another format ebook-convert reads
+// (helpers/ebookConvert.js, pickFormat) is a source too. The first open downloads that format into
+// `<base>.convert/` in the cache, converts it to EPUB there at Below Normal, parses the EPUB like
+// any other and deletes the folder; the cache then holds only the text, so the converter is never
+// needed again for that copy, even with the setting turned off. Its fingerprint names the format
+// and that file's own size and mtime, so replacing the MOBI in Calibre converts again and a tag
+// edit does not. Until the text is cached, such a record counts only while audiobookTextConvert is
+// on and ebook-convert is found: otherwise the search moves on (a sidecar EPUB still wins) and the
+// answer says why, instead of "no ebook".
 
 const crypto = require('crypto');
 const path = require('path');
-const { createCalibreClient, hasEpub } = require('./calibreClient.js');
+const { createCalibreClient } = require('./calibreClient.js');
+const { pickFormat } = require('./ebookConvert.js');
 const { norm, basename } = require('./bookCatalog.js');
 const calibreMatch = require('./calibreMatch.js');
 
@@ -49,11 +60,24 @@ const FAIL_RECORD_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const TITLE_MATCH = 0.8;
 const SIDECAR_MATCH = 0.6;
 
-const STABLE = new Set(['no-ebook', 'ambiguous', 'drm', 'parse-error', 'too-large', 'off']);
-const TRANSIENT = new Set(['calibre-unreachable', 'calibre-auth', 'calibre-off', 'bad-url', 'timeout', 'crash']);
+const STABLE = new Set(['no-ebook', 'ambiguous', 'drm', 'parse-error', 'convert-error', 'too-large', 'off']);
+// The converter settings are transient so that turning them on, or installing Calibre, works
+// within 30 s and without a catalog rebuild.
+const TRANSIENT = new Set(['calibre-unreachable', 'calibre-auth', 'calibre-off', 'bad-url', 'timeout', 'crash', 'convert-off', 'convert-missing', 'convert-timeout']);
+// A conversion that timed out ran for minutes at Below Normal; a background open (a reader with
+// read-along on, at every book start) must not start another one every 30 s.
+const TRANSIENT_TTL_BY_CODE = { 'convert-timeout': 10 * 60 * 1000 };
 // Failures that say something about the ebook itself; a cached copy of a different fingerprint
 // is no answer to them.
-const VERDICTS = new Set(['drm', 'parse-error', 'too-large', 'off']);
+const VERDICTS = new Set(['drm', 'parse-error', 'convert-error', 'too-large', 'off']);
+// The conversion recipe's version, part of a converted copy's fingerprint: a change to how the
+// bot calls ebook-convert converts every such book again.
+const CONVERT_VERSION = 1;
+const NO_CONVERTER = {
+	locate: () => ({ ok: false, code: 'convert-missing', reason: 'not-found' }),
+	convert: async () => ({ ok: false, code: 'convert-missing' }),
+	shutdown() {}
+};
 
 // Downloads and parses in flight, by cache directory and base, shared by every source in this
 // process: !restart builds a new source while the old one's download may still be running, and
@@ -267,10 +291,11 @@ function calibreMetaOf(ptr, link) {
 }
 
 function failCodeOf(code) {
-	if (code === 'drm') return 'drm';
-	if (code === 'too-large') return 'too-large';
+	if (code === 'drm' || code === 'too-large' || code === 'convert-error') return code;
 	return 'parse-error';
 }
+
+const formatName = (f) => String(f || '').toUpperCase();
 
 function parseFailCode(code) {
 	if (code === 'drm' || code === 'timeout' || code === 'too-large') return code;
@@ -293,6 +318,8 @@ function createBookTextSource(deps = {}) {
 	// The catalog's Calibre index (helpers/calibreIndex.js), off under the test runner by default.
 	const indexPick = deps.indexPick || ((work) => require('./calibreIndex.js').instance().readAlongPick(work));
 	const store = deps.store || require('./bookTextStore.js');
+	// Under the test runner no test may start the PC's real ebook-convert by accident.
+	const converter = deps.convert || (process.env.NODE_TEST_CONTEXT ? NO_CONVERTER : require('./ebookConvert.js').instance());
 	const fs = deps.fs || require('fs');
 	const fsp = fs.promises;
 	const now = deps.now || Date.now;
@@ -329,6 +356,12 @@ function createBookTextSource(deps = {}) {
 				: `The Calibre URL isn't a valid http(s) address; fix calibreUrl with \`${p}config\` → Integrations.`;
 			case 'drm': return 'This ebook is DRM-protected, so its text can\'t be read.';
 			case 'parse-error': return 'This ebook couldn\'t be read: the file looks damaged or isn\'t an ordinary EPUB.';
+			case 'convert-off': return `Calibre has this ebook only as ${formatName(r.format) || 'a format other than EPUB'}, and converting it to EPUB is turned off (audiobookTextConvert in \`${p}config\` → Audiobooks).`;
+			case 'convert-missing': return r.reason === 'bad-path' || r.reason === 'not-converter' || r.reason === 'configured-missing'
+				? `calibreConvertPath doesn't point at Calibre's ebook-convert program. Fix it in \`${p}config\` → Integrations, or leave it blank so the bot finds it.`
+				: `Calibre has this ebook only as ${formatName(r.format) || 'a format other than EPUB'}, and Calibre's ebook-convert program, which turns it into EPUB, wasn't found on this PC. Install Calibre here, or set calibreConvertPath in \`${p}config\` → Integrations.`;
+			case 'convert-error': return 'Calibre couldn\'t convert this ebook to EPUB: the file looks damaged.';
+			case 'convert-timeout': return 'Converting this ebook to EPUB took too long. Try again in a few minutes.';
 			case 'too-large': return `This ebook is too large to read (over ${MAX_EPUB_BYTES / 1048576} MB).`;
 			case 'timeout': return 'Reading this ebook took too long. Try again in a minute.';
 			case 'crash': return 'Reading this ebook failed unexpectedly. Try again in a minute.';
@@ -370,17 +403,37 @@ function createBookTextSource(deps = {}) {
 		return null;
 	}
 
+	// A failure outranks what an earlier probe found, and the probe record must not outlive the
+	// memo: a stale 'available' would bring back the "converted on first open" note.
 	function remember(id, code, r) {
+		if (STABLE.has(code) || TRANSIENT.has(code)) probes.delete(id);
 		if (STABLE.has(code)) memo.set(id, { code, text: textFor(code, r), stable: true, stamp: stamp() });
-		else if (TRANSIENT.has(code)) memo.set(id, { code, text: textFor(code, r), stable: false, at: now() });
+		else if (TRANSIENT.has(code)) memo.set(id, { code, text: textFor(code, r), stable: false, at: now(), ttl: TRANSIENT_TTL_BY_CODE[code] || TRANSIENT_TTL_MS });
 	}
 
 	function recalled(id) {
 		const m = memo.get(id);
 		if (!m) return null;
-		if (m.stable ? m.stamp === stamp() : now() - m.at < TRANSIENT_TTL_MS) return m;
+		if (m.stable ? m.stamp === stamp() : now() - m.at < m.ttl) return m;
 		memo.delete(id);
 		return null;
+	}
+
+	/** ebook-convert, when a text that is not cached yet needs it: { ok, path, args } or why not. */
+	function converterState() {
+		if (cfg.audiobookTextConvert === false) return { ok: false, code: 'convert-off' };
+		try {
+			const r = converter.locate(cfg);
+			return r && r.ok ? r : { ok: false, code: 'convert-missing', reason: (r && r.reason) || 'not-found' };
+		} catch (_) {
+			return { ok: false, code: 'convert-missing', reason: 'not-found' };
+		}
+	}
+
+	// A probe found a record to convert while the converter was there; the setting can be turned
+	// off, or the path broken, since, and the card must not offer a 📖 that can only fail.
+	function probeStatus(p) {
+		return p.status === 'available' && p.convert && !converterState().ok ? 'none' : p.status;
 	}
 
 	function recalledProbe(id) {
@@ -391,7 +444,8 @@ function createBookTextSource(deps = {}) {
 		return null;
 	}
 
-	const statusOfMemo = (m) => (m.stable ? (m.code === 'off' ? 'off' : 'none') : 'unknown');
+	const NO_CONVERTER_CODES = new Set(['convert-off', 'convert-missing']);
+	const statusOfMemo = (m) => (m.stable ? (m.code === 'off' ? 'off' : 'none') : NO_CONVERTER_CODES.has(m.code) ? 'none' : 'unknown');
 
 	function emit(id) {
 		for (const fn of listeners) {
@@ -422,7 +476,7 @@ function createBookTextSource(deps = {}) {
 		const m = recalled(work.id);
 		if (m) return statusOfMemo(m);
 		const p = recalledProbe(work.id);
-		if (p) return p.status;
+		if (p) return probeStatus(p);
 		const ptr = safe(() => store.works.peek(work));
 		if (ptr && pointerUsable(ptr, link)) return 'ready';
 		return 'unknown';
@@ -467,7 +521,7 @@ function createBookTextSource(deps = {}) {
 	}
 
 	function labelOf(source, via) {
-		if (source && source.type === 'calibre') return `Calibre #${source.id}`;
+		if (source && source.type === 'calibre') return source.convert ? `Calibre #${source.id} (${formatName(source.format)}, converted to EPUB)` : `Calibre #${source.id}`;
 		return via === 'link' ? 'linked EPUB' : 'EPUB next to the audio';
 	}
 
@@ -528,33 +582,51 @@ function createBookTextSource(deps = {}) {
 		if (code === 'auth') return { code: 'calibre-auth', reason: err.reason, unreachable: true };
 		if (code === 'bad-url') return { code: 'bad-url', reason: err.reason, unreachable: true };
 		if (code === 'too-large') return { code: 'too-large' };
-		if (code === 'no-epub' || code === 'not-found') return { code: 'no-ebook', missing: true };
+		if (code === 'no-epub' || code === 'no-format' || code === 'not-found') return { code: 'no-ebook', missing: true };
 		if (code === 'io') return { code: 'crash' };
 		return { code: 'calibre-unreachable', unreachable: true };
 	}
 
 	async function calibreSource(client, id, book, via) {
-		if (!book || !hasEpub(book)) return { code: 'no-ebook', missing: true };
+		const format = book ? pickFormat(book.formats) : null;
+		if (!format) return { code: 'no-ebook', missing: true };
 		const lib = await client.libraryId();
-		const fm = isObject(book.format_metadata) && isObject(book.format_metadata.epub) ? book.format_metadata.epub : null;
+		const fm = isObject(book.format_metadata) && isObject(book.format_metadata[format]) ? book.format_metadata[format] : null;
 		if (fm && Number(fm.size) > MAX_EPUB_BYTES) return { code: 'too-large' };
-		// The EPUB's own size and mtime, not last_modified: that moves on every tag, rating or
-		// cover edit, which would re-download and re-parse an unchanged book.
+		// The file's own size and mtime, not last_modified: that moves on every tag, rating or
+		// cover edit, which would re-download and re-parse (or convert) an unchanged book.
 		const own = fm && fm.size !== undefined && fm.size !== null && fm.mtime;
-		const fingerprint = own
-			? `calibre:${lib}:${id}:${fm.size}:${fm.mtime}`
-			: `calibre:${lib}:${id}:lm:${book.last_modified || ''}`;
+		const convert = format !== 'epub';
+		// An EPUB's fingerprint is the one every existing pointer was made with; changing it would
+		// read every book in the cache again.
+		const fingerprint = !convert
+			? (own ? `calibre:${lib}:${id}:${fm.size}:${fm.mtime}` : `calibre:${lib}:${id}:lm:${book.last_modified || ''}`)
+			: `calibre:${lib}:${id}:${format}:${own ? `${fm.size}:${fm.mtime}` : `lm:${book.last_modified || ''}`}:cv${CONVERT_VERSION}`;
+		const source = {
+			type: 'calibre', libraryId: lib, id: Number(id),
+			// Not part of the fingerprint: only lets the Calibre index tell a reused id apart.
+			uuid: typeof book.uuid === 'string' && book.uuid ? book.uuid : null,
+			epubSize: own && !convert ? fm.size : null, epubMtime: own && !convert ? fm.mtime : null, fingerprint
+		};
+		if (convert) Object.assign(source, { format, convert: true, formatSize: own ? fm.size : null, formatMtime: own ? fm.mtime : null });
 		return {
-			source: {
-				type: 'calibre', libraryId: lib, id: Number(id),
-				// Not part of the fingerprint: only lets the Calibre index tell a reused id apart.
-				uuid: typeof book.uuid === 'string' && book.uuid ? book.uuid : null,
-				epubSize: own ? fm.size : null, epubMtime: own ? fm.mtime : null, fingerprint
-			},
+			source,
 			via,
 			title: typeof book.title === 'string' ? book.title : null,
 			meta: calibreMetaFrom(book)
 		};
+	}
+
+	/**
+	 * Why a source that must be converted can't be read yet, or null when it can: its text is
+	 * cached (or known bad), or the converter is ready.
+	 */
+	async function convertBlock(r) {
+		if (!r || !r.source || !r.source.convert) return null;
+		const cached = await readCache(cacheBase(r.source.fingerprint, VERSION), r.source.fingerprint);
+		if (cached.index || cached.fail) return null;
+		const st = converterState();
+		return st.ok ? null : { code: st.code, reason: st.reason, format: r.source.format };
 	}
 
 	async function fromCalibre(id, via) {
@@ -589,11 +661,23 @@ function createBookTextSource(deps = {}) {
 		const found = await client.books(ids);
 		const out = [];
 		for (const [id, book] of found) {
-			if (book) out.push({ id, book, epub: hasEpub(book), ...calibreScore(book, work) });
+			if (!book) continue;
+			const format = pickFormat(book.formats);
+			out.push({ id, book, format, epub: format === 'epub', ...calibreScore(book, work) });
 		}
 		return out;
 	}
 
+	// An EPUB beats a record that must be converted at the same rank, so a library holding a book
+	// twice (EPUB and MOBI records) stays unambiguous, as it was before conversion existed.
+	const byRank = (a, b) => b.rank - a.rank || Number(b.epub) - Number(a.epub);
+
+	/**
+	 * Every accepted Calibre record for a work, best first, each with its source (`r`) when it must
+	 * be converted. A record the converter can't read yet is dropped before the ranking, so with
+	 * converting off a lower-ranked EPUB of the same book is read, as it was before conversion
+	 * existed; `blocked` says why the first dropped one was.
+	 */
 	async function matchCalibre(client, work) {
 		let list;
 		try {
@@ -601,10 +685,26 @@ function createBookTextSource(deps = {}) {
 		} catch (err) {
 			return { error: calibreFailure(err) };
 		}
-		const ok = list.filter((c) => c.epub && c.accepted).sort((a, b) => b.rank - a.rank);
-		if (!ok.length) return {};
-		if (ok.length > 1 && ok[0].rank === ok[1].rank) return { ambiguous: true };
-		return { id: ok[0].id, book: ok[0].book };
+		const left = [];
+		let blocked = null;
+		for (const c of list.filter((x) => x.format && x.accepted).sort(byRank)) {
+			if (!c.epub) {
+				try {
+					c.r = await calibreSource(client, c.id, c.book, 'auto');
+				} catch (err) {
+					c.r = calibreFailure(err);
+				}
+				const b = c.r.source ? await convertBlock(c.r) : null;
+				if (b) {
+					blocked = blocked || b;
+					continue;
+				}
+			}
+			left.push(c);
+		}
+		if (!left.length) return { blocked };
+		if (left.length > 1 && left[0].rank === left[1].rank && left[0].epub === left[1].epub) return { ambiguous: true, blocked };
+		return { pick: left[0], blocked };
 	}
 
 	async function sidecarFiles(work) {
@@ -655,23 +755,30 @@ function createBookTextSource(deps = {}) {
 	async function search(work, { noPointer = false } = {}) {
 		let calibreError = null;
 		let ambiguous = false;
+		let blocked = null;
 		const client = calibre();
 		// Only for a work with no pointer: taking the index's match could switch the EPUB of an
 		// existing pointer, and sync marks belong to the text they were made against.
 		const pick = client && noPointer ? pickFromIndex(work) : null;
 		if (pick) {
 			const r = await fromCalibre(pick.id, 'auto');
-			if (r.source) return r;
+			if (r.source) {
+				blocked = await convertBlock(r);
+				if (!blocked) return r;
+			}
 			if (r.unreachable) calibreError = r;
 		}
 		if (client && !calibreError) {
 			const m = await matchCalibre(client, work);
-			if (m.id) {
-				let r;
-				try {
-					r = await calibreSource(client, m.id, m.book, 'auto');
-				} catch (err) {
-					r = calibreFailure(err);
+			blocked = blocked || m.blocked || null;
+			if (m.pick) {
+				let r = m.pick.r;
+				if (!r) {
+					try {
+						r = await calibreSource(client, m.pick.id, m.pick.book, 'auto');
+					} catch (err) {
+						r = calibreFailure(err);
+					}
 				}
 				if (r.source) return r;
 				if (r.unreachable) calibreError = r;
@@ -692,6 +799,8 @@ function createBookTextSource(deps = {}) {
 		}
 		// With Calibre closed the bot cannot know there is no ebook, so it never says so.
 		if (calibreError) return calibreError;
+		// "No ebook" would hide that the owner can fix it with a setting.
+		if (blocked) return blocked;
 		return { code: ambiguous ? 'ambiguous' : 'no-ebook' };
 	}
 
@@ -722,7 +831,16 @@ function createBookTextSource(deps = {}) {
 			await fsp.mkdir(cacheDir, { recursive: true });
 			let input = source.path;
 			let download = null;
-			if (source.type === 'calibre') {
+			let workDir = null;
+			if (source.type === 'calibre' && source.convert) {
+				workDir = fileOf(base, 'convert');
+				const made = await convertCalibre(base, source, workDir);
+				if (!made.path) {
+					await fsp.rm(workDir, { recursive: true, force: true }).catch(() => {});
+					return made;
+				}
+				input = made.path;
+			} else if (source.type === 'calibre') {
 				const client = calibre();
 				if (!client) return { code: 'calibre-off', unreachable: true };
 				download = fileOf(base, 'download.tmp');
@@ -748,10 +866,63 @@ function createBookTextSource(deps = {}) {
 				return { code: cached.fail || 'parse-error' };
 			} finally {
 				if (download) await fsp.rm(download, { force: true }).catch(() => {});
+				if (workDir) await fsp.rm(workDir, { recursive: true, force: true }).catch(() => {});
 			}
 		})().finally(() => IN_FLIGHT.delete(key));
 		IN_FLIGHT.set(key, job);
 		return job;
+	}
+
+	async function writeFailRecord(base, fingerprint, code) {
+		const file = fileOf(base, 'fail.json');
+		try {
+			await fsp.writeFile(`${file}.tmp`, JSON.stringify({ version: VERSION, fingerprint, code, at: now() }));
+			await fsp.rename(`${file}.tmp`, file);
+		} catch (_) {
+			await fsp.rm(`${file}.tmp`, { force: true }).catch(() => {});
+		}
+	}
+
+	/**
+	 * Downloads the record's format into workDir and converts it to workDir/book.epub. The names
+	 * are the bot's own, so no title or Calibre path ever reaches the converter's command line.
+	 * @returns {Promise<{ path: string } | { code: string, reason?: string, format?: string, unreachable?: boolean }>}
+	 */
+	async function convertCalibre(base, source, workDir) {
+		const st = converterState();
+		if (!st.ok) return { code: st.code, reason: st.reason, format: source.format };
+		const client = calibre();
+		if (!client) return { code: 'calibre-off', unreachable: true };
+		await fsp.rm(workDir, { recursive: true, force: true }).catch(() => {});
+		await fsp.mkdir(workDir, { recursive: true });
+		const input = path.join(workDir, `book.${source.format}`);
+		const output = path.join(workDir, 'book.epub');
+		const tempDir = path.join(workDir, 'tmp');
+		await fsp.mkdir(tempDir, { recursive: true });
+		try {
+			await client.downloadFormat(source.id, source.format, input);
+		} catch (err) {
+			return calibreFailure(err);
+		}
+		const res = await converter.convert({ exe: st.path, args: st.args || [], input, output, cwd: workDir, tempDir });
+		const what = `the ${formatName(source.format)} of Calibre #${source.id} (cache ${base})`;
+		if (res && res.ok) {
+			if (res.bytes > MAX_EPUB_BYTES) {
+				await writeFailRecord(base, source.fingerprint, 'too-large');
+				return { code: 'too-large' };
+			}
+			logger.info(`Read-along: converted ${what} to EPUB in ${res.ms ?? '?'} ms, ${res.bytes ?? '?'} bytes.`);
+			return { path: output };
+		}
+		const code = res && res.code;
+		logger.warn(`Read-along: could not convert ${what}: ${code || 'error'}${res && res.exit !== undefined && res.exit !== null ? ` (exit ${res.exit})` : ''}.`);
+		if (code === 'drm' || code === 'convert-error') {
+			await writeFailRecord(base, source.fingerprint, code);
+			return { code };
+		}
+		if (code === 'timeout') return { code: 'convert-timeout' };
+		if (code === 'convert-missing') return { code, reason: 'not-found', format: source.format };
+		return { code: 'crash' };
 	}
 
 	async function fallback(work, r) {
@@ -856,6 +1027,12 @@ function createBookTextSource(deps = {}) {
 				}
 				continue;
 			}
+			// A conversion's folder outlives its run only when the bot was killed during it.
+			if (ext === 'convert') {
+				await fsp.rm(full, { recursive: true, force: true }).catch(() => {});
+				removed++;
+				continue;
+			}
 			if (keep.has(base)) continue;
 			if (ext === 'txt' || ext === 'json' || ext.endsWith('.tmp')) {
 				await fsp.rm(full, { force: true }).catch(() => {});
@@ -941,7 +1118,7 @@ function createBookTextSource(deps = {}) {
 		const m = recalled(id);
 		if (m) return statusOfMemo(m);
 		const known = recalledProbe(id);
-		if (known) return known.status;
+		if (known) return probeStatus(known);
 		const r = await resolve(work);
 		let result;
 		if (r.source) {
@@ -950,15 +1127,43 @@ function createBookTextSource(deps = {}) {
 				remember(id, cached.fail);
 				return 'none';
 			}
+			// A linked or pointed-at record that must be converted reaches here without search()'s
+			// converter check.
+			const blocked = cached.index ? null : await convertBlock(r);
+			if (blocked) {
+				remember(id, blocked.code, blocked);
+				return 'none';
+			}
 			result = cached.index ? 'ready' : 'available';
 		} else if (await fallback(work, r)) {
 			result = 'ready';
 		} else {
 			remember(id, r.code, r);
+			if (NO_CONVERTER_CODES.has(r.code)) return 'none';
 			return STABLE.has(r.code) ? (r.code === 'off' ? 'off' : 'none') : 'unknown';
 		}
-		probes.set(id, { status: result, stable: true, stamp: stamp() });
+		const src = r.source || {};
+		probes.set(id, { status: result, stable: true, stamp: stamp(), convert: !!src.convert, format: src.format || 'epub' });
 		return result;
+	}
+
+	/**
+	 * The format a work's text will be converted from on its first open ('mobi', 'azw3', ...),
+	 * known from its last probe; null when its text is cached, is an EPUB, or can't be converted.
+	 */
+	function pendingConversion(workIn) {
+		const work = fresh(workIn);
+		if (!work || typeof work.id !== 'string' || handles.has(work.id) || recalled(work.id)) return null;
+		const p = recalledProbe(work.id);
+		return p && p.convert && probeStatus(p) === 'available' ? p.format : null;
+	}
+
+	/** The failure a background caller would be answered with now ({ code, text }), or null. */
+	function lastFailure(workIn) {
+		const work = fresh(workIn);
+		if (!work || typeof work.id !== 'string') return null;
+		const m = recalled(work.id);
+		return m ? { code: m.code, text: m.text } : null;
 	}
 
 	function forget(id) {
@@ -1002,13 +1207,20 @@ function createBookTextSource(deps = {}) {
 		}
 		if (!book) return linkRefusal('not-found', `Calibre has no book #${id}.`);
 		const title = typeof book.title === 'string' && book.title ? book.title : `#${id}`;
-		if (!hasEpub(book)) return linkRefusal('no-epub', `Calibre #${id} “${title}” has no EPUB.`);
+		const format = pickFormat(book.formats);
+		if (!format) {
+			const have = (Array.isArray(book.formats) ? book.formats : []).map(formatName).filter(Boolean);
+			return linkRefusal('no-epub', have.length
+				? `Calibre #${id} “${title}” has no EPUB, and its ${have.join(', ')} can't be turned into one.`
+				: `Calibre #${id} “${title}” has no ebook file.`);
+		}
 		const entry = { type: 'calibre', id, by, at: now() };
 		if (isbn) entry.isbn = isbn;
 		store.links.set(work.id, entry);
 		forget(work.id);
 		const opened = await open(work, { force: true, explicit: true, retryFailed: true });
-		const echo = `Linked ${work.title || work.id} to Calibre #${id} “${title}” (EPUB).`;
+		const kind = format === 'epub' ? 'EPUB' : `${formatName(format)}, converted to EPUB`;
+		const echo = `Linked ${work.title || work.id} to Calibre #${id} “${title}” (${kind}).`;
 		return { ok: true, code: 'linked', text: opened.ok ? echo : `${echo} ${opened.text}`, open: { ok: opened.ok, code: opened.ok ? null : opened.code } };
 	}
 
@@ -1076,8 +1288,13 @@ function createBookTextSource(deps = {}) {
 		const show = (p) => (paths ? p : basename(p));
 		const summarize = (src) => (src && src.type === 'file'
 			? { type: 'file', path: show(src.path), size: src.size ?? null }
-			: src ? { type: 'calibre', id: src.id, libraryId: src.libraryId ?? null } : null);
-		const out = { workId: work && work.id, title: work && work.title, status: status(work), link: null, cache: null, candidates: { calibre: [], sidecars: [], calibreError: null }, lastError: null };
+			: src ? { type: 'calibre', id: src.id, libraryId: src.libraryId ?? null, format: src.convert ? src.format : 'epub' } : null);
+		const st = converterState();
+		const out = {
+			workId: work && work.id, title: work && work.title, status: status(work), link: null, cache: null,
+			candidates: { calibre: [], sidecars: [], calibreError: null }, lastError: null,
+			converter: st.ok ? { ok: true } : { ok: false, code: st.code, reason: st.reason || null }
+		};
 		if (!work || typeof work.id !== 'string') return out;
 		const rec = safe(() => store.links.get(work));
 		if (rec) out.link = rec.type === 'file' ? { ...rec, path: show(rec.path) } : { ...rec };
@@ -1104,7 +1321,7 @@ function createBookTextSource(deps = {}) {
 					.map((c) => ({
 						id: c.id, title: c.book.title || null, authors: Array.isArray(c.book.authors) ? c.book.authors : [],
 						series: c.book.series || null, seriesIndex: c.book.series_index ?? null,
-						epub: c.epub, accepted: c.accepted, titleScore: +c.titleScore.toFixed(2)
+						epub: c.epub, format: c.format, accepted: c.accepted, titleScore: +c.titleScore.toFixed(2)
 					}));
 			} catch (err) {
 				out.candidates.calibreError = calibreFailure(err).code;
@@ -1134,9 +1351,12 @@ function createBookTextSource(deps = {}) {
 		try {
 			if (parse && typeof parse.shutdown === 'function') parse.shutdown();
 		} catch (_) { /* nothing left to stop */ }
+		try {
+			if (converter && typeof converter.shutdown === 'function') converter.shutdown();
+		} catch (_) { /* nothing left to stop */ }
 	}
 
-	return { status, probe, open, link, describe, onChange, shutdown };
+	return { status, probe, open, link, describe, onChange, shutdown, pendingConversion, lastFailure };
 }
 
 module.exports = {

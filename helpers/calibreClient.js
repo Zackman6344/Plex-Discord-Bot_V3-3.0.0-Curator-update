@@ -1,8 +1,9 @@
 // helpers/calibreClient.js
 //
 // A GET-only client for the Calibre content server (the one the Calibre app runs while it is
-// open, http://127.0.0.1:8080 by default). The read-along uses it to find a book's EPUB and
-// download it once, and helpers/calibreIndex.js to copy the library's metadata; it never calls
+// open, http://127.0.0.1:8080 by default). The read-along uses it to find a book's EPUB (or a
+// MOBI or AZW3 it converts itself) and download it once, and helpers/calibreIndex.js to copy the
+// library's metadata; it never calls
 // anything that writes to the library.
 //
 // Credentials are the part worth care. fetch puts a URL's userinfo, password included, into its
@@ -250,14 +251,21 @@ function createCalibreClient({
 		}
 	}
 
-	async function downloadEpub(id, destPath) {
+	/**
+	 * Saves one format of a book, as Calibre stores it, to destPath. The read-along downloads an
+	 * EPUB, or a MOBI or AZW3 it converts itself (helpers/ebookConvert.js).
+	 */
+	async function downloadFormat(id, format, destPath) {
 		const n = Number(id);
+		const fmt = String(format || '').toUpperCase();
+		if (!/^[A-Z0-9_-]{1,12}$/.test(fmt)) throw new CalibreError('bad-format', `"${fmt.slice(0, 12)}" is not an ebook format name.`);
 		const lib = await getLibraryId();
-		const what = `the EPUB of book #${n}`;
-		const res = await request(`/get/EPUB/${seg(n)}/${seg(lib)}`, { timeoutMs: downloadTimeoutMs, what });
+		const what = `the ${fmt} of book #${n}`;
+		const res = await request(`/get/${seg(fmt)}/${seg(n)}/${seg(lib)}`, { timeoutMs: downloadTimeoutMs, what });
 		if (res.status === 404) {
 			await res.body?.cancel().catch(() => {});
-			throw new CalibreError('no-epub', `Calibre at ${host} has no EPUB for book #${n}.`, { host });
+			if (fmt === 'EPUB') throw new CalibreError('no-epub', `Calibre at ${host} has no EPUB for book #${n}.`, { host });
+			throw new CalibreError('no-format', `Calibre at ${host} has no ${fmt} for book #${n}.`, { host, format: fmt });
 		}
 		if (!res.ok || !res.body) {
 			await res.body?.cancel().catch(() => {});
@@ -266,14 +274,14 @@ function createCalibreClient({
 		const declared = Number(res.headers.get('content-length'));
 		if (Number.isFinite(declared) && declared > maxBytes) {
 			await res.body.cancel().catch(() => {});
-			throw new CalibreError('too-large', `The EPUB of book #${n} is larger than ${Math.round(maxBytes / 1048576)} MB.`, { host, bytes: declared });
+			throw new CalibreError('too-large', `The ${fmt} of book #${n} is larger than ${Math.round(maxBytes / 1048576)} MB.`, { host, bytes: declared });
 		}
 		let bytes = 0;
 		const counter = new Transform({
 			transform(chunk, _enc, done) {
 				bytes += chunk.length;
 				if (bytes > maxBytes) {
-					done(new CalibreError('too-large', `The EPUB of book #${n} is larger than ${Math.round(maxBytes / 1048576)} MB.`, { host }));
+					done(new CalibreError('too-large', `The ${fmt} of book #${n} is larger than ${Math.round(maxBytes / 1048576)} MB.`, { host }));
 					return;
 				}
 				done(null, chunk);
@@ -284,11 +292,15 @@ function createCalibreClient({
 		} catch (err) {
 			await fs.promises.rm(destPath, { force: true }).catch(() => {});
 			if (err && err.syscall && !(err.cause && err.cause.code)) {
-				throw new CalibreError('io', `The EPUB of book #${n} could not be saved (${err.code || 'error'}).`, { host, cause: err.code || null });
+				throw new CalibreError('io', `The ${fmt} of book #${n} could not be saved (${err.code || 'error'}).`, { host, cause: err.code || null });
 			}
 			throw toError(err, what);
 		}
 		return { bytes };
+	}
+
+	function downloadEpub(id, destPath) {
+		return downloadFormat(id, 'epub', destPath);
 	}
 
 	return {
@@ -298,7 +310,8 @@ function createCalibreClient({
 		searchPage,
 		books,
 		book,
-		downloadEpub
+		downloadEpub,
+		downloadFormat
 	};
 }
 

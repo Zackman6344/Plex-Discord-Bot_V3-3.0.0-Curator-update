@@ -113,6 +113,17 @@ async function server({ auth = null, user = 'reader', pass = 'open sesame', pref
 			}
 			return json(200, BOOKS[book[1]]);
 		}
+		const other = p.match(/^\/get\/AZW3\/(\d+)\/(.+)$/);
+		if (other) {
+			if (other[1] === '3' && other[2] === LIB) {
+				res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': EPUB_BYTES.length });
+				res.end(EPUB_BYTES);
+				return;
+			}
+			res.writeHead(404, { 'Content-Type': 'text/plain' });
+			res.end('not found');
+			return;
+		}
 		const get = p.match(/^\/get\/EPUB\/(\d+)\/(.+)$/);
 		if (get) {
 			if (get[1] === '1') {
@@ -253,6 +264,26 @@ test('an EPUB download streams to the file and reports its size', async () => {
 		assert.ok(fs.readFileSync(dest).equals(EPUB_BYTES));
 		await rejects(c.downloadEpub(404, pathMod.join(TMP, 'none.tmp')), 'no-epub');
 		assert.ok(!fs.existsSync(pathMod.join(TMP, 'none.tmp')));
+	} finally {
+		await s.close();
+	}
+});
+
+// The bug: the read-along could download only an EPUB, so a book Calibre had as AZW3 had no text.
+test('another format downloads from its own /get/ route with a GET, and a bad format name is refused unsent', async () => {
+	const s = await server();
+	try {
+		const c = createCalibreClient({ url: s.url });
+		const dest = pathMod.join(TMP, 'three.azw3');
+		assert.deepStrictEqual(await c.downloadFormat(3, 'azw3', dest), { bytes: EPUB_BYTES.length });
+		assert.ok(fs.readFileSync(dest).equals(EPUB_BYTES));
+		const missing = await rejects(c.downloadFormat(4, 'azw3', pathMod.join(TMP, 'four.azw3')), 'no-format');
+		assert.strictEqual(missing.message, `Calibre at ${s.host} has no AZW3 for book #4.`);
+		assert.ok(!fs.existsSync(pathMod.join(TMP, 'four.azw3')));
+		const before = s.requests.length;
+		await rejects(c.downloadFormat(3, '../cdb/x', pathMod.join(TMP, 'never.bin')), 'bad-format');
+		assert.strictEqual(s.requests.length, before);
+		assert.deepStrictEqual(s.requests.filter((r) => r.url.startsWith('/get/')).map((r) => [r.method, r.url]), [['GET', `/get/AZW3/3/${LIB}`], ['GET', `/get/AZW3/4/${LIB}`]]);
 	} finally {
 		await s.close();
 	}

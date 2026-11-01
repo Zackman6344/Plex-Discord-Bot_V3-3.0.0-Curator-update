@@ -1,5 +1,6 @@
-// /book calibre (owner): which audiobooks have no Calibre record, which have several, and the
-// state of the Calibre index (helpers/calibreIndex.js).
+// /book calibre (owner): which audiobooks have no Calibre record, which have several, which
+// matched records give the read-along no text (no EPUB and nothing ebook-convert reads, or a MOBI
+// while converting is off), and the state of the Calibre index (helpers/calibreIndex.js).
 //
 // Read from the index's saved copy only, so the reply never waits on Calibre; `refresh` starts a
 // read of the library in the background and says so. Replies name books by title and id and
@@ -77,6 +78,53 @@ function statusLines(idx) {
 	return lines;
 }
 
+function converterState() {
+	if (config.audiobookTextConvert === false) return { ok: false, code: 'convert-off' };
+	try {
+		const r = require('../../helpers/ebookConvert.js').instance().locate(config);
+		return r && r.ok ? { ok: true } : { ok: false, code: 'convert-missing' };
+	} catch (_) {
+		return { ok: false, code: 'convert-missing' };
+	}
+}
+
+function textPointer(w) {
+	try {
+		return require('../../helpers/bookTextStore.js').works.peek(w);
+	} catch (_) {
+		return null;
+	}
+}
+
+/**
+ * What a matched record gives the read-along, so "matched" never silently means "no text":
+ * null for an EPUB (or with the read-along off), else
+ * { kind: 'convert'|'converted'|'blocked'|'none', text }. conv() is asked only for a record that
+ * needs converting, and pointer(w) only when the converter can't run.
+ */
+function textNote(idx, w, m, conv, pointer) {
+	if (config.audiobookTextEnabled === false || !m || m.id === null) return null;
+	const r = idx.recordOf(m.id);
+	if (!r || !Array.isArray(r.formats)) return null;
+	const formats = r.formats;
+	const { pickFormat } = require('../../helpers/ebookConvert.js');
+	const format = pickFormat(formats);
+	if (format === 'epub') return null;
+	if (format) {
+		const name = format.toUpperCase();
+		const state = conv();
+		if (state.ok) return { kind: 'convert', text: `${name} only, converted to EPUB the first time its text opens` };
+		const why = state.code === 'convert-off' ? 'new conversions are off (audiobookTextConvert)' : 'ebook-convert wasn\'t found';
+		// A text converted earlier stays in the read-along's cache and still opens.
+		const ptr = pointer(w);
+		const src = ptr && ptr.source;
+		if (src && src.type === 'calibre' && src.convert && Number(src.id) === Number(m.id)) return { kind: 'converted', text: `${name} only, converted earlier, so its text still opens; ${why}` };
+		return { kind: 'blocked', text: state.code === 'convert-off' ? `${name} only, and converting is off (audiobookTextConvert), so no text from Calibre` : `${name} only, and ebook-convert wasn't found, so no text from Calibre` };
+	}
+	const have = formats.map((f) => String(f).toUpperCase());
+	return { kind: 'none', text: have.length ? `no text from Calibre: ${have.join(', ')} can't be read` : 'no text from Calibre: the record has no file' };
+}
+
 // Two narrations of one title are told apart the way the library lists them.
 function rowName(w) {
 	const which = w.edition ? ` (${esc(w.edition)})` : w.narrator ? ` (read by ${esc(w.narrator)})` : '';
@@ -88,8 +136,11 @@ function rowName(w) {
  * @param {object[]} works
  * @param {object} idx the Calibre index
  * @param {'missing'|'all'} show
+ * @param {{ converter?: () => { ok: boolean, code?: string }, pointer?: (work: object) => object|null }} [opts]
+ *   converter: whether ebook-convert can run now; pointer: the read-along's text pointer for a
+ *   work (test seams; the defaults look for ebook-convert and read bookTextStore)
  */
-function reportChunks(works, idx, show = 'missing') {
+function reportChunks(works, idx, show = 'missing', opts = {}) {
 	const p = prefix();
 	const s = sortOut(works, idx);
 	const total = Object.values(s).reduce((n, list) => n + list.length, 0);
@@ -108,13 +159,25 @@ function reportChunks(works, idx, show = 'missing') {
 			lines.push(`• ${rowName(w)}: ${ids.join(', ') || 'no candidates kept'}`);
 		}
 	}
+	let state = null;
+	const conv = () => state || (state = (opts.converter || converterState)());
+	const pointer = opts.pointer || textPointer;
+	const matchedRows = [...s.pinned, ...s.exact, ...s.likely].map((row) => ({ ...row, note: textNote(idx, row.w, row.m, conv, pointer) }));
+	if (show !== 'all') {
+		const noText = matchedRows.filter((row) => row.note && (row.note.kind === 'blocked' || row.note.kind === 'none'));
+		if (noText.length) {
+			lines.push('', `**Matched, but Calibre gives the read-along no text** (${noText.length})`);
+			for (const { w, m, note } of noText) lines.push(`• ${rowName(w)}: ${recordName(idx, m.id)}, ${note.text}`);
+		}
+		const converted = matchedRows.filter((row) => row.note && row.note.kind === 'convert').length;
+		if (converted) lines.push('', `${converted} matched book${converted === 1 ? ' is' : 's are'} in Calibre only as MOBI, AZW3 or similar; the text is converted to EPUB the first time it opens.`);
+	}
 	if (show === 'all') {
-		const matched = [...s.pinned, ...s.exact, ...s.likely];
-		if (matched.length) {
-			lines.push('', `**Matched** (${matched.length})`);
-			for (const { w, m } of matched) {
+		if (matchedRows.length) {
+			lines.push('', `**Matched** (${matchedRows.length})`);
+			for (const { w, m, note } of matchedRows) {
 				const how = m.method === 'pin' ? 'your pin' : m.method === 'link' ? 'your ebook link' : m.method === 'read-along' ? 'the read-along\'s ebook' : `${m.verdict}: ${m.method}`;
-				lines.push(`• ${rowName(w)}: ${recordName(idx, m.id)} (${how})`);
+				lines.push(`• ${rowName(w)}: ${recordName(idx, m.id)} (${how})${note ? `; ${note.text}` : ''}`);
 			}
 		}
 		if (s.forbidden.length) {
