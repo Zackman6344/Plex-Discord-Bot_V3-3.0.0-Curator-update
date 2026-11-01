@@ -27,7 +27,7 @@ process.env.PLEXBOT_LOG_DIR = pathMod.join(os.tmpdir(), `plexbot-test-book-engin
 const voice = require('@discordjs/voice');
 const bookmarks = require('../helpers/bookmarks.js');
 const voiceClaims = require('../helpers/voiceClaims.js');
-const { createBookDirector } = require('../helpers/bookEngine.js');
+const { createBookDirector, controlsMode } = require('../helpers/bookEngine.js');
 
 const S = 1000;
 const MIN = 60 * S;
@@ -958,4 +958,215 @@ test('a card button resolves its session id, and a stale id is told apart', asyn
 	assert.strictEqual(h.director.sessionById('nope00'), null);
 	h.director.control('g1', h.listener, 'stop');
 	assert.strictEqual(h.director.controlSession(s, h.listener, 'resume').code, 'no-session');
+});
+
+// ---- who may use the card (config.audiobookControls) --------------------------------------
+//
+// The bug: anyone other than the listener could only pause or stop a book, so friends listening
+// together in one voice channel could not skip back for each other; the owner asked for a setting
+// whose default is "whoever was in the channel when the book started".
+
+const MODES = ['started', 'voice', 'listener', 'everyone'];
+
+function leave(h, m) {
+	// discord.js keeps a left member's VoiceState, with a null channel.
+	h.guild.voiceStates.cache.set(m.id, { channelId: null });
+	m.voice.channel = null;
+}
+
+function rejoin(h, m) {
+	h.guild.voiceStates.cache.set(m.id, { channelId: h.voiceChannel.id });
+	m.voice.channel = h.voiceChannel;
+}
+
+// Ana and Ben are in the listener's channel before the book starts, with a music bot and this bot;
+// Cleo is in another channel; Dan joins after the start; the owner is not in voice.
+async function group(h, extra = { workId: LONG.id }) {
+	const ana = makeMember(h.guild, 'u2', 'Ana', h.voiceChannel);
+	const ben = makeMember(h.guild, 'u3', 'Ben', h.voiceChannel);
+	h.guild.voiceStates.cache.set('b9', { channelId: h.voiceChannel.id, member: { id: 'b9', user: { id: 'b9', bot: true } } });
+	h.guild.voiceStates.cache.set('bot', { channelId: h.voiceChannel.id });
+	const cleo = makeMember(h.guild, 'u5', 'Cleo', { id: 'v2', name: 'Other Room', guild: h.guild });
+	const s = await playing(h, extra);
+	const dan = makeMember(h.guild, 'u4', 'Dan', h.voiceChannel);
+	const owner = makeMember(h.guild, 'owner', 'Owner', null);
+	return { s, ana, ben, cleo, dan, owner };
+}
+
+test('the started snapshot is the humans in the channel as the book starts, never a bot, a later join or another channel', async (t) => {
+	const h = harness();
+	t.after(() => h.done());
+	const { s } = await group(h);
+	assert.deepStrictEqual([...s.startedWith].sort(), ['u1', 'u2', 'u3']);
+});
+
+test('each mode decides who besides the listener may use every control', async (t) => {
+	const h = harness();
+	t.after(() => h.done());
+	const { s, ana, cleo, dan, owner } = await group(h);
+	// [member, may seek, may pause] with the listener in the channel.
+	const expect = {
+		started: [[h.listener, true, true], [ana, true, true], [dan, false, false], [cleo, false, false], [owner, false, true]],
+		voice: [[h.listener, true, true], [ana, true, true], [dan, true, true], [cleo, false, false], [owner, false, true]],
+		listener: [[h.listener, true, true], [ana, false, false], [dan, false, false], [cleo, false, false], [owner, false, true]],
+		everyone: [[h.listener, true, true], [ana, true, true], [dan, true, true], [cleo, true, true], [owner, true, true]]
+	};
+	for (const mode of MODES) {
+		h.deps.config.audiobookControls = mode;
+		for (const [m, seek, pause] of expect[mode]) {
+			for (const action of ['fwd', 'back', 'chapter', 'speed', 'sleep', 'goto']) {
+				assert.strictEqual(h.director.canControl(s, m, action), seek, `${mode}: ${m.displayName} ${action}`);
+			}
+			assert.strictEqual(h.director.canControl(s, m, 'pause'), pause, `${mode}: ${m.displayName} pause`);
+			assert.strictEqual(h.director.canControl(s, m, 'stop'), pause, `${mode}: ${m.displayName} stop`);
+		}
+	}
+});
+
+test('the refusal names the rule in force, with no em-dash', async (t) => {
+	const h = harness();
+	t.after(() => h.done());
+	const { cleo } = await group(h);
+	const said = {};
+	for (const mode of MODES.filter(m => m !== 'everyone')) {
+		h.deps.config.audiobookControls = mode;
+		const r = h.director.control('g1', cleo, 'fwd', 30);
+		assert.strictEqual(r.code, 'forbidden', mode);
+		assert.doesNotMatch(r.text, /—/, mode);
+		said[mode] = r.text;
+	}
+	assert.strictEqual(said.started, 'This is Reader\'s book. Only people who were in 🔊 Reading Room when this book started, and are still in it, can use its buttons. Anyone in 🔊 Reading Room may pause or stop once Reader has left it.');
+	assert.strictEqual(said.voice, 'This is Reader\'s book. Only people in 🔊 Reading Room can use its buttons.');
+	assert.strictEqual(said.listener, 'This is Reader\'s book. Only they can use its buttons. Anyone in 🔊 Reading Room may pause or stop once Reader has left it.');
+});
+
+test('a snapshot member who left the channel is refused until they come back', async (t) => {
+	const h = harness();
+	t.after(() => h.done());
+	const { s, ana } = await group(h);
+	leave(h, ana);
+	assert.strictEqual(h.director.canControl(s, ana, 'fwd'), false);
+	assert.strictEqual(h.director.canControl(s, ana, 'pause'), false);
+	assert.strictEqual(h.director.control('g1', ana, 'fwd', 30).code, 'forbidden');
+	rejoin(h, ana);
+	assert.strictEqual(h.director.canControl(s, ana, 'fwd'), true);
+	assert.strictEqual(h.director.control('g1', ana, 'fwd', 30).code, 'ok');
+});
+
+test('the owner, and anyone left in the channel after the listener goes, may pause and stop in every mode', async (t) => {
+	const h = harness();
+	t.after(() => h.done());
+	const { s, dan, cleo, owner } = await group(h);
+	h.guild.voiceStates.cache.delete('u1');
+	for (const mode of MODES) {
+		h.deps.config.audiobookControls = mode;
+		assert.strictEqual(h.director.canControl(s, dan, 'pause'), true, `${mode}: a later join in the channel may pause`);
+		assert.strictEqual(h.director.canControl(s, dan, 'stop'), true, `${mode}: and stop`);
+		assert.strictEqual(h.director.canControl(s, dan, 'fwd'), false, `${mode}: but not seek while the listener is away`);
+		assert.strictEqual(h.director.canControl(s, owner, 'pause'), true, `${mode}: the owner may pause`);
+		assert.strictEqual(h.director.canControl(s, owner, 'stop'), true, `${mode}: the owner may stop`);
+		assert.strictEqual(h.director.canControl(s, owner, 'speed'), false, `${mode}: the owner's speed`);
+		assert.strictEqual(h.director.canControl(s, cleo, 'pause'), mode === 'everyone', `${mode}: another channel`);
+		assert.strictEqual(h.director.canControl(s, h.listener, 'speed'), true, `${mode}: the listener, even away`);
+	}
+});
+
+// The bug: in 'started' and 'voice' mode someone else in the channel could resume a book that had
+// parked because the listener left, and drive it on. Nothing parked it again, so it played on the
+// listener's bookmark, speed and listened time with the listener gone, and could mark it finished.
+test('while the listener is away a starting member may pause or stop but not resume or move the book', async (t) => {
+	const h = harness();
+	t.after(() => h.done());
+	const { s, ana, dan } = await group(h);
+	leave(h, h.listener);
+	h.client.emit('voiceStateUpdate', { id: 'u1', guild: h.guild, channelId: 'v1' }, { id: 'u1', guild: h.guild, channelId: null });
+	assert.deepStrictEqual([s.state, s.pauseReason], ['paused', 'listener-left']);
+	for (const mode of ['started', 'voice']) {
+		h.deps.config.audiobookControls = mode;
+		for (const [m, action] of [[ana, 'toggle'], [ana, 'resume'], [ana, 'speed'], [dan, 'toggle'], [ana, 'fwd']]) {
+			const r = h.director.control('g1', m, action, action === 'speed' ? 2 : 30);
+			assert.strictEqual(r.code, 'forbidden', `${mode}: ${m.displayName} ${action}`);
+		}
+		assert.deepStrictEqual([s.state, s.pauseReason], ['paused', 'listener-left'], mode);
+	}
+	h.deps.config.audiobookControls = 'started';
+	const refused = h.director.control('g1', ana, 'toggle');
+	assert.strictEqual(refused.text, 'This is Reader\'s book. Reader has left 🔊 Reading Room, so the book waits for them to come back. Until then anyone in it may pause or stop.');
+	assert.strictEqual(h.director.canControl(s, ana, 'stop'), true, 'stopping stays open');
+
+	rejoin(h, h.listener);
+	assert.strictEqual(h.director.control('g1', ana, 'toggle').code, 'ok', 'once the listener is back a starting member may resume');
+	assert.strictEqual(s.state, 'playing');
+});
+
+test('a blank or unknown setting falls back to started', async (t) => {
+	const h = harness();
+	t.after(() => h.done());
+	const { s, ana, dan } = await group(h);
+	for (const value of [undefined, null, '', 'nobody', 42]) {
+		h.deps.config.audiobookControls = value;
+		assert.strictEqual(h.director.canControl(s, ana, 'fwd'), true, String(value));
+		assert.strictEqual(h.director.canControl(s, dan, 'fwd'), false, String(value));
+		assert.match(h.director.control('g1', dan, 'fwd', 30).text, /when this book started/, String(value));
+	}
+	h.deps.config.audiobookControls = ' Voice ';
+	assert.strictEqual(h.director.canControl(s, dan, 'fwd'), true, 'case and spaces are forgiven');
+	assert.strictEqual(controlsMode(' Voice '), 'voice');
+	assert.strictEqual(controlsMode('bogus'), 'started');
+});
+
+test('a setting change applies to the next click', async (t) => {
+	const h = harness();
+	t.after(() => h.done());
+	const { s, dan } = await group(h);
+	assert.strictEqual(h.director.controlSession(s, dan, 'fwd', 30).code, 'forbidden');
+	h.deps.config.audiobookControls = 'voice';
+	const r = h.director.controlSession(s, dan, 'fwd', 30);
+	assert.strictEqual(r.code, 'ok');
+	h.deps.config.audiobookControls = 'listener';
+	assert.strictEqual(h.director.controlSession(s, dan, 'fwd', 30).code, 'forbidden');
+});
+
+test('a button, a !book command and a generic command agree in every mode', async (t) => {
+	const h = harness();
+	t.after(() => h.done());
+	const { s, ana, dan, cleo } = await group(h);
+	const replies = [];
+	const msg = (member) => ({ guild: h.guild, member, reply(p) { replies.push(p.content); return Promise.resolve(); } });
+	for (const mode of MODES) {
+		h.deps.config.audiobookControls = mode;
+		for (const m of [ana, dan, cleo]) {
+			const allowed = h.director.canControl(s, m, 'pause');
+			const button = h.director.controlSession(s, m, 'toggle', undefined, { cardUpdated: true });
+			assert.strictEqual(button.ok, allowed, `${mode}: ${m.displayName} button`);
+			if (allowed) h.director.control('g1', h.listener, 'resume');
+			const command = h.director.control('g1', m, 'pause');
+			assert.strictEqual(command.ok, allowed, `${mode}: ${m.displayName} !book pause`);
+			if (allowed) h.director.control('g1', h.listener, 'resume');
+			assert.strictEqual(h.director.routeGeneric('pause', msg(m)), true);
+			const generic = replies.pop();
+			assert.strictEqual(s.state, allowed ? 'paused' : 'playing', `${mode}: ${m.displayName} !pause`);
+			if (allowed) h.director.control('g1', h.listener, 'resume');
+			else {
+				assert.strictEqual(generic, button.text, `${mode}: one refusal for both`);
+				assert.strictEqual(command.text, button.text);
+				h.director.routeGeneric('stop', msg(m));
+				assert.match(replies.pop(), /^Reader's book keeps playing\. Only /, `${mode}: ${m.displayName} !stop`);
+				assert.strictEqual(s.state, 'playing');
+			}
+		}
+	}
+});
+
+test('every new session takes a new snapshot: a later join is in the next book\'s', async (t) => {
+	const h = harness();
+	t.after(() => h.done());
+	const { s, dan } = await group(h, { workId: SHORT.id });
+	assert.strictEqual(s.startedWith.has('u4'), false);
+	await playing(h, { workId: LONG.id });
+	const next = h.session();
+	assert.notStrictEqual(next, s, 'a switch is a new session');
+	assert.strictEqual(next.startedWith.has('u4'), true);
+	assert.strictEqual(h.director.canControl(next, dan, 'fwd'), true);
+	assert.strictEqual(h.director.canControl(s, dan, 'fwd'), false, 'the old session keeps its own');
 });

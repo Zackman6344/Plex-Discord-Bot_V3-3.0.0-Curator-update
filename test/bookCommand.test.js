@@ -804,6 +804,18 @@ test('text and link are /book subcommands, in the usage line and the sub-help', 
 	assert.ok(!/\/config/.test(help));
 });
 
+test('the help says who can use a book card\'s buttons under the setting in force', () => {
+	const line = (mode) => book._internal.helpEmbed({ config: { commandPrefix: '!', audiobookControls: mode } }).data.description
+		.split('\n').find(l => l.startsWith('> Pause, resume, stop'));
+	assert.strictEqual(line('started'), '> Pause, resume, stop, the card\'s buttons and these moving-around commands: the listener and anyone who was in voice when the book started and is still there. While the listener is out of the channel, others may only pause or stop. The bot owner can change who.');
+	const help = book._internal.helpEmbed({ config: { commandPrefix: '!' } }).data.description;
+	assert.ok(help.indexOf(line('started')) > help.indexOf('MOVING AROUND'), 'it sits with the commands it covers, after book now');
+	assert.match(line('voice'), /: the listener and anyone in the book's voice channel\./);
+	assert.match(line('listener'), /: only the listener\./);
+	assert.match(line('everyone'), /: anyone\./);
+	assert.strictEqual(line('nonsense'), line('started'), 'an unknown value reads as the default');
+});
+
 // The bug: Number(null) is 0, so a series with no number (a podcast, or a series the online
 // lookup filled without one) was listed as "#null" and sorted ahead of book 1.
 test('the library lists a series book with no number without "#null", after the numbered ones', () => {

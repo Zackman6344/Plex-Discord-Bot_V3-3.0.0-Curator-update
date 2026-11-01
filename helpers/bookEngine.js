@@ -59,8 +59,17 @@ const STILL_JOINING = 'Still joining the voice channel, one moment.';
 const CHOICES_MAX = 5;
 const ACTIONS = new Set(['pause', 'resume', 'stop', 'back', 'fwd', 'goto', 'chapter', 'nextch', 'prevch', 'speed', 'sleep']);
 const ALIASES = { forward: 'fwd', next: 'nextch', prev: 'prevch', skip: 'nextch' };
-// What someone other than the listener may do (plan 3.11).
+// What the bot owner may always do, and anyone in the book's channel once the listener has left
+// it (plan 3.11), whatever audiobookControls says.
 const OPEN_ACTIONS = new Set(['pause', 'stop']);
+const CONTROL_MODES = new Set(['started', 'voice', 'listener', 'everyone']);
+const DEFAULT_CONTROL_MODE = 'started';
+
+/** config.audiobookControls as one of CONTROL_MODES; a blank or unknown value is the default. */
+function controlsMode(value) {
+	const v = String(value == null ? '' : value).trim().toLowerCase();
+	return CONTROL_MODES.has(v) ? v : DEFAULT_CONTROL_MODE;
+}
 
 function defaultCreatePlayer() {
 	// Pause, not Stop: a voice blip auto-pauses and resumes on Ready instead of ending the part.
@@ -1011,20 +1020,77 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 		return a;
 	}
 
+	// The guild cache first: discord.js's member.voice reads the same entry, and a test's fake
+	// member keeps its join-time channel.
+	function channelIdOf(s, member) {
+		const id = memberId(member);
+		const cache = s.guild && s.guild.voiceStates && s.guild.voiceStates.cache;
+		const vs = id && cache && typeof cache.get === 'function' ? cache.get(id) : null;
+		if (vs) return vs.channelId || null;
+		const voice = member && member.voice;
+		return (voice && (voice.channelId || (voice.channel && voice.channel.id))) || null;
+	}
+
+	// The humans in the channel as the session is made. Keyed by the cache's own keys, since a
+	// VoiceState's id is its user's id and the fakes in tests carry none.
+	function voiceSnapshot(guild, channelId, userId) {
+		const ids = new Set([String(userId)]);
+		const cache = guild && guild.voiceStates && guild.voiceStates.cache;
+		if (!cache || typeof cache[Symbol.iterator] !== 'function') return ids;
+		const botId = client && client.user && client.user.id;
+		for (const [key, vs] of cache) {
+			if (!vs || vs.channelId !== channelId) continue;
+			const id = String(key);
+			const user = vs.member && vs.member.user;
+			if (id === botId || (user && user.bot)) continue;
+			ids.add(id);
+		}
+		return ids;
+	}
+
+	// Only when the guild's voice cache says so: a guild with no cache can't tell, and must not
+	// take the mode's rights away from everyone.
+	function listenerAway(s) {
+		const cache = s.guild && s.guild.voiceStates && s.guild.voiceStates.cache;
+		return !!cache && typeof cache.get === 'function' && !listenerInChannel(s);
+	}
+
 	/**
-	 * Plan 3.11: the listener does everything; the bot owner, and anyone in the book's channel
-	 * while the listener is not in it, may pause and stop.
+	 * Plan 3.11 and config.audiobookControls, read on every check so a change applies to the
+	 * next click: the listener does everything; who else may depends on the mode. In every mode
+	 * the bot owner, and anyone in the book's channel while the listener is not in it, may pause
+	 * and stop. While the listener is away nobody else may do more: a book parked because they
+	 * left waits for them, and resumed by someone else it would play on their bookmark, speed
+	 * and listened time with no one to stop it.
 	 */
 	function canControl(s, member, action) {
 		if (!s || !member) return false;
 		const id = memberId(member);
 		if (id && id === s.userId) return true;
-		if (!OPEN_ACTIONS.has(normalise(s, action))) return false;
+		const inBookChannel = channelIdOf(s, member) === s.voiceChannelId;
+		const mode = controlsMode(cfg().audiobookControls);
 		const owner = cfg().ownerId;
-		if (owner && id === String(owner)) return true;
-		const voice = member.voice;
-		const inBookChannel = !!voice && (voice.channelId || (voice.channel && voice.channel.id)) === s.voiceChannelId;
+		const isOwner = !!owner && id === String(owner);
+		if (listenerAway(s)) return OPEN_ACTIONS.has(normalise(s, action)) && (isOwner || inBookChannel || mode === 'everyone');
+		if (mode === 'everyone') return true;
+		if (mode === 'voice' && inBookChannel) return true;
+		if (mode === 'started' && inBookChannel && !!s.startedWith && s.startedWith.has(id)) return true;
+		if (!OPEN_ACTIONS.has(normalise(s, action))) return false;
+		if (isOwner) return true;
 		return inBookChannel && !listenerInChannel(s);
+	}
+
+	// The rule in force, for a refusal; the caller puts the listener's name in front.
+	function controlRule(s) {
+		const room = s.voiceChannelName ? `🔊 ${s.voiceChannelName}` : 'its voice channel';
+		const leftTail = ` Anyone in ${room} may pause or stop once ${s.listenerName} has left it.`;
+		if (listenerAway(s)) return `${s.listenerName} has left ${room}, so the book waits for them to come back. Until then anyone in it may pause or stop.`;
+		switch (controlsMode(cfg().audiobookControls)) {
+			case 'voice': return `Only people in ${room} can use its buttons.`;
+			case 'listener': return `Only they can use its buttons.${leftTail}`;
+			case 'everyone': return 'You can\'t use its buttons right now.';
+			default: return `Only people who were in ${room} when this book started, and are still in it, can use its buttons.${leftTail}`;
+		}
 	}
 
 	// ---- controls -------------------------------------------------------------------------
@@ -1175,7 +1241,7 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 		const a = normalise(s, action);
 		if (!ACTIONS.has(a)) return result(false, 'bad-action', `Unknown book control: ${action}.`);
 		if (!canControl(s, member, a)) {
-			return result(false, 'forbidden', `This is ${s.listenerName}'s book: only they can control it. Stop is open to everyone once they've left the channel.`, { sessionId: s.id });
+			return result(false, 'forbidden', `This is ${s.listenerName}'s book. ${controlRule(s)}`, { sessionId: s.id });
 		}
 		// player and conn do not exist yet.
 		if (s.state === 'starting' && a !== 'stop') return result(false, 'starting', STILL_JOINING, { sessionId: s.id });
@@ -1451,6 +1517,8 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 			work,
 			voiceChannelId: voiceChannel.id,
 			voiceChannelName: voiceChannel.name || null,
+			// Who may use the card under audiobookControls 'started'. A later join is never added.
+			startedWith: voiceSnapshot(guild, voiceChannel.id, userId),
 			textChannel: textChannel || null,
 			conn: undefined,
 			player: undefined,
@@ -1664,7 +1732,7 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 		let text;
 		if (action === 'stop' && !canControl(s, message.member, action)) {
 			const queued = bot && Array.isArray(bot.songQueue) && bot.songQueue.length > 0;
-			text = `${s.listenerName}'s book keeps playing: only they can stop it, or anyone in its voice channel once they've left.${queued ? ' The music queue is cleared.' : ''}`;
+			text = `${s.listenerName}'s book keeps playing. ${controlRule(s)}${queued ? ' The music queue is cleared.' : ''}`;
 		} else {
 			text = controlSession(s, message.member, action, undefined, { reason: 'generic' }).text;
 		}
@@ -1801,4 +1869,4 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 	};
 }
 
-module.exports = { createBookDirector, BUFFERING_TIMEOUT_MS };
+module.exports = { createBookDirector, controlsMode, BUFFERING_TIMEOUT_MS };

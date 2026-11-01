@@ -46,6 +46,10 @@ const defaults = {
   'calibreLibraryId' : '',   // blank = the server's default library
   'calibreUsername'  : '',
   'calibrePassword'  : '',
+  // Calibre's ebook-convert program. The read-along uses it to turn a MOBI or AZW3 ebook into
+  // EPUB, into its own copy in data/book_text/; the Calibre library is not changed. Blank finds it
+  // in Calibre's install folder or on PATH.
+  'calibreConvertPath' : '',
 
   // --- Automated broadcasts (Kometa runs + Playnite game launches) ---
   // Discord channel IDs the bot posts to. Kometa runs and game launches each have their own
@@ -228,6 +232,18 @@ const defaults = {
   // changes every 15 minutes while Calibre is open, and only reads. `!book calibre` lists the books
   // with no match. Off by default.
   'audiobookCalibreSort' : false,
+  // When a book's ebook is in Calibre only as MOBI or AZW3, convert it to EPUB with Calibre's
+  // ebook-convert (calibreConvertPath) the first time its text is opened, so the read-along can
+  // use it. The first open takes about a minute; the converted text is kept.
+  'audiobookTextConvert' : true,
+  // Who may use a playing book's card buttons (pause, back and forward, chapters, speed, sleep,
+  // stop) and the same !book commands. The listener always may. 'started': anyone who was in the
+  // book's voice channel when it started, while they are still there; 'voice': anyone in that
+  // voice channel; 'listener': only the listener; 'everyone': anyone who can see the card. In
+  // every mode the bot owner may pause or stop, and once the listener has left the channel anyone
+  // still in it may too. While the listener is out of the channel, nobody else may do more than
+  // pause or stop: the book waits for the listener to come back and resume it.
+  'audiobookControls' : 'started',
 
   // --- Voice (the Voice page of /config) ---
   // Priority of the bot process. Above normal stops a game, VR stream or Plex transcode on this PC

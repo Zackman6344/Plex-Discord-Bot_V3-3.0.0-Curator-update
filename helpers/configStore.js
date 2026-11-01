@@ -44,6 +44,7 @@ const SETTINGS = [
     { key: 'calibreLibraryId', label: 'Calibre library id (blank = default)', group: 'Integrations', type: 'string', placeholder: 'Calibre_Library' },
     { key: 'calibreUsername', label: 'Calibre username (only with a login)', group: 'Integrations', type: 'string' },
     { key: 'calibrePassword', label: 'Calibre password', group: 'Integrations', type: 'string', secret: true },
+    { key: 'calibreConvertPath', label: 'Calibre ebook-convert (blank = find it)', group: 'Integrations', type: 'string', placeholder: 'C:\\Program Files\\Calibre2\\ebook-convert.exe' },
 
     { key: 'archipelagoEnabled', label: 'Archipelago monitor', group: 'Archipelago', type: 'bool' },
     { key: 'archipelagoChannelId', label: 'Archipelago log channel', group: 'Archipelago', type: 'string', snowflake: true },
@@ -106,6 +107,16 @@ const SETTINGS = [
     { key: 'audiobookTextEnabled', label: 'Read-along (!book text, 📖)', group: 'Audiobooks', type: 'bool' },
     { key: 'audiobookTextSidecars', label: 'Read EPUBs next to the audio', group: 'Audiobooks', type: 'bool' },
     { key: 'audiobookCalibreSort', label: 'Sort and fill details from Calibre', group: 'Audiobooks', type: 'bool' },
+    { key: 'audiobookTextConvert', label: 'Convert MOBI/AZW3 ebooks for read-along', group: 'Audiobooks', type: 'bool' },
+    {
+        key: 'audiobookControls', label: 'Who can use a book card\'s buttons', group: 'Audiobooks', type: 'choice',
+        choices: [
+            { label: 'Anyone in voice when the book started', value: 'started' },
+            { label: 'Anyone in the voice channel', value: 'voice' },
+            { label: 'Only the listener', value: 'listener' },
+            { label: 'Anyone', value: 'everyone' },
+        ],
+    },
     {
         key: 'audiobookOnlineLookup', label: 'Look up series and narrators online', group: 'Audiobooks', type: 'bool',
         warn: 'Sends each book\'s title and author to Audible\'s unofficial catalog search after every catalog rebuild: at start-up or hourly when the library changed, on a rescan, and after an exclude or include edit.',

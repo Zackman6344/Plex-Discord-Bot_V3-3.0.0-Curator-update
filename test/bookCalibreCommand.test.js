@@ -18,6 +18,7 @@ const BASE = pathMod.join(os.tmpdir(), `plexbot-test-book-calibre-${process.pid}
 process.env.PLEXBOT_BOOK_BOOKMARKS_FILE = `${BASE}-bookmarks.json`;
 process.env.PLEXBOT_BOOK_CATALOG_FILE = `${BASE}-catalog.json`;
 process.env.PLEXBOT_BOOK_OVERRIDES_FILE = `${BASE}-overrides.json`;
+process.env.PLEXBOT_BOOK_TEXT_WORKS_FILE = `${BASE}-text-works.json`;
 process.env.PLEXBOT_LOG_DIR = `${BASE}-logs`;
 
 const config = require('../config/config.js');
@@ -164,6 +165,69 @@ test('a long report is cut into at most 5 messages of 1,900 characters', () => {
 	for (const c of chunks) assert.ok(c.length <= 2000, `${c.length}`);
 	assert.match(chunks[4], /…and more/);
 	assert.match(chunks[0], /400 audiobooks: 0 exact, 0 pinned, 0 likely, 0 ambiguous, 400 with no match/);
+});
+
+// The bug: Hyperion (MOBI) and Whalefall (AZW3) were listed as exact matches while the read-along
+// could read neither, so "matched" silently meant "no text".
+test('a matched record with no EPUB says whether it is converted or gives no text at all', () => {
+	const works = [
+		{ id: 'avery-quill/the-ember-throne', kind: 'book', title: 'The Ember Throne', author: 'Avery Quill' },
+		{ id: 'avery-quill/the-salt-crown', kind: 'book', title: 'The Salt Crown', author: 'Avery Quill' },
+		{ id: 'avery-quill/the-glass-tide', kind: 'book', title: 'The Glass Tide', author: 'Avery Quill' },
+		{ id: 'avery-quill/the-iron-wake', kind: 'book', title: 'The Iron Wake', author: 'Avery Quill' }
+	];
+	const idx = fakeIndex({
+		matches: {
+			'avery-quill/the-ember-throne': { id: 1, verdict: 'exact', method: 'title and author' },
+			'avery-quill/the-salt-crown': { id: 2, verdict: 'exact', method: 'title and author' },
+			'avery-quill/the-glass-tide': { id: 3, verdict: 'exact', method: 'title and author' },
+			'avery-quill/the-iron-wake': { id: 4, verdict: 'exact', method: 'title and author' }
+		},
+		records: {
+			1: { title: 'The Ember Throne', formats: ['epub', 'mobi'] },
+			2: { title: 'The Salt Crown', formats: ['azw3'] },
+			3: { title: 'The Glass Tide', formats: ['pdf', 'cbz'] },
+			4: { title: 'The Iron Wake', formats: [] }
+		}
+	});
+	let asked = 0;
+	const found = () => { asked++; return { ok: true }; };
+	const out = calibre.reportChunks(works, idx, 'missing', { converter: found }).join('\n');
+	assert.match(out, /\*\*Matched, but Calibre gives the read-along no text\*\* \(2\)/);
+	assert.match(out, /\*\*The Glass Tide\*\* · Avery Quill: #3 “The Glass Tide”, no text from Calibre: PDF, CBZ can't be read/);
+	assert.match(out, /\*\*The Iron Wake\*\* · Avery Quill: #4 “The Iron Wake”, no text from Calibre: the record has no file/);
+	assert.match(out, /1 matched book is in Calibre only as MOBI, AZW3 or similar; the text is converted to EPUB the first time it opens\./);
+	assert.doesNotMatch(out, /Ember Throne/, 'an EPUB match needs nothing from the owner');
+	assert.strictEqual(asked, 1, 'the converter is looked for once, and only for a record that needs it');
+	const all = calibre.reportChunks(works, idx, 'all', { converter: found }).join('\n');
+	assert.match(all, /#1 “The Ember Throne” \(exact: title and author\)\n/);
+	assert.match(all, /#2 “The Salt Crown” \(exact: title and author\); AZW3 only, converted to EPUB the first time its text opens/);
+	const off = calibre.reportChunks(works, idx, 'missing', { converter: () => ({ ok: false, code: 'convert-off' }) }).join('\n');
+	assert.match(off, /\*\*Matched, but Calibre gives the read-along no text\*\* \(3\)/);
+	assert.match(off, /#2 “The Salt Crown”, AZW3 only, and converting is off \(audiobookTextConvert\), so no text from Calibre/);
+	const missing = calibre.reportChunks(works, idx, 'missing', { converter: () => ({ ok: false, code: 'convert-missing' }) }).join('\n');
+	assert.match(missing, /AZW3 only, and ebook-convert wasn't found, so no text from Calibre/);
+	for (const text of [out, all, off, missing]) assert.doesNotMatch(text, /—/);
+});
+
+// The bug: with converting off, a MOBI book whose text was converted earlier was listed as giving
+// "no text from Calibre", while its 📖 still opened from the read-along's cache.
+test('a book converted earlier is not listed as giving no text once converting is off', () => {
+	const works = [{ id: 'avery-quill/the-salt-crown', kind: 'book', title: 'The Salt Crown', author: 'Avery Quill' }];
+	const idx = fakeIndex({
+		matches: { 'avery-quill/the-salt-crown': { id: 2, verdict: 'exact', method: 'title and author' } },
+		records: { 2: { title: 'The Salt Crown', formats: ['mobi'] } }
+	});
+	const converter = () => ({ ok: false, code: 'convert-off' });
+	const pointers = { 'avery-quill/the-salt-crown': { base: '0123456789abcdef', source: { type: 'calibre', id: 2, convert: true, format: 'mobi' } } };
+	const pointer = (w) => pointers[w.id] || null;
+	const out = calibre.reportChunks(works, idx, 'missing', { converter, pointer }).join('\n');
+	assert.doesNotMatch(out, /no text from Calibre|Matched, but/);
+	const all = calibre.reportChunks(works, idx, 'all', { converter, pointer }).join('\n');
+	assert.match(all, /#2 “The Salt Crown” \(exact: title and author\); MOBI only, converted earlier, so its text still opens; new conversions are off \(audiobookTextConvert\)/);
+	pointers['avery-quill/the-salt-crown'].source.id = 9;
+	assert.match(calibre.reportChunks(works, idx, 'missing', { converter, pointer }).join('\n'), /MOBI only, and converting is off/, 'a pointer to another record is no answer');
+	assert.doesNotMatch(all, /—/);
 });
 
 test('the slash spec offers calibre with its choices, within Discord\'s limits', () => {

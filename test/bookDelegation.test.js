@@ -566,7 +566,7 @@ test('a caller the book does not let act is told whose book it is, and the book 
 	for (const [name, member] of [['pause', bystander], ['resume', bystander], ['skip', bystander], ['skip', owner]]) {
 		const m = run(h.bot, name, member, h.guild);
 		assert.strictEqual(m.out.length, 1, `${name}: one reply`);
-		assert.match(replyText(m)[0], /^This is Reader's book: only they can control it/, name);
+		assert.match(replyText(m)[0], /^This is Reader's book\. Only people who were in 🔊 Reading Room when this book started/, name);
 	}
 	assert.deepStrictEqual(h.bot.songQueue.map(t => t.title), ['Song A'], 'nothing was skipped');
 	assert.strictEqual(h.bot.stopCalls, 0);
@@ -574,11 +574,12 @@ test('a caller the book does not let act is told whose book it is, and the book 
 	assert.strictEqual(h.bot.books.builds.length, 1);
 
 	const x = run(h.bot, 'stop', bystander, h.guild);
-	assert.deepStrictEqual(replyText(x), ['Reader\'s book keeps playing: only they can stop it, or anyone in its voice channel once they\'ve left. The music queue is cleared.']);
+	const rule = 'Only people who were in 🔊 Reading Room when this book started, and are still in it, can use its buttons. Anyone in 🔊 Reading Room may pause or stop once Reader has left it.';
+	assert.deepStrictEqual(replyText(x), [`Reader's book keeps playing. ${rule} The music queue is cleared.`]);
 	assert.deepStrictEqual(h.bot.songQueue, [], '!stop still clears the music queue');
 	assert.strictEqual(h.bot.stopCalls, 0);
 	const y = run(h.bot, 'stop', bystander, h.guild);
-	assert.deepStrictEqual(replyText(y), ['Reader\'s book keeps playing: only they can stop it, or anyone in its voice channel once they\'ve left.']);
+	assert.deepStrictEqual(replyText(y), [`Reader's book keeps playing. ${rule}`]);
 	assert.strictEqual(s.state, 'playing');
 
 	const c = await click(h, 'skip', bystander);

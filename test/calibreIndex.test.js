@@ -241,7 +241,27 @@ test('the read-along may take only an exact match that has an EPUB', async () =>
 	const h = make({ books, works: [work(), salt] });
 	await h.index.refresh();
 	assert.strictEqual(h.index.readAlongPick(work()), null);
-	assert.deepStrictEqual(h.index.readAlongPick(salt), { id: 2 });
+	assert.deepStrictEqual(h.index.readAlongPick(salt), { id: 2, format: 'epub' });
+});
+
+// The bug: an exact match whose record was only MOBI or AZW3 gave the read-along nothing, so the
+// owner saw the book "matched" in !book calibre and still got no 📖 on the card.
+test('an exact match that is only MOBI or AZW3 is picked with the format to convert, EPUB first when both exist', async () => {
+	const books = {
+		1: raw(1, { title: 'The Lantern Road', authors: ['Avery Quill'], formats: ['MOBI'] }),
+		2: raw(2, { title: 'The Salt Crown', authors: ['Avery Quill'], formats: ['mobi', 'azw3'] }),
+		3: raw(3, { title: 'The Ember Gate', authors: ['Avery Quill'], formats: ['azw3', 'epub'] }),
+		4: raw(4, { title: 'The Glass Tide', authors: ['Avery Quill'], formats: ['pdf', 'cbz', 'kfx'] })
+	};
+	const salt = work({ id: 'avery-quill/the-salt-crown', title: 'The Salt Crown' });
+	const ember = work({ id: 'avery-quill/the-ember-gate', title: 'The Ember Gate' });
+	const glass = work({ id: 'avery-quill/the-glass-tide', title: 'The Glass Tide' });
+	const h = make({ books, works: [work(), salt, ember, glass] });
+	await h.index.refresh();
+	assert.deepStrictEqual(h.index.readAlongPick(work()), { id: 1, format: 'mobi' });
+	assert.deepStrictEqual(h.index.readAlongPick(salt), { id: 2, format: 'azw3' });
+	assert.deepStrictEqual(h.index.readAlongPick(ember), { id: 3, format: 'epub' });
+	assert.strictEqual(h.index.readAlongPick(glass), null);
 });
 
 test('start arms one unref\'d 15-minute check and stop disarms it; a tick while off asks nothing', async () => {

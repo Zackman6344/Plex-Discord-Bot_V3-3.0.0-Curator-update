@@ -820,7 +820,7 @@ test('a linked path must be an existing .epub file', async () => {
 test('linking a Calibre id checks the book first and echoes its title', async () => {
 	const h = make({ books: { 11: cbook(), 2: cbook({ title: 'A Comic', formats: ['cbz'] }) } });
 	assert.deepStrictEqual(await h.source.link(work(), { type: 'calibre', id: 404 }, { by: '1' }), { ok: false, code: 'not-found', text: 'Calibre has no book #404.' });
-	assert.deepStrictEqual(await h.source.link(work(), { type: 'calibre', id: 2 }, { by: '1' }), { ok: false, code: 'no-epub', text: 'Calibre #2 “A Comic” has no EPUB.' });
+	assert.deepStrictEqual(await h.source.link(work(), { type: 'calibre', id: 2 }, { by: '1' }), { ok: false, code: 'no-epub', text: 'Calibre #2 “A Comic” has no EPUB, and its CBZ can\'t be turned into one.' });
 	h.client.reachable = false;
 	const closed = await h.source.link(work(), { type: 'calibre', id: 11 }, { by: '1' });
 	assert.deepStrictEqual([closed.ok, closed.code], [false, 'calibre-unreachable']);

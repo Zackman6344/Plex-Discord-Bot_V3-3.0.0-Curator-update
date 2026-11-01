@@ -935,6 +935,13 @@ function createReadAlong(opts = {}) {
 			lines.push(`📚 ${title}: an ebook was found. Its text is read the first time it is opened (\`${p}book text on\` or 📖 on the card).`);
 			return lines.join('\n');
 		}
+		// The open below is explicit, so it would skip the 10-minute back-off and start another
+		// conversion of up to 5 minutes just to answer a status question.
+		const failure = st === 'unknown' && typeof source.lastFailure === 'function' ? source.lastFailure(s.work) : null;
+		if (failure && failure.code === 'convert-timeout') {
+			lines.push(`📚 ${title}: ${failure.text}`);
+			return lines.join('\n');
+		}
 		const got = await textFor(s, { explicit: true });
 		if (!got.ok) {
 			lines.push(`📚 ${title}: ${got.text}`);
@@ -1040,7 +1047,8 @@ function createReadAlong(opts = {}) {
 		// the refusal, so no text stays on screen and no button is left to press.
 		if (!access) return answer(interaction, card.noticePayload(joinToReadText(s)), report);
 		const listener = access === 'listener';
-		// Their page never offers these; the engine refuses a goto from anyone else too.
+		// Their page never offers these. ↪ and 📩 stay the listener's whatever audiobookControls
+		// says; a viewer allowed to move the book does it with the card's buttons.
 		if (!listener && (id.act === 'play' || id.act === 'dm')) {
 			const name = esc(s.listenerName || 'the listener');
 			await followUp(interaction, id.act === 'play'
