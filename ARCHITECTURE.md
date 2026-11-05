@@ -195,7 +195,7 @@ Two signature styles coexist in the codebase:
 | `bookButtons.js`           | The `book:*` button namespace. A control click runs the engine action and answers with `interaction.update`, which acks and edits the card in one call. A stale card (its session id is not the live one) has its buttons stripped. Routes `book:lib:*` to `bookLibraryButtons.js`, and `playFromList` plays a pick from a list for the clicker (deferUpdate, then a private followUp). |
 | `epubText.js`              | Pure EPUB to text, no packages: a zip reader that works from a file descriptor and reads only the entries it needs, the OPF, the nav or NCX table of contents, HTML to paragraphs, the DRM gate (font obfuscation passes), sections split at 20,000 words, and the byte-offset index of the cache. Runs only inside the parse child. |
 | `epubTextWorker.js`        | The parse child and its queue. Forks itself with `--epub-text-child` and sets the child to Below Normal priority; one parse at a time, single flight per cache base, 120 s timeout. The child writes `<base>.txt`, then `<base>.json` (or `<base>.fail.json`), and sends back counts only. `shutdown()` leaves the queue usable for `!restart`. |
-| `readAlongModel.js`        | Pure: chapter keys from track titles and table-of-contents labels, front, body and back matter, the anchor map from audio time to word and back, pages of about 180 words, and the "approximate" labels. |
+| `readAlongModel.js`        | Pure: chapter keys from track titles, embedded chapter markers and table-of-contents labels, front, body and back matter, the anchor map from audio time to word and back, pages of about 180 words, and the "approximate" labels. |
 | `bookTextStore.js`         | The read-along's four small stores in `data/book_text/`: `links.json` (`!book link`), `readers.json` (who has the read-along on), `works.json` (which cache files each work uses) and `marks.json` (the sync marks). Looked up by work id, then by alias. |
 | `calibreClient.js`         | GET-only client for Calibre's content server: library info, search, book metadata, and a format's download (`downloadFormat`, `/get/<FORMAT>/<id>/<lib>`; `downloadEpub` is its EPUB case) streamed to a file. Answers Digest logins, and Basic ones over https only; refuses redirects and any URL with a login in it, caps a download at 300 MB, and names only `host:port` in its errors. |
 | `bookTextSource.js`        | Finds a work's ebook (a link, then the Calibre index's exact match for a work with no pointer, then a Calibre search, then EPUBs beside the audio), converts a MOBI/AZW3-only Calibre record to EPUB through `ebookConvert.js`, fingerprints it, keeps the content-addressed cache, and hands out text handles that read one section at a time. Remembers failures (stable ones until a catalog rebuild or `!book link`, transient ones for 30 s, a conversion timeout for 10 minutes), serves a cached copy while Calibre is closed, re-checks in the background, and runs `!book link` and its report. |
@@ -3167,6 +3167,41 @@ competing for the CPU, the longest stall was 42.8 ms.
   outro and credits tracks are flat: the text does not move. Between anchors the position is
   interpolated by word count. Anchors out of order are dropped (the longest chain that never goes
   back in the text is kept) and listed in `map.dropped`.
+- A work whose every track is titled like credits is paced over its tracks longer than 10 minutes
+  (`CREDITS_MAX_MS`): Plex titled The Martian's one 11-hour file "Opening Credits", its first
+  chapter's name, and the book had no map. A long credits track beside narrated ones stays flat:
+  the A.T. Murray Odyssey's 89-minute "Opening Credits" comes before Book 1, and counted as
+  narration it put the Fitzgerald ebook's pages 92 minutes ahead when Book 1 began.
+- A file's embedded chapter markers are tracks of their own when the file's title names no chapter
+  and the work is no omnibus, cut the way `bookModel.embeddedChapters` cuts them for the card.
+  Marker titles give keys like track titles. A bare leading number ("1 An Empty Road") counts only
+  when the ebook's section with that key has the same title, since in "02 An Empty Road" the
+  number can be the marker's place.
+- A marker with no key continues the chapter before it: The Martian's "Chapter N" markers last
+  1–5 s, and the chapter's text is in the "Log Entry: Sol N" markers after them. Credits markers
+  are flat, except one over 10 minutes with a chapter marker after it: The Eye of the World's
+  18-minute "Opening Credits" holds the prologue, and the chapter after it bounds what pace
+  spreads over it.
+- **Many "Chapter 0NN" markers follow the publisher's own numbering.** Dragon Keeper has 29 over a
+  prologue and 17 chapters, and a stray 16-second "Chapter 011" puts every later marker of Fool's
+  Errand one chapter off. A file stays split only when at least 3 chapters are pinned and 90% of
+  them read within ×1.3 of their median pace (`CHAPTER_PACE_SPREAD`, `CHAPTER_PACE_SHARE`);
+  otherwise the work maps as if its files had no markers. In the live library the 7 books whose
+  markers match their ebook put 97–100% of their chapters in that band, and the 6
+  publisher-numbered ones 7–69%.
+- After the work's last chapter, unkeyed markers are either the chapter's own text after a marker
+  that only announces it, or audio the ebook lacks. The chapter keeps the ones that bring its pace
+  closest to the median. Those left are cut like credits when no ebook text follows (The Martian's
+  26 minutes of bonus pieces), or paced over the text that does (a Robin Hobb marker titled after
+  the book reads the epilogue). A first chapter marker where the text audio begins takes the body
+  text before it when that brings its pace closer to the median: Royal Assassin's "Chapter 001"
+  runs 1:30:06 over the prologue and chapter 1.
+- Anchors from a split file carry `partIndex` (the file) and `chapter` (the marker's place in it),
+  and `inNoText` pairs credits by both. Measured on 28 ebook and recording pairs from the live
+  library: 7 maps change and 21 are byte-for-byte the same. At The Martian's 115 "Log Entry"
+  headings found in its text, the page was 17.0 minutes off on average and 27.5 at worst, and is
+  0.26 and 0.92. With every other chapter marker hidden, the 7 books are 0.4–1.1 minutes off on
+  average at the hidden ones, against 2.6–16.1 for the pace map they had.
 - Omnibus books restart their chapter numbers, so "Chapter 01" alone would match the first book's
   chapter 1 every time. When the track titles name at least two books ("Book 2 Title - Chapter
   01") and the TOC's chapter numbers restart under a new heading, recorded books pair with
@@ -3175,11 +3210,12 @@ competing for the CPU, the longest stall was 42.8 ms.
   before "2" is that book's chapter 1, and a recorded book the ebook lacks is cut out of the time
   axis like an intro. Only such maps carry `map.books`; every other work's map is unchanged.
 
-So the map is chapter-level where tracks are named after chapters, and estimated from pace across
-hour-split stretches. Measured on The Way of Kings: 70 of its 83 tracks are named after chapters
-(78% of the running time), and inside such a track positioning by proportion is off by about ±9%,
-about 3 minutes in a 30-minute chapter, because narration ran 140–197 words a minute from chapter
-to chapter (median 173). Across hour splits the whole-work pace is off by 11.7 minutes on average
+So the map is chapter-level where tracks, or a file's chapter markers, are named after chapters,
+and estimated from pace across hour-split stretches. Measured on The Way of Kings: 70 of its 83
+tracks are named after chapters (78% of the running time), and inside such a track positioning by
+proportion is off by about ±9%, about 3 minutes in a 30-minute chapter, because narration ran
+140–197 words a minute from chapter to chapter (median 173). Across hour splits the whole-work
+pace is off by 11.7 minutes on average
 and 19.8 at worst. The page never prints a number it cannot back: the footer says "≈
 Approximate" and "chapter-level" or "estimated from pace", and "dramatized edition" when the
 publisher, edition or narrator names GraphicAudio, a dramatization or a full cast, because a
@@ -3238,16 +3274,16 @@ counts as a match.
   pin one of its pages: the estimate there is clamped to the last body word, so every page of that
   chapter passed the nearness test.
 - A mark is refused with a note unless the book is playing and audible and the page is plausibly
-  near (`nearNarration`). **While a chapter-named track plays at the click
-  (`readAlongModel.spanAt`), the page's first word must lie inside that track's span.** The span is
-  taken at the click before the allowance, so a pin on a chapter's first page 0.4 s into its track
-  is taken although its ms falls in the chapter before. The 10-page escape does not apply there:
-  the chapter start is exact, and on The Once and Future King a pin 300 words into the next
-  chapter at 8.3 h dropped that boundary's track end and start and turned about 48 minutes into
-  'marked' pace. Where no chapter-named track plays (hour splits, pace stretches), the page must
-  be in the ebook section of the pace estimate or within 10 pages of the estimate. The model's
-  mark-wins rule below is unchanged; it still matters for hour splits and for marks already
-  stored.
+  near (`nearNarration`). **While a chapter-named track, or a split file's chapter, plays at the
+  click (`readAlongModel.spanAt`), the page's first word must lie inside that track's span.** The
+  span is taken at the click before the allowance, so a pin on a chapter's first page 0.4 s into
+  its track is taken although its ms falls in the chapter before. The 10-page escape does not
+  apply there: the chapter start is exact, and on The Once and Future King a pin 300 words into
+  the next chapter at 8.3 h dropped that boundary's track end and start and turned about 48
+  minutes into 'marked' pace. Where no chapter-named track plays (hour splits, pace stretches),
+  the page must be in the ebook section of the pace estimate or within 10 pages of the estimate.
+  The model's mark-wins rule below is unchanged; it still matters for hour splits and for marks
+  already stored.
 - A new mark within 20 s of audio, or on the same word, of a mark of the same text and recording
   replaces it.
 - In the model, a mark inside a no-text track is pinned to that track's end only when it lies
