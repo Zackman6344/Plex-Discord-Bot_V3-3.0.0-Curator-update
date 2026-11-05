@@ -22,6 +22,8 @@
 // and titles (a one-time id move that aliases carry), takes short plays on long tracks, splits mp3
 // collections by each file's album tag, orders interleaved volumes by their "(k of n)" album tags
 // and gives every holder of a still-duplicated id its own folder name instead of dropping a work.
+// Version 6 never takes Plex's "[Unknown Album]" for a title, and reads the author and title out
+// of a book folder named "Author (Year) Title (Reader)" (another id move that aliases carry).
 //
 // Besides what bookModel plays, each work carries display data that is never part of its id:
 // `dirs` (the real folders its files sit in), `root` (the music section folder those sit under,
@@ -30,7 +32,7 @@
 
 const crypto = require('crypto');
 
-const RULES_VERSION = 5;
+const RULES_VERSION = 6;
 
 const MIN = 60 * 1000;
 const HOUR = 60 * MIN;
@@ -83,6 +85,13 @@ const VARIOUS_RE = /^(?:various(?:\s+artists?)?|v\.?\s?a\.?|unknown(?:\s+artist)
 
 function isVarious(name) {
 	return VARIOUS_RE.test(String(name || '').trim());
+}
+
+// The album Plex files untagged audio under when it finds no online match. It names no book.
+const PLACEHOLDER_ALBUM_RE = /^\[?\s*unknown\s+album\s*\]?$/i;
+
+function isPlaceholderAlbum(title) {
+	return PLACEHOLDER_ALBUM_RE.test(String(title || '').trim());
 }
 
 /** The canonical house name when the text names an audiobook publisher, else null. */
@@ -1062,6 +1071,21 @@ function authorFromName(name) {
 	return who ? personName(who) : null;
 }
 
+/**
+ * The author and title a book folder names in the shape "Ida Marsh (1998) The Tin Crown (Various
+ * Artists)": author, the year the book came out, title, readers. Null unless the text before the
+ * year is a person's name, so "Tin Crown by Ida Marsh (2019) read by Jo Vale" is left to
+ * authorFromName.
+ * @returns {{ author: string, title: string } | null}
+ */
+function authorYearTitle(name) {
+	const m = String(name || '').replace(/\s+/g, ' ').trim().match(/^([^()]+?)\s*\(\s*(?:1[5-9]|20)\d{2}\s*\)\s*(.+)$/);
+	if (!m || /^(?:read|narrated)\s+by\b/i.test(m[2])) return null;
+	const author = personName(m[1]) || unsortName(m[1]);
+	const title = m[2].replace(/\s*\([^)]*\)\s*$/, '').trim();
+	return author && title ? { author, title } : null;
+}
+
 function stripAuthorPrefix(series, author) {
 	if (!series || !author) return series;
 	const esc = author.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -1110,6 +1134,7 @@ function describe(key, ts, albumsByKey, titleCounts, tagsOf = () => ({}), roots 
 	const genericLeaf = !carved && (isGenericName(cleanTitle(rawLeaf)) || roots.has(baseKey.toLowerCase()));
 	const leaf = genericLeaf && mainAlbum ? mainAlbum.title : rawLeaf;
 	const leafSource = book ? book.source : (carved || (genericLeaf && mainAlbum) ? 'album' : 'folder');
+	const named = leafSource === 'folder' ? authorYearTitle(leaf) : null;
 	// The album a loose book sits in can be Plex's guess for several files, so its sample says
 	// nothing about this one.
 	const tagList = book ? ts.map((t) => tagsOfTrack(t) || {}) : albumKeys.map((k) => tagsOf(k) || {});
@@ -1149,8 +1174,12 @@ function describe(key, ts, albumsByKey, titleCounts, tagsOf = () => ({}), roots 
 		const byName = authorFromName(rawLeaf);
 		if (byName) { author = byName; authorSource = 'folder-by'; }
 	}
-	// "Mythology" over forty books by twenty authors is a shelf, not the author of any of them.
 	const shelf = rootChild(ts[0]);
+	// A book's own folder can sit straight under the music root, where an author's folder would be,
+	// and its whole name is then no author.
+	const folderBook = named || (shelf ? authorYearTitle(shelf) : null);
+	if (!author && folderBook) { author = folderBook.author; authorSource = 'folder'; }
+	// "Mythology" over forty books by twenty authors is a shelf, not the author of any of them.
 	if (!author && shelf && !categoryFolders.has(norm(shelf))) { author = shelf; authorSource = 'folder'; }
 	if (!author) doubts.push({ code: 'no-author' });
 
@@ -1172,7 +1201,7 @@ function describe(key, ts, albumsByKey, titleCounts, tagsOf = () => ({}), roots 
 
 	// The folder is the author folder (a flat dump): the album title is the only name there is.
 	const folderIsAuthor = norm(leaf) === norm(rootChild(ts[0])) || norm(leaf) === norm(author);
-	const singleAlbum = albums.length === 1 ? albums[0] : null;
+	const singleAlbum = albums.length === 1 && !isPlaceholderAlbum(albums[0].title) ? albums[0] : null;
 	const unique = (a) => (titleCounts.get(norm(a.title)) || 0) === 1;
 	const albumTitleUsable = singleAlbum && unique(singleAlbum);
 
@@ -1191,7 +1220,7 @@ function describe(key, ts, albumsByKey, titleCounts, tagsOf = () => ({}), roots 
 	else if ((folderIsAuthor || genericLeaf) && singleAlbum) rawTitle = singleAlbum.title;
 	else if (albumTitleUsable) rawTitle = singleAlbum.title;
 	else if (strongAlbum && covered >= 0.5) rawTitle = strongAlbum.title;
-	else { rawTitle = leaf; titleSource = leafSource; }
+	else { rawTitle = named ? named.title : leaf; titleSource = leafSource; }
 
 	let series = null, sequence = null, seriesWeak = false, weakFull = null;
 	let seriesSource = null, sequenceSource = null;
@@ -2267,6 +2296,8 @@ module.exports = {
 	authorFromComment,
 	narratorFromComment,
 	isVarious,
+	isPlaceholderAlbum,
+	authorYearTitle,
 	bookIdentity,
 	numberedName,
 };

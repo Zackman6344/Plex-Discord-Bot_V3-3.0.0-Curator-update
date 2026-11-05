@@ -902,8 +902,8 @@ test('tag samples are one file per album, only from groups long enough to be a b
 	assert.deepStrictEqual(bookCatalog.tagSamples([]), []);
 });
 
-test('the rules version is 5', () => {
-	assert.strictEqual(bookCatalog.RULES_VERSION, 5);
+test('the rules version is 6', () => {
+	assert.strictEqual(bookCatalog.RULES_VERSION, 6);
 });
 
 // The bug (review): the music genre pattern matched words inside book genres ("Space Opera",
