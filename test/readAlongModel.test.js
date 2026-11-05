@@ -3,14 +3,19 @@
 // The bug: a read-along page that is not where the narration is, or that never turns up at
 // all. A track called "Chatper 12" left unmatched; a bare track number taken for a chapter; a
 // next-book preview's "Chapter One" or an unread Ars Arcanum stretching the pace map past the
-// epilogue; a chapter split over two tracks leaving an hour of "no text"; "Chapters 12-13"
+// epilogue; back matter no label list knows ("A Second Look") stretching the last chapter's
+// track; a chapter split over two tracks leaving an hour of "no text"; "Chapters 12-13"
 // hiding chapter 13; "Play from here" landing a word short, on the previous page; a GraphicAudio
 // edition whose catalog edition is the narrator's name not labelled dramatized; pages that drop
 // or repeat a word. An omnibus whose chapter numbers restart in every book: Book 1's "Chapter 01"
 // sent to Book 2's chapter 1, Book 1's heading-plus-chapter-1 section taken for front matter, and
 // a recorded book the ebook lacks stretching the pace map over hours of audio. A listener's sync
 // mark outvoted by the two track anchors it contradicts; a mark at a chapter's first word drawing
-// a "no text" stretch beside it; two marks that disagree both kept.
+// a "no text" stretch beside it; two marks that disagree both kept. A whole-book file titled
+// "Opening Credits" taken for credits, so the book had no map at all. A single file's chapter
+// markers never read, so its pages ran up to 27 minutes from the narration; a publisher's own
+// "Chapter 0NN" numbering taken for the book's chapters; bonus audio after the last chapter read
+// as that chapter.
 //
 // Harness: the plain pure-function style of test/bookModel.test.js. Works and ebook indexes are
 // synthetic: section labels shaped like real tables of contents, track titles shaped like the
@@ -347,6 +352,60 @@ test('an unperformed ars arcanum and a trailing preview end the body at the epil
 	assert.equal(msToWord(map2, partStart(performed, 3)).level, 'chapter');
 });
 
+// Calibre #381's shape: its sections' word counts and back-matter labels, and the track lengths
+// of the catalog work it reads with. The chapter titles are stand-ins.
+const PS_CHAPTER_WORDS = [4580, 3432, 3820, 3682, 6562, 6265, 4436, 3046, 4902, 4276, 3314, 5477, 3178, 3460, 5084, 6422, 5440];
+const PS_TRACK_MS = [
+	1970792, 1347200, 1531484, 1523248, 2777932, 2382893, 1847251, 1165712, 1886372, 1606638, 1258662,
+	2147281, 1173654, 1282782, 2007267, 2338476, 2250820,
+];
+const PS_BACK_MATTER = [
+	['A Second Look', 92], ['Acknowledgments', 94], ['About the Author', 195], ['About the Illustrator', 114],
+	['Pottermore Digital Editions', 133], ['Pottermore', 70], ['Copyright', 132],
+];
+const WORDED = [
+	'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve',
+	'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen',
+];
+
+// The bug: back matter whose labels no list knows counted as body, so the last chapter track ran
+// on to its end. #381 showed chapter 17's pages up to 4 minutes early and back matter for its
+// last 4.3. These maps differ from the first release's on purpose, so they stay out of `built`.
+test('a last chapter ends at its own last word, not at back matter no label list knows', () => {
+	const { index } = book([
+		['', 34], ['Dedication', 36],
+		...PS_CHAPTER_WORDS.map((n, i) => [`Chapter ${WORDED[i]}: Title ${i + 1}`, n]),
+		...PS_BACK_MATTER,
+	]);
+	const w = work(PS_TRACK_MS.map((ms, i) => [`Chapter ${i + 1} - Title ${i + 1}`, ms]));
+	const map = model.buildMap(w, index);
+	const ch17 = sectionOf(index, 'Chapter Seventeen: Title 17');
+	assert.equal(index.sections[ch17].wordStart, 72006);
+	assert.equal(index.sections[sectionOf(index, 'A Second Look')].wordStart, 77446);
+	assert.equal(map.matchedParts, 17);
+	const last = map.segments[map.segments.length - 1];
+	assert.deepEqual(last, { fromMs: partStart(w, 16), toMs: map.totalMs, fromWord: 72006, toWord: 77446, level: 'chapter' });
+	for (let ms = map.totalMs - 4.3 * MIN; ms < map.totalMs; ms += 5 * S) {
+		assert.equal(locate(map, msToWord(map, ms).word).section, ch17, `ms ${ms}`);
+	}
+	assert.equal(msToWord(map, map.totalMs - 1).word, 77445);
+});
+
+test('a last chapter the cache split keeps its pieces, and a text track after it reads what follows', () => {
+	const { index } = book([['1', 3000], ['2', 2500], ['2 (2)', 2500], ['Coda', 400], ['About the Author', 120]]);
+	index.sections[1].part = 1;
+	index.sections[2].part = 2;
+	const w = work([['Chapter 1', 20 * MIN], ['Chapter 2', 30 * MIN], ['Coda', 3 * MIN]]);
+	const map = model.buildMap(w, index);
+	const coda = index.sections[sectionOf(index, 'Coda')].wordStart;
+	assert.equal(map.anchors.find((a) => a.kind === 'track-end' && a.partIndex === 1).word, coda);
+	assert.equal(msToWord(map, partStart(w, 2) - 1).level, 'chapter');
+	assert.equal(locate(map, msToWord(map, partStart(w, 2) - 1).word).section, 2);
+	assert.equal(msToWord(map, partStart(w, 2)).word, coda);
+	assert.equal(msToWord(map, partStart(w, 2)).level, 'pace');
+	assert.equal(msToWord(map, map.totalMs - 1).word, coda + 399);
+});
+
 test('buildMap pins chapter tracks, flattens credits and paces the hour splits', () => {
 	const { w, map, ws, index } = wokFixture();
 	assert.deepEqual(map.dropped, []);
@@ -543,6 +602,40 @@ test('buildMap returns null when there is no body or no audio', () => {
 	assert.equal(buildMap(work([]), real), null);
 	assert.equal(buildMap(work([['Opening Credits', MIN]]), real), null);
 	assert.equal(buildMap(work([['Part 01', H]]), null), null);
+});
+
+// The bug: Plex titled The Martian's one 11-hour file "Opening Credits", its first chapter's name,
+// so the whole recording counted as credits and the book had no map. The word counts and the
+// duration are the real ones; the labels and the text are stand-ins.
+const MARTIAN_CHAPTER_WORDS = [
+	2341, 3276, 3165, 2945, 3382, 4076, 4778, 4070, 3125, 2304, 4751, 3459, 3220, 4536, 5139, 6252,
+	3704, 4328, 3258, 3741, 5045, 3840, 4019, 4100, 4733, 6729,
+];
+
+test('a whole-book file titled after its opening credits is paced over the body', () => {
+	const { index } = book([
+		['Cover', 0], ['Title Page', 0], ['Copyright', 149], ['Dedication', 12], ['Map', 59],
+		...MARTIAN_CHAPTER_WORDS.map((n, i) => [`Chapter ${i + 1}`, n]),
+	]);
+	// Outside `built`: the first release built no map for this work, which was the bug.
+	const map = model.buildMap(work([['Opening Credits', 39568982]]), index);
+	assert.ok(map, 'map built');
+	assert.deepEqual(map.segments, [{ fromMs: 0, toMs: 39568982, fromWord: 220, toWord: 104536, level: 'pace' }]);
+	assert.equal(model.inNoText(map, 0), false);
+	assert.equal(qualityAt(map, 5 * H).label, 'estimated from pace');
+	const credits = model.buildMap(work([['Intro', 30 * S], ['Opening Credits', 10 * H], ['Closing Credits', MIN]]), index);
+	assert.deepEqual(credits.segments.map((s) => s.level), ['none', 'pace', 'none']);
+});
+
+// The A.T. Murray Odyssey has an 89-minute "Opening Credits" track before Book 1. Counted as
+// narration, it put the Fitzgerald ebook's pages 92 minutes ahead when Book 1 began. The durations
+// are the real ones.
+test('a long credits track beside narrated tracks still shows no text', () => {
+	const { index } = book([['Title Page', 5], ['Contents', 194], ['Book I', 3979], ['Book II', 3743], ['Book III', 4392]]);
+	const map = buildMap(work([['Opening Credits', 5333472], ['Book 1', 2250031], ['Book 2', 2112679], ['Book 3', 2431399]]), index);
+	assert.deepEqual(map.anchors.filter((a) => a.kind === 'no-text').map((a) => [a.ms, a.word]), [[0, 199], [5333472, 199]]);
+	assert.equal(model.inNoText(map, 5333472 - 1), true);
+	assert.equal(model.inNoText(map, 5333472), false);
 });
 
 test('locate skips sections with no words', () => {
@@ -904,6 +997,250 @@ test('bookOfPart stops a worded book number at its separator and skips a book na
 	assert.equal(bookOfPart('04 Ch. 3 - Book 2 of Ash'), null);
 });
 
+// ---- embedded chapters --------------------------------------------------------------------------
+
+// A one-file work whose part carries embedded chapters the way the catalog stores them.
+function chaptered(partTitle, list, extra = {}) {
+	let t = 0;
+	const chapters = list.map(([title, ms]) => {
+		const c = { title, startMs: t, endMs: t + ms };
+		t += ms;
+		return c;
+	});
+	const w = work([[partTitle, t]], extra);
+	w.parts[0].chapters = chapters;
+	return w;
+}
+
+function whole(w) {
+	const out = structuredClone(w);
+	for (const p of out.parts) delete p.chapters;
+	return out;
+}
+
+function startOf(w, title) {
+	const c = w.parts[0].chapters.find((x) => x.title === title);
+	assert.ok(c, `no chapter ${title}`);
+	return c.startMs;
+}
+
+const padded = (n) => String(n).padStart(3, '0');
+const readAt = (wpm) => (words) => Math.round(words / wpm * MIN);
+
+// The bug: The Martian's one file has 160 chapter markers and its pages followed none of them,
+// up to 27 minutes behind. Its "Chapter N" markers last a second or two: the chapter's text is in
+// the "Log Entry: Sol N" markers after them. Chapter word counts are the real ones; the marker
+// lengths read them at one pace, and the labels and text are stand-ins.
+test('a single file\'s chapter markers pin each chapter, and a marker with no key continues the one before', () => {
+	const { index } = book([
+		['Cover', 0], ['Title Page', 0], ['Copyright', 149], ['Dedication', 12], ['Map', 59],
+		...MARTIAN_CHAPTER_WORDS.map((n, i) => [`Chapter ${i + 1}`, n]),
+	]);
+	const at = readAt(165);
+	const list = [['Opening Credits', 30 * S]];
+	MARTIAN_CHAPTER_WORDS.forEach((n, i) => {
+		const ms = at(n);
+		if (i === 5 || i === 25) {
+			list.push([`Chapter ${i + 1}`, ms]);
+			return;
+		}
+		const log = Math.round(ms * 0.6);
+		list.push([`Chapter ${i + 1}`, 2 * S], [`Log Entry: Sol ${2 * i + 6}`, log], [`Log Entry: Sol ${2 * i + 7}`, ms - 2 * S - log]);
+	});
+	list.push(['Some Selections from the Files of Mark Watney', 6 * S], ['Diary of an AssCan', 9 * MIN], ['The Earthling', 12 * MIN], ['End Credits', 53 * S]);
+	const w = chaptered('Opening Credits', list, { title: 'The Martian' });
+	// Outside `built`: the first release read no chapter markers.
+	const map = model.buildMap(w, index);
+	const chapterStart = (i) => index.sections[5 + i].wordStart;
+	MARTIAN_CHAPTER_WORDS.forEach((_, i) => {
+		const got = msToWord(map, startOf(w, `Chapter ${i + 1}`));
+		assert.deepEqual([got.word, got.level], [chapterStart(i), 'chapter'], `chapter ${i + 1}`);
+	});
+	let current = null;
+	for (const c of w.parts[0].chapters) {
+		if (/^Chapter /.test(c.title)) current = c.title;
+		if (!/^Log Entry/.test(c.title)) continue;
+		const got = msToWord(map, c.startMs + S);
+		assert.equal(got.level, 'chapter', c.title);
+		assert.equal(index.sections[locate(map, got.word).section].label, current, c.title);
+	}
+	assert.equal(model.inNoText(map, 10 * S), true, 'opening credits');
+	assert.equal(model.inNoText(map, startOf(w, 'Chapter 13')), false);
+	const bonus = startOf(w, 'Diary of an AssCan') + MIN;
+	assert.equal(model.inNoText(map, bonus), true, 'bonus audio the ebook lacks');
+	assert.equal(qualityAt(map, bonus).label, 'no text');
+	assert.equal(model.inNoText(map, map.totalMs - S), true, 'end credits');
+	assert.equal(msToWord(map, startOf(w, 'Some Selections from the Files of Mark Watney') - 1).word, chapterStart(25) + 6729 - 1);
+	assert.equal(map.matchedParts, 1);
+	assert.ok(map.matchedMsShare > 0.9, String(map.matchedMsShare));
+	const first = map.anchors.find((a) => a.kind === 'track-start');
+	assert.deepEqual([first.partIndex, first.chapter, first.word], [0, 1, chapterStart(0)]);
+	assert.deepEqual(model.spanAt(map, startOf(w, 'Log Entry: Sol 8') + S), { fromWord: chapterStart(1), toWord: chapterStart(2) });
+});
+
+// Dragon Keeper's 29 "Chapter 0NN" markers cut a prologue and 17 chapters in other places, and a
+// stray 16-second "Chapter 011" puts every later marker of Fool's Errand one chapter off. Pinned,
+// either would show another chapter's pages for hours.
+test('chapter markers numbered by the publisher leave the map as it was', () => {
+	const words = [9000, 3000, 7000, 2500, 8000, 4000, 9500, 3500];
+	const { index } = book([['Title Page', 73], ['Prologue', 4254], ...words.map((n, i) => [`Chapter ${i + 1}`, n])]);
+	const at = readAt(150);
+	const stray = chaptered('Test Work', [
+		['Chapter 001', at(4254 + words[0])], ['Chapter 002', at(words[1])], ['Chapter 003', at(words[2])], ['Chapter 004', 16 * S],
+		...words.slice(3).map((n, i) => [`Chapter ${padded(i + 5)}`, at(n)]),
+	]);
+	const total = 4254 + words.reduce((a, b) => a + b, 0);
+	const even = chaptered('Test Work', Array.from({ length: 13 }, (_, i) => [`Chapter ${padded(i + 1)}`, Math.round(at(total) / 13)]));
+	for (const w of [stray, even]) assert.deepEqual(buildMap(w, index), buildMap(whole(w), index));
+});
+
+// The Eye of the World titles its chapters "1 An Empty Road", a number a track title uses for its
+// place, and its 18-minute "Opening Credits" marker holds the prologue.
+test('a bare chapter number counts when the ebook titles that chapter the same, and long credits before a chapter are read', () => {
+	const words = [7167, 4965, 5259, 5966];
+	const titles = ['An Empty Road', 'Strangers', 'The Peddler', 'The Gleeman'];
+	const { index } = book([['Table of Contents', 220], ['PROLOGUE Dragonmount', 2618], ['MAPS', 0], ...titles.map((t, i) => [`${i + 1} ${t}`, words[i]])]);
+	const at = readAt(170);
+	const opts = { title: 'The Eye of the World' };
+	const part = 'The Eye of the World: Book One of The Wheel of Time (Unabridged)';
+	const w = chaptered(part, [['Opening Credits', 18 * MIN + 28 * S], ['Maps', 800], ...titles.map((t, i) => [`${i + 1} ${t}`, at(words[i])])], opts);
+	const map = model.buildMap(w, index);
+	titles.forEach((t, i) => {
+		const got = msToWord(map, startOf(w, `${i + 1} ${t}`));
+		assert.deepEqual([got.word, got.level], [index.sections[3 + i].wordStart, 'chapter'], t);
+	});
+	assert.deepEqual([msToWord(map, 0).word, msToWord(map, 0).level], [index.sections[1].wordStart, 'pace'], 'the prologue');
+	assert.equal(model.inNoText(map, MIN), false);
+	// Markers numbered by their place: "01 Dragonmount" is the prologue, "02 An Empty Road" chapter
+	// 1. Chapters of one length read at one pace however they are numbered, so only titles tell.
+	const { index: even } = book([['PROLOGUE Dragonmount', 5000], ...titles.map((t, i) => [`${i + 1} ${t}`, 5000])]);
+	const placed = chaptered(part, ['Dragonmount', ...titles].map((t, i) => [`${String(i + 1).padStart(2, '0')} ${t}`, at(5000)]), opts);
+	assert.deepEqual(buildMap(placed, even), buildMap(whole(placed), even));
+});
+
+// "Chapter 2 (continued)" after a log entry is still chapter 2, not chapter 2 read twice.
+test('a chapter marker repeated after a marker with no key stays one chapter', () => {
+	const { index } = book([['1', 3000], ['2', 4500], ['3', 3000], ['4', 3000]]);
+	const at = readAt(150);
+	const w = chaptered('Test Work', [
+		['Chapter 1', at(3000)], ['Chapter 2', 2 * S], ['Log Entry: Sol 9', at(2000)], ['Chapter 2 (continued)', at(2500) - 2 * S],
+		['Chapter 3', at(3000)], ['Chapter 4', at(3000)],
+	]);
+	const map = model.buildMap(w, index);
+	const two = index.sections[1].wordStart;
+	assert.deepEqual(model.spanAt(map, startOf(w, 'Chapter 2 (continued)') + MIN), { fromWord: two, toWord: two + 4500 });
+	assert.deepEqual(map.dropped, []);
+	const got = msToWord(map, startOf(w, 'Chapter 2 (continued)'));
+	assert.ok(got.word > two + 1900 && got.word < two + 2100, String(got.word));
+});
+
+// Royal Assassin's "Chapter 001" runs 1:30:06 over its prologue and chapter 1. Pinned to chapter 1
+// alone, its first 45 minutes showed chapter 1 while the prologue was read.
+test('a first chapter marker that also reads the prologue starts at the prologue', () => {
+	const words = [5993, 5641, 9257, 9500];
+	const { index } = book([['Table of Contents', 136], ['Prologue Dreams and Awakenings', 6544], ...words.map((n, i) => [`${i + 1} Title ${i + 1}`, n])]);
+	const at = readAt(148);
+	const prologue = index.sections[1].wordStart;
+	const w = chaptered('Test Work', words.map((n, i) => [`Chapter ${padded(i + 1)}`, at(n + (i ? 0 : 6544))]));
+	const map = model.buildMap(w, index);
+	assert.deepEqual([msToWord(map, 0).word, msToWord(map, 0).level], [prologue, 'chapter']);
+	assert.deepEqual(model.spanAt(map, MIN), { fromWord: prologue, toWord: index.sections[3].wordStart });
+	assert.equal(msToWord(map, startOf(w, 'Chapter 002')).word, index.sections[3].wordStart);
+	const without = chaptered('Test Work', words.map((n, i) => [`Chapter ${padded(i + 1)}`, at(n)]));
+	assert.equal(msToWord(model.buildMap(without, index), 0).word, index.sections[2].wordStart, 'a recording without the prologue');
+});
+
+// After the last chapter marker: a Hobb recording's marker titled after the book reads the
+// epilogue; The Martian's 26 minutes of bonus audio are not in the ebook; and a last "Chapter N"
+// marker can only announce the chapter, its text following in the next marker.
+test('the last chapter keeps the markers that read it, an epilogue marker paces the epilogue and bonus audio has no text', () => {
+	const words = [3000, 4500, 2400, 6000];
+	const at = readAt(150);
+	const { index } = book([...words.map((n, i) => [`Chapter ${i + 1}`, n]), ['Epilogue', 600]]);
+	const hobb = chaptered('Test Work', [
+		...words.map((n, i) => [`Chapter ${padded(i + 1)}`, at(n)]), ['Test Work', at(600) + 40 * S], ['End Credits', 12 * MIN],
+	]);
+	const map = model.buildMap(hobb, index);
+	const epilogue = index.sections[4].wordStart;
+	const got = msToWord(map, startOf(hobb, 'Test Work'));
+	assert.deepEqual([got.word, got.level], [epilogue, 'pace']);
+	assert.equal(model.inNoText(map, startOf(hobb, 'Test Work') + MIN), false);
+	assert.equal(model.inNoText(map, startOf(hobb, 'End Credits') + MIN), true, 'long credits with no chapter after them');
+	const { index: plain } = book(words.map((n, i) => [`Chapter ${i + 1}`, n]));
+	const martian = chaptered('Test Work', [
+		...words.slice(0, 3).map((n, i) => [`Chapter ${i + 1}`, at(n)]), ['Chapter 4', 2 * S], ['Log Entry: Sol 9', at(6000)],
+		['Diary of an AssCan', 9 * MIN], ['The Earthling', 12 * MIN],
+	]);
+	const m = model.buildMap(martian, plain);
+	const last = plain.sections[3].wordStart;
+	assert.deepEqual(model.spanAt(m, startOf(martian, 'Log Entry: Sol 9') + MIN), { fromWord: last, toWord: last + 6000 });
+	assert.equal(model.inNoText(m, startOf(martian, 'Diary of an AssCan') + MIN), true);
+	assert.equal(model.inNoText(m, m.totalMs - 1), true);
+});
+
+// The Sophocles BBC collection's "Chapter 02" file carries markers "Chapter 4", "Chapter 5": the
+// file's own title already pins it.
+test('a file titled after a chapter keeps its title anchor over its own chapter markers', () => {
+	const { index } = book([['1', 3000], ['2', 3000], ['3', 3000], ['4', 3000], ['5', 3000], ['6', 3000]]);
+	const w = work([['Chapter 01', 20 * MIN], ['Chapter 02', 60 * MIN]]);
+	w.parts[1].chapters = ['Chapter 4', 'Chapter 5', 'Chapter 6'].map((title, k) => ({ title, startMs: k * 20 * MIN, endMs: (k + 1) * 20 * MIN }));
+	assert.deepEqual(buildMap(w, index), buildMap(whole(w), index));
+});
+
+test('chapter markers that name no chapter, or fewer than three, leave the map as it was', () => {
+	const { index } = book([['1', 3000], ['2', 3000], ['3', 3000]]);
+	const codes = chaptered('The Murderbot Diaries 07 - System Collapse', [1, 2, 3, 4, 5].map((k) => [`MURDERBOTDIARIES07P0${k}`, 12 * MIN]));
+	const untitled = chaptered('Persians', [null, null, null, null].map((t) => [t, 15 * MIN]));
+	const two = chaptered('Test Work', [['Chapter 1', 20 * MIN], ['Chapter 2', 20 * MIN], ['Part 3', 20 * MIN]]);
+	for (const w of [codes, untitled, two]) assert.deepEqual(buildMap(w, index), buildMap(whole(w), index));
+});
+
+// Chapter numbers restart in every book of an omnibus: a book's intro track split at markers
+// "Chapter 01" would pin book 1's chapter 1.
+test('an omnibus keeps its tracks whole even when they carry chapter markers', () => {
+	const { index, w, map } = omnibusFixture();
+	const marked = structuredClone(w);
+	const intro = marked.parts.findIndex((p) => /^4-01 /.test(p.title));
+	marked.parts[intro].chapters = ['Chapter 01', 'Chapter 02', 'Chapter 03'].map((title, k) => ({ title, startMs: k * 20 * S, endMs: (k + 1) * 20 * S }));
+	assert.deepEqual(model.buildMap(marked, index), map);
+});
+
+test('marks on a split file: one inside its credits is dropped, one in a chapter refines that chapter', () => {
+	const { index } = book([['1', 3000], ['2', 3000], ['3', 3000], ['4', 3000]]);
+	const w = chaptered('Test Work', [['Opening Credits', MIN], ...[1, 2, 3, 4].map((n) => [`Chapter ${n}`, 20 * MIN]), ['End Credits', 2 * MIN]]);
+	const plain = model.buildMap(w, index);
+	const credits = { id: 'm1', ms: startOf(w, 'End Credits') + MIN, word: index.sections[3].wordStart + 2900, at: 1 };
+	const dropped = model.buildMap(w, index, { extraAnchors: [credits] });
+	assert.deepEqual(dropped.marks, { used: [], overruled: [] });
+	assert.deepEqual(dropped.anchors, plain.anchors);
+	const inside = { id: 'm2', ms: startOf(w, 'Chapter 3') + 5 * MIN, word: index.sections[2].wordStart + 900, at: 2 };
+	const map = model.buildMap(w, index, { extraAnchors: [inside] });
+	assert.deepEqual(map.marks, { used: ['m2'], overruled: [] });
+	assert.deepEqual(map.dropped, []);
+	assert.equal(msToWord(map, inside.ms).word, inside.word);
+	assert.equal(qualityAt(map, inside.ms + S).label, 'marked');
+	assert.equal(qualityAt(map, startOf(w, 'Chapter 2') + S).label, 'chapter-level');
+});
+
+test('a split file\'s chapter tracks start where the card\'s chapters start', () => {
+	const bookModel = require('../helpers/bookModel.js');
+	const { index } = book([['1', 3000], ['2', 3000], ['3', 3000], ['4', 3000]]);
+	const w = work([['Test Work', 80 * MIN]]);
+	// Out of order, a first chapter that starts late, a duplicate start, an empty chapter and one
+	// past the end, as Plex can report them.
+	w.parts[0].chapters = [
+		{ title: 'Chapter 2', startMs: 20 * MIN, endMs: 40 * MIN }, { title: 'Chapter 1', startMs: 5 * S, endMs: 20 * MIN },
+		{ title: 'Chapter 3', startMs: 40 * MIN, endMs: 60 * MIN }, { title: 'Chapter 3 again', startMs: 40 * MIN, endMs: 41 * MIN },
+		{ title: 'Empty', startMs: 50 * MIN, endMs: 50 * MIN }, { title: 'Chapter 4', startMs: 60 * MIN, endMs: 80 * MIN },
+		{ title: 'Past the end', startMs: 90 * MIN, endMs: 95 * MIN },
+	];
+	const map = model.buildMap(w, index);
+	const card = bookModel.chapters(w);
+	const starts = map.anchors.filter((a) => a.kind === 'track-start');
+	assert.equal(starts.length, 4);
+	for (const a of starts) assert.equal(a.ms, card[a.chapter].startMs, card[a.chapter].title);
+});
+
 // ---- sync marks ---------------------------------------------------------------------------------
 
 function fourChapters() {
@@ -1072,7 +1409,10 @@ test('inNoText is true in an intro, credits or a recorded book the ebook lacks, 
 });
 
 // c03f827 is the read-along's first release. A work without books on both sides must map exactly
-// as it did then, so every map built above is rebuilt with that commit's model and compared.
+// as it did then, so every map built above is rebuilt with that commit's model and compared. The
+// changes made on purpose keep their tests' maps out of the comparison: a last chapter ending at
+// its own last word, a whole-book file titled "Opening Credits", and a single file's chapter
+// markers. Chapter markers the model must not use go through it.
 const BASELINE = 'c03f827';
 
 function baselineDir() {

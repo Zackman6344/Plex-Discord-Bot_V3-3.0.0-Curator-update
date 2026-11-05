@@ -920,6 +920,29 @@ after it starts.
 - [ ] Each change applies to the next click, with no restart and no new card.
 - [ ] In every mode B's 📖 page has no ↪ or 📩, and the owner (not in voice) may pause and stop.
 
+## Phase 14: Chapter markers in single-file books (live)
+
+Built and unit-tested offline on 2026-11-05 with synthetic books, and measured on the live catalog
+and Calibre's EPUBs read in memory: 7 maps change (The Martian, The Eye of the World, Assassin's
+Apprentice, Royal Assassin, Assassin's Quest, Fool's Quest, Fool's Fate) and every other book's
+map stays the same. No catalog rebuild is needed. `/book goto 4:35:00` (or `!book goto`) reaches
+the times below.
+
+- [ ] The Martian (Calibre #351) at 4:35:00, inside chapter 14's audio log: 📖 shows chapter 14,
+      and the footer says "chapter-level". `!book text` says "chapter-level for 96% of the audio".
+- [ ] The Martian at 0:00:10 (opening credits) and at 10:35:00 ("Diary of an AssCan", bonus audio
+      the ebook lacks): "No text for this part of the audio". 📌 there is refused with the
+      no-text note.
+- [ ] The Martian, near the end of a chapter: ▶ to the next chapter's first page and press 📌:
+      "📌 That page is outside the chapter now playing…", nothing stored.
+- [ ] Royal Assassin (#371) at 0:05:00: the page is in the Prologue ("Dreams and Awakenings"), and
+      the footer says "chapter-level".
+- [ ] The Eye of the World (#7) at 0:10:00: the page is in the Prologue, "estimated from pace". At
+      0:20:00 it is in chapter 1, "An Empty Road", "chapter-level".
+- [ ] Dragon Keeper (#356), whose markers follow the publisher's numbering: every page still says
+      "estimated from pace", and `!book text` says "estimated from pace (no track is named after a
+      chapter)".
+
 ---
 
 ## Environment landmines found while reading

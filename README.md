@@ -856,7 +856,11 @@ would open by itself (the read-along is on and you start a book), the bot posts 
 the card's channel instead, at most once per book session, with no book text and no ping.
 
 **How close it follows.** There is no speech recognition. A track named after a chapter pins that
-chapter's text to it, and between those the bot goes by reading pace. Measured on The Way of Kings:
+chapter's text to it, and between those the bot goes by reading pace. A single-file book's own
+chapter markers count the same way when their lengths match the ebook's chapters: on The Martian
+the page is within a minute of the voice at every log entry, where reading pace alone ran up to
+27 minutes behind. Markers numbered by the publisher in other places are left out, and such a book
+goes by pace. Measured on The Way of Kings:
 70 of its 83 tracks are named after chapters, and inside one the page is within about ±9% of the
 voice (about 3 minutes in a 30-minute chapter). A book split into hour-long files has only pace to
 go on: about 12 minutes off on average, 20 at worst. Every page footer says "≈ Approximate" and

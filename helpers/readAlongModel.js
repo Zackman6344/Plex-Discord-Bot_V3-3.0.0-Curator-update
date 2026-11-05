@@ -9,7 +9,8 @@
 //
 // The map is honest about what it knows: tracks named after a chapter pin that chapter
 // ('chapter' level), hour splits between known points are interpolated by word count ('pace'),
-// and intro/outro tracks carry no text ('none'). A listener's sync marks come in as
+// and intro/outro tracks carry no text ('none'). A single file's embedded chapter markers count
+// as tracks when the chapters they name read at one pace. A listener's sync marks come in as
 // `extraAnchors`: each pins a page's first word to the moment it was heard, beats any automatic
 // anchor it disagrees with, and the stretches on either side of it are 'marked'.
 
@@ -55,6 +56,14 @@ const CHAIN_WEIGHT = 10000;
 // no-text track was set while nothing from the ebook was being read, and pinning it to the track's
 // end would overrule the chapter that really ends there.
 const NO_TEXT_MARK_SLACK_MS = 2500;
+// Credits, intros and trailers run a few minutes.
+const CREDITS_MAX_MS = 10 * 60 * 1000;
+// One narrator's chapters read within about 10% of each other (The Way of Kings' dramatized ones
+// within 140-197 wpm). Markers that agree with the ebook's chapters put 97% or more of them within
+// x1.3 of the median; the publisher's own numbering put 69% at most.
+const CHAPTER_PACE_SPREAD = 1.3;
+const CHAPTER_PACE_SHARE = 0.9;
+const CHAPTER_PACE_MIN = 3;
 
 // An omnibus's first book often has no heading of its own: its title is the TOC label of a
 // section that also holds chapter 1. A bare title page is far shorter than any chapter.
@@ -265,6 +274,99 @@ function isNoTextPart(part, { workTitle = '' } = {}) {
 	return NO_TEXT_RE.test(title) && !partKey(title, { workTitle });
 }
 
+// Plex can title a whole-book file "Opening Credits", its first chapter's name. When titles leave a
+// work no narrated part, a part that runs longer than credits do is the book itself. Beside
+// narrated parts a long credits track stays flat: it can hold an introduction the ebook lacks.
+function noTextParts(parts, workTitle) {
+	const flags = parts.map((p) => (typeof p.noText === 'boolean' ? p.noText : isNoTextPart(p, { workTitle })));
+	if (!flags.every(Boolean)) return flags;
+	return parts.map((p) => !(Number(p && p.durationMs) > CREDITS_MAX_MS));
+}
+
+// A part's embedded chapters, cut the way helpers/bookModel.js embeddedChapters cuts them so the
+// card's chapter slots and these tracks agree: the first chapter owns the part's opening, and a
+// part with fewer than two real chapters has none. Null when it has none.
+function embeddedList(part) {
+	if (!part || part.chapterKind === 'markers' || !Array.isArray(part.chapters)) return null;
+	const dur = Math.max(0, Number(part.durationMs) || 0);
+	const real = part.chapters
+		.filter((c) => c && Number.isFinite(c.startMs) && Number.isFinite(c.endMs) && c.endMs > c.startMs && c.startMs < dur)
+		.sort((a, b) => a.startMs - b.startMs);
+	const out = [];
+	for (const c of real) {
+		const startMs = out.length ? c.startMs : 0;
+		if (out.length && startMs <= out[out.length - 1].startMs) continue;
+		out.push({ title: String(c.title || c.tag || ''), startMs });
+	}
+	if (out.length < 2) return null;
+	return out.map((c, k) => ({ title: c.title, durationMs: (k + 1 < out.length ? out[k + 1].startMs : dur) - c.startMs }));
+}
+
+function afterNumber(label) {
+	const t = String(label ?? '').trim();
+	const kw = /^(?:chapter|chap|ch)(?!\p{L})\.?\s*/iu.exec(t);
+	const n = numberAt(t, kw ? kw[0].length : 0);
+	return n ? t.slice(n.end).replace(/^[\s:.)\-\u2013\u2014]+/, '') : t;
+}
+
+// A chapter title is often a TOC label: "1 An Empty Road" is chapter 1. A bare leading number counts
+// only when the ebook's own section with that key carries the same title, since in "02 The Boy" it
+// can be the marker's place.
+function verifiedKey(title, ebook) {
+	const key = labelKey(title);
+	if (!key || !/^c\d+$/.test(key)) return null;
+	const own = afterNumber(title);
+	if (!titleWords(own).size) return null;
+	return ebook.some((s) => s.key === key && titleSimilarity(own, afterNumber(s.label)) >= TITLE_MATCH) ? key : null;
+}
+
+// The chapters of one part as tracks: a chapter key pins its chapter like a track title does, and a
+// credits title is cut from the time axis. Null when no chapter has a key, so the part stays whole.
+function chapterKeys(list, ebook, workTitle) {
+	const out = list.map((c) => {
+		const key = partKey(c.title, { workTitle }) || verifiedKey(c.title, ebook);
+		return { ...c, key, noText: !key && NO_TEXT_RE.test(c.title) };
+	});
+	// The Eye of the World's 18-minute "Opening Credits" holds its prologue. A keyed chapter after it
+	// bounds what pace spreads over it, which a whole credits track has no way to do.
+	out.forEach((c, k) => {
+		if (c.noText && c.durationMs > CREDITS_MAX_MS && out.slice(k + 1).some((d) => d.key)) c.noText = false;
+	});
+	if (!out.some((c) => c.key)) return null;
+	let last = -1;
+	out.forEach((c, k) => { if (c.key) last = k; });
+	// A marker with no key continues the chapter before it: "Log Entry: Sol 6" is chapter 1's text,
+	// after a "Chapter 1" marker that only announces it. Past the part's last keyed chapter it is
+	// only a candidate (`tail`); buildMap decides.
+	let cur = null;
+	for (const [k, c] of out.entries()) {
+		if (c.noText) cur = null;
+		else if (c.key) cur = c.key;
+		else if (cur && k < last) c.key = cur;
+		else if (cur) c.tail = cur;
+	}
+	return out;
+}
+
+// A work's tracks with each part that has telling embedded chapters split into them, or null when
+// no part splits. A part whose own title names a chapter stays whole: its title pins it already.
+function chapterTracks(parts, sections, workTitle) {
+	const ebook = sections.map((s) => ({ label: s.label, key: labelKey(s.label) })).filter((s) => s.key);
+	let split = false;
+	const out = [];
+	parts.forEach((p, i) => {
+		const list = partKey(p && p.title, { workTitle }) ? null : embeddedList(p);
+		const inner = list && chapterKeys(list, ebook, workTitle);
+		if (!inner) {
+			out.push({ title: p && p.title, durationMs: p && p.durationMs, partIndex: i });
+			return;
+		}
+		split = true;
+		inner.forEach((c, k) => out.push({ ...c, partIndex: i, chapter: k }));
+	});
+	return split ? out : null;
+}
+
 // An omnibus track: "1-02 Book 1  The Sword of Testing - Chapter 01a" gives book 1, its title,
 // and "Chapter 01a" as the rest, which carries the chapter key. The rest starts at the last
 // separator that still leaves a chapter key (else a no-text word), so a book title may hold
@@ -352,6 +454,13 @@ function classifySections(sections, { performedKeys = new Set(), keyOverrides = 
 		bodyStartWord,
 		bodyEndWord,
 	};
+}
+
+// Where section i ends, with the pieces the cache split it into.
+function ownEnd(sections, i) {
+	let j = i;
+	while (j + 1 < sections.length && sections[j + 1].part > 1) j++;
+	return sections[j].wordStart + (sections[j].words || 0);
 }
 
 function isBookHeading(s) {
@@ -568,10 +677,25 @@ function buildMap(work, index, { extraAnchors = [] } = {}) {
 	const parts = Array.isArray(work && work.parts) ? work.parts : [];
 	if (!parts.length || !index) return null;
 	const workTitle = (work && work.title) || '';
-	const bk = bookPlan(parts, Array.isArray(index.sections) ? index.sections : [], workTitle);
-	const keys = bk ? bk.keys : parts.map((p) => partKey(p && p.title, { workTitle }));
-	const noText = bk ? bk.noText : parts.map((p) => isNoTextPart(p, { workTitle }));
-	const partBook = bk ? bk.partBook : parts.map(() => -1);
+	const sectionList = Array.isArray(index.sections) ? index.sections : [];
+	const bk = bookPlan(parts, sectionList, workTitle);
+	// An omnibus keeps its tracks whole: its chapter keys mean something only inside a book.
+	const split = bk ? null : chapterTracks(parts, sectionList, workTitle);
+	return (split && mapOf(work, index, extraAnchors, bk, split)) || mapOf(work, index, extraAnchors, bk, null);
+}
+
+// A part's "Chapter N" markers can be the publisher's own numbering, which cuts the book in other
+// places than its chapters (Dragon Keeper's 29 markers over a prologue and 17 chapters). Split
+// tracks hold only when the chapters they pin read at one pace: CHAPTER_PACE_SHARE of them within
+// CHAPTER_PACE_SPREAD of the median, else this returns null and the parts stay whole.
+function mapOf(work, index, extraAnchors, bk, split) {
+	const parts = work.parts;
+	const workTitle = (work && work.title) || '';
+	const tracks = split || parts.map((p, i) => ({ title: p && p.title, durationMs: p && p.durationMs, partIndex: i }));
+	const keys = bk ? bk.keys : tracks.map((t) => (t.chapter === undefined ? partKey(t.title, { workTitle }) : t.key));
+	const noText = bk ? bk.noText : noTextParts(tracks, workTitle);
+	const partBook = bk ? bk.partBook : tracks.map(() => -1);
+	const where = (i) => (tracks[i].chapter === undefined ? { partIndex: i } : { partIndex: tracks[i].partIndex, chapter: tracks[i].chapter });
 	const cls = classifySections(index.sections, { performedKeys: new Set(keys.filter(Boolean)), keyOverrides: bk && bk.keyOverrides });
 	const { sections, bodyStartIndex, bodyEndIndex, bodyStartWord, bodyEndWord } = cls;
 	if (!(bodyEndWord > bodyStartWord)) return null;
@@ -581,7 +705,7 @@ function buildMap(work, index, { extraAnchors = [] } = {}) {
 	// Intro/outro tracks are cut out of the time axis, so pace never stretches across them.
 	let real = 0;
 	let eff = 0;
-	const tl = parts.map((p, i) => {
+	const tl = tracks.map((p, i) => {
 		const dur = Math.max(0, Number(p && p.durationMs) || 0);
 		const t = { realStart: real, realEnd: real + dur, effStart: eff, effEnd: eff + (noText[i] ? 0 : dur) };
 		real = t.realEnd;
@@ -591,7 +715,7 @@ function buildMap(work, index, { extraAnchors = [] } = {}) {
 	const totalMs = real;
 	const totalEff = eff;
 	if (!(totalEff > 0)) return null;
-	const textParts = parts.map((_, i) => i).filter((i) => !noText[i]);
+	const textParts = tracks.map((_, i) => i).filter((i) => !noText[i]);
 	const firstText = textParts[0];
 	const lastText = textParts[textParts.length - 1];
 
@@ -614,8 +738,8 @@ function buildMap(work, index, { extraAnchors = [] } = {}) {
 
 	// Consecutive tracks with one key are one chapter split across files.
 	const runs = [];
-	const runOfPart = new Array(parts.length).fill(-1);
-	for (let i = 0; i < parts.length; i++) {
+	const runOfPart = new Array(tracks.length).fill(-1);
+	for (let i = 0; i < tracks.length; i++) {
 		if (!keys[i] || noText[i]) continue;
 		const r = runs[runs.length - 1];
 		if (r && r.last === i - 1 && r.key === keys[i] && r.book === partBook[i]) r.last = i;
@@ -640,8 +764,8 @@ function buildMap(work, index, { extraAnchors = [] } = {}) {
 			if (r.section >= 0) { host = ri; return; }
 			const h = runs[host];
 			const next = runs.slice(ri + 1).find((x) => x.section >= 0);
-			let j = h ? h.last + 1 : parts.length;
-			while (j < parts.length && noText[j]) j++;
+			let j = h ? h.last + 1 : tracks.length;
+			while (j < tracks.length && noText[j]) j++;
 			if (!h || j !== r.first || r.book < 0 || h.book !== r.book || !next || next.book !== r.book
 				|| !(num(h.key) < num(r.key) && num(r.key) < num(next.key))) {
 				host = -1;
@@ -652,31 +776,93 @@ function buildMap(work, index, { extraAnchors = [] } = {}) {
 		});
 	}
 
+	// Where a run's text ends when no keyed track follows it.
+	const textEnd = (r) => {
+		const start = sections[r.section].wordStart;
+		let p = candidatePos.get(r.section) + 1;
+		while (p < candidates.length && !(sections[candidates[p]].wordStart > start)) p++;
+		// A chapter with no keyed section after it ends at its own last word. What follows is the
+		// next book's title pages, or back matter no label list knows ("A Second Look", "About the
+		// Illustrator") that counts as body; a later text track still paces over it.
+		const limit = r.book >= 0 && r.book + 1 < bk.ebook.length ? bk.ebook[r.book].endWord : ownEnd(sections, r.section);
+		return p < candidates.length && inBook(candidates[p], r.book) ? sections[candidates[p]].wordStart : limit;
+	};
+
+	const startOf = (r) => (r.from >= 0 ? r.from : sections[r.section].wordStart);
+	const endOf = (r) => {
+		const start = startOf(r);
+		let j = r.last + 1;
+		while (j < tracks.length && noText[j]) j++;
+		const nr = j < tracks.length ? runOfPart[j] : -1;
+		const next = nr >= 0 && runs[nr].first === j && runs[nr].book === r.book && runs[nr].section >= 0 ? sections[runs[nr].section].wordStart : -1;
+		return Math.max(start, Math.min(next > start ? next : textEnd(r), bodyEndWord));
+	};
+
+	if (split) {
+		const pinned = runs.filter((r) => r.section >= 0 && tracks[r.first].chapter !== undefined);
+		if (pinned.length < CHAPTER_PACE_MIN) return null;
+		const final = pinned[pinned.length - 1];
+		const tailOf = (r) => {
+			const out = [];
+			for (let j = r.last + 1; j < tracks.length && tracks[j].tail === r.key; j++) out.push(j);
+			return out;
+		};
+		const absorb = (r, list) => {
+			for (const j of list) runOfPart[j] = runs.indexOf(r);
+			r.last += list.length;
+		};
+		// Unkeyed markers after a part's last keyed chapter continue it when a pinned chapter follows.
+		for (const r of pinned) if (r !== final) absorb(r, tailOf(r));
+		const msOf = (r) => tl[r.last].effEnd - tl[r.first].effStart;
+		const paces = pinned.filter((r) => r !== final).map((r) => (endOf(r) - startOf(r)) / msOf(r)).sort((a, b) => a - b);
+		const median = paces[(paces.length - 1) >> 1];
+		// How far words over ms read from the median pace, as a factor of at least 1.
+		const offPace = (words, ms) => (words > 0 && ms > 0 ? Math.max(words / ms / median, median * ms / words) : Infinity);
+		// After the work's last chapter they can be bonus audio the ebook lacks (The Martian's "Diary
+		// of an AssCan") or the chapter's own text after a marker that only announces it: the chapter
+		// keeps the ones that bring it closest to the book's pace.
+		const tail = tailOf(final);
+		const words = endOf(final) - startOf(final);
+		let take = 0;
+		let ms = msOf(final);
+		let best = offPace(words, ms);
+		tail.forEach((j, k) => {
+			ms += tl[j].effEnd - tl[j].effStart;
+			if (offPace(words, ms) < best) {
+				best = offPace(words, ms);
+				take = k + 1;
+			}
+		});
+		absorb(final, tail.slice(0, take));
+		// Markers it leaves with no text after it are audio the ebook lacks, cut like credits.
+		const rest = tail.slice(take);
+		if (rest.length && endOf(final) >= bodyEndWord) {
+			return mapOf(work, index, extraAnchors, bk, split.map((t, i) => (rest.includes(i) ? { ...t, noText: true, tail: undefined } : t)));
+		}
+		// A book's first chapter marker often opens with the credits and the prologue: Royal
+		// Assassin's "Chapter 001" runs 1:30:06 over its 6,544-word prologue and chapter 1. With no
+		// track before it to pace that text, it takes the text when that brings it closer to pace.
+		const head = pinned[0];
+		if (head.first === firstText && bodyStartWord < startOf(head)) {
+			const own = offPace(endOf(head) - startOf(head), msOf(head));
+			if (offPace(endOf(head) - bodyStartWord, msOf(head)) < own) head.from = bodyStartWord;
+		}
+		const agree = pinned.filter((r) => offPace(endOf(r) - startOf(r), msOf(r)) <= CHAPTER_PACE_SPREAD).length;
+		if (agree < CHAPTER_PACE_SHARE * pinned.length) return null;
+	}
+
 	const effAnchors = [];
 	runs.forEach((r, ri) => {
 		if (r.section < 0) return;
-		const start = sections[r.section].wordStart;
-		let end = -1;
-		let j = r.last + 1;
-		while (j < parts.length && noText[j]) j++;
-		const nr = j < parts.length ? runOfPart[j] : -1;
-		if (nr >= 0 && runs[nr].first === j && runs[nr].book === r.book && runs[nr].section >= 0 && sections[runs[nr].section].wordStart > start) {
-			end = sections[runs[nr].section].wordStart;
-		} else {
-			let p = candidatePos.get(r.section) + 1;
-			while (p < candidates.length && !(sections[candidates[p]].wordStart > start)) p++;
-			// A book's last chapter ends at its own last word, not at the next book's title pages.
-			const limit = r.book >= 0 && r.book + 1 < bk.ebook.length ? bk.ebook[r.book].endWord : bodyEndWord;
-			end = p < candidates.length && inBook(candidates[p], r.book) ? sections[candidates[p]].wordStart : limit;
-		}
-		end = Math.max(start, Math.min(end, bodyEndWord));
+		const start = startOf(r);
+		const end = endOf(r);
 		const base = { span: ri, section: r.section };
-		effAnchors.push({ ...base, kind: 'track-start', ms: tl[r.first].effStart, real: tl[r.first].realStart, word: start, partIndex: r.first });
-		effAnchors.push({ ...base, kind: 'track-end', ms: tl[r.last].effEnd, real: tl[r.last].realEnd, word: end, partIndex: r.last });
+		effAnchors.push({ ...base, kind: 'track-start', ms: tl[r.first].effStart, real: tl[r.first].realStart, word: start, ...where(r.first) });
+		effAnchors.push({ ...base, kind: 'track-end', ms: tl[r.last].effEnd, real: tl[r.last].realEnd, word: end, ...where(r.last) });
 	});
 	const matched = (i) => runOfPart[i] >= 0 && runs[runOfPart[i]].section >= 0;
-	const workStart = () => ({ kind: 'work-start', ms: 0, real: tl[firstText].realStart, word: bodyStartWord, partIndex: firstText });
-	const workEnd = () => ({ kind: 'work-end', ms: totalEff, real: tl[lastText].realEnd, word: bodyEndWord, partIndex: lastText });
+	const workStart = () => ({ kind: 'work-start', ms: 0, real: tl[firstText].realStart, word: bodyStartWord, ...where(firstText) });
+	const workEnd = () => ({ kind: 'work-end', ms: totalEff, real: tl[lastText].realEnd, word: bodyEndWord, ...where(lastText) });
 	if (!matched(firstText)) effAnchors.push(workStart());
 	if (!matched(lastText)) effAnchors.push(workEnd());
 	const extras = Array.isArray(extraAnchors) ? extraAnchors : [];
@@ -687,8 +873,8 @@ function buildMap(work, index, { extraAnchors = [] } = {}) {
 		const word = Math.min(Math.max(0, Math.round(Number(a.word) || 0)), totalWords);
 		let e = totalEff;
 		let away = false;
-		for (let i = 0; i < parts.length; i++) {
-			if (ms < tl[i].realEnd || i === parts.length - 1) {
+		for (let i = 0; i < tracks.length; i++) {
+			if (ms < tl[i].realEnd || i === tracks.length - 1) {
 				if (noText[i] && tl[i].realEnd - ms > NO_TEXT_MARK_SLACK_MS) away = true;
 				// The reaction allowance can carry a mark at a chapter's first word back into the
 				// intro before it; the words start where the intro ends.
@@ -710,7 +896,7 @@ function buildMap(work, index, { extraAnchors = [] } = {}) {
 	const keep = longestChain(sorted);
 	const chain = sorted.filter((_, i) => keep.has(i));
 	const dropped = [...sorted.filter((_, i) => !keep.has(i)), ...beaten, ...overruled, ...outside].map((a) => ({
-		kind: a.kind, ms: a.real, word: a.word, partIndex: a.partIndex, section: a.section ?? null,
+		kind: a.kind, ms: a.real, word: a.word, partIndex: a.partIndex, chapter: a.chapter, section: a.section ?? null,
 	}));
 	// The map must cover the whole work even when the longest chain lost its first or last anchor.
 	if (!chain.length || chain[0].ms > 0) chain.unshift({ ...workStart(), word: Math.min(bodyStartWord, chain.length ? chain[0].word : bodyStartWord) });
@@ -718,15 +904,16 @@ function buildMap(work, index, { extraAnchors = [] } = {}) {
 
 	const anchors = chain.map((a) => {
 		const out = { ms: a.real, word: a.word, kind: a.kind, partIndex: a.partIndex };
+		if (a.chapter !== undefined) out.chapter = a.chapter;
 		if (a.section !== undefined) out.section = a.section;
 		if (a.span !== undefined) out.span = a.span;
 		return out;
 	});
-	for (const i of parts.keys()) {
+	for (const i of tracks.keys()) {
 		if (!noText[i]) continue;
 		const w = Math.round(rightWord(chain, tl[i].effStart));
-		anchors.push({ ms: tl[i].realStart, word: w, kind: 'no-text', partIndex: i });
-		anchors.push({ ms: tl[i].realEnd, word: w, kind: 'no-text', partIndex: i });
+		anchors.push({ ms: tl[i].realStart, word: w, kind: 'no-text', ...where(i) });
+		anchors.push({ ms: tl[i].realEnd, word: w, kind: 'no-text', ...where(i) });
 	}
 	sortAnchors(anchors);
 	for (let k = 1; k < anchors.length; k++) {
@@ -750,8 +937,10 @@ function buildMap(work, index, { extraAnchors = [] } = {}) {
 	}
 	const chapterMs = segments.filter((s) => s.level === 'chapter').reduce((n, s) => n + (s.toMs - s.fromMs), 0);
 	const keptStarts = new Set(chain.filter((a) => a.kind === 'track-start').map((a) => a.span));
-	let matchedParts = 0;
-	runs.forEach((r, ri) => { if (keptStarts.has(ri)) matchedParts += r.last - r.first + 1; });
+	// Parts, not chapter tracks: a split part counts once.
+	const matchedSet = new Set();
+	runs.forEach((r, ri) => { if (keptStarts.has(ri)) for (let i = r.first; i <= r.last; i++) matchedSet.add(tracks[i].partIndex); });
+	const matchedParts = matchedSet.size;
 
 	const map = {
 		totalMs,
@@ -778,7 +967,7 @@ function buildMap(work, index, { extraAnchors = [] } = {}) {
 	// Only an omnibus carries this, so every other work's map stays exactly what it was.
 	if (bk) {
 		map.books = bk.audio.map((a) => {
-			const idx = parts.map((_, i) => i).filter((i) => bk.partAudioBook[i] === a.number);
+			const idx = tracks.map((_, i) => i).filter((i) => bk.partAudioBook[i] === a.number);
 			return {
 				number: a.number,
 				title: a.title,
@@ -836,8 +1025,10 @@ function inNoText(map, ms) {
 	const starts = new Map();
 	for (const a of (map && map.anchors) || []) {
 		if (a.kind !== 'no-text') continue;
-		if (!starts.has(a.partIndex)) starts.set(a.partIndex, a.ms);
-		else if (ms >= starts.get(a.partIndex) && ms < a.ms) return true;
+		// A split part's credits chapters are tracks of their own.
+		const id = a.chapter === undefined ? a.partIndex : `${a.partIndex}/${a.chapter}`;
+		if (!starts.has(id)) starts.set(id, a.ms);
+		else if (ms >= starts.get(id) && ms < a.ms) return true;
 	}
 	return false;
 }
