@@ -114,6 +114,25 @@ test('the calibre password is a secret and the read-along settings default safe'
     assert.strictEqual(typeof config.audiobookTextSidecars, 'boolean');
 });
 
+// The pictures download a book's PDF and run poppler for minutes, so they are opt-in.
+test('read-along pictures from a Calibre PDF are a bool in Audiobooks, off by default, with a warning', () => {
+    const config = require('../config/config.js');
+    const pictures = store.getSetting('audiobookTextPictures');
+    assert.strictEqual(pictures.group, 'Audiobooks');
+    assert.strictEqual(pictures.type, 'bool');
+    assert.match(pictures.warn, /PDF/);
+    assert.match(pictures.warn, /Below Normal/);
+    assert.ok(pictures.label.length <= 100, 'fits a select option');
+    assert.ok(!pictures.restartRequired, 'read at call time');
+    assert.ok(Object.prototype.hasOwnProperty.call(config, 'audiobookTextPictures'), 'has a config.js default');
+    assert.strictEqual(typeof config.audiobookTextPictures, 'boolean');
+    const order = store.settingsInGroup('Audiobooks').map((s) => s.key);
+    assert.strictEqual(order.indexOf('audiobookTextPictures'), order.indexOf('audiobookTextConvert') + 1);
+    assert.strictEqual(store.selectPages('Audiobooks').length, 1, 'Audiobooks still fits one menu');
+    const overridesFile = path.join(__dirname, '..', 'data', 'config.overrides.json');
+    if (!fs.existsSync(overridesFile)) assert.strictEqual(config.audiobookTextPictures, false);
+});
+
 test('the online book lookup settings land in the Audiobooks group, off and on the US store by default', () => {
     const config = require('../config/config.js');
     const on = store.getSetting('audiobookOnlineLookup');

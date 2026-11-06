@@ -176,6 +176,28 @@ test('an ordinary payload, the book card included, is still kept as it was', () 
     assert.strictEqual(commandLog.carriesPrivateText('bookpage:'), false);
 });
 
+// A page can carry pictures from the book's PDF: their names, local paths and attachment:// URLs
+// ride in the embeds and `files`, and none of them may reach data/logs.
+test('a page with pictures summarises and logs with no picture name, path or attachment URL', () => {
+    const card = require('../helpers/readAlongCard.js');
+    const dir = pathMod.join(os.tmpdir(), 'plexbot-test-pictures', '9aa360b44c75c103');
+    const pictures = ['p022', 'p062-063'].map((id) => ({ id, name: `${id}.jpg`, path: pathMod.join(dir, `${id}.jpg`), alt: 'Picture from the printed book, page 22', bytes: 150000 }));
+    const page = card.pagePayload({
+        surface: 'd', sid: 'a1b2c3', tag: '9f0c', word: 0, page: 0, pageCount: 5, bookTitle: 'The Fake Book',
+        sectionLabel: 'Chapter 1', text: PAGE_TEXT, mode: 'following', isListener: true, pictures, pictureCount: 2
+    });
+    assert.strictEqual(page.files.length, 2, 'the page does carry the pictures');
+    const summary = JSON.stringify(commandLog.summarise(page));
+    const id = commandLog.startInvocation({ command: 'book', path: 'button', args: 'bookpage:next:d:a1b2c3:9f0c:0' });
+    commandLog.recordOutput({ id, kind: 'interaction-reply', payload: page });
+    const written = fs.readFileSync(pathMod.join(DIR, fs.readdirSync(DIR)[0]), 'utf8');
+    for (const text of [summary, written]) {
+        assert.match(text, /\[book text not logged\]/);
+        assert.ok(!text.includes('.jpg') && !text.includes('attachment://') && !text.includes('9aa360b44c75c103') && !text.includes('printed book'), text);
+        assert.ok(!text.includes('quebec'));
+    }
+});
+
 test('a page reaches the day-file as a placeholder, and the page text never does', () => {
     const id = commandLog.startInvocation({ command: 'book', path: 'button', args: 'bookpage:next:d:a1b2c3:9f0c:0' });
     commandLog.recordOutput({ id, kind: 'interaction-reply', payload: rawPage() });

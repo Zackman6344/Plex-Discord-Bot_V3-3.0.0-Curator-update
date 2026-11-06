@@ -7,13 +7,28 @@
 // The rule the command log depends on: every payload that carries book text carries a row of
 // bookpage:* buttons, and nothing else does. helpers/commandLog.js redacts by that row, so a
 // payload with text and no row would be written to disk.
+//
+// The rule for pictures (a scanned PDF's illustrations, helpers/bookPictures.js): every payload
+// carries a `files` array, and only pagePayload ever fills it. An edit with no `files` keeps the
+// message's old attachments, so a page turned into a stub, or the refusal shown to someone who
+// left the voice channel, would keep the picture on their screen; `files: []` clears them.
+
+const path = require('path');
 
 const NAMESPACE = 'bookpage';
 const ACTS = new Set(['prev', 'next', 'now', 'play', 'off', 'dm', 'mark']);
 const SURFACES = new Set(['d', 'e']);
 const STYLE = { primary: 1, secondary: 2, success: 3, danger: 4 };
-const LIMITS = { title: 256, description: 4096, footer: 2048, content: 2000 };
+const LIMITS = { title: 256, description: 4096, footer: 2048, content: 2000, alt: 1024 };
 const NO_PINGS = { parse: [] };
+const PAGE_COLOR = 0x8e6e53;
+// Discord allows 10 embeds and 10 attachments a message; the page's own embed holds the first
+// picture. The byte cap keeps a page of big scans under the upload limit.
+const MAX_PAGE_PICTURES = 10;
+const MAX_MESSAGE_BYTES = 8 * 1024 * 1024;
+const PICTURE_NAME = /^p\d{3,4}(-\d{3,4})?\.jpg$/;
+const PICTURES_BIT = /^🖼 \d+ of \d+ pictures$/;
+const DEFAULT_ALT = 'Picture from the printed book';
 
 const MODE_TEXT = {
 	following: 'following the narration',
@@ -101,11 +116,12 @@ function markRow({ sid, tag, word }) {
 	return { type: 1, components: [button(pageId({ act: 'mark', surface: 'd', sid, tag, word }), 'Narrator is here', '📌', STYLE.secondary, false)] };
 }
 
-function footerOf({ quality, dramatized, page, pageCount, mode, extra }) {
+function footerOf({ quality, dramatized, page, pageCount, mode, extra }, pics = null) {
 	const bits = ['≈ Approximate'];
 	if (dramatized) bits.push('dramatized edition');
 	if (quality && quality.label) bits.push(quality.label);
 	if (Number.isFinite(page) && Number.isFinite(pageCount)) bits.push(`page ${page + 1} of ${pageCount}`);
+	if (pics && pics.shown < pics.count) bits.push(`🖼 ${pics.shown} of ${pics.count} pictures`);
 	if (extra) bits.push(extra);
 	if (MODE_TEXT[mode]) bits.push(MODE_TEXT[mode]);
 	return clip(bits.join(' · '), LIMITS.footer);
@@ -121,23 +137,72 @@ function noteLine(note) {
 	return NOTE_TEXT[note] || '';
 }
 
+// discord.js downloads a string that starts http(s):// and reads anything else from disk, and
+// Windows contacts the host of a UNC path on the read alone, so only a local absolute path is
+// ever attached.
+function localFile(p) {
+	return typeof p === 'string' && path.isAbsolute(p) && !/^[\\/]{2}/.test(p);
+}
+
+/** The pictures that can go on one page, in the order given: valid, local, at most 10 and 8 MB. */
+function attachable(list) {
+	const out = [];
+	const names = new Set();
+	let bytes = 0;
+	for (const p of Array.isArray(list) ? list : []) {
+		if (out.length >= MAX_PAGE_PICTURES) break;
+		if (!p || typeof p.name !== 'string' || !PICTURE_NAME.test(p.name) || names.has(p.name) || !localFile(p.path)) continue;
+		const size = Number(p.bytes);
+		if (!Number.isFinite(size) || size < 0) continue;
+		if (bytes + size > MAX_MESSAGE_BYTES) break;
+		bytes += size;
+		names.add(p.name);
+		out.push({ name: p.name, path: p.path, alt: p.alt });
+	}
+	return out;
+}
+
 /**
  * One page of the book with its button row.
- * @param {object} o surface 'd' (DM) or 'e' (ephemeral); word is the page's first global word
+ * @param {object} o surface 'd' (DM) or 'e' (ephemeral); word is the page's first global word;
+ *   pictures are the page's pictures in reading order ({ name, path, alt, bytes }) and
+ *   pictureCount how many the page holds in all
  */
 function pagePayload(o) {
+	const pics = attachable(o.pictures);
+	const count = Math.max(pics.length, Number.isInteger(o.pictureCount) ? o.pictureCount : (Array.isArray(o.pictures) ? o.pictures.length : 0));
 	const embed = {
-		color: 0x8e6e53,
+		color: PAGE_COLOR,
 		title: titleOf(o.bookTitle, o.sectionLabel, o.sectionNo, o.sectionCount),
 		description: clip(escText(pageText(o.text)) || '…', LIMITS.description),
-		footer: { text: footerOf(o) }
+		footer: { text: footerOf(o, { shown: pics.length, count }) }
 	};
+	if (pics.length) embed.image = { url: `attachment://${pics[0].name}` };
 	return {
 		content: noteLine(o.note),
-		embeds: [embed],
+		embeds: [embed, ...pics.slice(1).map(p => ({ color: PAGE_COLOR, image: { url: `attachment://${p.name}` } }))],
 		components: o.surface === 'd' && o.isListener ? [pageRow(o), markRow(o)] : [pageRow(o)],
+		files: pics.map(p => ({ attachment: p.path, name: p.name, description: clip(String(p.alt || DEFAULT_ALT), LIMITS.alt) })),
 		allowedMentions: NO_PINGS
 	};
+}
+
+/**
+ * The same payload without its pictures, for a resend after Discord refused the upload or a
+ * picture's file went missing: no image on the page embed, no image-only embeds, `files: []`.
+ */
+function stripPictures(payload) {
+	const embeds = [];
+	for (const e of (payload && payload.embeds) || []) {
+		if (!e || (e.image && !e.title && !e.description)) continue;
+		const kept = Object.assign({}, e);
+		delete kept.image;
+		if (kept.footer && typeof kept.footer.text === 'string') {
+			kept.footer = Object.assign({}, kept.footer, { text: kept.footer.text.split(' · ').filter(b => !PICTURES_BIT.test(b)).join(' · ') });
+		}
+		embeds.push(kept);
+	}
+	return Object.assign({}, payload, { embeds, files: [] });
 }
 
 /** Where the narration has no text (an intro or outro track, or past the end). */
@@ -158,12 +223,13 @@ function noTextPayload(o) {
 		content: noteLine(o.note),
 		embeds: [embed],
 		components: [pageRow(Object.assign({ prevOk: true, nextOk: true }, o, { none: true }))],
+		files: [],
 		allowedMentions: NO_PINGS
 	};
 }
 
 function stub(content) {
-	return { content: clip(content, LIMITS.content), embeds: [], components: [], allowedMentions: NO_PINGS };
+	return { content: clip(content, LIMITS.content), embeds: [], components: [], files: [], allowedMentions: NO_PINGS };
 }
 
 function preparingPayload({ bookTitle } = {}) {
@@ -189,6 +255,8 @@ function noticePayload(text) {
 
 module.exports = {
 	NAMESPACE,
+	MAX_PAGE_PICTURES,
+	MAX_MESSAGE_BYTES,
 	pagePayload,
 	noTextPayload,
 	preparingPayload,
@@ -196,6 +264,7 @@ module.exports = {
 	offStub,
 	movedStub,
 	noticePayload,
+	stripPictures,
 	pageId,
 	parsePageId,
 	escText

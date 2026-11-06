@@ -1,6 +1,7 @@
 // /book calibre (owner): which audiobooks have no Calibre record, which have several, which
 // matched records give the read-along no text (no EPUB and nothing ebook-convert reads, or a MOBI
-// while converting is off), and the state of the Calibre index (helpers/calibreIndex.js).
+// while converting is off), which also hold a scanned PDF for the read-along's pictures, and the
+// state of the Calibre index (helpers/calibreIndex.js).
 //
 // Read from the index's saved copy only, so the reply never waits on Calibre; `refresh` starts a
 // read of the library in the background and says so. Replies name books by title and id and
@@ -98,31 +99,37 @@ function textPointer(w) {
 
 /**
  * What a matched record gives the read-along, so "matched" never silently means "no text":
- * null for an EPUB (or with the read-along off), else
- * { kind: 'convert'|'converted'|'blocked'|'none', text }. conv() is asked only for a record that
- * needs converting, and pointer(w) only when the converter can't run.
+ * null for an EPUB with no PDF (or with the read-along off), else
+ * { kind: 'pdf'|'convert'|'converted'|'blocked'|'none', text }. 'pdf' is an EPUB with a scanned
+ * PDF beside it, whose pictures the read-along can show; a record with text and a PDF says so,
+ * and one with a PDF but no text says what would bring both. conv() is asked only for a record
+ * that needs converting, and pointer(w) only when the converter can't run.
  */
 function textNote(idx, w, m, conv, pointer) {
 	if (config.audiobookTextEnabled === false || !m || m.id === null) return null;
 	const r = idx.recordOf(m.id);
 	if (!r || !Array.isArray(r.formats)) return null;
 	const formats = r.formats;
+	const pdf = formats.some((f) => String(f).toLowerCase() === 'pdf');
+	const pictures = `with a PDF (pictures ${config.audiobookTextPictures === true ? 'on' : 'off'})`;
 	const { pickFormat } = require('../../helpers/ebookConvert.js');
 	const format = pickFormat(formats);
-	if (format === 'epub') return null;
+	if (format === 'epub') return pdf ? { kind: 'pdf', text: pictures } : null;
 	if (format) {
 		const name = format.toUpperCase();
+		const also = pdf ? `; ${pictures}` : '';
 		const state = conv();
-		if (state.ok) return { kind: 'convert', text: `${name} only, converted to EPUB the first time its text opens` };
+		if (state.ok) return { kind: 'convert', text: `${name} only, converted to EPUB the first time its text opens${also}` };
 		const why = state.code === 'convert-off' ? 'new conversions are off (audiobookTextConvert)' : 'ebook-convert wasn\'t found';
 		// A text converted earlier stays in the read-along's cache and still opens.
 		const ptr = pointer(w);
 		const src = ptr && ptr.source;
-		if (src && src.type === 'calibre' && src.convert && Number(src.id) === Number(m.id)) return { kind: 'converted', text: `${name} only, converted earlier, so its text still opens; ${why}` };
+		if (src && src.type === 'calibre' && src.convert && Number(src.id) === Number(m.id)) return { kind: 'converted', text: `${name} only, converted earlier, so its text still opens; ${why}${also}` };
 		return { kind: 'blocked', text: state.code === 'convert-off' ? `${name} only, and converting is off (audiobookTextConvert), so no text from Calibre` : `${name} only, and ebook-convert wasn't found, so no text from Calibre` };
 	}
 	const have = formats.map((f) => String(f).toUpperCase());
-	return { kind: 'none', text: have.length ? `no text from Calibre: ${have.join(', ')} can't be read` : 'no text from Calibre: the record has no file' };
+	const hint = pdf ? '; add an EPUB, MOBI or AZW3 to the record and its PDF\'s pictures can show too' : '';
+	return { kind: 'none', text: have.length ? `no text from Calibre: ${have.join(', ')} can't be read${hint}` : 'no text from Calibre: the record has no file' };
 }
 
 // Two narrations of one title are told apart the way the library lists them.

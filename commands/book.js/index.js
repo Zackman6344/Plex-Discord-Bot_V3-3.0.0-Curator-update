@@ -97,7 +97,7 @@ const SUBCOMMANDS = [
 	{ name: 'unmark', description: 'Remove your latest sync mark, a listed one, or (owner) all of a book\'s',
 		options: [{ name: 'which', type: 'STRING', description: 'A number from /book marks, or all confirm (owner)' }, TITLE('Book (default the one playing)')] },
 	{ name: 'link', description: 'Owner: tie a book to its ebook (Calibre id, ISBN, EPUB path, off, auto)',
-		options: [TITLE('Book', true), { name: 'ebook', type: 'STRING', description: 'Calibre id, ISBN, EPUB path, off or auto (empty: show)' }] },
+		options: [TITLE('Book', true), { name: 'ebook', type: 'STRING', description: 'Calibre id, ISBN, EPUB path, off, auto or pictures:redo/off/on (empty: show)' }] },
 	{ name: 'rescan', description: 'Owner: re-read the audiobook library from Plex now' },
 	{ name: 'calibre', description: 'Owner: audiobooks with no Calibre match, and the Calibre index',
 		options: [{ name: 'show', type: 'STRING', description: 'What to list (default: the books that need you)',
@@ -353,6 +353,7 @@ function helpEmbed(bot) {
 			`> \`${p}book text\`: Is there text for your book, and where it comes from. \`${p}book text now\` sends the page again.\n` +
 			'> 📖 on the book card: The page right now, visible only to whoever pressed it: the listener, or anyone in the book\'s voice channel.\n' +
 			'> 📌 on your DM page: Press it as the narrator reaches the page\'s first words: the text snaps to the voice there, for everyone who plays that recording.\n' +
+			'> 🖼 Pictures: a book whose Calibre record also holds a scanned PDF shows its illustrations on your page as the narration reaches them (owner setting).\n' +
 			`> \`${p}book marks [title]\` / \`${p}book unmark [n]\`: List a book's marks; remove your latest or a listed one. \`${p}book unmark all [title] confirm\` (owner) clears a book.\n` +
 			`> \`${p}book link <title> <calibre id|isbn|path|off|auto>\`: owner, tie a book to its ebook.\n\n` +
 			'**📖 YOUR BOOKS**\n' +

@@ -9,7 +9,9 @@ Phase 10 is the first live pass of the catalog's rules version 3: embedded tags,
 pass of rules version 5 and what came with it: the one-time id move, short works, typo and series
 plays, the sectioned library, the Calibre index and `!book calibre`. Phase 12 checks that sends
 made while the PC has lost Discord arrive late, and once. Phase 13 is the first live pass of the
-read-along's MOBI and AZW3 conversion and of `audiobookControls`, who may use a book card.
+read-along's MOBI and AZW3 conversion and of `audiobookControls`, who may use a book card. Phase 14
+is the first live pass of chapter markers inside single-file books, and Phase 15 of the
+read-along's pictures from a scanned PDF.
 
 The bot now persists its own logs to `data/logs/`, so a failure you didn't happen to be watching
 is still there afterwards:
@@ -875,7 +877,8 @@ for up to about 2 minutes. To drop the connection, turn Wi-Fi off (or pull the c
 Built and unit-tested offline on 2026-10-31 with a fake `ebook-convert` (a Node script that
 writes a synthetic EPUB, or hangs, fails or prints Calibre's DRM error) and synthetic books.
 The real `ebook-convert` ran only in measurements: 3.0 s for a 0.9 MB MOBI and 6.0 s for a
-2.7 MB AZW3 at Below Normal. Watch `npm run logs -- --raw` for `Read-along:` lines while you go.
+2.7 MB AZW3 at Below Normal. Watch the bot log (`data/logs/bot-<date>.log`; Plex Bot Status shows
+its tail) for `Read-along:` lines while you go; `npm run logs -- --raw` reads only the command log.
 
 **📖 on Hyperion and Whalefall** (Calibre #352, MOBI, and #353, AZW3; Calibre open, its
 content server started)
@@ -942,6 +945,100 @@ the times below.
 - [ ] Dragon Keeper (#356), whose markers follow the publisher's numbering: every page still says
       "estimated from pace", and `!book text` says "estimated from pace (no track is named after a
       chapter)".
+
+## Phase 15: Read-along pictures from a scanned PDF (live)
+
+Built and unit-tested offline on 2026-11-05 and 2026-11-06 with fake PDF tools and generated
+books, then run outside the bot on Calibre #384 with the real tools and the real Calibre, once as
+built and once after the review's fix pass. The second run: 264 pages in 371 s at Below Normal
+while other apps kept the PC busy (the first took 223 s), 119 pictures (114 placed), and all 17
+chapter openers on their chapter's first word. No step covers `pictures:redo` on an analysis two
+narrations of one book share, or the longer time cap of a PDF over 500 pages; both are unit-tested
+only. Calibre open, #384 holding its EPUB and PDF. Page numbers below are the PDF's own (the
+printed page number is 12 less). Watch the bot log (`data/logs/bot-<date>.log`; Plex Bot Status
+shows its tail) for `Read-along pictures:` lines; `npm run logs -- --raw` reads only the command
+log, for the redaction step below.
+
+- [ ] `/config` → Audiobooks shows "Read-along pictures from a Calibre PDF" off. Turn it on; no
+      restart.
+- [ ] Start Harry Potter and the Sorcerer's Stone with `!book text on`. `!book text` names Calibre
+      #384 and adds "🖼 Reading Calibre #384's PDF for pictures: page N of 264 (a few minutes,
+      once)." (without the page for its first few seconds). Task Manager → Details, with the Base
+      priority and Command line columns added, shows the node child (`--book-pictures-child` in
+      its command line) and `pdftoppm.exe` at Below normal, and any `ffmpeg.exe` whose command
+      line has `-f ppm_pipe -i pipe:0` at Below normal too (each lasts under a second, so one may
+      not show). The book's own `ffmpeg.exe` stays at Normal. The voice does not stutter while it
+      runs.
+- [ ] When it ends, about 4 to 6 minutes later, the bot log has exactly one `Read-along pictures:
+      read the PDF for pictures 9aa360b44c75c103: 264 pages, 119 pictures (6 spreads) in N ms.`,
+      with nothing between `ms` and the full stop (a `; pages skipped:` tail means pages or
+      pictures were lost), and no title or path in any line. `!book text` now says "🖼 114
+      pictures from Calibre #384's PDF show on your page as the narration reaches them."
+- [ ] `data/book_text/pictures/9aa360b44c75c103/` holds `index.json`, `pages.json`, one
+      `align-<16 hex>.json` and 119 JPGs; there is no `.work` or `.old` folder and no PDF anywhere
+      under `data/`. In Calibre, #384 still has exactly its EPUB and PDF.
+- [ ] At chapter 1's first page the DM page shows two pictures: the frontispiece (page 12) in the
+      page's own card and the chapter opener (13) under it. The next turn (about a minute in)
+      shows page 14's picture alone in their place, and the turn after it (about 2 minutes 20
+      seconds in) leaves the message with no attachment.
+- [ ] The pictures' alt text (Discord's ALT label on an image, or a screen reader) gives the
+      printed page: the chapter opener's reads "Picture from the printed book, page 1", and the
+      frontispiece's has no page number.
+- [ ] Pages 62 and 63 (the hut on the rock) show as one wide picture with chapter 5's opener; its
+      alt text reads "Picture from the printed book, pages 50 and 51".
+- [ ] ◀ onto a picture page and ▶ off it: the picture comes and goes. 📍 Now follows again.
+- [ ] Pause on a picture page: "⏸ paused" with the picture still there.
+- [ ] 📖 on the card, as the listener and as a second account in the voice channel: the same
+      picture, privately. The second account leaves the channel and presses ▶: the join line, and
+      no picture left on screen.
+- [ ] `!book text now` on a picture page: the old message says "This page moved ↓" with no picture.
+- [ ] Turn the setting off on a picture page: the picture leaves the DM page within a second (an
+      open 📖 page keeps its picture until its next click). On again: it returns, and the bot log
+      has no new `read the PDF` line.
+- [ ] `!book link "Harry Potter and the Sorcerer's Stone"` has a line "🖼 Pictures: 114 from
+      Calibre #384's PDF (27.9 MB, 264 pages, <date>), lined up with this text (97% of its pages
+      placed)."
+- [ ] `!book link "Harry Potter and the Sorcerer's Stone" pictures:off`, then `pictures:on`, then
+      `pictures:redo`: the first hides the pictures from the open page at once, the second brings
+      them back with no new `read the PDF` line in the bot log, and the last clears them from the
+      open page and starts a new analysis, with a reply that starts "🖼 Reading Calibre #384's
+      PDF for pictures again".
+- [ ] While that analysis runs (`!book text` shows "page N of 264"), turn the setting off: within
+      seconds Task Manager has no `pdftoppm.exe` and no Below normal `ffmpeg.exe`, and
+      `data/book_text/pictures/` has no `.work` folder. Turn it back on: `!book text` shows the
+      PDF being read again from its first pages.
+- [ ] `!restart` during that analysis: no `pdftoppm.exe` left in Task Manager, no `.work` folder
+      after the restart, and the analysis starts again on the next open.
+- [ ] Once the analysis that started again has logged `read the PDF for pictures` in the bot log,
+      take the book to the start of a chapter (the card's Next chapter), let it play about 20
+      seconds and pause it. Close Calibre, `!restart` and play the book: the first DM page shows
+      the chapter's opener, from the cache, with the page or a moment after it.
+- [ ] `npm run logs -- --raw`: picture pages are `[book text not logged]`; no `.jpg` name.
+- [ ] Stop the book on a picture page: the stub has no picture.
+- [ ] With Calibre still closed, play Whalefall (Calibre #353, no PDF; Phase 13 converted and
+      cached its text) and let a page open: `!book text` has no 🖼 line, and `!book link
+      Whalefall` says "🖼 Pictures: not checked (Calibre isn't answering)." Open Calibre again.
+- [ ] Back on Harry Potter, replace #384's PDF in Calibre with a copy of the same file (Add books
+      → Add files to selected book records), so its date changes. Within about 10 minutes of
+      reading along, or at once after `!restart`, a new analysis starts, and 4 to 6 minutes later
+      the bot log has `read the PDF for pictures <another 16 hex>`; until then the old pictures
+      keep showing. After the next `!restart` and a page, `data/book_text/pictures/` holds only
+      the new key's folder.
+- [ ] Replace #384's EPUB the same way. Within about 10 minutes the open page says "The text was
+      updated", then within seconds the bot log has `Read-along pictures: lined up <16 hex> with
+      text <another 16 hex> in N ms.` and no new `read the PDF` line, and the pictures are back.
+      The book's 📌 marks belong to the old copy of the text and stop applying.
+- [ ] Look at, and decide on, what the offline runs showed: the chapter 1, 4, 10, 15 and 16
+      openers come out as whole printed pages, text included; the troll guide's spread (158, 159)
+      comes out as two pictures; and at the end of chapter 17, page 259's painting shows on the
+      chapter's last page from about 36:19 into the 37:31 track, while the frog on 260, the back
+      endpapers (262, 263) and the back cover (264) never show while following (▶ past the
+      chapter's last page still reaches them). A build without the end-matter fix (b28486b)
+      shows all four at 33:49–34:23 instead, beside the back matter's own text pages.
+- [ ] With `audiobookCalibreSort` on, a test record with only a PDF for an audiobook that has no
+      other Calibre record (or pinned to it with `!book edit <book> calibre <id>`): `!book link
+      <book>` lists it "(PDF only: no text, so no pictures either)", and `!book calibre` adds "add
+      an EPUB, MOBI or AZW3 to the record and its PDF's pictures can show too".
 
 ---
 

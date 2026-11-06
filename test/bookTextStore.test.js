@@ -1,12 +1,13 @@
-// helpers/bookTextStore.js: the read-along's ebook links, reader preferences, cache pointers and
-// sync marks.
+// helpers/bookTextStore.js: the read-along's ebook links, reader preferences, cache pointers, sync
+// marks and pictures pointers.
 //
 // The bug: a link or a cache pointer saved under a work's old id is lost when a catalog rebuild
 // renames the work, so the owner's `!book link` silently stops applying and a parsed book is
 // parsed again; clearing a link leaves its alias copy behind, which then comes back; a Discord id
 // or a folder-built work id like "__proto__" reaches the prototype chain. A second sync mark at the
 // same spot kept beside the first, a mark saved without the text version it belongs to, or marks under
-// a renamed work's old id left to drift from the new list.
+// a renamed work's old id left to drift from the new list. A pictures:redo re-read lost from its
+// pointer on a reload.
 //
 // Harness: the jsonStore pattern of test/bookmarks.test.js: pid-suffixed env files set before the
 // first require, and reset() between tests so each read comes off disk.
@@ -22,13 +23,15 @@ process.env.PLEXBOT_BOOK_TEXT_LINKS_FILE = `${BASE}-links.json`;
 process.env.PLEXBOT_BOOK_TEXT_READERS_FILE = `${BASE}-readers.json`;
 process.env.PLEXBOT_BOOK_TEXT_WORKS_FILE = `${BASE}-works.json`;
 process.env.PLEXBOT_BOOK_TEXT_MARKS_FILE = `${BASE}-marks.json`;
+process.env.PLEXBOT_BOOK_PICTURES_FILE = `${BASE}-pictures.json`;
 
 const store = require('../helpers/bookTextStore.js');
 
 const FILES = [process.env.PLEXBOT_BOOK_TEXT_LINKS_FILE, process.env.PLEXBOT_BOOK_TEXT_READERS_FILE, process.env.PLEXBOT_BOOK_TEXT_WORKS_FILE, process.env.PLEXBOT_BOOK_TEXT_MARKS_FILE];
+const PICTURES = process.env.PLEXBOT_BOOK_PICTURES_FILE;
 
 test.afterEach(() => {
-	for (const f of FILES) fs.rmSync(f, { force: true });
+	for (const f of FILES.concat(PICTURES)) fs.rmSync(f, { force: true });
 	store.reset();
 });
 
@@ -80,6 +83,26 @@ test('a pointer found through an alias is copied to the current id', () => {
 	assert.deepStrictEqual(store.works.get(RENAMED), ptr);
 	store.reset();
 	assert.deepStrictEqual(store.works.all()[RENAMED.id], ptr);
+});
+
+// helpers/bookPictures.js keeps pictures:redo's re-read of a shared analysis on the work's pictures
+// pointer: a restart in the minutes that re-read takes must not drop it, nor a catalog rename.
+test('a pictures pointer keeps its redo field off disk and through an alias, and clear drops it', () => {
+	assert.strictEqual(store.files.pictures, PICTURES);
+	const asked = { key: null, base: null, pdf: null, count: 0, at: 5, usedAt: 4, off: false, offBy: null, offAt: null, redo: '9aa360b44c75c103' };
+	store.pictures.set('avery-quill/the-ember-throne', asked);
+	store.reset();
+	assert.deepStrictEqual(store.pictures.peek(RENAMED), asked, 'off disk, found through the alias');
+	assert.deepStrictEqual(store.pictures.get(RENAMED), asked);
+	store.reset();
+	assert.strictEqual(store.pictures.all()[RENAMED.id].redo, '9aa360b44c75c103', 'the copy under the new id keeps it');
+	const serving = Object.assign({}, asked, { key: '9aa360b44c75c103', base: '157d62d84d19901d', count: 3 });
+	store.pictures.set(RENAMED.id, serving);
+	store.reset();
+	assert.deepStrictEqual(store.pictures.peek(RENAMED), serving, 'beside an analysis the work serves meanwhile');
+	store.pictures.clear(RENAMED);
+	store.reset();
+	assert.deepStrictEqual(store.pictures.all(), {});
 });
 
 test('reader preferences turn on and off and record when', () => {

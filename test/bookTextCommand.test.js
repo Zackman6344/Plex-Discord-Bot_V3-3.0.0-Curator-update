@@ -6,11 +6,15 @@
 // Calibre stores; `!book link` usable by anyone while ownerId is blank (it reads files on this
 // PC); a guild-channel `!book link <book>` that prints local paths for the whole channel.
 //
+// The PDF pictures' owner controls ride on `!book link <book> pictures:redo|off|on`: the bug would
+// be one that relinks the ebook or refreshes the catalog, one anyone may use, or a `!book link
+// <book>` report that names a picture's path.
+//
 // Harness: the real command module with recording prefix messages and slash interactions (as in
 // test/bookCommand.test.js), and the real pager (helpers/readAlong.js) on
 // test/helpers/readAlongFakes.js: a fake director, a fake source serving a synthetic ebook and
-// answering link/describe, a fake Discord client. The catalog store is the real one on a
-// pid-suffixed temp file, seeded with made-up works.
+// answering link/describe, fake pictures answering describe/command, a fake Discord client. The
+// catalog store is the real one on a pid-suffixed temp file, seeded with made-up works.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -86,11 +90,12 @@ function harness({ playing = true } = {}) {
 	const w = T.makeWork(SECTIONS);
 	const books = T.fakeBooks(clock);
 	const source = T.fakeSource(sample);
+	const pictures = T.fakePictures();
 	const client = T.fakeClient();
-	const ra = createReadAlong({ client, books, source, timers: clock, logger: { info() {}, warn() {}, error() {} }, catalog: { work: () => null } });
+	const ra = createReadAlong({ client, books, source, pictures, timers: clock, logger: { info() {}, warn() {}, error() {} }, catalog: { work: () => null } });
 	live.push(ra);
 	if (playing) books.add({ work: w, userId: ANA, audible: false });
-	return { clock, books, source, client, ra, bot: { books, readAlong: ra } };
+	return { clock, books, source, pictures, client, ra, bot: { books, readAlong: ra } };
 }
 
 function prefixMessage(userId, query, { inGuild = true } = {}) {
@@ -201,6 +206,98 @@ test('the link details name each Calibre candidate\'s format and whether ebook-c
 	assert.doesNotMatch(text.formatDescribe(epubOnly, '!'), /🔄/);
 });
 
+test('the link details add the PDF pictures line and flag each Calibre candidate\'s PDF', () => {
+	const MB = 1048576;
+	const base = {
+		workId: 'test-author/the-final-empire', title: 'The Final Empire', status: 'ready', link: null, cache: null, lastError: null, converter: { ok: true },
+		candidates: {
+			calibre: [
+				{ id: 384, title: 'Illustrated', epub: true, format: 'epub', pdf: true, accepted: true },
+				{ id: 383, title: 'Converted', epub: false, format: 'azw3', pdf: true, accepted: false },
+				{ id: 12, title: 'Scanned', epub: false, format: null, pdf: true, accepted: false },
+				{ id: 7, title: 'Plain', epub: true, format: 'epub', pdf: false, accepted: false }
+			],
+			sidecars: [], calibreError: null
+		}
+	};
+	const pdf = { id: 384, size: 29224426, mtime: '2026-11-05T19:48:19.486724+00:00' };
+	const at = `<t:${Math.round(Date.parse(pdf.mtime) / 1000)}:d>`;
+	const show = pictures => text.formatDescribe({ ...base, pictures }, '!');
+	const none = show(null);
+	assert.match(none, /#384 “Illustrated”, \+ PDF ✅ · #383 “Converted” \(AZW3, converted to EPUB\), \+ PDF · #12 “Scanned” \(PDF only: no text, so no pictures either\) · #7 “Plain”(\n|$)/);
+	assert.doesNotMatch(none, /🖼|pictures:redo/, 'no report, no line');
+	const ready = show({ state: 'ready', pdfId: 384, pdf, pages: 264, count: 60, quality: { share: 0.977 } });
+	assert.match(ready, new RegExp(`\\n🖼 Pictures: 60 from Calibre #384's PDF \\(${(pdf.size / MB).toFixed(1)} MB, 264 pages, ${at}\\), lined up with this text \\(98% of its pages placed\\)\\.\\n`));
+	assert.match(ready, /`off` or `auto`\. `pictures:redo`, `pictures:off` or `pictures:on` reads its PDF again, hides or shows the pictures\.$/);
+	assert.match(show({ state: 'ready', pdf, count: 0 }), /🖼 Pictures: none found in Calibre #384's PDF \(27\.9 MB, <t:\d+:d>\)\./);
+	assert.match(show({ state: 'available', pdfId: 384, pdf }), /🖼 Pictures: Calibre #384's PDF \(27\.9 MB, <t:\d+:d>\) is read the next time this book's text opens\./);
+	assert.match(show({ state: 'running', pdfId: 384, progress: { stage: 'render', done: 120, total: 264 } }), /🖼 Pictures: reading Calibre #384's PDF, page 120 of 264\./);
+	assert.match(show({ state: 'running', pdfId: 384, progress: { stage: 'find', done: 300, total: 264 } }), /🖼 Pictures: reading Calibre #384's PDF, page 264 of 264\./);
+	// pdftotext reads the whole text layer as one step of one: no "page 1 of 1" for a 264-page PDF.
+	for (const done of [0, 1]) assert.match(show({ state: 'running', pdfId: 384, progress: { stage: 'text', done, total: 1 } }), /🖼 Pictures: reading Calibre #384's PDF\.\n/);
+	assert.match(show({ state: 'failed', pdfId: 384, code: 'pdf-encrypted' }), /🖼 Pictures: none from Calibre #384's PDF: it is encrypted\./);
+	assert.match(show({ state: 'failed', pdfId: 384, code: 'align-failed', quality: { share: 0.12 } }), /: its pages don't match this ebook \(12% of its pages placed\)\./);
+	const soon = Date.now() + 120000;
+	assert.match(show({ state: 'waiting', pdfId: 384, code: 'calibre-unreachable', retryAt: soon }), new RegExp(`🖼 Pictures: reading Calibre #384's PDF failed \\(Calibre isn't answering\\); it tries again <t:${Math.round(soon / 1000)}:R>\\.`));
+	// Only a text open moves a wait on: hours later, with nobody reading, the time has passed.
+	assert.match(show({ state: 'waiting', pdfId: 384, code: 'calibre-unreachable', retryAt: Date.now() - 3 * 3600000 }), /🖼 Pictures: reading Calibre #384's PDF failed \(Calibre isn't answering\); it tries again the next time the book's text opens\./);
+	assert.match(show({ state: 'waiting', pdfId: 384, code: 'pdf-missing', retryAt: soon }), /🖼 Pictures: reading Calibre #384's PDF failed \(Calibre lists a PDF but has no file for it\); it tries again <t:\d+:R>\./);
+	assert.match(show({ state: 'waiting', pdfId: 384, code: 'disk-error', retryAt: soon }), /🖼 Pictures: reading Calibre #384's PDF failed \(the bot couldn't read or write its picture files\); it tries again <t:\d+:R>\./);
+	assert.match(show({ state: 'failed', pdfId: 384, code: 'gave-up' }), /🖼 Pictures: none from Calibre #384's PDF: reading it failed 3 times\./);
+	assert.match(show({ state: 'off', count: 60 }), /🖼 Pictures: off for every book \(audiobookTextPictures in `!config` → Audiobooks\); 60 kept\./);
+	assert.match(show({ state: 'book-off', pdfId: 384 }), /🖼 Pictures: switched off for this book\./);
+	assert.match(show({ state: 'no-pdf', pdfId: 384 }), /🖼 Pictures: none; Calibre #384 has no PDF\./);
+	assert.match(show({ state: 'no-pdf', pdfId: 384, code: 'record-changed' }), /🖼 Pictures: none; Calibre #384 no longer holds the book this text came from\./);
+	assert.match(show({ state: 'no-pdf', pdfId: 384, code: 'pdf-only' }), /🖼 Pictures: none; Calibre #384 has only its PDF left, no text to line it up with\./);
+	assert.match(show({ state: 'failed', pdfId: 384, code: 'bad-result' }), /🖼 Pictures: none from Calibre #384's PDF: the PDF reader left no usable pictures\./);
+	assert.match(show({ state: 'unknown' }), /🖼 Pictures: not checked yet; the PDF is looked for when the text first opens\./);
+	// The record check itself failed, so whether the record has a PDF is not known.
+	assert.match(show({ state: 'unknown', pdfId: 384, code: 'calibre-unreachable' }), /🖼 Pictures: not checked \(Calibre isn't answering\)\./);
+	assert.match(show({ state: 'unknown', pdfId: 384, code: 'calibre-off' }), /🖼 Pictures: not checked \(Calibre is turned off\)\./);
+	assert.match(show({ state: 'unknown', pdfId: 384, code: 'calibre-auth' }), /🖼 Pictures: not checked \(Calibre asked for a login\)\./);
+	assert.match(show({ state: 'tools-missing' }), /🖼 Pictures: Calibre's PDF tools weren't found on this PC; install Calibre here\./);
+	const file = show({ state: 'not-calibre' });
+	assert.match(file, /🖼 Pictures: none; only a PDF on the Calibre record the text comes from has them\./);
+	assert.doesNotMatch(file, /pictures:redo/, 'nothing to redo for an EPUB file');
+	for (const out of [none, ready, file]) assert.doesNotMatch(out, /—|[A-Za-z]:[\\/]/);
+});
+
+// Every state and code helpers/bookPictures.js's describe() can report, with and without the
+// PDF's facts: no line may read "undefined", "null" or "NaN", and a failure is named in words.
+test('the pictures line has words for every state and code the pictures can report', () => {
+	const STATES = ['off', 'book-off', 'not-calibre', 'unknown', 'no-pdf', 'available', 'checking', 'queued', 'downloading', 'running', 'aligning', 'ready', 'failed', 'waiting', 'tools-missing'];
+	const FAILED = ['pdf-encrypted', 'pdf-damaged', 'no-text-layer', 'too-large', 'gave-up', 'align-failed', 'bad-result', 'disk-error'];
+	const WAITING = ['calibre-unreachable', 'calibre-auth', 'calibre-off', 'io-error', 'pdf-missing', 'disk-error', 'timeout', 'crash'];
+	const UNKNOWN = ['calibre-unreachable', 'calibre-off', 'calibre-auth', 'io-error'];
+	const CODES = [null, undefined, 'no-pdf', 'record-changed', 'pdf-only', 'tools-missing', 'cancelled', 'shutdown', ...FAILED, ...WAITING];
+	const full = { pdfId: 384, pdf: { id: 384, size: 29224426, mtime: '2026-11-05T19:48:19.486724+00:00' }, pages: 264, count: 116, found: 121, share: 0.968, quality: { textPages: 217, aligned: 210, share: 0.968 }, progress: { stage: 'render', done: 120, total: 264 }, retryAt: Date.now() + 600000 };
+	const bare = { pdfId: null, pdf: null, pages: null, count: null, found: null, share: null, quality: null, progress: null, retryAt: null };
+	const lineOf = r => text.formatDescribe({ workId: 'test-author/x', title: 'X', status: 'ready', link: null, cache: null, lastError: null, candidates: {}, pictures: r }, '!').split('\n').find(l => l.startsWith('🖼'));
+	for (const state of STATES) {
+		for (const code of CODES) {
+			for (const facts of [full, bare]) {
+				const line = lineOf(Object.assign({ enabled: true, state, code, off: false, offBy: null, offAt: null, key: null, base: null }, facts));
+				assert.ok(line, `${state}/${code}`);
+				assert.doesNotMatch(line, /undefined|null|NaN|\[object/, `${state}/${code}: ${line}`);
+			}
+		}
+	}
+	for (const [state, codes] of [['failed', FAILED], ['waiting', WAITING], ['unknown', UNKNOWN]]) {
+		for (const code of codes) {
+			const line = lineOf(Object.assign({ state, code }, full));
+			assert.ok(!line.includes(code), `${state}/${code} is named in words: ${line}`);
+		}
+	}
+});
+
+test('text status carries the pictures\' own 🖼 line', async () => {
+	const h = harness();
+	await run(h, ANA, 'text on');
+	h.pictures.statusValue = { state: 'ready', count: 4 };
+	const out = await run(h, ANA, 'text');
+	assert.match(out, /\n🖼 ready: 4 pictures \(!book link\)\n📩 Your page is in your DMs\.$/);
+});
+
 test('text now with nothing playing says so', async () => {
 	const h = harness({ playing: false });
 	await run(h, ANA, 'text on');
@@ -241,7 +338,11 @@ test('parseLinkArgs returns readings: quoted, explicit splits, candidate splits'
 		['Final Empire off', { split: { workText: 'Final Empire', target: { type: 'off' }, explicit: true } }],
 		['Final Empire AUTO', { split: { workText: 'Final Empire', target: { type: 'auto' }, explicit: true } }],
 		['Final Empire', {}],
-		['Fahrenheit 451', { split: { workText: 'Fahrenheit', target: { type: 'calibre', id: 451 }, explicit: false } }]
+		['Fahrenheit 451', { split: { workText: 'Fahrenheit', target: { type: 'calibre', id: 451 }, explicit: false } }],
+		['Final Empire pictures:redo', { split: { workText: 'Final Empire', target: { type: 'pictures', action: 'redo' }, explicit: true } }],
+		['"Fahrenheit 451" Pictures:OFF', { quoted: { workText: 'Fahrenheit 451', target: { type: 'pictures', action: 'off' } } }],
+		['test-author/the-final-empire pictures:on', { split: { workText: 'test-author/the-final-empire', target: { type: 'pictures', action: 'on' }, explicit: true } }],
+		['Final Empire pictures:delete', {}]
 	];
 	for (const [input, want] of cases) assert.deepStrictEqual(text.parseLinkArgs(input), Object.assign({ whole: input }, want), input);
 });
@@ -370,6 +471,60 @@ test('a title named "Off" is still described, never read as a target', async () 
 	assert.ok(!h.source.calls.some(c => c[0] === 'link'));
 });
 
+// ---- !book link: the PDF pictures ----------------------------------------------------------------
+
+test('"!book link <book> pictures:redo|off|on" goes to the pictures only: no relink, no catalog refresh', async (t) => {
+	const refreshed = t.mock.method(catalog, 'refreshMetadata', () => ({ ok: true }));
+	const h = harness();
+	const redo = await run(h, OWNER, 'link "The Final Empire" pictures:redo');
+	assert.strictEqual(redo, '🖼 Reading Calibre #1\'s PDF for pictures again; it takes a few minutes.');
+	await run(h, OWNER, 'link Fahrenheit PICTURES:off');
+	await run(h, OWNER, 'link test-author/fahrenheit-451 pictures:on');
+	assert.deepStrictEqual(h.pictures.callsOf('command').map(c => c.slice(1)), [
+		['test-author/the-final-empire', 'redo', { by: OWNER }],
+		['test-author/fahrenheit', 'off', { by: OWNER }],
+		['test-author/fahrenheit-451', 'on', { by: OWNER }]
+	]);
+	assert.ok(!h.source.calls.some(c => c[0] === 'link'), 'the ebook link is untouched');
+	assert.strictEqual(refreshed.mock.callCount(), 0);
+	h.pictures.commandResult = { ok: false, code: 'not-calibre', text: 'The Final Empire\'s text is not from a Calibre record, so it has no PDF pictures.' };
+	assert.strictEqual(await run(h, OWNER, 'link "The Final Empire" pictures:redo'), '⛔ The Final Empire\'s text is not from a Calibre record, so it has no PDF pictures.');
+	h.pictures.command = async () => { throw Object.assign(new Error('D:\\Calibre Library\\x.pdf'), { code: 'EBUSY' }); };
+	assert.strictEqual(await run(h, OWNER, 'link "The Final Empire" pictures:redo'), '❌ That did not work; check the bot log.');
+});
+
+test('"!book link pictures:off" with no book applies to the book playing here and says which', async () => {
+	const h = harness();
+	const GUILD = '200000000000000001';
+	h.books.session = (guildId) => (guildId === GUILD ? { workId: 'test-author/fahrenheit', work: catalog.work('test-author/fahrenheit') } : null);
+	h.pictures.commandResult = { ok: true, code: 'off', text: 'Pictures are off for Fahrenheit.' };
+	const out = await run(h, OWNER, 'link pictures:off');
+	assert.strictEqual(out, '📖 For **Fahrenheit**, the book playing here:\n🖼 Pictures are off for Fahrenheit.');
+	assert.deepStrictEqual(h.pictures.callsOf('command').map(c => c.slice(1, 3)), [['test-author/fahrenheit', 'off']]);
+});
+
+test('the pictures controls are the owner\'s, like every !book link', async () => {
+	const h = harness();
+	assert.match(await run(h, ANA, 'link "The Final Empire" pictures:redo'), /Only the bot owner/);
+	config.ownerId = '';
+	assert.match(await run(h, OWNER, 'link "The Final Empire" pictures:off'), /Set ownerId first/);
+	assert.deepStrictEqual(h.pictures.callsOf('command'), []);
+});
+
+test('"!book link <book>" adds the pictures line, asks the pictures once, and names no path in a guild', async () => {
+	const h = harness();
+	h.pictures.describeValue = { state: 'ready', pdfId: 7, pdf: { id: 7, size: 2097152, mtime: '2026-11-05T19:48:19+00:00' }, count: 12, share: 0.9 };
+	const out = await run(h, OWNER, 'link The Final Empire');
+	assert.match(out, /\n🖼 Pictures: 12 from Calibre #7's PDF \(2\.0 MB, <t:\d+:d>\), lined up with this text \(90% of its pages placed\)\.\n/);
+	assert.ok(!/[A-Za-z]:[\\/]/.test(out), out);
+	assert.match(h.client.sent[0].first.content, /🖼 Pictures: 12 from Calibre #7's PDF/, 'the DM with paths has it too');
+	assert.deepStrictEqual(h.pictures.callsOf('describe').map(c => c[1]), ['test-author/the-final-empire']);
+	h.pictures.describe = async () => { throw new Error('boom'); };
+	const without = await run(h, OWNER, 'link The Final Empire');
+	assert.doesNotMatch(without, /🖼/, 'a failing pictures report costs only its line');
+	assert.match(without, /Full details/);
+});
+
 test('the sub-help lists the read-along and still fits an embed', async () => {
 	const sent = [];
 	await book.command.process({ config: { commandPrefix: '!' } }, null, { channel: { async send(p) { sent.push(p); } } }, '?');
@@ -377,5 +532,15 @@ test('the sub-help lists the read-along and still fits an embed', async () => {
 	assert.match(d, /READ ALONG/);
 	assert.match(d, /`!book text on`/);
 	assert.match(d, /`!book link <title>/);
+	assert.match(d, /\n> 🖼 Pictures: a book whose Calibre record also holds a scanned PDF shows its illustrations on your page as the narration reaches them \(owner setting\)\.\n/);
 	assert.ok(d.length <= 4096, `${d.length}`);
+});
+
+test('the slash link option names the pictures forms within Discord\'s 100 characters', () => {
+	const linkSub = book._internal.SUBCOMMANDS.find(s => s.name === 'link');
+	const ebook = linkSub.options.find(o => o.name === 'ebook');
+	assert.strictEqual(ebook.description, 'Calibre id, ISBN, EPUB path, off, auto or pictures:redo/off/on (empty: show)');
+	assert.ok(ebook.description.length <= 100);
+	assert.match(text.linkUsage('!'), /`!book link <book> pictures:redo` reads the book's Calibre PDF for pictures again; `pictures:off` and `pictures:on` hide and show them for that book\./);
+	assert.ok(text.linkUsage('!').length < 2000);
 });

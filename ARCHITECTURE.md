@@ -40,7 +40,7 @@ When you run `node index.js`:
    - Registers the `clientReady` and `messageCreate` event handlers.
 6. Calls `client.login(keys.botToken)`. Discord login is async, so the next two steps run in the same tick, before the gateway answers.
 7. Installs `uncaughtException` / `unhandledRejection` handlers (log only, don't exit).
-8. Installs `SIGTERM` / `SIGINT` handlers for graceful shutdown. `utils.stop()` calls `bot.books.shutdown()` first, before the music queue is emptied: book saves are synchronous, and `process.exit` follows straight after. `bot.readAlong.shutdown()` comes next, after the books; it also kills any running EPUB parse child. Each session's end queues the edit that turns its open read-along DM page into a stub. On `!restart` that edit goes out; on `SIGINT` or `SIGTERM` the process exits first, so the page keeps its text and buttons until it is clicked, and the click answers that the book is no longer playing (or adopts the page into a book playing then).
+8. Installs `SIGTERM` / `SIGINT` handlers for graceful shutdown. `utils.stop()` calls `bot.books.shutdown()` first, before the music queue is emptied: book saves are synchronous, and `process.exit` follows straight after. `bot.readAlong.shutdown()` comes next, after the books; it also kills any running EPUB parse child, and the read-along pictures' PDF child with its tools (`bookPictures.shutdown()`, a synchronous `taskkill /T /F`). Each session's end queues the edit that turns its open read-along DM page into a stub. On `!restart` that edit goes out; on `SIGINT` or `SIGTERM` the process exits first, so the page keeps its text and buttons until it is clicked, and the click answers that the book is no longer playing (or adopts the page into a book playing then).
 9. On `clientReady` (Discord ready), `app/music.js` calls `startHealthMonitor(client)`, which runs an initial health check and schedules re-checks every 15 minutes.
 10. Still on `clientReady`, `app/music.js` calls `startEventServer(client)` (`helpers/eventServer.js`). When `config.eventServerEnabled` is true it opens a localhost-only HTTP listener that relays Kometa run + Playnite game-launch pushes to the broadcast channel; otherwise it logs "disabled" and no-ops.
 11. Then `app/music.js` calls `startGamePresence(client)` (`helpers/gamePresence.js`). When `config.gamePresenceEnabled` is true it subscribes to `presenceUpdate` and broadcasts games the owner starts (detected via Discord activity). No-op otherwise. The `GuildPresences` intent it needs is added in `app/utils.js` only when the flag is on, so the default keeps login working.
@@ -196,13 +196,18 @@ Two signature styles coexist in the codebase:
 | `epubText.js`              | Pure EPUB to text, no packages: a zip reader that works from a file descriptor and reads only the entries it needs, the OPF, the nav or NCX table of contents, HTML to paragraphs, the DRM gate (font obfuscation passes), sections split at 20,000 words, and the byte-offset index of the cache. Runs only inside the parse child. |
 | `epubTextWorker.js`        | The parse child and its queue. Forks itself with `--epub-text-child` and sets the child to Below Normal priority; one parse at a time, single flight per cache base, 120 s timeout. The child writes `<base>.txt`, then `<base>.json` (or `<base>.fail.json`), and sends back counts only. `shutdown()` leaves the queue usable for `!restart`. |
 | `readAlongModel.js`        | Pure: chapter keys from track titles, embedded chapter markers and table-of-contents labels, front, body and back matter, the anchor map from audio time to word and back, pages of about 180 words, and the "approximate" labels. |
-| `bookTextStore.js`         | The read-along's four small stores in `data/book_text/`: `links.json` (`!book link`), `readers.json` (who has the read-along on), `works.json` (which cache files each work uses) and `marks.json` (the sync marks). Looked up by work id, then by alias. |
+| `bookTextStore.js`         | The read-along's five small stores in `data/book_text/`: `links.json` (`!book link`), `readers.json` (who has the read-along on), `works.json` (which cache files each work uses), `marks.json` (the sync marks) and `pictures.json` (which PDF analysis each work's pictures come from, and the owner's per-book switch). Looked up by work id, then by alias. |
 | `calibreClient.js`         | GET-only client for Calibre's content server: library info, search, book metadata, and a format's download (`downloadFormat`, `/get/<FORMAT>/<id>/<lib>`; `downloadEpub` is its EPUB case) streamed to a file. Answers Digest logins, and Basic ones over https only; refuses redirects and any URL with a login in it, caps a download at 300 MB, and names only `host:port` in its errors. |
 | `bookTextSource.js`        | Finds a work's ebook (a link, then the Calibre index's exact match for a work with no pointer, then a Calibre search, then EPUBs beside the audio), converts a MOBI/AZW3-only Calibre record to EPUB through `ebookConvert.js`, fingerprints it, keeps the content-addressed cache, and hands out text handles that read one section at a time. Remembers failures (stable ones until a catalog rebuild or `!book link`, transient ones for 30 s, a conversion timeout for 10 minutes), serves a cached copy while Calibre is closed, re-checks in the background, and runs `!book link` and its report. |
 | `ebookConvert.js`          | Calibre's `ebook-convert`: `pickFormat` (which format of a record the read-along reads), `findConverter` (`calibreConvertPath`, else Calibre's install folder, else PATH; a configured path must be a local file named `ebook-convert(.exe)`), and the converter: one conversion at a time for the whole bot, Below Normal, no shell, a 5-minute timeout, `taskkill /T` on timeout and shutdown. |
-| `readAlongCard.js`         | Pure: the DM and ephemeral page payloads, the no-text page and the stubs a page turns into. Every payload with book text carries the `bookpage:` row the command log redacts by, and no other payload does. |
-| `readAlong.js`             | The pager: one DM page per listener, edited as the narration advances and never skipping a page; the 📖 ephemeral; `!book text` on, off, now and its status reply; the one closed-DMs line per session. Hooks into the engine through `onChange` and `setTextInfo`. |
+| `readAlongCard.js`         | Pure: the DM and ephemeral page payloads, the no-text page and the stubs a page turns into. Every payload with book text carries the `bookpage:` row the command log redacts by, and no other payload does. Every payload carries a `files` array and only a page fills it, with its pictures (at most 10 and 8 MB); `stripPictures` is the same page without them. |
+| `readAlong.js`             | The pager: one DM page per listener, edited as the narration advances and never skipping a page; the 📖 ephemeral; `!book text` on, off, now and its status reply; the one closed-DMs line per session. Hooks into the engine through `onChange` and `setTextInfo`, and into `bookPictures` through `ensure` on each text open and `onChange`. |
 | `readAlongButtons.js`      | The `bookread:<sid>` (📖) and `bookpage:*` buttons. Acknowledges each click at once; 📖 answers the listener, and anyone in the book's voice channel at the time of the click. |
+| `bookPictures.js`          | Read-along pictures, the bot's side: checks the text's Calibre record for a PDF, queues one analysis at a time for the whole process, downloads the PDF only when its turn comes, installs what the child wrote, and serves each text's pictures from memory (`forText`). The 🖼 status lines, `!book link`'s pictures report and `pictures:redo`/`off`/`on`, the failure records, the sweep and the 1 GB size cap. Never parses a PDF or renders a page. |
+| `bookPicturesWorker.js`    | The pictures queue and its child, built like `epubTextWorker.js`: forks itself with `--book-pictures-child` at Below Normal, one job at a time with align jobs ahead of waiting full ones, single flight per key and text base, killed after 2 minutes without progress or 30 minutes in all (for a book over 500 pages, 5 minutes plus 3 s a page: 55 minutes at 1,000). The child writes the JPGs, `pages.json`, `align-<base>.json` and `index.json` last, and sends back counts only. |
+| `bookPicturesScan.js`      | Child only: `pdftotext -bbox-layout` once, then each page rendered once by `pdftoppm` to PPM on stdout, scored for art on a 110 px box average, and its picture encoded by ffmpeg-static from stdin (cropped, whole, or two facing pages tiled into one spread). Also the scan's folio offset, for printed page numbers, and the failure codes, `crash` among them when more than a few pages or pictures are lost. |
+| `bookPicturesAlign.js`     | Pure, child only: OCR words in column reading order, the ebook's words numbered as the pager numbers them, n-gram votes, a DP that places each printed page on the text and a pass that puts back pages it left out beside a gap, and each picture's word and fallback word. |
+| `pdfTools.js`              | Finds Calibre's poppler `pdftotext` and `pdftoppm` (beside `ebook-convert`, then Calibre's install folders, then PATH; both must answer `-v` as Poppler, and a tool that gave no answer is asked again a minute later) and ffmpeg-static, and runs one tool call: argument array, no shell, stdout capped, stderr dropped, a timeout kills the tree. |
 | `processPriority.js`       | Sets the bot process to `above_normal` (default) or `normal` priority from `config.processPriority`, and again whenever `/config` changes it. Never throws; a refused raise warns once. |
 | `discordRetry.js`          | The Client's `rest` options: a `makeRequest` that holds a Discord REST request while discord.com cannot be reached and sends it once it can, with a 30 s attempt window. See "Discord sends through a connection drop". |
 | `voiceHealth.js`           | The opt-in voice-health sampler behind `!voicehealth`: per-packet send gaps, source underruns, connection and networking changes, event-loop delay, CPU, memory and GC, rolled into one record per active minute in `data/logs/voice-<date>.jsonl`. Every hook returns on its first line while `config.voiceHealthEnabled` is off. |
@@ -216,7 +221,7 @@ Three files in `config/`. The two with secrets are **gitignored**; templates are
 
 | File                   | Tracked? | What it holds                                                              |
 | ---------------------- | -------- | -------------------------------------------------------------------------- |
-| `config/config.js`     | yes      | Feature flags + display strings: `commandPrefix`, `listenChannel`, `playlistsDir`, `serverName`, `ownerId`, `launchRoleId`, `playniteEnabled`, `tautulliEnabled` + `tautulliApiKey` + `tautulliUrl`, `language`, `youtube_quality`, the broadcast block (`broadcastChannelId`, `eventServerEnabled`, `eventServerPort`, `eventServerToken`, `broadcastKometa`, `broadcastGameLaunch`), `archipelagoEnabled` + `archipelagoBatchSeconds`, `archipelagoInstallDir` + `archipelagoPython` for `!ap next`, the audiobook settings (online lookup and `audiobookCalibreSort` included), the six read-along settings (four of them for Calibre) and the two voice settings (tables below). |
+| `config/config.js`     | yes      | Feature flags + display strings: `commandPrefix`, `listenChannel`, `playlistsDir`, `serverName`, `ownerId`, `launchRoleId`, `playniteEnabled`, `tautulliEnabled` + `tautulliApiKey` + `tautulliUrl`, `language`, `youtube_quality`, the broadcast block (`broadcastChannelId`, `eventServerEnabled`, `eventServerPort`, `eventServerToken`, `broadcastKometa`, `broadcastGameLaunch`), `archipelagoEnabled` + `archipelagoBatchSeconds`, `archipelagoInstallDir` + `archipelagoPython` for `!ap next`, the audiobook settings (online lookup and `audiobookCalibreSort` included), the nine read-along settings (five of them for Calibre) and the two voice settings (tables below). |
 | `config/keys.js`       | **no**   | `botToken` (Discord) + `geminiApiKey` (Gemini). Copy from `keys.example.js`. |
 | `config/plex.js`       | **no**   | Plex `hostname`, `port`, `https`, `token` (the bot's default user), `homeOwnerToken` (optional, only for cross-account playlist features), `managedUser`, `options`. Copy from `plex.example.js`. |
 
@@ -246,7 +251,7 @@ out-of-range value cannot break playback.
 | `audiobookCalibreSort` | bool | `false` | The Calibre index ("Sort and fill details from Calibre"): match every audiobook to a Calibre record for its section and blank details, and `!book calibre`. Needs `calibreUrl` too. Read on every call; the 15-minute check returns early while it is off. See "The Calibre index". |
 | `audiobookControls` | choice `started` `voice` `listener` `everyone` | `'started'` | Who besides the listener may use a book card's buttons and the gated `!book` commands. Read on every click; a blank or unknown value reads as `started`. See "Permissions" under "The engine". |
 
-**Read-along settings.** The first three are under `/config` → Audiobooks, the five Calibre ones
+**Read-along settings.** The first four are under `/config` → Audiobooks, the five Calibre ones
 under Integrations. All are read at call time, and the Calibre client is rebuilt whenever any of
 the four Calibre server values changes, so none needs a restart. Where `ebook-convert` is, is
 remembered for a minute per `calibreConvertPath` value, since a card render asks on every redraw.
@@ -256,6 +261,7 @@ remembered for a minute per `calibreConvertPath` value, since a card render asks
 | `audiobookTextEnabled` | bool | `true` | `!book text`, `!book link` and the card's 📖. Nothing is downloaded or parsed until someone uses it; the only background work is the read-only probe when a book starts (a Calibre search and a folder listing). Off: the commands refuse, no card shows 📖, and an open DM page says so on its next event. |
 | `audiobookTextSidecars` | bool | `true` | Also look for `.epub` files in the folders that hold a book's audio. |
 | `audiobookTextConvert` | bool | `true` | Convert a Calibre record with no EPUB but a MOBI, AZW3 or similar to EPUB on its first open. Off: no new conversion, such a record shows no 📖 and the replies say why; a text converted earlier still opens from the cache. |
+| `audiobookTextPictures` | bool | `false` | Pictures from a scanned PDF on the same Calibre record as the text, on the DM page and the 📖 page. Read at call time; turning it off cancels a running analysis and clears the pictures from open DM pages at once (a 📖 page on its next click), and turning it on serves analyses kept from before without reading the PDF again. See "Pictures from a scanned PDF". |
 | `calibreUrl` | string | `'http://127.0.0.1:8080'` | Calibre's content server. Blank turns Calibre off. Must be http(s); a URL with a login in it is refused by `/config` and again by the client, and the refusal never repeats the value. |
 | `calibreLibraryId` | string | `''` | Blank uses the server's default library (`/ajax/library-info`). |
 | `calibreUsername` | string | `''` | Only when Calibre's "Require username and password" is on. |
@@ -328,11 +334,16 @@ All persistent runtime state lives under `data/`. The directory is created if mi
 | `data/book_text/readers.json`     | `helpers/bookTextStore.js` (the per-user read-along preference: who ran `!book text on`, by Discord user id, kept across books and restarts until `!book text off`) |
 | `data/book_text/works.json`       | `helpers/bookTextStore.js` (which cache files each work uses, and the source they came from) |
 | `data/book_text/marks.json`       | `helpers/bookTextStore.js` (the read-along's sync marks set with 📌, by work id: audio time, word index, text version, Discord user id and time; no book text) |
+| `data/book_text/pictures.json`    | `helpers/bookTextStore.js` (read-along pictures, by work id: `{ key, base, pdf: { libraryId, id, uuid, size, mtime, fingerprint }, count, at, usedAt, off, offBy, offAt, redo? }`, never the PDF's path. A pointer with `off` and a null key keeps the owner's switch for a book with no analysis; after a failed alignment it still names its key, with `count` 0, so the sweep keeps `pages.json` for the next text. `redo` is the key of an analysis another work shows that `pictures:redo` still has to read again: it outlives a restart, and goes once that read is in or has failed for good) |
+| `data/book_text/pictures/<key>/`  | `helpers/bookPicturesWorker.js` (the PDF child): one PDF's analysis. `index.json` (the picture list and the scan's folio offset, written last, so it marks a complete folder), `pages.json` (each printed page's word hashes and art boxes, no readable text), the JPGs (`p022.jpg`, `p062-063.jpg` for a spread), and per text an `align-<base>.json` (each picture's word, plus a fallback word for one placed off its own page) or `align-<base>.fail.json`. `helpers/bookPictures.js`'s sweep removes a key no pointer names and align files of bases nothing names; its 1 GB cap removes whole keys, least recently used first, never one used in the last hour |
+| `data/book_text/pictures/<key>.fail.json` | `helpers/bookPictures.js` (a PDF that gives no pictures: encrypted, damaged, no text layer, over 1,000 pages or 300 MB, or failed 3 times; or the strikes of an analysis that hung, crashed or hit a disk error. Deleted after 30 days, by `pictures:redo`, or once the key is read whole) |
+| `data/book_text/pictures/<key>.work/` | `helpers/bookPictures.js` (an analysis in flight: the downloaded `book.pdf` and the child's `out/`. Deleted when the job ends, whatever the result. After a killed bot the sweep deletes it, and the sweep runs before an instance's first picture load or job, so only once a text opens with `audiobookTextPictures` on; until then the PDF stays here) |
+| `data/book_text/pictures/<key>.old/` | `helpers/bookPictures.js` (the analysis a new one of the same PDF replaces, for the moment between two renames, as when `pictures:redo` runs on a key another work shows. After a crash in that moment the sweep moves it back to `<key>/` when a pointer names the key and `<key>/` is missing, and deletes it otherwise) |
 
 The catalog, bookmarks, bookmark `.bak`, overrides (with its `.bak` and `.tmp`), tag cache,
 lookup cache and Calibre index (with its `.tmp`) files are gitignored, each on its own line: the bookmarks are keyed by Discord user
 id, the tag cache by local file paths, and the rest describe your library. `data/book_text/` is gitignored as a
-whole: it holds text extracted from your own ebooks, user ids and local paths. Each has an env
+whole: it holds text extracted from your own ebooks, pictures from your own PDFs, user ids and local paths. Each has an env
 override, which the tests set to a pid-suffixed temp path before the first require:
 
 | Env var | Default path |
@@ -343,17 +354,19 @@ override, which the tests set to a pid-suffixed temp path before the first requi
 | `PLEXBOT_BOOK_TAGS_FILE` | `data/book_tags.json` |
 | `PLEXBOT_BOOK_LOOKUP_FILE` | `data/book_lookup.json` |
 | `PLEXBOT_BOOK_CALIBRE_FILE` | `data/book_calibre.json`. Under the test runner without it, the default Calibre index is off and arms no timer. |
-| `PLEXBOT_BOOK_TEXT_DIR` | `data/book_text` (the cache goes in its `cache/` folder) |
+| `PLEXBOT_BOOK_TEXT_DIR` | `data/book_text` (the cache goes in its `cache/` folder, the read-along pictures in `pictures/`) |
 | `PLEXBOT_BOOK_TEXT_LINKS_FILE` | `data/book_text/links.json` |
 | `PLEXBOT_BOOK_TEXT_READERS_FILE` | `data/book_text/readers.json` |
 | `PLEXBOT_BOOK_TEXT_WORKS_FILE` | `data/book_text/works.json` |
 | `PLEXBOT_BOOK_TEXT_MARKS_FILE` | `data/book_text/marks.json` |
+| `PLEXBOT_BOOK_PICTURES_FILE` | `data/book_text/pictures.json` |
 
 Under the test runner without its env var, each book store is memory-only and the overrides
 file is never read or written (`editOverrides` answers "off limits"), the same rule as every other `jsonStore` store, so the bot tests (`app/bot.js`
 now asks the catalog whether a track is a book) never see the real catalog or the real overrides.
 The read-along's text source goes further: under the runner without `PLEXBOT_BOOK_TEXT_DIR` it
-refuses to read or write any cache at all and reports the read-along as off.
+refuses to read or write any cache at all and reports the read-along as off, and the pictures
+module (`helpers/bookPictures.js`) serves nothing and starts nothing.
 Outside the runner the stores write to their real
 paths, so an ad-hoc `node -e` check against them should set the env vars first.
 
@@ -3373,6 +3386,12 @@ presses 📖, and nowhere else.
   for cache 5d9348fd5c994bbe: 4 sections, 1928 words in 17 ms.`
 - `!book link <book>` typed in a guild channel names Calibre ids and file basenames only, and
   sends the full paths to the owner by DM.
+- Pictures from a scanned PDF are book content and follow the text's rule: the listener's DM page
+  and the 📖 page, never a channel. Their log lines carry the 16-hex key and text base, codes,
+  counts and ms, never a title, a page or a path. The PDF child gets paths and no title and sends
+  back counts; `pages.json` holds hashes of the OCR words, never the words. The command log never
+  sees a picture: it reads only `content`, `embeds` and `components`, and every page payload is
+  redacted by its `bookpage:` row (tested with a picture page).
 
 **Calibre and local files.**
 
@@ -3400,9 +3419,250 @@ presses 📖, and nowhere else.
 `refreshCard(s)`. `bookread:<sessionId>` and `bookpage:*` are their own button namespaces, routed
 after `book:*` and before tag inference in `app/music.js`, so `bookButtons` never claims them.
 
+**Pictures from a scanned PDF** (`helpers/bookPictures.js`, `bookPicturesWorker.js`,
+`bookPicturesScan.js`, `bookPicturesAlign.js`, `pdfTools.js`; off by default,
+`audiobookTextPictures`). When the Calibre record a text comes from also holds a scanned PDF of the
+printed edition, the PDF's illustrations show on the DM page and the 📖 page as the narration
+reaches the start of the printed page they are on. Built, reviewed and fixed on 2026-11-05 and
+polished on 2026-11-06, unit-tested offline with fake PDF tools and generated books (191 tests in
+6 new files, and the read-along's existing test files updated), and run outside the bot on Calibre
+#384, Harry Potter and the Sorcerer's Stone (the UK EPUB beside an Internet Archive scan of the
+illustrated edition, 264 pages), through the real `bookPictures`, worker, Calibre client, poppler
+25.11.0 and ffmpeg-static: once as built, and once after the review's fix pass. The polish after
+that run (a forced re-read that is tried again, a known failure kept while Calibre is closed, the
+time cap stretched for long books) is unit-tested only. **It has not met a live Discord yet**;
+Phase 15 of `BUGTESTING.md` is that pass.
+
+- **Which PDF.** Only the record the text comes from (`handle.source`, type `calibre`); a sidecar
+  or linked EPUB gets none, and so does a podcast. `readAlong.textFor` calls `ensure(work,
+  handle)` on every text open, never on a card render or the start probe, so nothing is downloaded
+  until someone reads along. `ensure` reads the record (`/ajax/book`) at most every 10 minutes,
+  and at once when the text's base or record changes. The record must be in the handle's library,
+  carry the handle's uuid when both have one (Calibre reuses a deleted record's id), and still hold
+  a text format. A set kept from an earlier run is served from disk before Calibre is asked, so the
+  pictures show with Calibre closed. `forText`, called on every render, is a Map lookup (a test
+  counts 0 disk, store and Calibre calls over 200 of them).
+- **Calibre not answering.** A record check that fails (Calibre closed, a login asked for,
+  `calibreUrl` blank) before anything has shown that the record holds a PDF leaves the book
+  `unknown`: `!book text` prints no 🖼 line (most records have no PDF), and `!book link` says "not
+  checked (Calibre isn't answering)". Once a PDF is known, from this run or a pointer, the same
+  failure is a wait: a set already served keeps serving under its ready line, and a book with none
+  shows the waiting line. A failure already known (a damaged PDF found this run, or a text that
+  does not line up, found this run or kept on the pointer from an earlier one) stands with its own
+  line, and the failed check only moves its next one. In each case the
+  record is asked again on the first look after 2 minutes.
+- **Key.** `sha1('<PICTURES_VERSION>|calibre:<lib>:<id>:pdf:<size>:<mtime>')` cut to 16 hex, from
+  `format_metadata.pdf`, as the text's fingerprint is: `last_modified` moves on every tag edit, and
+  Calibre rewrites the file it serves (29,205,115 bytes served for #384's 29,224,426 stored). The
+  record's `format_metadata` also carries the library's local path, which nothing copies. The
+  text's base names only the align file, so a re-parsed or replaced EPUB is lined up again in
+  seconds, with no download and no rendering.
+- **One analysis at a time.** Full analyses wait in a process-wide line and download their PDF into
+  `<key>.work/book.pdf` only when their turn comes, then go to `bookPicturesWorker`'s child, forked
+  at Below Normal with `--max-old-space-size=512`. Its tools run at Below Normal too (Windows passes
+  it on, and `runTool` sets it as well): every `pdftotext`, `pdftoppm` and pictures `ffmpeg` a
+  sample could read during the two real runs was Below Normal. The book's own audio `ffmpeg` stays
+  at Normal.
+  An align job skips the line and runs ahead of a waiting full one. There is one job per key, and
+  per key and text base, across works and `!restart`. The parent puts `out/` in as `<key>/` and
+  deletes `<key>.work/` only after the child has closed, since Windows will not delete a folder a
+  process holds a file in. An existing `<key>/` (another work's, during a `pictures:redo`) is
+  renamed to `<key>.old/` first and deleted once the new folder is in, or renamed back when the new
+  one cannot go in, so the key is without a folder only for the moment between two renames; the
+  works showing the old folder load the new one on their next look.
+- **The child.** One `pdftotext -enc UTF-8 -bbox-layout -f 1 -l 1001`, to a file: on a pipe
+  it ends lines with CRLF, and #384's is 11.9 MB. Never `-r`, which scales the word boxes but not
+  the page. Then each page once: `pdftoppm -f n -l n -singlefile -scale-to-x -1 -scale-to-y 1200`
+  with no output root, so the PPM comes on stdout (`-` as the root writes a file named `-.jpg`); a
+  110 px box average of it is scored for art, the size the scorer was tuned on; and a picture is
+  encoded by ffmpeg-static from that same PPM through stdin, cropped, whole, or as two frames
+  through `tile=2x1` for a spread. A JPG over 2 MB is encoded again smaller, a PDF over 1,000 pages
+  is refused (`too-large`), and at most 200 pictures are kept. Each tool call has its own timeout,
+  60 s for `pdftotext`, 30 s for a page's render and 15 s for an encode, and three page timeouts in
+  a row end the job. The worker kills a child that sends no progress for 2 minutes, or that runs
+  30 minutes in all. Rendering measured 0.84 s a page on an idle PC and 1.38 s on a busy one, so
+  1,000 pages take about 14 to 23 minutes: the first page count a render reports stretches the cap
+  of a book over 500 pages to 5 minutes plus 3 s a page, counted from the fork (55 minutes at
+  1,000). A later count moves nothing.
+- **Lost pages and pictures.** Pages that will not render or score, and pictures ffmpeg fails to
+  encode, are passed over, up to 3 of them together or 2% of the pages if that is more; a picture
+  still over 2 MB after three tries is dropped without counting. One more fails the job as
+  `crash`, a strike, rather than install a tool's partial read as the book's analysis, and so does
+  a scan whose art pages gave no JPG at all. `index.json`'s summary keeps both counts (`skipped`,
+  `encodeFailed`), and the install line ends `; pages skipped: N, pictures not encoded: N` when
+  either is above 0.
+- **The trap: Calibre's poppler exits 1 for a password-protected PDF, as for a damaged one**, and
+  never 3, poppler's permissions code. On exit 1 the child looks for an `/Encrypt` entry in the
+  PDF's first and last 64 KB, where the trailer is (a linearized file keeps its first trailer near
+  the start): found, the PDF is `pdf-encrypted`, else `pdf-damaged`. The tool's stderr would say
+  which, but it quotes the path, so it is never read.
+- **Art**, ported from the design spike: OCR line boxes 5–18 pt tall with real words mask the
+  text; the paper colour is the running median of the text pages' own samples; ink is an RGB
+  distance over 45; a page carries a picture when its largest 8-connected patch of ink is 2.5% of
+  the page or more. A picture page with fewer than 30 OCR tokens is a full page. Any other is
+  cropped to the box around its patches of 1.5% or more, padded by 2%. **Patches that together
+  reach within 1% of the left or right edge and are under 20% of the page wide are no picture**, on
+  a full page as on a text page: a scanner's shadow, or the facing page's art bleeding over. On
+  #384 that drops exactly two pages the first run showed, 220 (a text page's shaded edge, 182×1200
+  in chapter 15) and 27 (a sliver of the facing page's art), and no other. Two facing full pages
+  are one spread when both gutter columns carry ink in at least half of 60 sampled rows and the
+  median colour distance across the gutter is at most 60, and, when the folio offset is known, the
+  left one is an even printed page.
+- **Printed page numbers.** Every number alone on its line in a page's head or foot band votes for
+  the scan's folio offset, its page number minus the printed one, and the most common offset counts
+  when it has 3 votes or more and a majority of them. #384's is 12. `index.json` carries it as
+  `folioOffset`, and a picture's alt text names the printed page: "Picture from the printed book,
+  page 10" for the PDF's page 22, "pages 50 and 51" for the spread on its pages 62 and 63. With no
+  offset, or for a page before the numbering starts (#384's frontispiece, printed page 0), the alt
+  text has no number, since the PDF's own would mislead; 113 of #384's 114 placed pictures carry
+  one. **Folios set off by dashes (`- 12 -`) or sharing their line with a running head give no
+  offset**, so such a book's alt text has no numbers and its spreads are found by their content
+  alone.
+- **The trap: pdftotext reads a two-column scan row by row, across both columns.** Fed that
+  order, the alignment placed 8 of #384's 17 chapter openers. `readingOrder` re-reads the line
+  boxes: running heads and folios dropped by position, a full-width line cutting the page into
+  bands, the left column before the right, rows within 4 pt, line-end hyphens joined.
+- **Lining up.** Every OCR trigram found once in the ebook votes for its page's offset; up to 5
+  windows of offsets per page are its candidate places; a DP picks one place per page that never
+  moves back more than 20 words. **The DP's forward step cannot bridge a jump in the offset** (a
+  few printed pages missing from the scan, a passage the print lacks, or pages of more than about
+  850 words in a dense or 2-up scan), so it leaves out strong pages beside the jump, and their
+  pictures would move to its far side. A fill pass puts such a page back: one left out between two
+  placed pages takes its own best place when that has 20 votes or more and its offset lies between
+  the place before it and the next placed page's, within 20 words either way. On #384 it changes
+  nothing; every page start is the design DP's. The chosen anchors are cut to a forward chain and
+  widened one exact token at a time. A section that starts within 40 words before a page's first
+  seen word starts that page, since a drop cap hides the first words; otherwise the unseen words
+  are split with the page before. Under 60% of the text pages placed is `align-failed` for that
+  text. Ebook words are numbered as the pager numbers them: `readAlongModel.WORD_RE` over each
+  section's byte range of `<base>.txt`, from its `wordStart`.
+- **Placement.** A picture's word is its own page's start when that page lined up, else the next
+  lined-up text page's start (a full page or a spread shows with the text that follows it, as a
+  reader sees it on turning the page), else the word after the previous text page's end. A picture
+  placed off its own page also carries `fallback`, the last word of the nearest lined-up page
+  before it (37 of #384's 114 do). It is that page's own last word because, past a book's last
+  chapter, the word after it is the first one not narrated. Pictures before the first lined-up
+  page are front matter and dropped. The pager places each set against the session's map once per
+  set and map (`narratedPictures`, cached on the text): a picture whose word no narrated stretch of
+  the map holds takes its fallback when that one is narrated. A map that narrates every body word
+  moves nothing; one whose last chapter ends at its own last word keeps the book's last
+  illustration in that chapter (below). The pager attaches the pictures whose word lies in the
+  shown page's `[word, endWord)`, and shows body pages only.
+- **Payloads. The trap: a Discord edit with no `files` keeps the message's old attachments**, so
+  a page turned into a stub, or the refusal that replaces the 📖 page of someone who left the
+  voice channel, would keep the picture on their screen. Every `readAlongCard` payload carries
+  `files`, `[]` for anything but a page, built fresh each time because discord.js pushes the new
+  files' ids into a passed `attachments` array. A page's first picture is the page embed's image
+  and the rest are image-only embeds, at most 10 and 8 MB. The picture ids are part of the render
+  key, and `onPicturesChange` redraws only an open DM page whose pictures changed; a 📖 page is a
+  snapshot and shows the change on its next click. **A first DM page still on its way has no
+  message to edit:** a book's first open in a run loads its kept set in the background, usually
+  while that DM is sent, and the setting or `pictures:off` can flip meanwhile, so `openPage`
+  compares the page's pictures again once the message exists and redraws it when they differ. A
+  refused upload (40005, 413) or a JPG gone or locked (`ENOENT`, `EACCES`, `EPERM`, `EBUSY`) sends
+  the page once more without its pictures, on every path including the first 📖 click.
+- **Failures and the sweep** (rows in Failure modes and under Data & state): stable failures stay
+  on disk until the PDF changes, `pictures:redo`, or 30 days, when the sweep removes the record. A
+  timeout, a crash or a disk error after the PDF was read is a strike on disk, retried after 30
+  minutes, and the third gives up. In memory only: Calibre errors and file errors that cost no
+  reading (a download that could not be saved, a text an align job could not read) are retried
+  after 2 minutes, a PDF the record lists but Calibre has no file for after 10 minutes, missing
+  tools after 60 s. The sweep runs once per instance, before its first load or job, so only once a
+  text opens with `audiobookTextPictures` on, and skips every key with a job in flight in the
+  process. The 1 GB cap removes whole analyses, least recently used first, never one in flight or
+  used in the last hour. A set held in memory shelters its analysis only while pages use it (drawn
+  in the last hour), since memo entries live as long as the bot. The works of a removed analysis
+  check their record again on their next look, and no page is redrawn for it: a paused book's open
+  DM page would have the PDF read straight back for nobody, and it keeps the copies Discord already
+  holds until it is drawn again.
+- **`pictures:redo`, `off` and `on`.** `pictures:redo` opens the book's text and asks Calibre for
+  its record first, and refuses with the reason when either fails. It then cancels the work's job
+  and waits up to 20 s for it to let go, deletes the key's failure record and, unless another
+  work's pointer names the key, its folder, drops the work's pointer and clears its open pages,
+  and reads the PDF again. A work that shows the same analysis keeps it meanwhile: the PDF is read
+  again in full all the same (`forceFull`), and the new folder replaces the kept one only when it
+  is whole (the rename above). The key to read again is also on the redoing work's pointer, as
+  `redo`, so the next run reads it after a `!restart`. **A forced read that fails for a reason
+  that passes** (a wait in memory, a cancel or shutdown, a strike) **puts the kept analysis back
+  on the redoing work's pages and is tried again** after that failure's own wait, a strike's taken
+  from its record so it holds across a restart; until the read lands, neither `!book text` nor
+  `!book link` calls the kept analysis `ready`. The read landing, a stable failure, the third
+  strike or a new PDF on the record ends the redo and clears `redo`. **An off switch outlives a
+  redo**: the pointer is read again after the wait, so a `pictures:off` sent during it is kept,
+  nothing is started, and the reply says so; a forced read the redo still owes runs after
+  `pictures:on`. `pictures:off` and `pictures:on` set the switch on the work's pointer and emit, so
+  open DM pages drop or regain the pictures at once.
+- **Tools.** `pdfTools.locate` looks beside `findConverter`'s `ebook-convert` (`app\bin`), then in
+  `Program Files\Calibre2` or `Calibre`, then on PATH. **The trap: Git for Windows puts Xpdf
+  4.00's `pdftotext` on PATH, and it has no `-bbox-layout`**, so a folder counts only when both
+  tools answer `-v` as Poppler. An answer that prints a banner, Poppler's or a refusal such as
+  Xpdf's, is kept per file for the life of the process. No answer at all (10 s without one, a
+  failed start, nothing printed, as from a tool whose DLLs an install is replacing) is asked again
+  by the next `warm()` once it is a minute old, so installing or updating Calibre needs no restart.
+  A new size or mtime cannot be counted on to clear it: Calibre's installer keeps each poppler
+  file's build mtime. `bookPictures` asks through `warm()`, which runs the probes with `execFile`:
+  `locate`'s own are synchronous and cost the bot's thread 130–270 ms the first time.
+- **Measured on #384** (2026-11-05, outside the bot, Calibre open), in the run after the fix pass,
+  with other apps keeping the PC at 56–78% CPU and the live bot playing audio. The EPUB downloaded
+  in 271 ms (19,799,567 bytes) and parsed into 26 sections, 78,276 words, in 375 ms; the PDF
+  downloaded in 483 ms. The child took 371.1 s for the 264 pages: `pdftotext` 4.6 s, then about
+  1.38 s a page, and the alignment about 240 ms. The run as built took 223.4 s, about 0.85 s a
+  page, so a book this size takes about 4 to 6 minutes. It found 119 pictures (80 cropped from text
+  pages, 33 full pages and 6 spreads: 62+63, 92+93, 126+127, 202+203, 216+217 and the back
+  endpapers 262+263), 16.0 MB of JPGs from 17.5 KB to 633 KB, median 109 KB. 210 of 217 text pages
+  lined up (96.8%), and all 17 chapter openers landed on their chapter's first word, which the live
+  work's map times at 0:00 into each chapter's track. 114 pictures were placed (77 at their own
+  page's start, 35 at the next text page's, 2 after the previous one's end) and 5 front-matter ones
+  dropped. The folio offset came out 12, and no page was skipped and no picture failed to encode.
+  The 269 IPC messages carried no book text and no path, the only log line was `Read-along
+  pictures: read the PDF for pictures 9aa360b44c75c103: 264 pages, 119 pictures (6 spreads) in
+  371075 ms.`, the node child was Below Normal in all 18 samples, and no `pdftoppm.exe`, `.work`
+  folder or PDF was left. Opened again from the kept analysis, the set loaded in 163 ms with no PDF
+  read.
+
+**Known differences from the design**, all seen on #384:
+
+- The troll-guide spread, pages 158 and 159, carries hand-lettered labels, so each page has 30 or
+  more OCR tokens and is scored a text page: two cropped pictures at page 160's start rather than
+  one spread.
+- A crop is the box around the art's patches, and art that reaches around the text (a painted
+  border, a shaded margin joined to the picture) is one patch as large as the page. 12 of the
+  placed cropped pictures cover 90% or more of their page, text included: the chapter 1, 4, 10, 15
+  and 16 openers, page 22's painting with text printed on it, and six more.
+- `classifySections` counts the back matter after chapter 17 as body: "A Second Look" and
+  "Pottermore" match no known label, so the body runs to word 78,144 and takes the acknowledgments
+  and "About the Author" with it. Page 259's painting is placed at word 77,538, the
+  acknowledgments' first word (the design used 77,445, the last of chapter 17), with 77,445 as its
+  fallback. Without the end-matter fix the map narrates that back matter at the end of chapter
+  17's 37:31 track, and the four pictures placed there show with its pages: page 259's painting
+  and the frog on 260 at 33:49, on the acknowledgments' DM page `[77538, 77632)`, and the back
+  endpapers (262+263) and the back cover (264) at 34:23, on About the Author's `[77632, 77827)`.
+  The end-matter fix (b28486b, `ownEnd` in `readAlongModel.js`) is in the same build. With it a
+  last chapter ends at its own last word and the narration stops at 77,445: page 259 falls back
+  there and shows on chapter
+  17's last DM page, `[77272, 77446)`, from 36:19 to the track's end at 37:31. The frog has no
+  fallback (it is placed at its own page's start), and the endpapers' and back cover's fallback,
+  77,631, is not narrated either, so those three are never reached while following (▶ past the
+  chapter's last page still shows them), and following shows 111 of the 114 placed pictures.
+
+**Known gaps**, found in the review and the checks after it, and not fixed:
+
+- A `pictures:redo` swap drops the alignment of a work that shows the same analysis on another text
+  base. The work keeps its old pictures and lines its text up again on its next look. After a
+  restart that look asks Calibre for the record first, so with Calibre closed the work shows
+  "Reading the PDF for pictures failed (Calibre isn't answering)" and no pictures until Calibre
+  answers.
+- After a `!restart` during a forced re-read's first try, with Calibre closed, the redoing work has
+  no pictures and no 🖼 line until Calibre answers, while the work that shares the analysis keeps
+  showing it.
+- A forced re-read that lands while the bot shuts down keeps its `redo` field, so the next run
+  reads the PDF once more.
+
 **Not built (phase 1 stops here):** speech recognition or manual sync marks (the map already
 accepts extra anchors), MOBI and AZW3, covers, a web reader, and a highlighted sentence that moves
-with the voice.
+with the voice. For the pictures: pictures from another Calibre record of the same book (only the
+record the text comes from is looked at), and keeping an unchanged picture by its attachment id
+instead of uploading it again with every edit of its page.
 
 ### Failure modes
 
@@ -3441,6 +3701,20 @@ with the voice.
 | Read-along: an older DM page clicked | that message becomes "📖 This page moved ↓"; the current page is untouched |
 | Read-along: ebook re-parsed or relinked while a page is open | new cache files, old ones untouched; the open page re-renders at the narration with "The text was updated", and so does a click on a button drawn from the old text |
 | Read-along: `audiobookTextEnabled` turned off live | commands refuse, the next card edit drops 📖, open pages say so on their next event |
+| Pictures: an encrypted or damaged PDF, one with no text layer, or one over 1,000 pages or 300 MB (the Calibre client's download cap) | `<key>.fail.json`; the 🖼 line names the reason; not read again until the PDF changes (a new key), `pictures:redo`, or 30 days, when the sweep removes the record. A password shows as encrypted by the PDF's `/Encrypt` entry, since poppler exits 1 for it as for damage |
+| Pictures: the PDF does not line up with the text (under 60% of its text pages placed) | `align-<base>.fail.json` for that text; a new text base, a new `ALIGN_VERSION` or `pictures:redo` tries again; the analysis is kept |
+| Pictures: a tool call hangs, or the child crashes | each call's own timeout kills it (60 s `pdftotext`, 30 s a page's render, 15 s an encode), and a render or encode that times out loses only its page or picture; a `pdftotext` timeout, three render timeouts in a row, 2 minutes without progress or 30 minutes in all (5 minutes plus 3 s a page for a book over 500 pages) end the job (`taskkill /T /F`, so no `pdftoppm.exe` is left) as a strike on disk, retried after 30 minutes; the third is `gave-up` |
+| Pictures: pages that will not render, or pictures ffmpeg will not encode | passed over up to 3 together (or 2% of the pages, if more) and counted in `index.json` and the install line; one more, or art pages that gave no JPG at all, fail the job as `crash`, a strike |
+| Pictures: Calibre closed during the record check | no PDF known yet: `unknown`, no 🖼 line in `!book text`, and `!book link` says "not checked (Calibre isn't answering)"; a PDF known: a wait, and a set read earlier keeps showing, from disk; a failure already known (this run's, or an alignment failure kept on the pointer) keeps its line. Each is asked again after 2 minutes |
+| Pictures: Calibre closed during the download | `calibre-unreachable`, retried after 2 minutes |
+| Pictures: Calibre lists a PDF whose file is gone from the library (the download answers 404) | `pdf-missing`, "Calibre lists a PDF but has no file for it", looked at again every 10 minutes; one warn line per PDF per run |
+| Pictures: a disk error after the PDF was read (the child's writes, or putting the finished folder in place) | `disk-error`, "the bot couldn't read or write its picture files": a strike, since each retry costs a download and minutes of CPU. A download that could not be saved stays `io-error`, retried after 2 minutes |
+| Pictures: Calibre's PDF tools not found, or only Git's Xpdf `pdftotext` | `tools-missing`, looked for again after 60 s, and tools that gave no answer at all are asked again then; the 🖼 line says to install Calibre |
+| Pictures: `audiobookTextPictures` turned off live | the running analysis is cancelled and every open DM page is edited with `files: []` at once; a 📖 page keeps what it shows until its next click, which draws it without pictures; on again, kept analyses show with no new reading |
+| Pictures: a JPG gone or locked, or Discord refuses the upload | the page goes out once more without its pictures (`ENOENT`, `EACCES`, `EPERM`, `EBUSY`, 40005, 413), on every send path including the first 📖 click |
+| Pictures: `pictures:redo` on an analysis another work shows, and the re-read fails for a reason that passes (Calibre closed, the tools missing, a cancel, a strike) | the kept analysis serves the redoing work again without being reported `ready` (the 🖼 line shows the wait), and the re-read is tried again after that failure's wait, or on the next look after a cancel; the pointer's `redo` carries it across a restart. A stable failure or the third strike ends the redo |
+| Pictures: `!restart` mid-analysis | `readAlong.shutdown` kills the child's tree; the new instance's sweep skips the key while the old job is in flight, the old job's own cleanup removes `<key>.work`, and the next open queues the job again |
+| Pictures: the bot killed mid-analysis (a crash, a hard stop) | `<key>.work/`, PDF included, stays until the sweep, which runs at the first text open with `audiobookTextPictures` on |
 
 **Not built (phase 2):** a "stop the music and start my book" takeover button, stashing and
 restoring the music queue, a sleep fade-out, "next in series", book volume (an ffmpeg `volume=`
@@ -3563,6 +3837,8 @@ swallow it.
 Every test that touches a store or a log points it at a pid-suffixed `os.tmpdir()` path through its env var (`PLEXBOT_LOG_DIR`, `PLEXBOT_BOOK_CATALOG_FILE` and the rest) before the first require, and never writes `data/`. `test/bookResourceFfmpeg.test.js` runs the real ffmpeg-static through the real proxy on a generated 20 s WAV (about 1 s); the engine tests run a real `AudioPlayer` on injected Opus-silence resources, so they inject timers rather than mocking the global ones, which would freeze the player's 20 ms cycle.
 
 The read-along tests add `PLEXBOT_BOOK_TEXT_DIR` and its three `PLEXBOT_BOOK_TEXT_*_FILE` stores to that list. `test/epubTextWorker.test.js` and `test/readAlongIntegration.test.js` fork real parse children; every EPUB is generated by `test/helpers/epubFixture.js` from NATO-alphabet words, and Calibre is always a fake (a local `http.createServer` in `test/calibreClient.test.js`, an injected object elsewhere), never the real server. The Calibre index tests inject their own store, client and timers; without `PLEXBOT_BOOK_CALIBRE_FILE` the default index stays off under the runner and arms no timer.
+
+The read-along pictures tests add `PLEXBOT_BOOK_PICTURES_FILE`. `test/helpers/fakePdfTools.js` stands in for Calibre's poppler tools and ffmpeg (`node fakePdfTools.js <pdftotext|pdftoppm|ffmpeg|xpdf> ...`): the "PDF" is a JSON spec written by `writeFakePdf(file, { mode, pages })`, with modes `ok`, `damaged`, `encrypted` (exit 1, as Calibre's poppler gives for a password, with an `/Encrypt` trailer entry in the file), `no-text`, `hang` and `hang-tree` and per-page `failPages` and `hangPages`; `fakeTools()` gives the `{ exe, args }` tools a job takes, and ffmpeg reads its spec from `--fake-spec`. `test/bookPicturesWorker.test.js` forks real children, one of them through the real scan and alignment on a 7-page fake PDF; its stretched time cap runs on a fake fork under `node:test` mock timers (`setTimeout` and `Date`), so 55 minutes pass in milliseconds. The scan and alignment tests typeset a generated book in two columns (`test/fixtures/bookPictures/synth.js`), so no real book text is used.
 
 ---
 

@@ -536,6 +536,10 @@ function createBookTextSource(deps = {}) {
 			source: JSON.parse(JSON.stringify(source)),
 			via,
 			label: labelOf(source, via),
+			// The cache pair by path, for a child process that reads the text itself (the pictures'
+			// alignment), so no book text crosses IPC.
+			textPath: textFile,
+			indexPath: fileOf(base, 'json'),
 			// Content-addressed: the bytes behind this handle are never rewritten, even when a
 			// newer copy of the ebook is parsed while it is in use.
 			async readSection(i) {
@@ -1321,7 +1325,8 @@ function createBookTextSource(deps = {}) {
 					.map((c) => ({
 						id: c.id, title: c.book.title || null, authors: Array.isArray(c.book.authors) ? c.book.authors : [],
 						series: c.book.series || null, seriesIndex: c.book.series_index ?? null,
-						epub: c.epub, format: c.format, accepted: c.accepted, titleScore: +c.titleScore.toFixed(2)
+						epub: c.epub, format: c.format, accepted: c.accepted, titleScore: +c.titleScore.toFixed(2),
+						pdf: Array.isArray(c.book.formats) && c.book.formats.some((f) => String(f).toLowerCase() === 'pdf')
 					}));
 			} catch (err) {
 				out.candidates.calibreError = calibreFailure(err).code;

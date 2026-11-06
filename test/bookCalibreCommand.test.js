@@ -194,7 +194,7 @@ test('a matched record with no EPUB says whether it is converted or gives no tex
 	const found = () => { asked++; return { ok: true }; };
 	const out = calibre.reportChunks(works, idx, 'missing', { converter: found }).join('\n');
 	assert.match(out, /\*\*Matched, but Calibre gives the read-along no text\*\* \(2\)/);
-	assert.match(out, /\*\*The Glass Tide\*\* · Avery Quill: #3 “The Glass Tide”, no text from Calibre: PDF, CBZ can't be read/);
+	assert.match(out, /\*\*The Glass Tide\*\* · Avery Quill: #3 “The Glass Tide”, no text from Calibre: PDF, CBZ can't be read; add an EPUB, MOBI or AZW3 to the record and its PDF's pictures can show too/);
 	assert.match(out, /\*\*The Iron Wake\*\* · Avery Quill: #4 “The Iron Wake”, no text from Calibre: the record has no file/);
 	assert.match(out, /1 matched book is in Calibre only as MOBI, AZW3 or similar; the text is converted to EPUB the first time it opens\./);
 	assert.doesNotMatch(out, /Ember Throne/, 'an EPUB match needs nothing from the owner');
@@ -228,6 +228,50 @@ test('a book converted earlier is not listed as giving no text once converting i
 	pointers['avery-quill/the-salt-crown'].source.id = 9;
 	assert.match(calibre.reportChunks(works, idx, 'missing', { converter, pointer }).join('\n'), /MOBI only, and converting is off/, 'a pointer to another record is no answer');
 	assert.doesNotMatch(all, /—/);
+});
+
+// A scanned PDF beside the text gives the read-along pictures; one with no text gives neither.
+test('a matched record with a PDF says whether its pictures are on, and a PDF without text says what would help', () => {
+	const works = [
+		{ id: 'avery-quill/the-ember-throne', kind: 'book', title: 'The Ember Throne', author: 'Avery Quill' },
+		{ id: 'avery-quill/the-salt-crown', kind: 'book', title: 'The Salt Crown', author: 'Avery Quill' },
+		{ id: 'avery-quill/the-glass-tide', kind: 'book', title: 'The Glass Tide', author: 'Avery Quill' },
+		{ id: 'avery-quill/the-iron-wake', kind: 'book', title: 'The Iron Wake', author: 'Avery Quill' }
+	];
+	const idx = fakeIndex({
+		matches: {
+			'avery-quill/the-ember-throne': { id: 1, verdict: 'exact', method: 'title and author' },
+			'avery-quill/the-salt-crown': { id: 2, verdict: 'exact', method: 'title and author' },
+			'avery-quill/the-glass-tide': { id: 3, verdict: 'exact', method: 'title and author' },
+			'avery-quill/the-iron-wake': { id: 4, verdict: 'exact', method: 'title and author' }
+		},
+		records: {
+			1: { title: 'The Ember Throne', formats: ['epub', 'pdf'] },
+			2: { title: 'The Salt Crown', formats: ['pdf', 'azw3'] },
+			3: { title: 'The Glass Tide', formats: ['pdf'] },
+			4: { title: 'The Iron Wake', formats: ['epub'] }
+		}
+	});
+	const savedPictures = config.audiobookTextPictures;
+	const converter = () => ({ ok: true });
+	try {
+		config.audiobookTextPictures = false;
+		const missing = calibre.reportChunks(works, idx, 'missing', { converter }).join('\n');
+		assert.match(missing, /#3 “The Glass Tide”, no text from Calibre: PDF can't be read; add an EPUB, MOBI or AZW3 to the record and its PDF's pictures can show too/);
+		assert.doesNotMatch(missing, /Ember Throne|Iron Wake/, 'text and a PDF need nothing from the owner');
+		const off = calibre.reportChunks(works, idx, 'all', { converter }).join('\n');
+		assert.match(off, /#1 “The Ember Throne” \(exact: title and author\); with a PDF \(pictures off\)\n/);
+		assert.match(off, /#2 “The Salt Crown” \(exact: title and author\); AZW3 only, converted to EPUB the first time its text opens; with a PDF \(pictures off\)/);
+		assert.match(off, /#4 “The Iron Wake” \(exact: title and author\)$/m);
+		config.audiobookTextPictures = true;
+		const on = calibre.reportChunks(works, idx, 'all', { converter }).join('\n');
+		assert.match(on, /#1 “The Ember Throne” \(exact: title and author\); with a PDF \(pictures on\)/);
+		const blocked = calibre.reportChunks(works, idx, 'missing', { converter: () => ({ ok: false, code: 'convert-off' }) }).join('\n');
+		assert.match(blocked, /#2 “The Salt Crown”, AZW3 only, and converting is off \(audiobookTextConvert\), so no text from Calibre$/m, 'no text, so no word of pictures');
+		for (const text of [missing, off, on, blocked]) assert.doesNotMatch(text, /—/);
+	} finally {
+		config.audiobookTextPictures = savedPictures;
+	}
 });
 
 test('the slash spec offers calibre with its choices, within Discord\'s limits', () => {

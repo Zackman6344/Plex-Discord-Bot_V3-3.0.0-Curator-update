@@ -14,7 +14,7 @@
 
 const logger = require('./logger.js');
 const card = require('./readAlongCard.js');
-const { readerAccess, joinToReadText } = require('./readAlong.js');
+const { readerAccess, joinToReadText, pictureRefused } = require('./readAlong.js');
 
 const EPHEMERAL = 64;
 const NO_PINGS = { parse: [] };
@@ -47,12 +47,24 @@ async function cardClick(interaction, bot, sid, opts) {
 		logger.warn('Read-along button could not defer:', codeOf(err));
 		return;
 	}
+	// A page whose picture Discord refused, or whose JPG is gone or locked, goes out once more
+	// without its pictures, as every other page does (readAlong.js); otherwise the click would be
+	// left on "Preparing".
 	const answer = async (payload) => {
 		report(opts, payload);
 		try {
 			await interaction.editReply(payload);
 		} catch (err) {
-			logger.warn('Read-along button could not answer:', codeOf(err));
+			if (!pictureRefused(err, payload)) {
+				logger.warn('Read-along button could not answer:', codeOf(err));
+				return;
+			}
+			logger.warn('Read-along pictures: a page went out without its pictures:', codeOf(err));
+			try {
+				await interaction.editReply(card.stripPictures(payload));
+			} catch (again) {
+				logger.warn('Read-along button could not answer:', codeOf(again));
+			}
 		}
 	};
 	const s = bot.books.sessionById(sid);
