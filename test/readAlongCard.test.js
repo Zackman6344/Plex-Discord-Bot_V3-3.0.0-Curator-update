@@ -6,15 +6,27 @@
 // would then write to disk; a stub that keeps live buttons; "Play from here" or "Follow in DMs"
 // offered to someone in the voice channel who is not the listener; a ping from the page; an
 // omnibus book the ebook leaves out called "an intro, credits or music". A 📌 sync mark offered on
-// an ephemeral page or a no-text page, or a sixth button in the first row to fit it.
+// an ephemeral page or a no-text page, or a sixth button in the first row to fit it. A picture
+// that stays on screen because a stub or a plain page carried no `files` (an edit without them
+// keeps the old attachments); an eleventh picture or a page over the upload size; a picture
+// attached from a URL or a UNC path.
 //
 // Harness: pure, no Discord. Payloads are built by hand from synthetic NATO-alphabet text.
 
 const test = require('node:test');
 const assert = require('node:assert');
+const os = require('node:os');
+const pathMod = require('node:path');
 
 const card = require('../helpers/readAlongCard.js');
 const { words } = require('./helpers/epubFixture.js');
+
+const PIC_DIR = pathMod.join(os.tmpdir(), 'plexbot-card-pictures', '0123456789abcdef');
+
+function pic(page, over = {}) {
+	const id = `p${String(page).padStart(3, '0')}`;
+	return Object.assign({ id, name: `${id}.jpg`, path: pathMod.join(PIC_DIR, `${id}.jpg`), alt: `Picture from the printed book, page ${page}`, bytes: 150000 }, over);
+}
 
 const BASE = {
 	surface: 'd',
@@ -53,11 +65,21 @@ function assertDiscordShape(p, where) {
 		assert.ok(r.components.length >= 1 && r.components.length <= 5, `${where}: 1 to 5 buttons`);
 		for (const b of r.components) assert.ok(b.custom_id.length <= 100, `${where}: ${b.custom_id}`);
 	}
+	assert.ok(p.embeds.length <= 10, `${where}: at most 10 embeds`);
+	assert.ok(Array.isArray(p.files) && p.files.length <= 10, `${where}: a files array of at most 10`);
+	const names = p.files.map(f => f.name);
 	for (const e of p.embeds) {
+		if (e.image) assert.ok(names.includes(e.image.url.replace(/^attachment:\/\//, '')), `${where}: ${e.image.url} is attached`);
+		// An image-only embed (a page's second picture onwards) has no title, text or footer.
+		if (e.image && !e.title) {
+			assert.deepStrictEqual(Object.keys(e).sort(), ['color', 'image'], `${where}: image-only`);
+			continue;
+		}
 		assert.ok(e.title.length <= 256, `${where}: title`);
 		assert.ok(e.description.length <= 4096, `${where}: description`);
 		assert.ok(e.footer.text.length <= 2048, `${where}: footer`);
 	}
+	for (const f of p.files) assert.ok(f.description.length <= 1024, `${where}: alt text`);
 	assert.deepStrictEqual(p.allowedMentions, { parse: [] });
 }
 
@@ -140,6 +162,7 @@ test('stubs and notices carry no buttons, no embed and no book text', () => {
 	]) {
 		assert.deepStrictEqual(p.components, [], name);
 		assert.deepStrictEqual(p.embeds, [], name);
+		assert.deepStrictEqual(p.files, [], `${name}: an edit to a stub clears a picture`);
 		assert.ok(!p.content.includes(fixture), name);
 		assert.deepStrictEqual(p.allowedMentions, { parse: [] }, name);
 	}
@@ -186,4 +209,88 @@ test('the 📌 confirmation and the marked level read in the footer', () => {
 	const p = page({ quality: { level: 'marked', label: 'marked' }, extra: '📌 Marked at 1:02:03' });
 	assert.match(p.embeds[0].footer.text, /Approximate · dramatized edition · marked · page 3 of 9 · 📌 Marked at 1:02:03 · following the narration/);
 	assert.deepStrictEqual(card.parsePageId(p.components[1].components[0].custom_id), { act: 'mark', surface: 'd', sid: 'a1b2c3', tag: '9f0c', word: 12345 });
+});
+
+// ---- pictures ---------------------------------------------------------------------------------
+
+test('every payload the card builds carries its own files array, and only a page with pictures fills it', () => {
+	const built = [
+		page(),
+		page({ surface: 'e', mode: 'snapshot', isListener: false }),
+		card.noTextPayload({ surface: 'd', sid: 'a1b2c3', tag: '9f0c', word: 0, bookTitle: 'B', resumesAt: null, mode: 'following', isListener: true }),
+		card.preparingPayload({ bookTitle: 'B' }),
+		card.endedStub({ bookTitle: 'B' }),
+		card.offStub(),
+		card.movedStub(),
+		card.noticePayload('x')
+	];
+	for (const p of built) assert.deepStrictEqual(p.files, []);
+	// discord.js writes into some arrays it is handed, so no two payloads may share one.
+	assert.strictEqual(new Set(built.map(p => p.files)).size, built.length);
+	assert.deepStrictEqual(page({ pictures: [pic(22)], pictureCount: 1 }).files.map(f => f.name), ['p022.jpg']);
+});
+
+test('a page\'s first picture goes in its own embed, the rest in image-only embeds, each with its file and alt text', () => {
+	const p = page({ pictures: [pic(28, { id: 'p028-029', name: 'p028-029.jpg', path: pathMod.join(PIC_DIR, 'p028-029.jpg') }), pic(30)], pictureCount: 2 });
+	assertDiscordShape(p, 'two pictures');
+	assert.strictEqual(p.embeds.length, 2);
+	assert.strictEqual(p.embeds[0].image.url, 'attachment://p028-029.jpg');
+	assert.ok(p.embeds[0].description.includes('alpha'), 'embeds[0] is still the text');
+	assert.deepStrictEqual(p.embeds[1], { color: p.embeds[0].color, image: { url: 'attachment://p030.jpg' } });
+	assert.deepStrictEqual(p.files, [
+		{ attachment: pathMod.join(PIC_DIR, 'p028-029.jpg'), name: 'p028-029.jpg', description: 'Picture from the printed book, page 28' },
+		{ attachment: pathMod.join(PIC_DIR, 'p030.jpg'), name: 'p030.jpg', description: 'Picture from the printed book, page 30' }
+	]);
+	assert.doesNotMatch(p.embeds[0].footer.text, /🖼/);
+	assert.ok(ids(p).every(id => id.startsWith('bookpage:')), 'a picture page is still a page: the command log redacts it');
+});
+
+test('more than 10 pictures, or more than 8 MB, keeps the first that fit and the footer says how many', () => {
+	const twelve = [];
+	for (let n = 1; n <= 12; n++) twelve.push(pic(n));
+	const many = page({ pictures: twelve, pictureCount: 12 });
+	assertDiscordShape(many, 'twelve');
+	assert.strictEqual(card.MAX_PAGE_PICTURES, 10);
+	assert.deepStrictEqual(many.files.map(f => f.name), twelve.slice(0, 10).map(x => x.name));
+	assert.match(many.embeds[0].footer.text, /page 3 of 9 · 🖼 10 of 12 pictures · following the narration/);
+	const big = [pic(1, { bytes: 3 * 1024 * 1024 }), pic(2, { bytes: 3 * 1024 * 1024 }), pic(3, { bytes: 3 * 1024 * 1024 }), pic(4, { bytes: 1000 })];
+	const heavy = page({ pictures: big, pictureCount: 4 });
+	assert.deepStrictEqual(heavy.files.map(f => f.name), ['p001.jpg', 'p002.jpg'], `${card.MAX_MESSAGE_BYTES} bytes at most, in reading order`);
+	assert.match(heavy.embeds[0].footer.text, /🖼 2 of 4 pictures/);
+});
+
+test('a picture is attached only with a bot-made name, a local absolute path and a known size, once', () => {
+	const bad = [
+		pic(1, { name: '../p001.jpg' }),
+		pic(2, { name: 'p002.png' }),
+		pic(3, { path: 'https://example.test/p003.jpg' }),
+		pic(4, { path: '\\\\host\\share\\p004.jpg' }),
+		pic(5, { path: '//host/share/p005.jpg' }),
+		pic(6, { path: 'p006.jpg' }),
+		pic(7, { bytes: undefined }),
+		pic(8),
+		pic(8)
+	];
+	const p = page({ pictures: bad, pictureCount: bad.length });
+	assert.deepStrictEqual(p.files.map(f => f.name), ['p008.jpg']);
+	assert.deepStrictEqual(p.embeds.map(e => e.image && e.image.url), ['attachment://p008.jpg']);
+	assert.match(p.embeds[0].footer.text, /🖼 1 of 9 pictures/);
+	assert.strictEqual(page({ pictures: [pic(9, { alt: 'x'.repeat(2000) })] }).files[0].description.length, 1024);
+});
+
+test('stripPictures gives the same page with no picture, no image-only embed and files: []', () => {
+	const twelve = [];
+	for (let n = 1; n <= 12; n++) twelve.push(pic(n));
+	const p = page({ pictures: twelve, pictureCount: 12 });
+	const s = card.stripPictures(p);
+	assert.deepStrictEqual(s.files, []);
+	assert.strictEqual(s.embeds.length, 1);
+	assert.strictEqual(s.embeds[0].image, undefined);
+	assert.strictEqual(s.embeds[0].description, p.embeds[0].description);
+	assert.strictEqual(s.embeds[0].footer.text, page().embeds[0].footer.text, 'no "10 of 12" on a page that shows none');
+	assert.deepStrictEqual([s.content, s.components, s.allowedMentions], [p.content, p.components, p.allowedMentions]);
+	assertDiscordShape(s, 'stripped');
+	assert.strictEqual(p.files.length, 10, 'the payload it was given is unchanged');
+	assert.strictEqual(p.embeds[0].image.url, 'attachment://p001.jpg');
+	assert.deepStrictEqual(card.stripPictures(card.movedStub()), card.movedStub());
 });

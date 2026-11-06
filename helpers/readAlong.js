@@ -19,6 +19,10 @@
 // engine calls, so they are only recorded there and acted on later, through the reader's chain.
 //
 // Book text never reaches a log line: every logger call here carries codes and ids only.
+//
+// A page can also carry the pictures printed on it, from a scanned PDF on the book's Calibre
+// record (helpers/bookPictures.js). They are book content too: only the listener's DM page and
+// the 📖 page ever show them, and no log line names one.
 
 const DEFAULT_TIMERS = { setTimeout, clearTimeout, now: () => Date.now() };
 
@@ -55,6 +59,22 @@ const UNKNOWN_MESSAGE = 10008;
 const DM_CLOSED = 50007;
 const EPHEMERAL = 64;
 const NO_PINGS = { parse: [] };
+// Discord refusing a page's upload (40005, or a bare 413 from its edge), or a picture's file gone
+// or locked when discord.js reads it (the sweep, a virus scanner): the page goes out once more
+// without its pictures, so one bad JPG never freezes a page.
+const PICTURE_REFUSED = new Set([40005, 'ENOENT', 'EACCES', 'EPERM', 'EBUSY', 'FileNotFound']);
+// The pager's stand-in when helpers/bookPictures.js cannot start: pages without pictures.
+const NO_PICTURES = Object.freeze({
+	forText: () => null,
+	ensure() {},
+	status: () => null,
+	describe: async () => null,
+	command: async () => ({ ok: false, code: 'unavailable', text: 'Read-along pictures could not start; check the bot log.' }),
+	onChange: () => () => {},
+	shutdown() {},
+	between: () => ({ shown: [], count: 0 }),
+	statusLine: () => null
+});
 
 const STALE_TEXT = 'That book is no longer playing.';
 const DM_CLOSED_TEXT = 'I can\'t DM you (your DMs are closed to this server). Use the 📖 button on the book card instead; it shows the page only to you.';
@@ -66,6 +86,33 @@ const MARK_NOT_PLAYING_TEXT = '📌 Marks need the book playing: press 📌 when
 
 function codeOf(err) {
 	return (err && (err.code || err.name)) || 'error';
+}
+
+/** Whether a send failed on the payload's pictures alone, so the page can go out once more without them. */
+function pictureRefused(err, payload) {
+	return !!err && (PICTURE_REFUSED.has(err.code) || err.status === 413)
+		&& !!payload && Array.isArray(payload.files) && payload.files.length > 0;
+}
+
+/**
+ * A set's pictures placed where this map's narration reaches them: a picture keeps its word when a
+ * stretch of the map narrates it, else takes its fallback (the last word of the printed page before
+ * it) when that one is narrated. Back matter after a last chapter that ends at its own last word is
+ * never narrated, so a picture placed there would never show.
+ * @param {object[]} list a PictureSet's pictures ({ id, word, fallback?, pages, ... }), sorted by word
+ * @param {{ segments?: Array<{ fromWord: number, toWord: number, level: string }> }} map the
+ *   session's map (readAlongModel.buildMap)
+ * @returns {object[]} sorted by word, then printed page, as bookPictures.between needs; the list
+ *   itself when no picture moved
+ */
+function narratedPictures(list, map) {
+	const pics = Array.isArray(list) ? list : [];
+	const segs = map && Array.isArray(map.segments) ? map.segments : [];
+	const narrated = w => Number.isInteger(w) && segs.some(x => x.level !== 'none' && x.fromWord <= w && w < x.toWord);
+	const out = pics.map(p => (narrated(p.word) || !narrated(p.fallback) ? p : Object.assign({}, p, { word: p.fallback })));
+	if (out.every((p, i) => p === pics[i])) return pics;
+	const page = p => (Array.isArray(p.pages) && Number.isFinite(p.pages[0]) ? p.pages[0] : 0);
+	return out.sort((a, b) => a.word - b.word || page(a) - page(b));
 }
 
 // The guild's voice-state cache is what the gateway keeps current; the interaction's member can
@@ -121,6 +168,9 @@ function createReadAlong(opts = {}) {
 	const source = opts.source || require('./bookTextSource.js').createBookTextSource();
 	const now = () => timers.now();
 	const prefix = () => cfg().commandPrefix || '!';
+	// opts.pictures (a test seam) has bookPictures' instance shape plus its pure between and
+	// statusLine.
+	const pictures = opts.pictures || startPictures();
 
 	const readers = new Map();
 	const texts = new Map();
@@ -129,6 +179,21 @@ function createReadAlong(opts = {}) {
 	let closed = false;
 
 	// ---- small helpers ---------------------------------------------------------------------
+
+	// Pictures reopen a text through this pager's own source. A pictures module that fails to start
+	// costs the pictures only: a throw here would leave the whole read-along unloaded (app/music.js).
+	function startPictures() {
+		try {
+			const lib = require('./bookPictures.js');
+			const deps = { openText: work => source.open(work, { explicit: true }), catalog, logger, now };
+			// Only a test passes its config; production wiring also follows /config changes live.
+			if (opts.cfg) deps.cfg = cfg;
+			return Object.assign({}, lib.createBookPictures(deps), { between: lib.between, statusLine: lib.statusLine });
+		} catch (err) {
+			logger.warn('Read-along pictures: could not start:', codeOf(err));
+			return NO_PICTURES;
+		}
+	}
 
 	function later(ms, fn) {
 		const h = timers.setTimeout(() => {
@@ -196,6 +261,7 @@ function createReadAlong(opts = {}) {
 			lastState: null,
 			lastSpeed: 1,
 			lastRenderKey: null,
+			shownPics: '',
 			pendingNote: null,
 			chain: Promise.resolve(),
 			timers: { turn: null, coalesce: null },
@@ -233,10 +299,21 @@ function createReadAlong(opts = {}) {
 		return r.chain;
 	}
 
-	async function edit(r, payload) {
-		if (!r.message || r.dead) return;
+	async function withPictures(send, payload) {
 		try {
-			await r.message.edit(payload);
+			return await send(payload);
+		} catch (err) {
+			if (!pictureRefused(err, payload)) throw err;
+			logger.warn('Read-along pictures: a page went out without its pictures:', codeOf(err));
+			return send(card.stripPictures(payload));
+		}
+	}
+
+	async function edit(r, payload) {
+		const msg = r.message;
+		if (!msg || r.dead) return;
+		try {
+			await withPictures(p => msg.edit(p), payload);
 		} catch (err) {
 			if (err && (err.code === UNKNOWN_MESSAGE || err.code === DM_CLOSED)) {
 				drop(r);
@@ -252,7 +329,7 @@ function createReadAlong(opts = {}) {
 		}
 		const user = await client.users.fetch(String(userId));
 		const dm = await user.createDM();
-		return dm.send(payload);
+		return withPictures(p => dm.send(p), payload);
 	}
 
 	// ---- the text of a work ----------------------------------------------------------------
@@ -324,8 +401,15 @@ function createReadAlong(opts = {}) {
 				}
 			}
 			if (!map || !body.length) return { ok: false, code: 'no-body', text: 'This ebook has no chapters I can line up with the audio.' };
-			t = { base: h.base, tag: h.tag, handle: h, map, marksKey, rev: 0, parts: s.work.parts, body, bodyPos: new Map(body.map((sec, i) => [sec, i])), pages: new Map() };
+			t = { base: h.base, tag: h.tag, handle: h, map, marksKey, rev: 0, parts: s.work.parts, body, bodyPos: new Map(body.map((sec, i) => [sec, i])), pages: new Map(), placed: null };
 			texts.set(s.workId, t);
+		}
+		// Every way a text opens passes here (never a card render or a probe), so a book's PDF is
+		// looked at only once someone reads along. A memo hit is a Map lookup.
+		try {
+			pictures.ensure(s.work, h);
+		} catch (err) {
+			logger.warn('Read-along pictures: could not check a book:', codeOf(err));
 		}
 		return { ok: true, t, stale: !!res.stale };
 	}
@@ -445,7 +529,38 @@ function createReadAlong(opts = {}) {
 		};
 	}
 
-	async function payloadFor(s, t, ref, { surface, mode, note = null, extra = null, viewerId }) {
+	// Placed against the map once per set and map, so every later render costs a lookup: a new
+	// analysis or alignment brings a new set, and a mark a new map.
+	function placedPictures(t, set) {
+		const c = t.placed;
+		if (c && c.set === set && c.map === t.map) return c.list;
+		const list = narratedPictures(set.pictures, t.map);
+		t.placed = { set, map: t.map, list };
+		return list;
+	}
+
+	// The pictures printed on this page, as helpers/bookPictures.js serves them for this text and
+	// placed where the narration reaches them: none on a no-text page, with the setting off, or
+	// before a set is loaded.
+	function picturesAt(s, t, ref) {
+		if (ref && ref.kind === 'page') {
+			try {
+				const set = pictures.forText(s.work, t.handle);
+				const list = set && Array.isArray(set.pictures) && set.pictures.length ? placedPictures(t, set) : null;
+				const at = list ? pictures.between(list, ref.word, ref.endWord) : null;
+				if (at && Array.isArray(at.shown)) return at;
+			} catch (_) { /* no pictures, never no page */ }
+		}
+		return { shown: [], count: 0 };
+	}
+
+	// Picture ids are printed-page ids under one analysis, so this changes exactly when the page's
+	// pictures do: a new analysis, a realign, the setting or the book switched off.
+	function picsKeyOf(at) {
+		return at.shown.map(p => p.id).join(',');
+	}
+
+	async function payloadFor(s, t, ref, { surface, mode, note = null, extra = null, viewerId, pics = null }) {
 		const isListener = String(viewerId) === String(s.userId);
 		const bookTitle = titleOf(s);
 		if (ref.kind === 'none') {
@@ -454,6 +569,7 @@ function createReadAlong(opts = {}) {
 				mode, note, isListener, dramatized: t.map.dramatized
 			});
 		}
+		const at = pics || picturesAt(s, t, ref);
 		const { text, pages } = await pagesOf(t, ref.sec);
 		const p = pages[ref.page] || pages[0];
 		const sec = t.map.sections[ref.sec];
@@ -476,7 +592,9 @@ function createReadAlong(opts = {}) {
 			note,
 			extra,
 			isListener,
-			isPaused: s.state === 'paused'
+			isPaused: s.state === 'paused',
+			pictures: at.shown,
+			pictureCount: at.count
 		}, edges(t, ref, pages)));
 	}
 
@@ -488,19 +606,23 @@ function createReadAlong(opts = {}) {
 	}
 
 	// The map's revision is part of the key, so a mark (anyone's, on this recording) re-renders
-	// every open page of it on that page's next event, sync level and all.
-	function renderKey(s, t, ref, mode, note, extra = null) {
-		return `${s.id}|${t.tag}|${t.rev || 0}|${ref.kind}|${ref.word}|${mode}|${note || ''}|${extra || ''}`;
+	// every open page of it on that page's next event, sync level and all. So are the page's
+	// picture ids.
+	function renderKey(s, t, ref, mode, note, extra = null, pics = picturesAt(s, t, ref)) {
+		return `${s.id}|${t.tag}|${t.rev || 0}|${ref.kind}|${ref.word}|${mode}|${note || ''}|${extra || ''}|${picsKeyOf(pics)}`;
 	}
 
 	async function render(r, s, t, ref, mode, note = null, extra = null) {
 		r.shown = ref;
 		r.shownTag = t.tag;
-		const k = renderKey(s, t, ref, mode, note, extra);
+		// Looked up once, so the key, the payload and shownPics all agree.
+		const pics = picturesAt(s, t, ref);
+		const k = renderKey(s, t, ref, mode, note, extra, pics);
 		if (k === r.lastRenderKey) return false;
-		const payload = await payloadFor(s, t, ref, { surface: 'd', mode, note, extra, viewerId: r.userId });
+		const payload = await payloadFor(s, t, ref, { surface: 'd', mode, note, extra, viewerId: r.userId, pics });
 		if (r.dead) return false;
 		r.lastRenderKey = k;
+		r.shownPics = picsKeyOf(pics);
 		await edit(r, payload);
 		return true;
 	}
@@ -760,6 +882,7 @@ function createReadAlong(opts = {}) {
 		let first;
 		let t = null;
 		let ref = null;
+		let pics = null;
 		// A reader left in the map with no message would answer "already in your DMs" to every
 		// later !book text on or now for the rest of the session.
 		try {
@@ -777,7 +900,8 @@ function createReadAlong(opts = {}) {
 				t = got.t;
 				sample(r, s);
 				ref = await estimate(s, t);
-				first = await payloadFor(s, t, ref, { surface: 'd', mode: modeOf(r, s), viewerId: uid });
+				pics = picturesAt(s, t, ref);
+				first = await payloadFor(s, t, ref, { surface: 'd', mode: modeOf(r, s), viewerId: uid, pics });
 			} else {
 				first = card.preparingPayload({ bookTitle: title });
 			}
@@ -808,12 +932,17 @@ function createReadAlong(opts = {}) {
 		if (ready) {
 			r.shown = ref;
 			r.shownTag = t.tag;
-			r.lastRenderKey = renderKey(s, t, ref, modeOf(r, s), null);
+			r.lastRenderKey = renderKey(s, t, ref, modeOf(r, s), null, null, pics);
+			r.shownPics = picsKeyOf(pics);
 			r.lastTurnAt = now();
 			schedule(r, s, t);
 			// A seek while the DM was on its way was dropped (no message to edit yet), and the
 			// turns from here would only walk one page at a time towards it.
 			if (!continuous(r, s, books.position(s))) requestJump(r, s);
+			// So was a pictures change: a book's first open in a run loads its kept set in the
+			// background, usually while the DM is on its way, and the setting or pictures:off can
+			// flip during it too.
+			if (picsKeyOf(picturesAt(s, t, ref)) !== r.shownPics) redrawPictures(r, s);
 			return { ok: true, code: 'sent', text: '📩 Sent to your DMs.' };
 		}
 		serial(r, async () => {
@@ -870,7 +999,8 @@ function createReadAlong(opts = {}) {
 			sample(r, s);
 			const ref = await estimate(s, t);
 			const mode = modeOf(r, s);
-			const payload = await payloadFor(s, t, ref, { surface: 'd', mode, viewerId: uid });
+			const pics = picturesAt(s, t, ref);
+			const payload = await payloadFor(s, t, ref, { surface: 'd', mode, viewerId: uid, pics });
 			let msg;
 			try {
 				msg = await sendDm(uid, payload);
@@ -895,7 +1025,8 @@ function createReadAlong(opts = {}) {
 			r.message = msg;
 			r.shown = ref;
 			r.shownTag = t.tag;
-			r.lastRenderKey = renderKey(s, t, ref, mode, null);
+			r.lastRenderKey = renderKey(s, t, ref, mode, null, null, pics);
+			r.shownPics = picsKeyOf(pics);
 			r.lastTurnAt = now();
 			try { await old.edit(card.movedStub()); } catch (_) {}
 			schedule(r, s, t);
@@ -961,6 +1092,13 @@ function createReadAlong(opts = {}) {
 		lines.push(`🔗 Sync: ${sync}. Approximate${drama}.`);
 		const used = t.map.marks ? t.map.marks.used.length : 0;
 		if (used) lines.push(`📌 ${used} sync mark${used === 1 ? '' : 's'} on this recording (\`${p}book marks\`).`);
+		let pl = null;
+		try {
+			pl = pictures.statusLine(pictures.status(s.work, t.handle), { prefix: p });
+		} catch (err) {
+			logger.warn('Read-along pictures: could not report a book:', codeOf(err));
+		}
+		if (pl) lines.push(pl);
 		const r = readers.get(uid);
 		if (r && !r.dead && r.sid === s.id && r.message) lines.push('📩 Your page is in your DMs.');
 		return lines.join('\n');
@@ -979,7 +1117,7 @@ function createReadAlong(opts = {}) {
 	async function answer(interaction, payload, report) {
 		report(payload);
 		try {
-			await interaction.editReply(payload);
+			await withPictures(p => interaction.editReply(p), payload);
 		} catch (err) {
 			logger.warn('Read-along could not answer a button:', codeOf(err));
 		}
@@ -1346,9 +1484,39 @@ function createReadAlong(opts = {}) {
 		}
 	}
 
+	// The page on screen drawn again in place, following or browsing, when its pictures differ from
+	// the ones it shows. Nothing else moves, the turn timer included. On the reader's chain, so it
+	// compares against whatever page an edit in flight leaves.
+	function redrawPictures(r, s) {
+		return serial(r, async () => {
+			if (!liveFor(r, s)) return;
+			const got = await textFor(s);
+			if (!got.ok || got.t.tag !== r.shownTag) return;
+			if (picsKeyOf(picturesAt(s, got.t, r.shown)) === r.shownPics) return;
+			await render(r, s, got.t, r.shown, modeOf(r, s));
+		});
+	}
+
+	// A book's pictures arrived, changed or went (an analysis finished, the setting, a book's
+	// pictures:off; '*' is every work). A first DM still on its way has no message to edit yet:
+	// openPage looks again once it lands. A 📖 page is a snapshot and picks them up on its next
+	// click.
+	function onPicturesChange(workId) {
+		if (closed) return;
+		let list = [];
+		try { list = books.sessions() || []; } catch (_) {}
+		for (const r of readers.values()) {
+			if (r.dead || !r.message || !r.shown) continue;
+			const s = list.find(x => x.id === r.sid);
+			if (!s || (workId !== '*' && !sameWork(s, workId))) continue;
+			redrawPictures(r, s);
+		}
+	}
+
 	const unsubscribeBooks = books.onChange(onEngine);
 	books.setTextInfo(cardInfo);
 	const unsubscribeSource = typeof source.onChange === 'function' ? source.onChange(onSourceChange) : () => {};
+	const unsubscribePictures = typeof pictures.onChange === 'function' ? pictures.onChange(onPicturesChange) : () => {};
 
 	/**
 	 * Timers stopped and hooks removed. Run after the director's shutdown, which queues each open
@@ -1364,6 +1532,8 @@ function createReadAlong(opts = {}) {
 		try { books.setTextInfo(null); } catch (_) {}
 		try { unsubscribeSource(); } catch (_) {}
 		try { source.shutdown(); } catch (_) {}
+		try { if (typeof unsubscribePictures === 'function') unsubscribePictures(); } catch (_) {}
+		try { pictures.shutdown(); } catch (_) {}
 	}
 
 	return {
@@ -1379,6 +1549,7 @@ function createReadAlong(opts = {}) {
 		marksChanged,
 		dm: sendDm,
 		source,
+		pictures,
 		shutdown,
 		_reader: uid => readers.get(String(uid)) || null
 	};
@@ -1388,6 +1559,8 @@ module.exports = {
 	createReadAlong,
 	readerAccess,
 	joinToReadText,
+	pictureRefused,
+	narratedPictures,
 	PAGE_TARGET_WORDS,
 	PAGE_MAX_CHARS,
 	MIN_TURN_GAP_MS,

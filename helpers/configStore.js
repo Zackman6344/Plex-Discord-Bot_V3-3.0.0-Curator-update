@@ -109,6 +109,10 @@ const SETTINGS = [
     { key: 'audiobookCalibreSort', label: 'Sort and fill details from Calibre', group: 'Audiobooks', type: 'bool' },
     { key: 'audiobookTextConvert', label: 'Convert MOBI/AZW3 ebooks for read-along', group: 'Audiobooks', type: 'bool' },
     {
+        key: 'audiobookTextPictures', label: 'Read-along pictures from a Calibre PDF', group: 'Audiobooks', type: 'bool',
+        warn: 'Downloads a book\'s PDF from Calibre once and reads it for a few minutes at Below Normal priority.',
+    },
+    {
         key: 'audiobookControls', label: 'Who can use a book card\'s buttons', group: 'Audiobooks', type: 'choice',
         choices: [
             { label: 'Anyone in voice when the book started', value: 'started' },

@@ -8,6 +8,9 @@
 //                 files in data/book_text/cache/, see helpers/bookTextSource.js)
 //   marks.json    the listeners' sync marks, by work id: shared by everyone who plays that
 //                 recording
+//   pictures.json which analysis of a scanned PDF each work's pictures come from (a folder in
+//                 data/book_text/pictures/, see helpers/bookPictures.js) and the owner's
+//                 per-book off switch
 //
 // Links, pointers and marks are looked up by work id and then by each of the work's aliases, so a
 // catalog rebuild that renames a work keeps both. A pointer found through an alias is copied to
@@ -218,12 +221,40 @@ const marks = {
 	}
 };
 
+// Pictures from a scanned PDF, by work id: { key, base, pdf, count, at, usedAt, off, offBy, offAt,
+// redo? }. `key` names the analysis folder, `base` the text it was lined up with, `pdf` the Calibre
+// record's PDF by its size and mtime (never its path), `usedAt` the last time a page served it
+// (the size cap removes the least recently used), `off` the owner's `pictures:off`. A pointer with
+// `off` and no key keeps the switch for a book that has no analysis yet. `redo` is the key of an
+// analysis another work shows that `pictures:redo` asked to read again: it stays, through a
+// restart, until that re-read is in or fails for good, and may sit on a pointer with no key.
+const picturesStore = store('PLEXBOT_BOOK_PICTURES_FILE', 'pictures.json', 'pictures', 'pictures pointer');
+
+const pictures = Object.assign(keyed(picturesStore), {
+	get(work) {
+		const hit = find(picturesStore, work);
+		if (!hit) return null;
+		const id = idOf(work);
+		if (hit.id !== id) {
+			picturesStore.load()[id] = copy(hit.value);
+			picturesStore.persist();
+		}
+		return copy(hit.value);
+	},
+	// The same lookup without the alias copy, for callers that must not write (a status line).
+	peek(work) {
+		const hit = find(picturesStore, work);
+		return hit ? copy(hit.value) : null;
+	}
+});
+
 /** Test seam: forget every in-memory copy so the next read comes off disk. */
 function reset() {
 	linksStore.reset();
 	readersStore.reset();
 	worksStore.reset();
 	marksStore.reset();
+	picturesStore.reset();
 }
 
 module.exports = {
@@ -231,7 +262,8 @@ module.exports = {
 	readers,
 	works,
 	marks,
+	pictures,
 	reset,
-	files: { links: linksStore.file, readers: readersStore.file, works: worksStore.file, marks: marksStore.file },
-	healthy: () => linksStore.healthy() && readersStore.healthy() && worksStore.healthy() && marksStore.healthy()
+	files: { links: linksStore.file, readers: readersStore.file, works: worksStore.file, marks: marksStore.file, pictures: picturesStore.file },
+	healthy: () => linksStore.healthy() && readersStore.healthy() && worksStore.healthy() && marksStore.healthy() && picturesStore.healthy()
 };

@@ -149,6 +149,7 @@ module.exports = {
   'audiobookTextEnabled'         : true,   // !book text and the card's 📖 (see "Reading along")
   'audiobookTextSidecars'        : true,   // also look for .epub files next to a book's audio
   'audiobookTextConvert'         : true,   // convert a MOBI/AZW3-only Calibre ebook to EPUB on its first open
+  'audiobookTextPictures'        : false,  // a Calibre PDF's illustrations on the read-along page (see "Pictures from a scanned PDF")
   'audiobookControls'            : 'started', // who may use a book card's buttons: 'started' 'voice' 'listener' 'everyone' (see "Who controls a book")
   'audiobookOnlineLookup'        : false,  // fill blank series, narrators and publishers from Audible (see "Looking books up online")
   'audiobookLookupRegion'        : 'us',   // which Audible store: 'us' 'ca' 'uk' 'au' 'fr' 'de' 'jp' 'it' 'in' 'es'
@@ -823,7 +824,7 @@ folder listing) that decides whether the card shows 📖.
 | `!book unmark all [title] confirm` | Owner only: clears every mark of a book. Without `confirm` it says how many marks, from how many listeners, it would clear. |
 
 On `/`: `/book text mode:on` (or `off`, `now`, or no mode for the status),
-`/book link title:<book> ebook:<id, ISBN, path, off or auto>`, `/book marks [title]` and
+`/book link title:<book> ebook:<id, ISBN, path, off, auto or pictures:redo/off/on>`, `/book marks [title]` and
 `/book unmark [which:<n or all confirm>] [title]`.
 
 **The page.** One DM message, edited in place. Each page is about 180 words, roughly a minute of
@@ -930,6 +931,47 @@ until the file changes. A conversion that runs out of time is tried again when s
 reports it. With the setting off or `ebook-convert` missing, such a book shows no 📖,
 and `!book text`, `!book link <title>` and `!book calibre` say why.
 
+**Pictures from a scanned PDF.** Off by default (`audiobookTextPictures`, `/config` →
+Audiobooks). When a book's Calibre record holds a scanned PDF of the printed edition beside the
+text the read-along reads (its EPUB, or the MOBI or AZW3 it converts), the PDF's illustrations show
+on your DM page and on the 📖 page when the narration reaches the start of the printed page they
+are on. A picture printed among the text is cropped to its art, a full-page picture is shown whole
+with the page of text that follows it, and two facing pages that make one picture are joined side
+by side. When the page of text that follows is never narrated, as for a last illustration facing
+the back matter, the picture shows with the page before it instead. Each picture's alt text names
+its printed page ("Picture from the printed book, page 10") when the scan's page numbers can be
+read, and no page otherwise. **Pictures never go to a channel.** Nothing is downloaded until
+someone reads along: the first open of the text downloads the PDF once (a GET) and reads it at
+Below Normal priority with Calibre's own PDF tools and ffmpeg, which takes about 4 to 6 minutes for
+the 264 pages of Harry Potter and the Sorcerer's Stone on this PC (3:44 in one run, 6:12 in another
+while other apps kept the PC busy), and `!book text` shows how far it is. The PDF is then deleted.
+The pictures are kept as JPGs in `data/book_text/pictures/` (gitignored; 16 MB for that book;
+past 1 GB in all, the books read along least recently lose theirs first), so they show with
+Calibre closed, and a new copy of the ebook is only lined up with them again, in seconds.
+One PDF is read at a time for the whole bot. On that book 119 pictures were found and 114
+placed (the other 5 come before the first printed page that lines up with the text, and are dropped
+as front matter), and each chapter's opening picture landed on the chapter's first word.
+
+- It needs Calibre installed on this PC, whose PDF tools are in `Calibre2\app\bin`. The
+  `pdftotext` that Git for Windows puts on PATH is an older program without the output needed, and
+  is skipped. Installing or updating Calibre while the bot runs needs no restart: the tools are
+  looked for again a minute later.
+- The PDF needs a text layer (OCR), because printed pages are lined up with the ebook by their
+  words. A scan without one gives no pictures, and so does one where under 60% of the printed text
+  pages match the ebook.
+- The PDF can be at most 300 MB and 1,000 pages; a bigger one gives no pictures ("it is too
+  large").
+- When a reading fails, the 🖼 line of `!book text` says why, and when it tries again if it will.
+  A PDF that is password-protected, damaged, without a text layer or too large is not read again
+  until it changes, `pictures:redo`, or the first restart after 30 days. Calibre not answering is
+  retried after 2 minutes (a book not yet seen with a PDF gets no 🖼 line meanwhile), and a PDF
+  Calibre lists but has no file for after 10; a reading that hangs, stops partway or cannot write
+  its files is tried again after 30 minutes, three tries in all.
+- A page shows at most 10 pictures; the footer says "🖼 10 of 12 pictures" when more are printed there.
+- A record with only a PDF has no text to read along, so no pictures either: add an EPUB, MOBI or
+  AZW3 to it. `!book link <title>` and `!book calibre` say so.
+- The Calibre library is never changed.
+
 **Linking by hand** (owner only; `ownerId` must be set, because a link can point at any EPUB on
 this PC):
 
@@ -941,8 +983,11 @@ this PC):
 | `!book link Words of Radiance D:\Books\Words of Radiance.epub` | A file on this PC. A typed network path (`\\server\share\…`) is refused; a mapped network drive letter is not detected and is read like a local one. |
 | `!book link The Final Empire off` | No read-along for this book. |
 | `!book link The Final Empire auto` | Forget the link and search again. |
-| `!book link The Final Empire` | What it uses now, and the Calibre books and files it considered. Typed in a server channel, the reply names Calibre ids and file names only, and the full paths go to you by DM. |
-| `!book link auto` | With no title, `auto`, `off`, `id:N`, `isbn:N` or a path applies to the book playing in this server, else your most recent book, and the reply starts "📖 For **Title**, the book playing here:" or "…, your most recent book:". A book whose title is exactly "Off" is still described, not linked. |
+| `!book link The Final Empire` | What it uses now, and the Calibre books and files it considered. Typed in a server channel, the reply names Calibre ids and file names only, and the full paths go to you by DM. With `audiobookTextPictures` on, its 🖼 line says whether the record has a PDF and, for one that does, the PDF's size, pages and date, how many pictures it gave, and how much of the text they line up with; with Calibre closed, a book the bot has not yet seen with a PDF gets "not checked (Calibre isn't answering)". With the setting off, the line only says pictures are off (and how many are kept), and the 📚 line marks a record that holds a PDF with "+ PDF". |
+| `!book link The Final Empire pictures:redo` | Deletes this book's pictures and reads its PDF again from the start (a few minutes); its pages show no pictures until that ends. Another narration of the same book that shows the same pictures keeps them until the new ones are ready, and if this reading fails for a reason that passes (Calibre closed, say), this book shows them again too while the reading waits to be tried again. A restart does not lose the reading: it runs on the book's next open. |
+| `!book link The Final Empire pictures:off` | Hides that book's pictures from open DM pages at once (a 📖 page drops them on its next click). They stay on disk, and the switch outlives a new PDF and a `pictures:redo`. |
+| `!book link The Final Empire pictures:on` | Shows them again, with no new reading. |
+| `!book link auto` | With no title, `auto`, `off`, `id:N`, `isbn:N`, a path or `pictures:redo`/`off`/`on` applies to the book playing in this server, else your most recent book, and the reply starts "📖 For **Title**, the book playing here:" or "…, your most recent book:". A book whose title is exactly "Off" is still described, not linked. |
 
 Every link echoes what it linked, such as "Linked The Final Empire to Calibre #299 “Mistborn”
 (EPUB).", so a wrong id shows at once. An ebook that could not be read (DRM, damaged) is not tried
@@ -1139,7 +1184,7 @@ is playing.
 | `/book finish [title]` | Mark a book finished (default: the one you are listening to). |
 | `/book forget <title>` | Drop your place in a book. Asks first: a button on `/`, `!book forget <id> confirm` on `!`. |
 | `/book text [mode]` | The read-along: `on`, `off` or `now`; no mode shows its status. The text goes to your DMs. See **Reading along**. |
-| `/book link <title> [ebook]` | Owner only, and `ownerId` must be set: tie a book to its ebook (a Calibre id, an ISBN, an EPUB path, `off` or `auto`); no ebook shows what it uses now. |
+| `/book link <title> [ebook]` | Owner only, and `ownerId` must be set: tie a book to its ebook (a Calibre id, an ISBN, an EPUB path, `off` or `auto`), or `pictures:redo`, `pictures:off` or `pictures:on` for its PDF's pictures; no ebook shows what it uses now. |
 | `/book marks [title]` | The read-along's sync marks on a book (default: the one playing): audio time, chapter, who and when. See **Sync marks**. |
 | `/book unmark [which] [title]` | Remove your latest sync mark, or `which:3` for a listed one of yours. `which:all` is the owner's and says what it would clear; `which:all confirm` clears the book. |
 | `/book rescan` | Owner only (anyone while `ownerId` is blank, as with `/config`): re-read the library from Plex now and report what changed, doubtful groups, music split off book folders and the online lookup. See **What `/book rescan` reports**. |

@@ -27,7 +27,8 @@ function prefix() {
 function linkUsage(p = prefix()) {
 	return `Usage: \`${p}book link <book> <ebook>\`, where the ebook is a Calibre id (\`id:299\`), an ISBN (\`isbn:9780765350381\`), ` +
 		'the full path of an .epub file, `off` or `auto`. Quote a title that ends in a number: ' +
-		`\`${p}book link "Fahrenheit 451" id:12\`. \`${p}book link <book>\` alone shows what it uses now.`;
+		`\`${p}book link "Fahrenheit 451" id:12\`. \`${p}book link <book>\` alone shows what it uses now. ` +
+		`\`${p}book link <book> pictures:redo\` reads the book's Calibre PDF for pictures again; \`pictures:off\` and \`pictures:on\` hide and show them for that book.`;
 }
 
 /** @returns {string|null} the ISBN-13 form of an ISBN-10 (or of an ISBN-13), null if neither */
@@ -52,6 +53,8 @@ function targetOf(raw) {
 	const lower = text.toLowerCase();
 	if (/^id:\d{1,9}$/i.test(text)) return { target: { type: 'calibre', id: Number(text.slice(3)) }, explicit: true };
 	if (/^isbn:[\dXx-]{10,17}$/i.test(text)) return { target: { type: 'isbn', isbn: text.slice(5) }, explicit: true };
+	const pictures = /^pictures:(redo|off|on)$/.exec(lower);
+	if (pictures) return { target: { type: 'pictures', action: pictures[1] }, explicit: true };
 	if (lower === 'off' || lower === 'auto') return { target: { type: lower }, explicit: true };
 	if (isPathText(text)) return { target: { type: 'file', path: text }, explicit: true };
 	if (/^\d{1,7}$/.test(text)) return { target: { type: 'calibre', id: Number(text) }, explicit: false };
@@ -132,9 +135,86 @@ function statusText(st) {
 }
 
 function candidateFormat(b) {
-	if (b.epub) return '';
-	if (b.format) return ` (${String(b.format).toUpperCase()}, converted to EPUB)`;
+	const pdf = b.pdf ? ', + PDF' : '';
+	if (b.epub) return pdf;
+	if (b.format) return ` (${String(b.format).toUpperCase()}, converted to EPUB)${pdf}`;
+	if (b.pdf) return ' (PDF only: no text, so no pictures either)';
 	return ' (no EPUB, and no format that converts)';
+}
+
+// Why a book's PDF gives no pictures, by helpers/bookPictures.js's failure codes and in the words
+// of its own `!book text` line.
+const PICTURE_FAILURES = {
+	'pdf-encrypted': 'it is encrypted',
+	'pdf-damaged': 'it is damaged',
+	'no-text-layer': 'it has no text layer to place them by',
+	'align-failed': 'its pages don\'t match this ebook',
+	'too-large': 'it is too large',
+	'gave-up': 'reading it failed 3 times',
+	'bad-result': 'the PDF reader left no usable pictures',
+	timeout: 'it took too long',
+	crash: 'it stopped unexpectedly',
+	'calibre-unreachable': 'Calibre isn\'t answering',
+	'calibre-auth': 'Calibre asked for a login',
+	'calibre-off': 'Calibre is turned off',
+	'io-error': 'a file could not be written',
+	'pdf-missing': 'Calibre lists a PDF but has no file for it',
+	'disk-error': 'the bot couldn\'t read or write its picture files',
+	'tools-missing': 'Calibre\'s PDF tools weren\'t found on this PC'
+};
+
+/**
+ * The 🖼 line of `!book link <book>` from the pictures' describe() report: the state, the PDF's
+ * size, pages and date, how many pictures and how much of the text they line up with, any failure
+ * and when it retries. Never a path. null with no report.
+ * @param {{ state: string, pdfId?: number, pdf?: { id?: number, size?: number, mtime?: string },
+ *   pages?: number, count?: number, share?: number, quality?: { share?: number },
+ *   progress?: { stage: string, done: number, total: number }, code?: string, retryAt?: number }} r
+ */
+function picturesLine(r, p = prefix()) {
+	if (!r || typeof r.state !== 'string') return null;
+	const pdf = r.pdf && typeof r.pdf === 'object' ? r.pdf : {};
+	const id = Number.isFinite(r.pdfId) ? r.pdfId : Number.isFinite(pdf.id) ? pdf.id : null;
+	const record = id !== null ? `Calibre #${id}` : 'the Calibre record';
+	const facts = [];
+	if (Number.isFinite(pdf.size)) facts.push(`${(pdf.size / 1048576).toFixed(1)} MB`);
+	if (Number.isInteger(r.pages) && r.pages > 0) facts.push(`${r.pages} pages`);
+	const date = Date.parse(pdf.mtime);
+	if (Number.isFinite(date)) facts.push(`<t:${Math.round(date / 1000)}:d>`);
+	const name = `${id !== null ? `Calibre #${id}'s PDF` : 'the PDF'}${facts.length ? ` (${facts.join(', ')})` : ''}`;
+	const why = PICTURE_FAILURES[r.code] || esc(r.code || 'an error');
+	const share = Number.isFinite(r.share) ? r.share : (r.quality && Number.isFinite(r.quality.share) ? r.quality.share : null);
+	const placed = share !== null ? ` (${Math.round(share * 100)}% of its pages placed)` : '';
+	const kept = r.count > 0 ? `; ${r.count} kept` : '';
+	const prog = r.progress || {};
+	// Only the find and render stages count pages: the text layer is read in one step, 0 or 1 of 1.
+	const at = (prog.stage === 'find' || prog.stage === 'render') && Number.isInteger(prog.total) && prog.total > 0 && Number.isInteger(prog.done)
+		? `, page ${Math.max(0, Math.min(prog.done, prog.total))} of ${prog.total}` : '';
+	// Only a text open moves a wait on, so a retry time already past means the next open.
+	const retry = Number.isFinite(r.retryAt) && r.retryAt > Date.now() ? `<t:${Math.round(r.retryAt / 1000)}:R>` : 'the next time the book\'s text opens';
+	switch (r.state) {
+		case 'off': return `🖼 Pictures: off for every book (audiobookTextPictures in \`${p}config\` → Audiobooks)${kept}.`;
+		case 'book-off': return `🖼 Pictures: switched off for this book${kept}.`;
+		case 'not-calibre': return '🖼 Pictures: none; only a PDF on the Calibre record the text comes from has them.';
+		case 'no-pdf':
+			if (r.code === 'record-changed') return `🖼 Pictures: none; ${record} no longer holds the book this text came from.`;
+			if (r.code === 'pdf-only') return `🖼 Pictures: none; ${record} has only its PDF left, no text to line it up with.`;
+			return `🖼 Pictures: none; ${record} has no PDF.`;
+		case 'unknown': return r.code ? `🖼 Pictures: not checked (${why}).` : '🖼 Pictures: not checked yet; the PDF is looked for when the text first opens.';
+		case 'available': return `🖼 Pictures: ${name} is read the next time this book's text opens.`;
+		case 'checking': return `🖼 Pictures: checking ${record} for a PDF.`;
+		case 'queued': return `🖼 Pictures: ${name} is read after the book being read now.`;
+		case 'downloading': return `🖼 Pictures: downloading ${name}.`;
+		case 'running': return `🖼 Pictures: reading ${name}${at}.`;
+		case 'aligning': return `🖼 Pictures: lining up the pictures of ${name} with this text.`;
+		case 'ready':
+			if (!(r.count > 0)) return `🖼 Pictures: none found in ${name}.`;
+			return `🖼 Pictures: ${r.count} from ${name}, lined up with this text${placed}.`;
+		case 'failed': return `🖼 Pictures: none from ${name}: ${why}${r.code === 'align-failed' ? placed : ''}.`;
+		case 'waiting': return `🖼 Pictures: reading ${name} failed (${why}); it tries again ${retry}.`;
+		case 'tools-missing': return '🖼 Pictures: Calibre\'s PDF tools weren\'t found on this PC; install Calibre here.';
+		default: return `🖼 Pictures: ${esc(r.state)}.`;
+	}
 }
 
 function converterLine(conv, p = prefix()) {
@@ -190,8 +270,11 @@ function formatDescribe(d, p = prefix()) {
 		const list = cands.sidecars.slice(0, LIST_MAX).map(f => `${esc(f.file)} (${f.score})${f.accepted ? ' ✅' : ''}`);
 		lines.push(`🗂 Next to the audio: ${list.join(' · ')}`);
 	}
+	const pics = picturesLine(d.pictures, p);
+	if (pics) lines.push(pics);
 	if (d.lastError && d.lastError.text) lines.push(`⚠️ ${d.lastError.text}`);
-	lines.push(`Link with \`${p}book link "${d.title || d.workId}" id:N\`, \`isbn:N\`, an EPUB path, \`off\` or \`auto\`.`);
+	const picForms = pics && d.pictures.state !== 'not-calibre' ? ' `pictures:redo`, `pictures:off` or `pictures:on` reads its PDF again, hides or shows the pictures.' : '';
+	lines.push(`Link with \`${p}book link "${d.title || d.workId}" id:N\`, \`isbn:N\`, an EPUB path, \`off\` or \`auto\`.${picForms}`);
 	return lines.join('\n');
 }
 
@@ -220,12 +303,25 @@ async function text(ctx) {
 	return ctx.say(r.text);
 }
 
+async function picturesReport(ctx, work) {
+	const pictures = ctx.bot.readAlong.pictures;
+	if (!pictures || typeof pictures.describe !== 'function') return null;
+	try {
+		return await pictures.describe(work);
+	} catch (err) {
+		logger.warn('Read-along pictures: !book link could not describe them:', (err && (err.code || err.name)) || 'error');
+		return null;
+	}
+}
+
 async function describe(ctx, work) {
 	const source = ctx.bot.readAlong.source;
 	const p = prefix();
+	const pictures = await picturesReport(ctx, work);
+	const report = async paths => ({ ...(await source.describe(work, { paths })), pictures });
 	// A guild channel on the prefix path is public; a slash reply here is ephemeral, a DM is private.
-	if (!ctx.guild || ctx.interaction) return ctx.say(formatDescribe(await source.describe(work, { paths: true }), p));
-	const full = formatDescribe(await source.describe(work, { paths: true }), p);
+	if (!ctx.guild || ctx.interaction) return ctx.say(formatDescribe(await report(true), p));
+	const full = formatDescribe(await report(true), p);
 	let sent = true;
 	try {
 		await ctx.bot.readAlong.dm(ctx.userId, { content: full.length > DM_MAX ? `${full.slice(0, DM_MAX - 1)}…` : full, allowedMentions: { parse: [] } });
@@ -233,7 +329,7 @@ async function describe(ctx, work) {
 		sent = false;
 		if (!err || err.code !== DM_CLOSED) logger.warn('!book link could not DM the details:', (err && (err.code || err.name)) || 'error');
 	}
-	const short = formatDescribe(await source.describe(work, { paths: false }), p);
+	const short = formatDescribe(await report(false), p);
 	const tail = sent
 		? '📩 Full details (with paths) sent to your DMs.'
 		: `I can't DM you; run \`${p}book link ${work.id}\` in a DM with me to see the paths.`;
@@ -270,7 +366,24 @@ async function linkWithoutBook(ctx, target) {
 	return doLink(ctx, work, target, `📖 For **${esc(work.title)}**, ${which}:`);
 }
 
+// pictures:redo|off|on act on the book's PDF pictures only: no ebook link changes, so the
+// Calibre index and the catalog are left as they are.
+async function picturesCommand(ctx, work, action, lead) {
+	const pictures = ctx.bot.readAlong.pictures;
+	let r = null;
+	try {
+		if (pictures && typeof pictures.command === 'function') r = await pictures.command(work, action, { by: ctx.userId });
+	} catch (err) {
+		logger.error('Read-along pictures: !book link failed:', (err && (err.code || err.name)) || 'error');
+		return ctx.say('❌ That did not work; check the bot log.');
+	}
+	if (!r || typeof r.text !== 'string') return ctx.say('🖼 Read-along pictures are not available; check the bot log.');
+	const text = /^(🖼|⛔)/u.test(r.text) ? r.text : `${r.ok ? '🖼' : '⛔'} ${r.text}`;
+	return ctx.say(`${lead ? `${lead}\n` : ''}${text}`);
+}
+
 async function doLink(ctx, work, target, lead = '') {
+	if (target.type === 'pictures') return picturesCommand(ctx, work, target.action, lead);
 	let r;
 	try {
 		r = await ctx.bot.readAlong.source.link(work, target, { by: ctx.userId });

@@ -1,14 +1,18 @@
 // test/helpers/readAlongFakes.js
 //
-// Fakes for the read-along tests (readAlong, readAlongButtons, bookTextCommand): a manual clock
-// whose advance() runs each due timer and then lets the pager's promise chains settle, a book
-// director that plays a session by the clock (position = anchor + elapsed x speed) and notifies
-// like bookEngine does, a text source serving a synthetic ebook from memory, and a Discord client
-// whose DM sends and edits are recorded.
+// Fakes for the read-along tests (readAlong, readAlongButtons, readAlongPictures,
+// bookTextCommand): a manual clock whose advance() runs each due timer and then lets the pager's
+// promise chains settle, a book director that plays a session by the clock (position = anchor +
+// elapsed x speed) and notifies like bookEngine does, a text source serving a synthetic ebook from
+// memory, a picture source standing in for helpers/bookPictures.js, and a Discord client whose
+// DM sends and edits are recorded.
 //
 // Every word comes from test/helpers/epubFixture.js (the NATO alphabet), so no copyrighted text.
 // Not named *.test.js, so `node --test test/*.test.js` does not try to run it.
 
+const fs = require('node:fs');
+const os = require('node:os');
+const pathMod = require('node:path');
 const model = require('../../helpers/readAlongModel.js');
 const card = require('../../helpers/readAlongCard.js');
 const { words: fixtureWords } = require('./epubFixture.js');
@@ -59,11 +63,16 @@ function manualClock(start = T0) {
  * A synthetic ebook as the cache would hold it: sections of `words` words in paragraphs of
  * `para` words, joined by \n like helpers/epubText.js writes them.
  * @param {Array<{ label: string, words: number, para?: number }>} sections
+ * @param {{ paths?: string }} [opts] paths: a directory to write the cache pair into
+ *   (`<base>.txt`, `<base>.json`, real byte offsets); only then does the handle carry textPath and
+ *   indexPath, as bookTextSource's does (the real helpers/bookPictures.js gives a handle without
+ *   them no pictures)
  */
-function makeText(sections, { base = 'a1b2c3d4e5f60718', start = 0, label = 'Calibre #1' } = {}) {
+function makeText(sections, { base = 'a1b2c3d4e5f60718', start = 0, label = 'Calibre #1', paths = null } = {}) {
 	const texts = [];
 	const index = { version: 1, builtAt: T0 - 86400000, totalWords: 0, sections: [] };
 	let wordStart = 0;
+	let byteStart = 0;
 	sections.forEach((sec, i) => {
 		const paras = [];
 		let left = sec.words;
@@ -76,8 +85,10 @@ function makeText(sections, { base = 'a1b2c3d4e5f60718', start = 0, label = 'Cal
 		}
 		const text = paras.join('\n');
 		texts.push(text);
-		index.sections.push({ label: sec.label, href: `text/c${i}.xhtml`, depth: 1, part: 0, words: model.words(text).length, wordStart, byteStart: 0, byteLen: Buffer.byteLength(text), paragraphs: paras.length });
+		const byteLen = Buffer.byteLength(text);
+		index.sections.push({ label: sec.label, href: `text/c${i}.xhtml`, depth: 1, part: 0, words: model.words(text).length, wordStart, byteStart: paths ? byteStart : 0, byteLen, paragraphs: paras.length });
 		wordStart += sec.words;
+		byteStart += byteLen + 1;
 	});
 	index.totalWords = wordStart;
 	const reads = [];
@@ -95,6 +106,15 @@ function makeText(sections, { base = 'a1b2c3d4e5f60718', start = 0, label = 'Cal
 			return texts[i] || '';
 		}
 	};
+	if (paths) {
+		const body = `${texts.join('\n')}\n`;
+		Object.assign(index, { textFile: `${base}.txt`, textBytes: Buffer.byteLength(body) });
+		handle.textPath = pathMod.join(paths, `${base}.txt`);
+		handle.indexPath = pathMod.join(paths, `${base}.json`);
+		fs.mkdirSync(paths, { recursive: true });
+		fs.writeFileSync(handle.textPath, body);
+		fs.writeFileSync(handle.indexPath, JSON.stringify(index));
+	}
 	return { index, texts, handle, reads };
 }
 
@@ -254,6 +274,73 @@ function discordError(code) {
 	return Object.assign(new Error(`Discord error ${code}`), { code });
 }
 
+// A failure set on the fake client or a message: a Discord code, or a function of the payload
+// that returns a code, an Error, or nothing for a send that goes through.
+function failureFor(spec, payload) {
+	const f = typeof spec === 'function' ? spec(payload) : spec;
+	if (!f) return null;
+	return f instanceof Error ? f : discordError(f);
+}
+
+/**
+ * Stands in for helpers/bookPictures.js as createReadAlong takes it (opts.pictures): the
+ * instance's forText, ensure, status, describe, command, onChange and shutdown, plus the pure
+ * between and statusLine. A test puts pictures on a work with set(workId, [picture(page, word)]),
+ * turns the owner's setting with `setting`, and emits a change as the real one does. Nothing is
+ * read or written: a picture's path names a file that does not exist.
+ */
+function fakePictures({ dir = pathMod.join(os.tmpdir(), 'plexbot-fake-pictures', '0123456789abcdef') } = {}) {
+	const listeners = new Set();
+	const sets = new Map();
+	const order = (a, b) => a.word - b.word || a.pages[0] - b.pages[0];
+	const p = {
+		calls: [],
+		setting: true,
+		statusValue: null,
+		describeValue: null,
+		commandResult: { ok: true, code: 'redo', text: '🖼 Reading Calibre #1\'s PDF for pictures again; it takes a few minutes.' },
+		dir,
+		/**
+		 * One picture as a set holds it: printed page n (n and n + 1 for a spread) at a global word.
+		 * `fallback`, when given, is the word it takes where the narration never reaches its own.
+		 */
+		picture(page, word, { spread = false, kind = null, bytes = 150000, fallback = null } = {}) {
+			const pad = n => String(n).padStart(3, '0');
+			const id = spread ? `p${pad(page)}-${pad(page + 1)}` : `p${pad(page)}`;
+			const pic = {
+				id, word, path: pathMod.join(dir, `${id}.jpg`), name: `${id}.jpg`, pages: spread ? [page, page + 1] : [page],
+				kind: kind || (spread ? 'spread' : 'part'), width: spread ? 1956 : 978, height: 1200, bytes,
+				alt: `Picture from the printed book, page ${page}`
+			};
+			if (fallback !== null) pic.fallback = fallback;
+			return pic;
+		},
+		set(workId, pictures) { sets.set(workId, pictures); },
+		forText(work, handle) {
+			const list = p.setting && work ? sets.get(work.id) : null;
+			if (!list) return null;
+			return { key: pathMod.basename(dir), base: handle ? handle.base : null, workId: work.id, pdfId: 1, count: list.length, pictures: list.slice().sort(order) };
+		},
+		ensure(work, handle) { p.calls.push(['ensure', work && work.id, handle]); },
+		status(work, handle) { p.calls.push(['status', work && work.id, handle]); return p.statusValue; },
+		async describe(work) { p.calls.push(['describe', work && work.id]); return p.describeValue; },
+		async command(work, action, opts) { p.calls.push(['command', work && work.id, action, opts]); return p.commandResult; },
+		onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+		listenerCount: () => listeners.size,
+		emit(workId) { for (const fn of [...listeners]) fn(workId); },
+		shutdown() { p.calls.push(['shutdown']); },
+		between(pictures, fromWord, toWord, max = 10) {
+			const hits = pictures.filter(x => x.word >= fromWord && x.word < toWord).sort(order);
+			return { shown: hits.slice(0, max), count: hits.length };
+		},
+		statusLine(st, { prefix = '!' } = {}) {
+			return st ? `🖼 ${st.state}${Number.isFinite(st.count) ? `: ${st.count} pictures` : ''} (${prefix}book link)` : null;
+		},
+		callsOf: kind => p.calls.filter(c => c[0] === kind)
+	};
+	return p;
+}
+
 function fakeClient() {
 	const c = { dmFail: null, sent: [], messages: [], seq: 0 };
 	const makeMsg = (payload, uid) => {
@@ -265,7 +352,8 @@ function fakeClient() {
 			edits: [],
 			editFail: null,
 			async edit(p) {
-				if (m.editFail) throw discordError(m.editFail);
+				const err = failureFor(m.editFail, p);
+				if (err) throw err;
 				m.edits.push(p);
 				m.payload = p;
 				return m;
@@ -281,7 +369,8 @@ function fakeClient() {
 				async createDM() {
 					return {
 						async send(p) {
-							if (c.dmFail) throw discordError(c.dmFail);
+							const err = failureFor(c.dmFail, p);
+							if (err) throw err;
 							const m = makeMsg(p, uid);
 							c.sent.push(m);
 							return m;
@@ -358,6 +447,7 @@ module.exports = {
 	makeWork,
 	expectedPages,
 	fakeSource,
+	fakePictures,
 	fakeBooks,
 	fakeChannel,
 	fakeClient,

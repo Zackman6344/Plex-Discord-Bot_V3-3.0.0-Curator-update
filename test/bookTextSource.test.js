@@ -848,6 +848,41 @@ test('describe names files by basename unless paths are asked for, and never sho
 	assert.strictEqual(full.candidates.sidecars[0].file, file);
 });
 
+// The pictures' alignment runs in a child that reads the cached text itself, so no book text
+// crosses IPC: the handle has to name the exact pair it reads.
+test('a handle names the cache pair it reads, fresh and served from the cache', async () => {
+	const h = make({ books: { 11: cbook() } });
+	const { handle } = await h.source.open(work(), { explicit: true });
+	assert.strictEqual(handle.textPath, pathMod.join(h.cacheDir, `${handle.base}.txt`));
+	assert.strictEqual(handle.indexPath, pathMod.join(h.cacheDir, `${handle.base}.json`));
+	assert.deepStrictEqual(JSON.parse(fs.readFileSync(handle.indexPath, 'utf8')), handle.index);
+	const bytes = fs.readFileSync(handle.textPath);
+	for (let i = 0; i < handle.index.sections.length; i++) {
+		const s = handle.index.sections[i];
+		assert.strictEqual(bytes.subarray(s.byteStart, s.byteStart + s.byteLen).toString('utf8'), await handle.readSection(i));
+	}
+	const again = make({ client: h.client, dir: h.dir });
+	const cached = await again.source.open(work());
+	assert.notStrictEqual(cached.handle, handle);
+	assert.deepStrictEqual([cached.handle.textPath, cached.handle.indexPath], [handle.textPath, handle.indexPath]);
+});
+
+test('describe flags each Calibre candidate that also holds a PDF, and still shows no library path', async () => {
+	const h = make({
+		books: {
+			11: cbook({ formats: ['epub', 'pdf'] }),
+			12: cbook({ title: 'The Lantern Road (scan)', formats: ['pdf'] }),
+			13: cbook({ title: 'The Lantern Road Notes', formats: ['epub'] })
+		}
+	});
+	const d = await h.source.describe(work());
+	const byId = new Map(d.candidates.calibre.map((c) => [c.id, c]));
+	assert.deepStrictEqual([byId.get(11).pdf, byId.get(11).epub], [true, true]);
+	assert.deepStrictEqual([byId.get(12).pdf, byId.get(12).epub, byId.get(12).format], [true, false, null]);
+	assert.strictEqual(byId.get(13).pdf, false);
+	assert.ok(!JSON.stringify(d).includes('Calibre Library'), JSON.stringify(d));
+});
+
 test('a calibreUrl with a login in it is refused without a request and without echoing it', async () => {
 	const h = make({ books: {} });
 	const source = createBookTextSource({

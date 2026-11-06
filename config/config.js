@@ -236,6 +236,12 @@ const defaults = {
   // ebook-convert (calibreConvertPath) the first time its text is opened, so the read-along can
   // use it. The first open takes about a minute; the converted text is kept.
   'audiobookTextConvert' : true,
+  // Read-along pictures: when a book's Calibre record holds a scanned PDF of the print edition
+  // beside its EPUB (or a MOBI or AZW3 the bot converts), show the PDF's illustrations on the
+  // listener's DM page and the 📖 page as the narration reaches the printed page they are on.
+  // The first open downloads the PDF once and reads it for a few minutes at Below Normal
+  // priority; the pictures are kept in data/book_text/pictures. Off by default.
+  'audiobookTextPictures' : false,
   // Who may use a playing book's card buttons (pause, back and forward, chapters, speed, sleep,
   // stop) and the same !book commands. The listener always may. 'started': anyone who was in the
   // book's voice channel when it started, while they are still there; 'voice': anyone in that
