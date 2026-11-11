@@ -10,14 +10,21 @@
 // against the multidata, and then answers for any slot in milliseconds. This file finds what the
 // worker needs, keeps one running, and talks to it.
 //
-// **Only a seed generated on this machine can be rebuilt.** It takes the Players yamls, the
-// apworlds and the seed number. The multidata has only the seed NAME, which is derived from the
-// number; the number itself is on the first line of the spoiler in the same output zip, and in
-// the Generate log until Archipelago deletes it a week later.
+// **Only a seed generated on this machine can be rebuilt.** It takes the yamls, the apworlds and
+// the seed number. The multidata has only the seed NAME, which is derived from the number; the
+// number itself is on the first line of the spoiler in the same output zip, and in the Generate log
+// until Archipelago deletes it a week later.
 //
-// **One worker, started by the first `!ap next` that needs it and then kept.** Loading every world
-// and rebuilding a big seed takes most of a minute and about half a gigabyte, so it is neither
-// done per command nor at startup for a command that may never be run.
+// **The yamls are copied the first time a seed is seen.** The Players folder moves on to the next
+// async, and one yaml added to it renumbers every slot after it, which is how the 35-slot seed of
+// 2026-11-09 stopped rebuilding the day after it was generated: five yamls for the next game were
+// copied in. So while the Generate log still names the files and none has changed since the run,
+// they are copied into data/archipelago/seeds/<seed>/ with the multidata, and the worker rolls that
+// copy from then on.
+//
+// **One worker, started when a room it can rebuild connects and then kept.** Loading every world and
+// rebuilding a big seed takes about half a minute and half a gigabyte, so it is done once, before
+// anybody asks, rather than per command.
 
 const { spawn, execFile } = require('child_process');
 const fs = require('fs');
@@ -79,17 +86,20 @@ function escapeRegExp(text) {
 
 // Keyed by the logs folder's modification time, which moves whenever a generation adds a log.
 // A seed that is not there is then only searched for again once something new could be.
-const seedSearches = new Map();
+const generationSearches = new Map();
 
 /**
- * The seed number behind a seed name, from the Generate log of the run that produced it.
+ * What the Generate log of the run that produced a seed says: its number, and the yamls it rolled.
  *
- * The line reads "Generating for 79 players, 51632394463281032748 Seed 31755677627148142336 with
- * plando: ...". A run that failed and was retried leaves a log for each attempt under a different
- * seed, so the match is on the name, and the newest log that has it wins.
- * @returns {Promise<string|null>}
+ * The lines read "Generating for 35 players, 22585070207533418417 Seed 16496140521916006544 with
+ * plando: ..." and, per player, "P12 Weights: ZackLL11800.yaml >> <description>". A yaml holding
+ * several players names its file once per player. A run that failed and was retried leaves a log
+ * for each attempt under a different seed, so the match is on the name, and the newest log that
+ * has it wins.
+ * @returns {Promise<{seed: string, log: string, files: string[], at: number, plando: string|null}|null>}
+ *   `at` is when the run started (the log's creation time), `plando` the run's plando options
  */
-async function findSeedNumber(apDir, seedName) {
+async function findGeneration(apDir, seedName) {
     const logs = path.join(apDir, 'logs');
     let stamp;
     try {
@@ -98,8 +108,8 @@ async function findSeedNumber(apDir, seedName) {
         return null;
     }
     const cacheKey = `${logs}|${seedName}`;
-    const cached = seedSearches.get(cacheKey);
-    if (cached && (cached.seed || cached.stamp === stamp)) return cached.seed;
+    const cached = generationSearches.get(cacheKey);
+    if (cached && (cached.found || cached.stamp === stamp)) return cached.found;
 
     const pattern = new RegExp(`\\b${escapeRegExp(seedName)} Seed (\\d+)\\b`);
     const entries = [];
@@ -107,13 +117,16 @@ async function findSeedNumber(apDir, seedName) {
         if (!/^Generate_\d+_.*\.txt$/i.test(name)) continue;
         const file = path.join(logs, name);
         try {
-            entries.push({ file, mtime: (await fs.promises.stat(file)).mtimeMs });
+            const stat = await fs.promises.stat(file);
+            // Created when the run opened it, which is when the yamls were read; the modification
+            // time is the end of a run that can take ten minutes.
+            entries.push({ file, mtime: stat.mtimeMs, started: stat.birthtimeMs || stat.mtimeMs });
         } catch (_) { /* removed while listing */ }
     }
     entries.sort((a, b) => b.mtime - a.mtime);
 
-    let seed = null;
-    for (const { file } of entries) {
+    let found = null;
+    for (const { file, started } of entries) {
         let head;
         try {
             head = await readHead(file, LOG_HEAD_BYTES);
@@ -121,23 +134,186 @@ async function findSeedNumber(apDir, seedName) {
             continue;
         }
         const match = pattern.exec(head);
-        if (match) {
-            seed = match[1];
-            break;
+        if (!match) continue;
+        const files = [];
+        for (const line of head.split(/\r?\n/)) {
+            const weights = /\bP\d+ Weights: (.+?) >> /.exec(line);
+            if (weights && !files.includes(weights[1])) files.push(weights[1]);
+        }
+        const plando = new RegExp(`\\b${escapeRegExp(seedName)} Seed \\d+ with plando: ([^\\r\\n]*)`).exec(head);
+        found = { seed: match[1], log: file, files, at: started, plando: plando ? plando[1].trim() : null };
+        break;
+    }
+    generationSearches.set(cacheKey, { found, stamp });
+    return found;
+}
+
+/** The seed number behind a seed name, from its Generate log. @returns {Promise<string|null>} */
+async function findSeedNumber(apDir, seedName) {
+    const generation = await findGeneration(apDir, seedName);
+    return generation ? generation.seed : null;
+}
+
+/**
+ * The folder Archipelago rolls yamls from: host.yaml's generator.player_files_path, relative to the
+ * install unless absolute, and "Players" when host.yaml does not say.
+ */
+async function hostPlayersDir(apDir) {
+    let text = '';
+    try {
+        text = await fs.promises.readFile(path.join(apDir, 'host.yaml'), 'utf8');
+    } catch (_) { /* no host.yaml: Archipelago's own default */ }
+    // Only the generator's own: Universal Tracker keeps a player_files_path of its own further down.
+    const section = /^generator:[ \t]*\r?\n((?:[ \t]+[^\r\n]*\r?\n|[ \t]*\r?\n)*)/m.exec(text);
+    const line = section && /^[ \t]+player_files_path:[ \t]*([^\r\n]*)$/m.exec(section[1]);
+    const dir = (line && yamlScalar(line[1])) || 'Players';
+    return path.isAbsolute(dir) ? dir : path.join(apDir, dir);
+}
+
+/** A one-line YAML scalar as host.yaml writes it: double-quoted with escapes, single-quoted, or plain. */
+function yamlScalar(raw) {
+    const text = String(raw || '').trim();
+    if (text.startsWith('"')) {
+        let out = '';
+        for (let i = 1; i < text.length; i += 1) {
+            if (text[i] === '\\' && i + 1 < text.length) out += text[++i];
+            else if (text[i] === '"') return out;
+            else out += text[i];
+        }
+        return out;
+    }
+    if (text.startsWith("'")) {
+        const end = text.indexOf("'", 1);
+        return (end === -1 ? text.slice(1) : text.slice(1, end)).replace(/''/g, "'");
+    }
+    return text.replace(/[ \t]+#.*$/, '').trim();
+}
+
+function seedsDir() {
+    return process.env.PLEXBOT_AP_SEEDS_DIR || path.join(__dirname, '..', 'data', 'archipelago', 'seeds');
+}
+
+// Under the test runner the override is required, the gate the other stores use, so a test run
+// never copies anything into the live bot's data folder.
+function snapshotsUsable() {
+    return !process.env.NODE_TEST_CONTEXT || !!process.env.PLEXBOT_AP_SEEDS_DIR;
+}
+
+function fileSafe(text) {
+    return String(text || '').replace(/[^A-Za-z0-9._-]+/g, '_');
+}
+
+// Where the bot's copy of a seed's multidata goes, whether or not one has been made.
+function keptMultidata(seedName) {
+    return path.join(seedsDir(), fileSafe(seedName), `AP_${fileSafe(seedName)}.zip`);
+}
+
+async function readSnapshot(seedName) {
+    const dir = path.join(seedsDir(), fileSafe(seedName));
+    let manifest;
+    try {
+        manifest = JSON.parse(await fs.promises.readFile(path.join(dir, 'seed.json'), 'utf8'));
+    } catch (_) {
+        return null;
+    }
+    if (!manifest || manifest.seedName !== seedName) return null;
+    const multidata = keptMultidata(seedName);
+    let haveMultidata = true;
+    try {
+        await fs.promises.access(multidata);
+    } catch (_) {
+        haveMultidata = false;
+    }
+    return {
+        dir,
+        players: path.join(dir, 'players'),
+        multidata: haveMultidata ? multidata : null,
+        seed: manifest.seed || null,
+        plando: typeof manifest.plando === 'string' ? manifest.plando : null,
+        files: Array.isArray(manifest.files) ? manifest.files : []
+    };
+}
+
+const snapshotNotes = new Set();
+function noteSnapshot(seedName, why) {
+    const key = `${seedName}|${why}`;
+    if (snapshotNotes.has(key)) return;
+    snapshotNotes.add(key);
+    logger.info(`no copy kept of seed ${seedName}'s yamls: ${why}`);
+}
+
+/**
+ * The bot's copy of a seed's yamls and multidata, made now if there is none yet, the Generate log
+ * still names every yaml, and none of them has changed since the run. Null when there is none and
+ * none can be made; the worker then rolls the Players folder as it stands.
+ * @returns {Promise<{dir: string, players: string, multidata: string|null, seed: string|null,
+ *   files: string[]}|null>}
+ */
+async function seedSnapshot(apDir, seedName, multidata) {
+    if (!snapshotsUsable()) return null;
+    const held = await readSnapshot(seedName);
+    if (held) return held;
+
+    const generation = await findGeneration(apDir, seedName);
+    if (!generation || generation.files.length === 0) return null;
+    const source = await hostPlayersDir(apDir);
+    for (const file of generation.files) {
+        let stat;
+        try {
+            stat = await fs.promises.stat(path.join(source, file));
+        } catch (_) {
+            noteSnapshot(seedName, `${file} is no longer in ${source}`);
+            return null;
+        }
+        // Copying a yaml edited since the run started would keep the edit, not what the seed rolled.
+        // The write time only: Windows moves a file's change time for attribute and metadata updates
+        // nobody made to its text, which would refuse a good copy. A yaml overwritten by a copy that
+        // keeps an older write time gets past this, and the worker's name, game and sphere checks
+        // are what catch it.
+        if (stat.mtimeMs > generation.at) {
+            noteSnapshot(seedName, `${file} has changed since the seed was generated`);
+            return null;
         }
     }
-    seedSearches.set(cacheKey, { seed, stamp });
-    return seed;
+
+    const dir = path.join(seedsDir(), fileSafe(seedName));
+    const staging = `${dir}.partial`;
+    try {
+        await fs.promises.rm(staging, { recursive: true, force: true });
+        await fs.promises.mkdir(path.join(staging, 'players'), { recursive: true });
+        for (const file of generation.files) {
+            await fs.promises.copyFile(path.join(source, file), path.join(staging, 'players', file));
+        }
+        if (multidata) await fs.promises.copyFile(multidata, path.join(staging, `AP_${fileSafe(seedName)}.zip`));
+        // Written last, so a copy cut short is never read as a finished one.
+        await fs.promises.writeFile(path.join(staging, 'seed.json'), JSON.stringify({
+            seedName,
+            seed: generation.seed,
+            plando: generation.plando,
+            files: generation.files,
+            log: generation.log,
+            savedAt: new Date().toISOString()
+        }, null, 2));
+        await fs.promises.rm(dir, { recursive: true, force: true });
+        await fs.promises.rename(staging, dir);
+    } catch (err) {
+        logger.warn(`could not keep a copy of seed ${seedName}'s yamls: ${err.message || err}`);
+        try { await fs.promises.rm(staging, { recursive: true, force: true }); } catch (_) { /* best effort */ }
+        return null;
+    }
+    logger.info(`kept a copy of seed ${seedName}'s ${generation.files.length} yaml(s) and multidata in ${dir}`);
+    return readSnapshot(seedName);
 }
 
 /**
  * Everything the worker needs for one seed, or why it cannot have it.
  *
- * The output zip is what says the seed was generated here. The seed number is only looked up
- * from the Generate log as a spare: the worker reads it off the spoiler inside the zip, which
- * lasts as long as the zip does, while Archipelago deletes its logs after a week.
+ * The output zip, or the bot's copy of it, is what says the seed was generated here. The seed
+ * number is only a spare: the worker reads it off the spoiler inside the zip, which lasts as long
+ * as the zip does, while Archipelago deletes its logs after a week.
  * @returns {Promise<{ok: true, apDir: string, seed: string|null, seedName: string,
- *   multidata: string, pythonVersion: string}|{ok: false, reason: string, detail: string}>}
+ *   multidata: string, pythonVersion: string, playersDir: string|null}|
+ *   {ok: false, reason: string, detail: string}>} playersDir is the bot's copy of the seed's yamls
  */
 async function locateSeed(apDir, seedName) {
     if (!apDir) return { ok: false, reason: 'disabled', detail: 'archipelagoInstallDir is blank' };
@@ -147,14 +323,22 @@ async function locateSeed(apDir, seedName) {
     if (!pythonVersion) {
         return { ok: false, reason: 'no-install', detail: `no Archipelago install at ${apDir}` };
     }
-    const multidata = path.join(apDir, 'output', `AP_${seedName}.zip`);
+    const output = path.join(apDir, 'output', `AP_${seedName}.zip`);
+    let outputHere = true;
     try {
-        await fs.promises.access(multidata);
+        await fs.promises.access(output);
     } catch (_) {
+        outputHere = false;
+    }
+    const snapshot = await seedSnapshot(apDir, seedName, outputHere ? output : null);
+    const multidata = outputHere ? output : snapshot && snapshot.multidata;
+    if (!multidata) {
         return { ok: false, reason: 'not-generated-here', detail: `no output/AP_${seedName}.zip in ${apDir}` };
     }
-    const seed = await findSeedNumber(apDir, seedName);
-    return { ok: true, apDir, seed, seedName, multidata, pythonVersion };
+    const generation = snapshot ? null : await findGeneration(apDir, seedName);
+    const seed = (snapshot && snapshot.seed) || (generation && generation.seed) || null;
+    const plando = snapshot ? snapshot.plando : generation && generation.plando;
+    return { ok: true, apDir, seed, seedName, multidata, pythonVersion, playersDir: snapshot ? snapshot.players : null, plando: plando || null };
 }
 
 const pythons = new Map();
@@ -324,12 +508,14 @@ class LogicWorker {
     }
 
     /**
-     * @param {Array<{slot: number, received: Array<[number, number, number]>, checked: number[]}>} queries
-     *   received is each NetworkItem as [item, location, flags]
+     * @param {Array<{slot: number, checked: number[]}>} queries
+     * @param {Object<string, Array<[number, number, number]>>} received every slot's NetworkItems
+     *   as [item, location, flags], whichever slots are asked about: a rule in one slot's world can
+     *   wait on another slot's items, as Dungeon Defenders' rules do
      * @returns {Promise<Array>} one result per query, in order
      */
-    async inLogic(queries) {
-        const reply = await this.request({ op: 'inLogic', slots: queries });
+    async inLogic(queries, received) {
+        const reply = await this.request({ op: 'inLogic', slots: queries, received: received || {} });
         return reply.results || [];
     }
 
@@ -404,10 +590,23 @@ async function choose(seedName, options) {
         return located;
     }
 
+    // A prewarm never takes the worker from a seed somebody may be using; checked here, in turn,
+    // so a choose queued just ahead has already set current.worker.
+    if (options.prewarm && current.worker && current.worker.alive && current.seedName && current.seedName !== seedName) {
+        return { ok: false, reason: 'busy', detail: `the worker is serving seed ${current.seedName}` };
+    }
+
     const key = `${located.apDir}|${located.seedName}`;
-    // One being stopped (a timed-out question) is on its way out, not a worker to hand over.
-    if (current.key === key && current.worker && current.worker.alive && !current.worker.stopping) {
-        return { worker: current.worker, key };
+    const held = current.key === key ? current.worker : null;
+    // One being stopped (a timed-out question) is on its way out, not a worker to hand over. One
+    // that could not rebuild answers sphere 1 until its cause has had time to be fixed, or until a
+    // copy of the yamls exists that it was not started with. A healthy one is kept whatever happens
+    // to the copy since: it has already rolled what it needed.
+    const degraded = held && held.degradedAt;
+    const stale = degraded && Date.now() - held.degradedAt >= FAILURE_RETRY_MS;
+    const improved = degraded && located.playersDir && held.playersDir !== located.playersDir;
+    if (held && held.alive && !held.stopping && !stale && !improved) {
+        return { worker: held, key };
     }
 
     const failed = failures.get(key);
@@ -428,9 +627,12 @@ async function choose(seedName, options) {
             '--ap-dir', located.apDir,
             '--seed-name', located.seedName,
             '--multidata', located.multidata,
-            ...(located.seed ? ['--seed', located.seed] : [])],
+            ...(located.seed ? ['--seed', located.seed] : []),
+            ...(located.playersDir ? ['--players-dir', located.playersDir] : []),
+            ...(located.plando !== null && located.plando !== undefined ? ['--plando', located.plando] : [])],
         label: options.label
     });
+    worker.playersDir = located.playersDir || null;
     current.key = key;
     current.worker = worker;
     installExitHook();
@@ -459,12 +661,21 @@ async function waitFor(worker, key, options) {
     }
     if (worker.startedAt && !worker.announced) {
         worker.announced = true;
-        const slots = Object.values(worker.slots || {});
-        const verified = slots.filter(s => s.verified).length;
-        logger.info(`[AP:${options.label || '?'}] logic worker ready in ${Math.round((Date.now() - worker.startedAt) / 1000)} s: `
-            + `${verified}/${slots.length} slots verified against the multidata`);
-        for (const [slot, s] of Object.entries(worker.slots || {})) {
-            if (!s.verified) logger.warn(`[AP:${options.label || '?'}] slot ${slot} answers sphere 1 only: ${s.reason}`);
+        const label = options.label || '?';
+        const seconds = Math.round((Date.now() - worker.startedAt) / 1000);
+        const rebuildError = worker.info && worker.info.rebuildError;
+        if (rebuildError) {
+            worker.degradedAt = Date.now();
+            // One line rather than one per slot: every slot falls back for the same reason.
+            logger.warn(`[AP:${label}] logic worker ready in ${seconds} s, answering sphere 1 only until the cause is fixed `
+                + `(it tries again after ${Math.round(FAILURE_RETRY_MS / 60000)} minutes): ${rebuildError}`);
+        } else {
+            const slots = Object.values(worker.slots || {});
+            const verified = slots.filter(s => s.verified).length;
+            logger.info(`[AP:${label}] logic worker ready in ${seconds} s: ${verified}/${slots.length} slots verified against the multidata`);
+            for (const [slot, s] of Object.entries(worker.slots || {})) {
+                if (!s.verified) logger.warn(`[AP:${label}] slot ${slot} answers sphere 1 only: ${s.reason}`);
+            }
         }
     }
     return { ok: true, worker };
@@ -485,6 +696,16 @@ function stopAll() {
     current.worker = null;
     current.key = null;
     current.seedName = null;
+}
+
+/**
+ * Start the worker for a seed in the background, for a room that has just connected, so the first
+ * `!ap next` after a restart finds it ready. A worker already serving another seed is left alone:
+ * only one runs, and taking it from a room somebody is using would cost them the minute instead.
+ */
+function prewarm(seedName, options = {}) {
+    if (!installDir() || !seedName) return;
+    acquire(seedName, { label: options.label, prewarm: true }).catch(() => {});
 }
 
 /** Stop the worker if it is the one serving this seed, for when the last watch on it goes. */
@@ -511,8 +732,13 @@ function configChanged() {
 
 module.exports = {
     acquire,
+    prewarm,
     locateSeed,
+    findGeneration,
     findSeedNumber,
+    hostPlayersDir,
+    seedSnapshot,
+    keptMultidata,
     frozenPythonVersion,
     resolvePython,
     LogicWorker,
@@ -524,7 +750,8 @@ module.exports = {
     _reset() {
         stopAll();
         failures.clear();
-        seedSearches.clear();
+        generationSearches.clear();
+        snapshotNotes.clear();
         pythons.clear();
         noted.clear();
         lastSettings = null;

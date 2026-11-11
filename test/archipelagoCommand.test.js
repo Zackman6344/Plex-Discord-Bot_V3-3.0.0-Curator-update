@@ -8,6 +8,8 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const harness = require('./helpers/apServer.js');
 const stores = harness.useTempStores('cmd');   // must run before any helper is required
@@ -15,6 +17,7 @@ const stores = harness.useTempStores('cmd');   // must run before any helper is 
 const config = require('../config/config.js');
 const claims = require('../helpers/archipelagoClaims.js');
 const monitor = require('../helpers/archipelagoMonitor.js');
+const nextPages = require('../helpers/archipelagoNextButtons.js');
 const slashRegistry = require('../helpers/slashRegistry.js');
 const ap = require('../commands/archipelago.js');
 
@@ -323,9 +326,12 @@ test('clearing a password still works when asked for in words', async () => {
 // all when several are asked about, only its name in the footer, so it cannot crowd out one that
 // has something.
 //
-// Each slot lists only its soonest sphere with anything in logic and counts the spheres after it.
-// One list running across spheres read as an arbitrary slice of hundreds of names, with nothing
-// in the reply saying which sphere any of them was in.
+// Several slots each list a few names from their soonest sphere with anything in logic and count
+// the rest. One slot pages through everything in logic, each sphere after the soonest under its
+// own heading: one list running across spheres read as an arbitrary slice of hundreds of names,
+// with nothing in the reply saying which sphere any of them was in. A location somebody has hinted
+// leads its slot's list, starred, whatever its sphere, since whoever asked for the hint is waiting
+// on what is there.
 //
 // The wording carries which of two very different answers a slot got. One comes from the seed's
 // own logic, run against the items the slot has received. The other is sphere 1 alone, the
@@ -334,7 +340,7 @@ test('clearing a password still works when asked for in words', async () => {
 //
 // suggestNextAll is stubbed: this is about what the command renders, and how each slot's answer
 // is worked out is covered in archipelagoSuggest.test.js. The status message is edited into the
-// answer, and in this action `edit` gets a bare string, so the edits are what has to be captured.
+// answer, so the edits are what has to be captured.
 
 // Held once, so a test that asks twice restores the real one and not the first stub.
 const realSuggestNextAll = monitor.suggestNextAll;
@@ -355,29 +361,58 @@ async function askNext(t, outcome, { wait = false, args = ['next'] } = {}) {
     };
     t.after(() => { monitor.suggestNextAll = realSuggestNextAll; });
 
-    const edits = [];
+    const payloads = [];
     const msg = fakeMessage();
     msg.channel.send = async (payload) => {
         msg.sent.push(payload);
-        return { edit: async (text) => { edits.push(text); return {}; } };
+        return { edit: async (payload) => { payloads.push(payload); return {}; } };
     };
     await ap.command.process(msg, ...args);
-    return { msg, edits, calls, final: edits.length ? edits[edits.length - 1] : null };
+    // The loading line goes in as bare text and the answer as a payload, since only the answer
+    // can carry page buttons or quote text somebody else wrote.
+    const edits = payloads.map(p => (typeof p === 'string' ? p : p.content));
+    return {
+        msg, edits, calls,
+        final: edits.length ? edits[edits.length - 1] : null,
+        last: payloads.length ? payloads[payloads.length - 1] : null
+    };
 }
 
-// One slot's answer in the shape suggestNextAll gives it: `locations` only the soonest sphere with
-// anything in logic, `later` a count for each sphere after it, `total` everything in logic and
-// `open` everything unchecked. `later` is written here as [sphere, count] pairs to keep tests short.
-const inLogic = (slot, locations, open, sphere = 1, later = []) => {
-    const groups = later.map(([s, count]) => ({ sphere: s, count }));
+// One slot's answer in the shape answerFromLogic gives it, from what is in logic sphere by sphere,
+// earliest first, as [sphere, names] pairs: `locations` the soonest sphere, `later` a count for
+// each sphere after it, `total` everything in logic, `open` everything unchecked, and `all` the
+// whole list in the order a one-slot reply walks it, with the names in `hinted` leading it.
+// `hintedLocked` counts hinted locations not in logic, which have no name in the answer at all.
+function logicAnswer(slot, spheres, open, { hinted = [], hintedLocked = 0 } = {}) {
+    const listed = spheres.flatMap(([sphere, names]) => names.map(name => ({ name, sphere, hinted: hinted.includes(name) })));
+    const soonest = listed.length > 0 ? listed[0].sphere : null;
+    const later = [];
+    for (const l of listed) {
+        if (l.sphere === soonest) continue;
+        const group = later[later.length - 1];
+        if (group && group.sphere === l.sphere) group.count += 1;
+        else later.push({ sphere: l.sphere, count: 1 });
+    }
     return {
-        ok: true, slot, mode: 'logic', locations, sphere: locations.length > 0 ? sphere : null,
-        later: groups, total: locations.length + groups.reduce((n, g) => n + g.count, 0), open
+        ok: true, slot, mode: 'logic',
+        locations: listed.filter(l => l.sphere === soonest).map(l => l.name),
+        sphere: soonest,
+        later,
+        hinted: listed.filter(l => l.hinted).map(({ name, sphere }) => ({ name, sphere })),
+        hintedLocked,
+        all: [...listed.filter(l => l.hinted), ...listed.filter(l => !l.hinted)],
+        total: listed.length,
+        open
     };
-};
+}
 // Enough names to run past a block's cap, numbered so each line can be told apart.
 const numbered = (prefix, n) => Array.from({ length: n }, (_, i) => `${prefix} ${i + 1}`);
 const bullets = (names) => names.map(name => `• ${name}`).join('\n');
+// The names in a later sphere, for tests that only care how many it holds.
+const chests = (sphere, n) => Array.from({ length: n }, (_, i) => `Chest ${sphere === null ? 'x' : sphere}.${i + 1}`);
+// The same answer with `later` as [sphere, count] pairs, to keep the tests about counts short.
+const inLogic = (slot, locations, open, sphere = 1, later = []) =>
+    logicAnswer(slot, [[sphere, locations], ...later.map(([s, n]) => [s, chests(s, n)])], open);
 const sphereOne = (slot, locations, open, why) => ({
     ok: true, slot, mode: 'sphere1', source: 'multidata', locations,
     sphere: locations.length > 0 ? 1 : null, total: locations.length, open, why
@@ -392,8 +427,38 @@ const answered = (...results) => ({ ok: true, logic: { ok: true }, results });
 const INSTALL = 'D:/Games/AP-0.6.7';
 const NOT_HERE = { ok: false, reason: 'not-generated-here', detail: `no output/AP_Seed_CMD.zip in ${INSTALL}` };
 
-const LOADING = '🧭 Loading this seed\'s logic from the Archipelago install. About a minute the first time…';
+const LOADING = '🧭 Loading this seed\'s logic from the Archipelago install. About half a minute…';
 const LEAD = '_In logic with the items each slot has received, by the seed\'s own rules; earliest sphere first. ';
+
+// Pages after the first exist only behind ▶, so they are read by clicking it as somebody would.
+async function clickPage(customId, userId = ZACK) {
+    const seen = {};
+    seen.claimed = await nextPages.handle({
+        customId,
+        user: { id: userId },
+        update: async (payload) => { seen.update = payload; },
+        reply: async (payload) => { seen.reply = payload; }
+    }, null, null);
+    return seen;
+}
+
+// Read through toJSON, since that is what Discord is sent.
+const buttonsOf = (payload) => (payload && payload.components ? payload.components : [])
+    .flatMap(row => row.toJSON().components);
+const buttonStates = (payload) => buttonsOf(payload).map(b => [b.label, b.disabled]);
+
+// Every page of a one-slot reply in order: the first as the command left it, the rest by ▶ until
+// it is disabled. The cap only stops a ▶ that is never disabled from looping forever.
+async function allPages(reply) {
+    const pages = [reply.last];
+    for (;;) {
+        const next = buttonsOf(pages[pages.length - 1]).find(b => b.label === '▶');
+        if (!next || next.disabled || pages.length > 100) return pages;
+        const click = await clickPage(next.custom_id);
+        assert.ok(click.update, `▶ did not turn the page: ${JSON.stringify(click.reply)}`);
+        pages.push(click.update);
+    }
+}
 
 test('!ap next lists claimed slots earliest sphere with something in logic first', async (t) => {
     const slots = ['ZackWord', 'ZackStuck', 'ZackEarly', 'ZackDone', 'ZackBanner'];
@@ -433,22 +498,25 @@ test('one slot answered from the seed\'s logic names its soonest sphere, lists i
     assert.strictEqual(reply.edits.length, 1, 'no loading line when the logic was already up');
     assert.ok(reply.final.startsWith('🧭 **What is in logic**\n'), reply.final);
     assert.ok(reply.final.includes(
-        '**ZackWord** — sphere 2: 2 in logic\n• Crate\\_1\n• Door B\n_Also in logic: sphere 3 (1) · 6 still locked_\n'),
+        '**ZackWord** — sphere 2: 2 in logic\n• Crate\\_1\n• Door B\n_Sphere 3_\n• Chest 3.1\n' +
+        '_Also in logic: sphere 3 (1) · 6 still locked_\n'),
         `the sphere, its count and every location, markdown escaped: ${reply.final}`);
     assert.ok(!reply.final.includes('Sphere 1 only'), reply.final);
 });
 
-test('one slot lists 15 names from its soonest sphere and counts each later sphere, with thousands separators', async (t) => {
+test('one slot\'s first page lists 15 names and counts each later sphere, with thousands separators', async (t) => {
     await claimAll(['ZackWarhammer']);
     const reply = await askNext(t, answered(
         inLogic('ZackWarhammer', numbered('Empire', 56), 2929, 1, [[2, 1175], [3, 2]])));
 
+    // All 1,233 in logic are walked, not only the 56 in sphere 1, so there are 83 pages.
     assert.ok(reply.final.includes(
         '**ZackWarhammer** — sphere 1: 56 in logic\n' +
         `${bullets(numbered('Empire', 15))}\n` +
-        '• …41 more in sphere 1\n' +
-        '_Also in logic: sphere 2 (1,175), sphere 3 (2) · 1,696 still locked_\n'), reply.final);
+        '_Also in logic: sphere 2 (1,175), sphere 3 (2) · 1,696 still locked_\n' +
+        '_Page 1 of 83_\n'), reply.final);
     assert.ok(!reply.final.includes('Empire 16'), reply.final);
+    assert.ok(!reply.final.includes('more in sphere'), reply.final);
 });
 
 // A location the sphere data does not place is still in logic; there is just no sphere to name.
@@ -467,15 +535,17 @@ test('one slot with nothing in logic past its soonest sphere says so beside what
     assert.ok(reply.final.includes(
         '**ZackDig** — sphere 2: 20 in logic\n' +
         `${bullets(numbered('Chunk', 15))}\n` +
-        '• …5 more in sphere 2\n' +
-        '_Nothing later in logic yet · 3,825 still locked_\n'), reply.final);
+        '_Nothing later in logic yet · 3,825 still locked_\n' +
+        '_Page 1 of 2_\n'), reply.final);
 });
 
 test('a slot with everything unchecked in logic leaves the locked count out rather than saying 0', async (t) => {
     await claimAll(['ZackWord']);
     const reply = await askNext(t, answered(inLogic('ZackWord', ['Crate'], 3, 1, [[2, 2]])));
 
-    assert.ok(reply.final.includes('**ZackWord** — sphere 1: 1 in logic\n• Crate\n_Also in logic: sphere 2 (2)_\n'), reply.final);
+    assert.ok(reply.final.includes(
+        '**ZackWord** — sphere 1: 1 in logic\n• Crate\n_Sphere 2_\n• Chest 2.1\n• Chest 2.2\n_Also in logic: sphere 2 (2)_\n'),
+        reply.final);
     assert.ok(!reply.final.includes('locked'), reply.final);
 });
 
@@ -488,14 +558,114 @@ test('one slot with nothing later and nothing locked ends at its last name', asy
     assert.ok(!reply.final.includes('locked'), reply.final);
 });
 
-// "…1 more" would take the line the one name does.
-test('one slot shows a 16th name rather than a line saying 1 more', async (t) => {
+// The header and the closing counts are what say which sphere a page is in and how much is left,
+// so a page turned to without them would be a list of names with no context.
+test('one slot pages through everything in logic 15 at a time, with its header and closing line on every page', async (t) => {
     await claimAll(['ZackWord']);
-    const reply = await askNext(t, answered(inLogic('ZackWord', numbered('Crate', 16), 16)));
+    const crates = numbered('Crate', 40);
+    const reply = await askNext(t, answered(inLogic('ZackWord', crates, 50)));
 
-    assert.ok(reply.final.includes(`**ZackWord** — sphere 1: 16 in logic\n${bullets(numbered('Crate', 16))}\n${LEAD}`),
-        reply.final);
-    assert.ok(!reply.final.includes('more in sphere'), reply.final);
+    const pages = await allPages(reply);
+    assert.strictEqual(pages.length, 3, pages.map(p => p.content).join('\n----\n'));
+    pages.forEach((page, i) => {
+        assert.strictEqual(page.content,
+            '🧭 **What is in logic**\n' +
+            '**ZackWord** — sphere 1: 40 in logic\n' +
+            `${bullets(crates.slice(i * 15, i * 15 + 15))}\n` +
+            '_Nothing later in logic yet · 10 still locked_\n' +
+            `_Page ${i + 1} of 3_\n` +
+            `${LEAD}Nothing here says what is in them._`);
+        assert.deepStrictEqual(page.allowedMentions, { parse: [] }, `page ${i + 1} could ping`);
+    });
+    assert.deepStrictEqual(buttonStates(pages[0]), [['◀', true], ['▶', false]], 'nothing comes before page 1');
+    assert.deepStrictEqual(buttonStates(pages[1]), [['◀', false], ['▶', false]]);
+    assert.deepStrictEqual(buttonStates(pages[2]), [['◀', false], ['▶', true]], 'nothing comes after the last page');
+});
+
+test('a one-slot list that fits on one page has no page line and no buttons, and a 17th name starts a second page', async (t) => {
+    await claimAll(['ZackWord']);
+    const fits = await askNext(t, answered(inLogic('ZackWord', numbered('Crate', 15), 15)));
+    assert.ok(fits.final.includes(`**ZackWord** — sphere 1: 15 in logic\n${bullets(numbered('Crate', 15))}\n${LEAD}`),
+        fits.final);
+    assert.ok(!fits.final.includes('_Page'), fits.final);
+    assert.strictEqual(fits.last.components, undefined, 'no buttons with nothing to turn to');
+
+    // A page of its own for one name would cost a click to see what fits beside the rest, the way
+    // "…1 more" would take the line the name itself does.
+    const sixteen = await askNext(t, answered(inLogic('ZackWord', numbered('Crate', 16), 16)));
+    assert.ok(sixteen.final.includes(`**ZackWord** — sphere 1: 16 in logic\n${bullets(numbered('Crate', 16))}\n${LEAD}`),
+        sixteen.final);
+    assert.ok(!sixteen.final.includes('_Page'), sixteen.final);
+    assert.strictEqual(sixteen.last.components, undefined);
+
+    const spills = await askNext(t, answered(inLogic('ZackWord', numbered('Crate', 17), 17)));
+    const pages = await allPages(spills);
+    assert.strictEqual(pages.length, 2);
+    assert.ok(pages[0].content.includes(`${bullets(numbered('Crate', 15))}\n_Page 1 of 2_\n`), pages[0].content);
+    assert.ok(pages[1].content.includes('**ZackWord** — sphere 1: 17 in logic\n• Crate 16\n• Crate 17\n_Page 2 of 2_\n'),
+        pages[1].content);
+});
+
+// The pages answer for the asker's slot, so a click from somebody else would move the list under them.
+test('only the person who asked can turn the pages of a one-slot reply', async (t) => {
+    await claimAll(['ZackWord']);
+    const reply = await askNext(t, answered(inLogic('ZackWord', numbered('Crate', 20), 20)));
+    const next = buttonsOf(reply.last).find(b => b.label === '▶');
+
+    const stranger = await clickPage(next.custom_id, MALLORY);
+    assert.strictEqual(stranger.update, undefined, 'the page did not move');
+    assert.match(stranger.reply.content, /Only the person who asked can turn these pages/);
+
+    const asker = await clickPage(next.custom_id, ZACK);
+    assert.ok(asker.update && asker.update.content.includes('• Crate 16\n'), JSON.stringify(asker));
+});
+
+// The header names only the soonest sphere, so without a heading a name from a later one would
+// read as part of it, and a page that opens partway into a later sphere would say nothing at all.
+test('one slot\'s list puts each later sphere under its own heading, repeated at the top of a page that opens inside it', async (t) => {
+    await claimAll(['ZackWord']);
+    const reply = await askNext(t, answered(logicAnswer('ZackWord',
+        [[1, numbered('Crate', 3)], [2, numbered('Door', 20)], [3, ['Gate']]], 30)));
+
+    const pages = await allPages(reply);
+    assert.strictEqual(pages.length, 2, pages.map(p => p.content).join('\n----\n'));
+    const closing = '_Also in logic: sphere 2 (20), sphere 3 (1) · 6 still locked_\n';
+    assert.ok(pages[0].content.includes(
+        '**ZackWord** — sphere 1: 3 in logic\n' +
+        `${bullets(numbered('Crate', 3))}\n_Sphere 2_\n${bullets(numbered('Door', 12))}\n${closing}_Page 1 of 2_\n`),
+        pages[0].content);
+    assert.ok(pages[1].content.includes(
+        '**ZackWord** — sphere 1: 3 in logic\n' +
+        `_Sphere 2_\n${bullets(numbered('Door', 20).slice(12))}\n_Sphere 3_\n• Gate\n${closing}_Page 2 of 2_\n`),
+        pages[1].content);
+    assert.ok(!pages.some(page => /_sphere 1_/i.test(page.content)), 'the header already names the soonest sphere');
+
+    const aligned = await askNext(t, answered(logicAnswer('ZackWord', [[1, numbered('Crate', 15)], [2, ['Door', 'Gate']]], 17)));
+    const [, second] = await allPages(aligned);
+    assert.ok(second.content.includes('**ZackWord** — sphere 1: 15 in logic\n_Sphere 2_\n• Door\n• Gate\n'),
+        `a page that opens exactly where the sphere changes: ${second.content}`);
+
+    // A last name kept on a full page brings its heading with it.
+    const lastOne = await askNext(t, answered(logicAnswer('ZackWord', [[1, numbered('Crate', 15)], [2, ['Door']]], 16)));
+    assert.ok(lastOne.final.includes(`${bullets(numbered('Crate', 15))}\n_Sphere 2_\n• Door\n`), lastOne.final);
+    assert.strictEqual(lastOne.last.components, undefined, lastOne.final);
+});
+
+test('one slot\'s hinted locations lead its list, starred, with their sphere named when it is not the soonest', async (t) => {
+    await claimAll(['ZackWord']);
+    const reply = await askNext(t, answered(logicAnswer('ZackWord',
+        [[1, ['Alpha', 'Bravo', 'Charlie']], [2, ['Delta', 'Echo_Point']], [3, ['Foxtrot']]], 9,
+        { hinted: ['Bravo', 'Echo_Point'], hintedLocked: 2 })));
+
+    assert.ok(reply.final.includes(
+        '**ZackWord** — sphere 1: 3 in logic\n' +
+        '⭐ Bravo\n' +
+        '⭐ Echo\\_Point · sphere 2\n' +
+        '• Alpha\n• Charlie\n' +
+        '_Sphere 2_\n• Delta\n' +
+        '_Sphere 3_\n• Foxtrot\n' +
+        '_Also in logic: sphere 2 (2), sphere 3 (1) · 3 still locked · ⭐ 2 hinted still locked_\n'), reply.final);
+    assert.strictEqual(reply.final.split('Echo').length - 1, 1, `a hinted location is listed once: ${reply.final}`);
 });
 
 test('a slot with nothing in logic yet says how much is still locked', async (t) => {
@@ -522,6 +692,60 @@ test('several slots each get their soonest sphere, later and locked counts on on
         '**ZackWord** — sphere 1: 4 in logic · +0 later · 322 locked\n' +
         `${bullets(numbered('Crate', 4))}\n${LEAD}`), reply.final);
     assert.ok(!reply.final.includes('Also in logic'), reply.final);
+    assert.strictEqual(reply.last.components, undefined, 'several slots answer in one message, with no pages to turn');
+});
+
+test('several slots list hinted locations ahead of their other names and count the hinted ones still locked on the slot\'s line', async (t) => {
+    await claimAll(['ZackWord', 'ZackBanner']);
+    const reply = await askNext(t, answered(
+        logicAnswer('ZackWord', [[1, ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo']], [2, ['Foxtrot']]], 20,
+            { hinted: ['Delta', 'Foxtrot'], hintedLocked: 3 }),
+        inLogic('ZackBanner', ['Gate'], 4)));
+
+    assert.ok(reply.final.includes(
+        '**ZackWord** — sphere 1: 5 in logic · +1 later · 14 locked · ⭐ 3 hinted locked\n' +
+        '⭐ Delta\n⭐ Foxtrot · sphere 2\n• Alpha\n• …3 more\n'), reply.final);
+    assert.ok(reply.final.includes('**ZackBanner** — sphere 1: 1 in logic · +0 later · 3 locked\n• Gate\n\n'),
+        `no star on a slot with no hints: ${reply.final}`);
+});
+
+// The star is explained only where it can appear, so a reply with no hints carries no extra words.
+test('the footer explains the star when a slot has a hinted location, in logic or still locked, and not otherwise', async (t) => {
+    await claimAll(['ZackWord']);
+    const NOTE = 'Nothing here says what is in them. ⭐ marks a location somebody has hinted._';
+
+    const lockedOnly = await askNext(t, answered(logicAnswer('ZackWord', [[1, ['Crate']]], 5, { hintedLocked: 2 })));
+    assert.ok(lockedOnly.final.includes('_Nothing later in logic yet · 4 still locked · ⭐ 2 hinted still locked_\n'),
+        lockedOnly.final);
+    assert.ok(lockedOnly.final.endsWith(NOTE), lockedOnly.final);
+
+    const reachable = await askNext(t, answered(logicAnswer('ZackWord', [[1, ['Crate']]], 5, { hinted: ['Crate'] })));
+    assert.ok(reachable.final.includes('**ZackWord** — sphere 1: 1 in logic\n⭐ Crate\n'), reachable.final);
+    assert.ok(reachable.final.endsWith(NOTE), reachable.final);
+
+    const none = await askNext(t, answered(inLogic('ZackWord', ['Crate'], 5)));
+    assert.ok(!none.final.includes('⭐'), none.final);
+    assert.ok(none.final.endsWith(`${LEAD}Nothing here says what is in them._`), none.final);
+});
+
+// The note goes by what the message shows, and a slot cut for length shows nothing.
+test('a hinted slot cut from a long reply leaves no star and no note about one', async (t) => {
+    const slots = Array.from({ length: 25 }, (_, i) => `ZackSlot${String(i + 1).padStart(2, '0')}`);
+    await claimAll(slots);
+    const reply = await askNext(t, answered(...slots.map((name, i) => logicAnswer(name, [[25 - i, numbered('Loc', 50)]], 60,
+        i === 0 ? { hinted: ['Loc 1'], hintedLocked: 2 } : {}))));
+
+    assert.ok(!reply.final.includes('**ZackSlot01**'), `sphere 25 is cut: ${reply.final}`);
+    assert.ok(!reply.final.includes('⭐'), reply.final);
+    assert.ok(reply.final.length <= 2000, `${reply.final.length} characters`);
+});
+
+// A hinted location the sphere data does not place may not be in the soonest sphere at all.
+test('a hinted location with no known sphere says so rather than reading as part of the soonest', async (t) => {
+    await claimAll(['ZackWord']);
+    const reply = await askNext(t, answered(logicAnswer('ZackWord', [[1, ['Alpha']], [null, ['Mystery']]], 4,
+        { hinted: ['Mystery'] })));
+    assert.ok(reply.final.includes('**ZackWord** — sphere 1: 1 in logic\n⭐ Mystery · sphere unknown\n• Alpha\n'), reply.final);
 });
 
 test('several slots leave out the ones with nothing in logic yet and name them in the footer', async (t) => {
@@ -583,18 +807,28 @@ test('a slot that is not in the multiworld keeps its own line among several', as
     assert.ok(reply.final.includes('**ZackGone** — not a slot in this multiworld.'), reply.final);
 });
 
-test('one slot with names too long for the message gives up names, never its place in the reply', async (t) => {
+// Discord rejects a message over 2,000 characters outright, so a page has to end on the size of
+// what it holds as well as on the count. Escaping turns each underscore into two characters, so a
+// budget measured before it would overrun here.
+test('one slot with names too long for 15 to a page puts fewer on each, keeps every page under Discord\'s limit and loses none', async (t) => {
     await claimAll(['ZackLong']);
-    const long = numbered('A location name long enough that sixteen of them cannot share one Discord message', 16)
-        .map(name => `${name} ${'x'.repeat(30)}`);
-    const reply = await askNext(t, answered(inLogic('ZackLong', long, 40, 1, [[2, 3], [3, 1], [4, 2]])));
+    const long = numbered('A_location_name_long_enough_that_fifteen_of_them_cannot_share_one_Discord_message', 40)
+        .map(name => `${name}_${'x_'.repeat(15)}`);
+    const reply = await askNext(t, answered(inLogic('ZackLong', long, 60, 1, [[2, 3]])));
 
-    assert.ok(reply.final.length <= 2000, `${reply.final.length} characters`);
-    assert.ok(reply.final.includes('**ZackLong** — sphere 1: 16 in logic'), reply.final);
-    assert.match(reply.final, /• …\d+ more in sphere 1/);
-    assert.ok(reply.final.includes('_Also in logic: sphere 2 (3), sphere 3 (1), sphere 4 (2) · 18 still locked_'), reply.final);
-    assert.ok(reply.final.split('\n').filter(line => line.startsWith('• A location')).length < 16, 'some names were given up');
-    assert.ok(!reply.final.includes('more slot(s)'), reply.final);
+    const pages = await allPages(reply);
+    assert.ok(pages.length > 3, `40 long names fit in ${pages.length} pages`);
+    for (const page of pages) {
+        assert.ok(page.content.length <= 2000, `a page is ${page.content.length} characters`);
+        assert.ok(page.content.includes('**ZackLong** — sphere 1: 40 in logic\n'), page.content);
+        assert.ok(page.content.includes('_Also in logic: sphere 2 (3) · 17 still locked_\n'), page.content);
+    }
+    const firstPage = pages[0].content.split('\n').filter(line => line.startsWith('• '));
+    assert.ok(firstPage.length < 15, `${firstPage.length} names on page 1`);
+
+    const listed = pages.flatMap(page => page.content.split('\n').filter(line => line.startsWith('• ')));
+    assert.deepStrictEqual(listed, [...long, ...chests(2, 3)].map(name => `• ${name.replace(/_/g, '\\_')}`),
+        'every name once, in order, escaped');
 });
 
 test('the later-sphere line names six spheres and counts the rest', async (t) => {
@@ -606,13 +840,20 @@ test('the later-sphere line names six spheres and counts the rest', async (t) =>
     reply.final);
 });
 
-test('a soonest sphere generation gave no number to reads as unknown, with no sphere on its "more" line', async (t) => {
+// Spheres with no number sort last, so when the soonest has none, nothing else in logic has one.
+test('a soonest sphere generation gave no number to reads as unknown on every page, with no heading repeating it', async (t) => {
     await claimAll(['ZackNull']);
-    const reply = await askNext(t, answered(inLogic('ZackNull', numbered('Loc', 20), 30, null, [[null, 3]])));
-    assert.ok(reply.final.includes('**ZackNull** — sphere unknown: 20 in logic'), reply.final);
-    assert.ok(reply.final.includes('• …5 more\n'), reply.final);
-    assert.ok(reply.final.includes('_Also in logic: sphere unknown (3) · 7 still locked_'), reply.final);
-    assert.ok(!/no sphere|null/.test(reply.final), reply.final);
+    const reply = await askNext(t, answered(inLogic('ZackNull', numbered('Loc', 20), 30, null)));
+
+    const pages = await allPages(reply);
+    assert.strictEqual(pages.length, 2);
+    for (const page of pages) {
+        assert.ok(page.content.includes('**ZackNull** — sphere unknown: 20 in logic\n'), page.content);
+        assert.ok(page.content.includes('_Nothing later in logic yet · 10 still locked_\n'), page.content);
+        assert.ok(!/_sphere unknown_/i.test(page.content), `the header already says it: ${page.content}`);
+        assert.ok(!/no sphere|null/.test(page.content), page.content);
+    }
+    assert.ok(pages[1].content.includes('**ZackNull** — sphere unknown: 20 in logic\n• Loc 16\n'), pages[1].content);
 });
 
 test('several slots that all have nothing left to check say so, with no empty line under the header', async (t) => {
@@ -673,7 +914,7 @@ test('a sphere 1 fallback block lists its names under the same caps as a logic b
     assert.ok(one.final.includes(
         '**ZackWord** — sphere 1 only: 17 open · 40 further in\n' +
         `${bullets(numbered('Start', 15))}\n` +
-        '• …2 more in sphere 1\n_'), one.final);
+        '_Page 1 of 2_\n_'), one.final);
 
     const several = await askNext(t, fallback(
         sphereOne('ZackWord', numbered('Start', 5), 45, NOT_HERE.reason),
@@ -739,6 +980,17 @@ test('the footer credits the seed\'s own rules only when some slot was answered 
     assert.ok(nothingLeft.final.includes('\n_Nothing here says what is in them. 2 with nothing left to check:'), nothingLeft.final);
 });
 
+// A rebuild that failed fails every slot alike, so "did not match this slot" would send somebody
+// looking at their own yaml for a fault in the Players folder.
+test('a sphere 1 fallback because the seed could not be rebuilt says that, and where to look', async (t) => {
+    await claimAll(['ZackWord']);
+    const reply = await askNext(t, answered(sphereOne('ZackWord', ['Start Chest'], 2, 'rebuild-failed')));
+    assert.ok(reply.final.includes(
+        ' Sphere 1 only where the seed\'s own logic is unavailable (the seed could not be rebuilt; the bot log says why): '),
+        reply.final);
+    assert.ok(!reply.final.includes('did not match this slot'), reply.final);
+});
+
 test('a first !ap next that has to wait for the seed\'s logic says so on its status line', async (t) => {
     await claimAll(['ZackWord']);
     const reply = await askNext(t, answered(inLogic('ZackWord', ['Crate'], 1)), { wait: true });
@@ -750,22 +1002,60 @@ test('a first !ap next that has to wait for the seed\'s logic says so on its sta
     assert.ok(reply.final.includes('**ZackWord** — sphere 1: 1 in logic\n• Crate'), reply.final);
 });
 
-test('with neither the seed\'s logic nor sphere data, the reply starts with why the logic was unavailable', async (t) => {
-    await claimAll(['ZackWord']);
-    const needSpheres = (logic) => ({
-        ok: false,
-        reason: 'need-spheres',
-        want: 'data/archipelago/spheres/Seed_CMD.json',
-        fallback: 'data/archipelago/spoilers/Seed_CMD.txt',
-        logic
+// Where ensureSpheres says a seed's sphere data would be, as it gives them: absolute paths inside
+// the bot's folder.
+const BOT_ROOT = path.join(__dirname, '..');
+const needSpheres = (logic) => ({
+    ok: false,
+    reason: 'need-spheres',
+    want: path.join(BOT_ROOT, 'data', 'archipelago', 'spheres', 'Seed_CMD.json'),
+    fallback: path.join(BOT_ROOT, 'data', 'archipelago', 'spoilers', 'Seed_CMD.txt'),
+    logic
+});
+
+// The install the reply's command is built from. Set per test, since the machine's own setting
+// would otherwise pick which of the two texts a test sees; the space is what makes quoting matter.
+const AP_HOME = path.resolve('/Games/Archipelago 0.6.8');
+function installAt(t, dir) {
+    const saved = config.archipelagoInstallDir;
+    config.archipelagoInstallDir = dir;
+    t.after(() => { config.archipelagoInstallDir = saved; });
+}
+
+// The reply only names a zip that is there, so the tests that want the command make one. Their
+// folders have a space in the name for the same reason AP_HOME does.
+function scratch(t, prefix) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    return dir;
+}
+function zipAt(dir, ...parts) {
+    const file = path.join(dir, ...parts);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, '');
+    return file;
+}
+// The bot's own copies of a seed are looked for as well, so each test says where they are kept
+// rather than reading the live bot's data folder.
+function seedsAt(t, dir) {
+    const saved = process.env.PLEXBOT_AP_SEEDS_DIR;
+    process.env.PLEXBOT_AP_SEEDS_DIR = dir;
+    t.after(() => {
+        if (saved === undefined) delete process.env.PLEXBOT_AP_SEEDS_DIR;
+        else process.env.PLEXBOT_AP_SEEDS_DIR = saved;
     });
+}
+
+test('with neither the seed\'s logic nor sphere data, the reply starts with why the logic was unavailable', async (t) => {
+    installAt(t, AP_HOME);
+    seedsAt(t, scratch(t, 'plexbot-test-cmd-seeds-'));
+    await claimAll(['ZackWord']);
 
     const reply = await askNext(t, needSpheres(NOT_HERE));
     assert.ok(reply.final.startsWith(
         '🧭 I cannot use this seed\'s own logic (this seed was not generated here), ' +
         'and I have no sphere data for it either.\n' +
-        'Without the logic I can still list sphere 1, which needs nothing, given sphere data:\n'), reply.final);
-    assert.ok(reply.final.includes('`data/archipelago/spoilers/Seed_CMD.txt`'), 'the spoiler path is still named');
+        'Sphere 1, which needs nothing, can still be listed'), reply.final);
     assert.ok(!reply.final.includes(INSTALL), `the logic's detail reached the reply: ${reply.final}`);
 
     // A worker's own error is where a traceback full of host paths would come from.
@@ -777,10 +1067,76 @@ test('with neither the seed\'s logic nor sphere data, the reply starts with why 
     assert.ok(failed.final.startsWith(
         '🧭 I cannot use this seed\'s own logic (it could not be loaded; the bot log says why), '), failed.final);
     assert.ok(!failed.final.includes(INSTALL), `the worker's error reached the reply: ${failed.final}`);
+    assert.ok(!failed.final.includes('Rules.py'), `the worker's error reached the reply: ${failed.final}`);
 
     // No reason to give, so it says only what it knows rather than "cannot use ... ()".
     const bare = await askNext(t, needSpheres({ ok: false }));
-    assert.ok(bare.final.startsWith('🧭 I have no sphere data for this multiworld.\nWithout the logic'), bare.final);
+    assert.ok(bare.final.startsWith('🧭 I have no sphere data for this multiworld.\nSphere 1, which needs nothing'), bare.final);
+});
+
+// The command used to read `python scripts/extract-spheres.py <Archipelago>/output/AP_<seed>.zip`.
+// PowerShell will not parse that ("The '<' operator is reserved for future use"), so pasted as it
+// stood it never reached Python. Unquoted, a space in the install path splits it in two.
+test('for a seed generated here, the reply with no sphere data gives the command to run with the install\'s real path, quoted', async (t) => {
+    const home = scratch(t, 'plexbot-test Archipelago-');
+    const zip = zipAt(home, 'output', 'AP_Seed_CMD.zip');
+    installAt(t, home);
+    seedsAt(t, scratch(t, 'plexbot-test-cmd-seeds-'));
+    await claimAll(['ZackWord']);
+    const command = `\`python scripts\\extract-spheres.py "${zip}"\``;
+
+    for (const reason of ['failed', 'no-python']) {
+        const reply = await askNext(t, needSpheres({ ok: false, reason, detail: `${reason} at ${INSTALL}` }));
+        assert.ok(reply.final.endsWith(
+            '\nSphere 1, which needs nothing, can still be listed. From the bot\'s folder, run:\n' + command),
+            `${reason}: ${reply.final}`);
+        assert.ok(!/[<>]/.test(reply.final), `${reason}: a placeholder reached the command: ${reply.final}`);
+        assert.ok(!reply.final.includes('spoiler'), `${reason}: ${reply.final}`);
+    }
+});
+
+// The install's output folder gets cleared out now and then, and the copy kept when the room first
+// connected is the same multidata.
+test('with the install\'s zip gone, the command names the bot\'s own copy of it', async (t) => {
+    installAt(t, scratch(t, 'plexbot-test Archipelago-'));
+    const seeds = scratch(t, 'plexbot-test-cmd-seeds-');
+    seedsAt(t, seeds);
+    const kept = zipAt(seeds, 'Seed_CMD', 'AP_Seed_CMD.zip');
+    await claimAll(['ZackWord']);
+
+    const reply = await askNext(t, needSpheres({ ok: false, reason: 'failed', detail: `failed at ${INSTALL}` }));
+    assert.ok(reply.final.endsWith(`From the bot's folder, run:\n\`python scripts\\extract-spheres.py "${kept}"\``),
+        reply.final);
+});
+
+// The command used to name the install's zip whether or not it was there, so pasted it could fail
+// on a missing file.
+test('with no zip anywhere, the reply names the spoiler\'s place rather than a command that cannot run', async (t) => {
+    installAt(t, scratch(t, 'plexbot-test Archipelago-'));
+    seedsAt(t, scratch(t, 'plexbot-test-cmd-seeds-'));
+    await claimAll(['ZackWord']);
+
+    const reply = await askNext(t, needSpheres({ ok: false, reason: 'failed', detail: `failed at ${INSTALL}` }));
+    assert.ok(!reply.final.includes('extract-spheres'), reply.final);
+    assert.ok(reply.final.includes('can still be listed from the seed\'s spoiler log, saved as'), reply.final);
+});
+
+// No multidata here means nothing for the script to read, so there is no command to offer, and a
+// path on the host would only tell the channel how this PC is laid out.
+test('for a seed generated elsewhere, the reply with no sphere data names the spoiler\'s place inside the bot\'s folder', async (t) => {
+    installAt(t, AP_HOME);
+    await claimAll(['ZackWord']);
+
+    const reply = await askNext(t, needSpheres(NOT_HERE));
+    const spoiler = path.join('data', 'archipelago', 'spoilers', 'Seed_CMD.txt');
+    assert.ok(reply.final.endsWith(
+        `\nSphere 1, which needs nothing, can still be listed from the seed's spoiler log, saved as \`${spoiler}\` ` +
+        'in the bot\'s folder. It only covers the placements the seed\'s completion depends on, about a tenth of them.'),
+        reply.final);
+    assert.ok(!reply.final.includes(BOT_ROOT), `a path on the host reached the reply: ${reply.final}`);
+    assert.ok(!reply.final.includes(AP_HOME), `a path on the host reached the reply: ${reply.final}`);
+    assert.ok(!reply.final.includes('extract-spheres'), reply.final);
+    assert.ok(!/[<>]/.test(reply.final), reply.final);
 });
 
 // Every reason archipelagoLogic.acquire and prepareSuggest give for having no logic. One the

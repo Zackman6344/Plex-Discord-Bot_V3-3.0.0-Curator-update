@@ -21,6 +21,8 @@ const spheres = require('./archipelagoSpheres.js');
 const logic = require('./archipelagoLogic.js');
 // HintStatus 30. Anything else is either unremarkable or already found.
 const HINT_PRIORITY = 30;
+// HintStatus 20: the receiving player has said they do not want it, so it is nobody's priority.
+const HINT_AVOID = 20;
 const claims = require('./archipelagoClaims.js');
 const goals = require('./archipelagoGoals.js');
 const roles = require('./archipelagoRoles.js');
@@ -681,6 +683,8 @@ function attach(state) {
 
         if (phase === 'connected') {
             logger.info(`[AP:${watch.label}] connected to ${detail} as ${watch.slot}`);
+            // Loaded now, so the first `!ap next` after a restart does not wait half a minute.
+            if (isRoomWatch(watch) && client.seedName) logic.prewarm(client.seedName, { label: watch.label });
         } else if (phase === 'disconnected' || phase === 'error') {
             // `expected` marks the first attempt against a room URL, which fails while the web
             // host is still starting the room. Routine, so it goes to debug rather than warn.
@@ -2108,7 +2112,7 @@ async function resolveTrackerId(state) {
  * unavailable, since then it is all there is to answer from.
  *
  * @param {{onWait?: Function, slotNames?: string[]}} [options] onWait runs once if the answer has to
- *   wait for the logic worker to start, which takes about a minute the first time. slotNames, when
+ *   wait for the logic worker to start, which takes about half a minute. slotNames, when
  *   given, lets a question about slots that are all finished skip the worker and the tracker.
  */
 async function prepareSuggest(id, options = {}) {
@@ -2211,11 +2215,27 @@ function resolveSlot(client, slotName) {
 }
 
 /**
+ * Locations in a slot's world that somebody has hinted and is still waiting on, as a Set of ids.
+ * Hints are public in the room already, so marking where one points says nothing new. One the
+ * receiver has marked to avoid is nobody's priority and is left out.
+ */
+function hintedIn(client, slotId) {
+    if (!client || typeof client.hintsToFindIn !== 'function') return new Set();
+    return new Set(client.hintsToFindIn(slotId, client.team)
+        .filter(hint => hint.status !== HINT_AVOID)
+        .map(hint => hint.location));
+}
+
+/**
  * One slot's answer from the logic worker's result.
  *
- * `total` is how many locations are listed and `open` how many are unchecked at all, so the reply
- * can say how much is still locked. An id with no name in the data package is kept as an id rather
- * than dropped: the location is real and worth naming badly.
+ * `total` is how many locations are in logic and `open` how many are unchecked at all, so the
+ * reply can say how much is still locked. `hinted` is what somebody has hinted and the slot can
+ * reach now, any sphere, listed ahead of everything else; `hintedLocked` counts the hinted ones
+ * still out of reach. `all` is the whole list in the order a reply walks it, for paging.
+ *
+ * A name comes from the room's data package, else from the worker's copy of the seed's own, and an
+ * id neither knows is kept as an id rather than dropped: the location is real and worth naming badly.
  */
 function answerFromLogic(client, resolved, result) {
     const { slot, slotId } = resolved;
@@ -2225,11 +2245,16 @@ function answerFromLogic(client, resolved, result) {
     if (!result.open) return { ok: false, reason: 'nothing-left', slot };
 
     const names = client.locationNames.get(client.slotGames.get(slotId));
-    const listed = (result.locations || []).map(([id, sphere]) => ({
-        name: (names && names.get(id)) || `Location#${id}`,
-        sphere: Number.isFinite(sphere) ? sphere : Infinity
+    const hints = hintedIn(client, slotId);
+    const listed = (result.locations || []).map(([id, sphere, workerName]) => ({
+        id,
+        name: (names && names.get(id)) || workerName || `Location#${id}`,
+        sphere: Number.isFinite(sphere) ? sphere : Infinity,
+        hinted: hints.has(id)
     }));
     listed.sort((a, b) => a.sphere - b.sphere || a.name.localeCompare(b.name, undefined, { numeric: true }));
+    const inLogic = new Set(listed.map(l => l.id));
+    const hinted = listed.filter(l => l.hinted);
 
     // The soonest sphere with anything in logic is named and listed; the spheres after it are
     // only counted. Listing them all together read as an arbitrary slice of hundreds of names
@@ -2251,9 +2276,15 @@ function answerFromLogic(client, resolved, result) {
         locations: listed.filter(l => l.sphere === soonest).map(l => l.name),
         sphere: known(soonest),
         later: later.map(group => ({ sphere: known(group.sphere), count: group.count })),
+        hinted: hinted.map(l => ({ name: l.name, sphere: known(l.sphere) })),
+        // Only a verified answer knows what is locked. A sphere 1 answer knows only what is outside
+        // sphere 1, and much of that may well be in logic.
+        hintedLocked: result.verified ? [...hints].filter(id => !inLogic.has(id)).length : 0,
+        all: [...hinted, ...listed.filter(l => !l.hinted)].map(l => ({ name: l.name, sphere: known(l.sphere), hinted: l.hinted })),
         total: listed.length,
         open: result.open,
-        ...(result.verified ? {} : { why: 'unverified' })
+        // A rebuild that failed outright fails every slot alike, which is not this slot's fault.
+        ...(result.verified ? {} : { why: /^could not rebuild/.test(String(result.reason || '')) ? 'rebuild-failed' : 'unverified' })
     };
 }
 
@@ -2315,9 +2346,10 @@ function suggestFor(prep, slotName) {
 /**
  * What is in logic across every slot asked about.
  *
- * Nothing here reads which item is at a location, or prefers one location over another for any
- * reason but its sphere, because the moment it did the answer would be telling somebody what is
- * there. The logic worker reads the items a slot has RECEIVED, which that player already knows.
+ * Nothing here reads which item is at a location to order or pick what is shown: locations go by
+ * sphere and name, after any somebody has hinted, which the room has already seen. The logic worker
+ * puts the seed's own items back to judge rules that look at them (Dungeon Defenders'), and reads
+ * the items each slot has RECEIVED, which that player already knows.
  *
  * @param {{onWait?: Function}} [options] passed to prepareSuggest
  * @returns {Promise<{ok: boolean, reason?: string, want?: string, results?: Array, logic?: Object}>}
@@ -2351,15 +2383,20 @@ async function answerAll(prep, names, dirs = SPHERE_DIRS) {
     // Every slot already settled (finished, or not in this room) needs nothing from the worker,
     // and asking a worker that has died meanwhile would turn those answers into a failure.
     if (asked.length === 0) return { ok: true, logic: prep.logic, results: resolved };
+    // Every slot's items, not only the asked slots': a rule in one world can wait on another
+    // slot's items, as Dungeon Defenders' do. [item, location, flags]: the location is what tells
+    // an item handed out by /send or !getitem (location -1, flags 0) from one somebody found.
+    const received = {};
+    for (const [key, items] of prep.receivedItems || []) {
+        const [team, slot] = String(key).split(':');
+        if (Number(team) === Number(client.team)) received[slot] = items.map(item => [item[0], item[1], item[3]]);
+    }
     let answers;
     try {
         answers = await prep.worker.inLogic(asked.map(r => ({
             slot: r.slotId,
-            // [item, location, flags]: the location is what tells an item handed out by /send
-            // or !getitem (location -1, flags 0) from one somebody found.
-            received: (prep.receivedItems.get(`${client.team}:${r.slotId}`) || []).map(item => [item[0], item[1], item[3]]),
             checked: prep.checkedIds.get(`${client.team}:${r.slotId}`) || []
-        })));
+        })), received);
     } catch (err) {
         // The worker died or stalled mid-question. Sphere 1 still answers, if there is sphere
         // data to take it from.

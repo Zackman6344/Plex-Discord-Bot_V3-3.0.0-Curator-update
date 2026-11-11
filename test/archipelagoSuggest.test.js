@@ -963,15 +963,17 @@ test('later spheres come in sphere order, each counted exactly, with no group fo
     ]);
 });
 
-test('a later sphere is never named, only counted', () => {
-    // The reply has room for one sphere's names. A name from a later sphere listed beside them
-    // would read as somewhere to go now.
+test('a later sphere is never listed among the soonest, and the full list keeps each location in its own sphere', () => {
+    // A several-slot reply shows the soonest sphere's names under that sphere's count, so a later
+    // name among them would be miscounted and labelled with the wrong sphere. A one-slot reply
+    // pages through every name and heads each later sphere, which takes every entry's own sphere.
     const out = fromLogic({ slot: 4, verified: true, locations: [[82002, 2], [82000, 1], [82003, null]], open: 3 });
     assert.deepStrictEqual(out.locations, ['Power Bomb (Crateria surface)']);
-    const serialised = JSON.stringify(out);
-    for (const later of ['Ridley', 'Morphing Ball']) {
-        assert.ok(!serialised.includes(later), `${later} was named`);
-    }
+    assert.deepStrictEqual(out.all, [
+        { name: 'Power Bomb (Crateria surface)', sphere: 1, hinted: false },
+        { name: 'Ridley', sphere: 2, hinted: false },
+        { name: 'Morphing Ball', sphere: null, hinted: false }
+    ]);
 });
 
 test('the total counts everything in logic: the names listed plus every later sphere\'s count', () => {
@@ -1070,42 +1072,241 @@ test('no logic answer carries an item, even when the worker\'s reason names one'
     assert.ok(!JSON.stringify(out).includes('Progressive Sword'));
 });
 
+// --- hinted locations, and names the worker supplies -------------------------------------------
+//
+// A hint is public in the room from the moment it is taken, so leading with the locations somebody
+// is waiting on tells nobody anything new. Which hints count is decided by the real client's own
+// reading of the server's `_read_hints_` answer, fed below the way the server feeds it, so "still
+// waiting on" means here what it means live.
+
+const { ArchipelagoClient } = require('../helpers/archipelagoClient.js');
+
+/** One hint as the server stores it: in DaveSMetroid's world and for ZackWord unless said otherwise. */
+function hint(over) {
+    return {
+        receiving_player: 28, finding_player: 4, location: 82002,
+        item: 77009, found: false, entrance: '', item_flags: 1, status: 0,
+        ...over
+    };
+}
+
+/** The test client, reading these hints through the real client, each filed under its finder's slot. */
+function hinting(hints, client = prep({}).client) {
+    const real = new ArchipelagoClient({ target: { kind: 'direct', host: 'x', port: 1 }, slot: 's' });
+    const answer = {};
+    for (const h of hints) {
+        const key = `_read_hints_${client.team}_${h.finding_player}`;
+        answer[key] = [...(answer[key] || []), h];
+    }
+    real._absorbHints(answer);
+    client.hintsToFindIn = (slot, team) => real.hintsToFindIn(slot, team);
+    return client;
+}
+
+test('a hinted location in a later sphere leads the full list and keeps its own sphere', () => {
+    // Lifted above the soonest sphere's names, it would read as one of them without its sphere
+    // beside it. It still counts toward that sphere, which the closing "Also in logic" line reports.
+    const client = hinting([hint({ location: 82002, status: 30 })]);
+    const out = fromLogic({ slot: 4, verified: true, locations: [[82000, 1], [82001, 1], [82002, 2]], open: 5 },
+        'DaveSMetroid', client);
+    assert.deepStrictEqual(out.hinted, [{ name: 'Ridley', sphere: 2 }]);
+    assert.deepStrictEqual(out.all, [
+        { name: 'Ridley', sphere: 2, hinted: true },
+        { name: 'Power Bomb (Crateria surface)', sphere: 1, hinted: false },
+        { name: 'X-Ray Scope', sphere: 1, hinted: false }
+    ]);
+    assert.deepStrictEqual(out.locations, ['Power Bomb (Crateria surface)', 'X-Ray Scope']);
+    assert.deepStrictEqual(out.later, [{ sphere: 2, count: 1 }]);
+    assert.strictEqual(out.total, 3);
+});
+
+test('a hinted location in the soonest sphere still counts among that sphere\'s names', () => {
+    // The several-slot header counts the soonest sphere from this list. The reply leaves out the
+    // repeat when it lists the starred names first.
+    const client = hinting([hint({ location: 82001 })]);
+    const out = fromLogic({ slot: 4, verified: true, locations: [[82000, 1], [82001, 1]], open: 2 }, 'DaveSMetroid', client);
+    assert.deepStrictEqual(out.locations, ['Power Bomb (Crateria surface)', 'X-Ray Scope']);
+    assert.deepStrictEqual(out.hinted, [{ name: 'X-Ray Scope', sphere: 1 }]);
+    assert.deepStrictEqual(out.all.map(e => e.name), ['X-Ray Scope', 'Power Bomb (Crateria surface)']);
+});
+
+test('the full list puts the hinted first, then the rest by sphere and natural name order, each once', () => {
+    // Scrambled the way a worker's reply can arrive. In both groups the sphere decides before the
+    // name, a name decides in natural order ("Layer 67" before "Layer 100"), and no known sphere
+    // goes after every known one.
+    const { client } = prep({});
+    const names = client.locationNames.get('Super Metroid');
+    const ids = {
+        'Layer 100': 82010, 'Layer 67': 82011, 'Layer 9': 82012, 'Layer 10': 82013,
+        'Layer 8': 82014, 'Layer 70': 82015, 'Layer 7': 82016
+    };
+    for (const [name, id] of Object.entries(ids)) names.set(id, name);
+    hinting([hint({ location: 82014 }), hint({ location: 82015 }), hint({ location: 82016 })], client);
+
+    const out = fromLogic({
+        slot: 4,
+        verified: true,
+        locations: [[82013, null], [82014, 3], [82010, 1], [82016, null], [82012, 2], [82015, 1], [82011, 1]],
+        open: 9
+    }, 'DaveSMetroid', client);
+    assert.deepStrictEqual(out.all, [
+        { name: 'Layer 70', sphere: 1, hinted: true },
+        { name: 'Layer 8', sphere: 3, hinted: true },
+        { name: 'Layer 7', sphere: null, hinted: true },
+        { name: 'Layer 67', sphere: 1, hinted: false },
+        { name: 'Layer 100', sphere: 1, hinted: false },
+        { name: 'Layer 9', sphere: 2, hinted: false },
+        { name: 'Layer 10', sphere: null, hinted: false }
+    ]);
+    assert.strictEqual(out.all.length, out.total);
+    assert.deepStrictEqual(out.hinted, out.all.filter(e => e.hinted).map(({ name, sphere }) => ({ name, sphere })),
+        'the several-slot reply stars them in the same order');
+});
+
+test('a hint marked avoid is neither starred nor counted as locked, and every other status is starred', () => {
+    // Status 20 is the receiving player saying they do not want the item. Every other outstanding
+    // status still has somebody waiting.
+    for (const status of [0, 10, 30]) {
+        const client = hinting([hint({ location: 82002, status })]);
+        const out = fromLogic({ slot: 4, verified: true, locations: [[82001, 1], [82002, 2]], open: 3 }, 'DaveSMetroid', client);
+        assert.deepStrictEqual(out.hinted, [{ name: 'Ridley', sphere: 2 }], `status ${status}`);
+    }
+
+    const client = hinting([hint({ location: 82002, status: 20 }), hint({ location: 82003, status: 20 })]);
+    const out = fromLogic({ slot: 4, verified: true, locations: [[82001, 1], [82002, 2]], open: 3 }, 'DaveSMetroid', client);
+    assert.deepStrictEqual(out.hinted, []);
+    assert.deepStrictEqual(out.all.map(e => e.hinted), [false, false]);
+    assert.strictEqual(out.hintedLocked, 0, 'the avoided one out of logic is not counted either');
+});
+
+test('a hint already found is neither starred nor counted as locked', () => {
+    // Found means checked, so the worker no longer lists it. Counted, it would sit under "hinted
+    // still locked" for the rest of the seed.
+    const client = hinting([hint({ location: 82003, found: true, status: 40 }), hint({ location: 82002 })]);
+    const out = fromLogic({ slot: 4, verified: true, locations: [[82001, 1], [82002, 2]], open: 3 }, 'DaveSMetroid', client);
+    assert.deepStrictEqual(out.hinted, [{ name: 'Ridley', sphere: 2 }]);
+    assert.strictEqual(out.hintedLocked, 0);
+});
+
+test('a hinted location out of logic is counted, never named', () => {
+    // Named, it would read as somewhere to go now.
+    const client = hinting([hint({ location: 82002 }), hint({ location: 82003 })]);
+    const out = fromLogic({ slot: 4, verified: true, locations: [[82001, 1]], open: 4 }, 'DaveSMetroid', client);
+    assert.strictEqual(out.hintedLocked, 2);
+    assert.deepStrictEqual(out.hinted, []);
+    const serialised = JSON.stringify(out);
+    for (const name of ['Ridley', 'Morphing Ball']) assert.ok(!serialised.includes(name), `${name} was named`);
+});
+
+test('a hint in another slot\'s world never stars or counts a location of the same id in this one', () => {
+    // Location ids are unique only within a game, so the finding slot decides whose world a hint
+    // points into. 91000 is Kraid in Super Metroid here and Used A in Wordipelago.
+    const client = hinting([
+        hint({ finding_player: 28, receiving_player: 4, location: 91000 }),
+        hint({ finding_player: 28, receiving_player: 4, location: 91001 })
+    ]);
+    client.locationNames.get('Super Metroid').set(91000, 'Kraid');
+    const reply = { verified: true, locations: [[91000, 1]], open: 2 };
+
+    const dave = fromLogic({ slot: 4, ...reply }, 'DaveSMetroid', client);
+    assert.deepStrictEqual(dave.hinted, []);
+    assert.strictEqual(dave.hintedLocked, 0);
+    const word = fromLogic({ slot: 28, ...reply }, 'ZackWord', client);
+    assert.deepStrictEqual(word.hinted, [{ name: 'Used A', sphere: 1 }]);
+    assert.strictEqual(word.hintedLocked, 1);
+});
+
+test('a hinted answer never carries the item its hint names', () => {
+    // The reply's footer says "Nothing here says what is in them", and a hint names exactly that.
+    const client = hinting([hint({ location: 82002, item: 77009 }), hint({ location: 82003, item: 77010 })]);
+    const out = fromLogic({ slot: 4, verified: true, locations: [[82002, 2]], open: 3 }, 'DaveSMetroid', client);
+    assert.strictEqual(out.hinted.length, 1, 'the hint was read');
+    const serialised = JSON.stringify(out);
+    for (const item of ['77009', '77010']) assert.ok(!serialised.includes(item), `item ${item} leaked into the answer`);
+});
+
+test('a client with no hint reader still answers, with nothing starred', () => {
+    // Exported, and called with whatever client a caller built. One built before hints were read
+    // must not take the command down.
+    const { client } = prep({});
+    assert.strictEqual(client.hintsToFindIn, undefined);
+    const out = fromLogic({ slot: 4, verified: true, locations: [[82001, 1], [82002, 2]], open: 3 }, 'DaveSMetroid', client);
+    assert.strictEqual(out.ok, true);
+    assert.deepStrictEqual(out.hinted, []);
+    assert.strictEqual(out.hintedLocked, 0);
+    assert.deepStrictEqual(out.all, [
+        { name: 'X-Ray Scope', sphere: 1, hinted: false },
+        { name: 'Ridley', sphere: 2, hinted: false }
+    ]);
+});
+
+test('a name the data package lacks comes from the worker before falling back to Location#<id>', () => {
+    // The worker carries the names in the seed's own data package. The room's come first, so a
+    // location reads the same here as in the room's log lines and hint list.
+    const out = fromLogic({
+        slot: 4,
+        verified: true,
+        locations: [[82001, 1, 'X-Ray Scope (the worker\'s)'], [999998, 1, 'Spore Spawn'], [999999, 1]],
+        open: 3
+    });
+    assert.deepStrictEqual(out.locations, ['Location#999999', 'Spore Spawn', 'X-Ray Scope']);
+});
+
+test('while the room\'s data package is still downloading, the worker\'s names stand in', () => {
+    const { client } = prep({});
+    client.locationNames = new Map();
+    const out = fromLogic({ slot: 4, verified: true, locations: [[82001, 1, 'X-Ray Scope'], [82002, 2, 'Ridley']], open: 2 },
+        'DaveSMetroid', client);
+    assert.deepStrictEqual(out.locations, ['X-Ray Scope']);
+    assert.deepStrictEqual(out.all.map(e => e.name), ['X-Ray Scope', 'Ridley']);
+});
+
 // --- asking the worker about every slot at once ------------------------------------------------
 //
-// One request covers every slot asked about. The tracker keys its rows "team:slot" and lists each
-// received item as [item, location, finder, flags]; the worker wants a slot number and
-// [item, location, flags]. The flags are what generation classified that copy as, which is not
-// always what its name says, and the worker needs them to rebuild the item as it was. The location
-// is what tells a found item from one the server handed out (/send, !getitem), which arrives at a
-// negative location with flags 0 whatever the item is.
+// One request covers every slot asked about, and carries the received items of every slot on the
+// client's team besides. A rule in one world can wait on another slot's items: the Dungeon Defenders
+// apworld wraps every location's rule so that a location holding one of its hero actions is only in
+// logic once the Defenders player has that hero, whichever world the location is in. The worker that
+// judged each slot on its own items failed its self-check on 8 of the live room's 35 slots.
+//
+// The tracker keys its rows "team:slot" and lists each received item as [item, location, finder,
+// flags]; the worker is asked with a slot number and its checked ids, and told the items by slot
+// number as [item, location, flags]. The flags are what generation classified that copy as, which is
+// not always what its name says, and the worker needs them to rebuild the item as it was. The
+// location is what tells a found item from one the server handed out (/send, !getitem), which
+// arrives at a negative location with flags 0 whatever the item is.
 
 /**
  * A prepared read with a logic worker in it, the way prepareSuggest returns one when the seed's
- * logic loaded. `reply` answers one query; `asked` keeps every batch the worker was sent.
+ * logic loaded. `reply` answers one query; `asked` keeps every batch of queries the worker was sent,
+ * and `told` the received items that came with each.
  */
 function logicPrep(checked, received, reply, over) {
     const p = prep(checked, over);
     const asked = [];
+    const told = [];
     p.logic = { ok: true };
     p.spheres = null;
     p.receivedItems = new Map(Object.entries(received || {}));
     p.worker = {
-        inLogic: async (queries) => {
+        inLogic: async (queries, items) => {
             asked.push(queries);
+            told.push(items);
             return queries.map(q => (reply ? reply(q) : { slot: q.slot, verified: true, locations: [], open: 1 }));
         }
     };
     p.asked = asked;
+    p.told = told;
     return p;
 }
 
-test('the worker is asked with the slot number, received items as [item, location, flags], and checked ids', async () => {
+test('the worker is asked with the slot number and checked ids, and told the items as [item, location, flags]', async () => {
     const p = logicPrep(
         { '0:4': [82000, 82001] },
         { '0:4': [[77001, 91000, 28, 1], [77002, 82000, 4, 0]] });
     await monitor.answerAll(p, ['DaveSMetroid']);
-    assert.deepStrictEqual(p.asked,
-        [[{ slot: 4, received: [[77001, 91000, 1], [77002, 82000, 0]], checked: [82000, 82001] }]]);
+    assert.deepStrictEqual(p.asked, [[{ slot: 4, checked: [82000, 82001] }]]);
+    assert.deepStrictEqual(p.told, [{ 4: [[77001, 91000, 1], [77002, 82000, 0]] }]);
 });
 
 test('an item the server handed out reaches the worker with its negative location intact', async () => {
@@ -1113,7 +1314,7 @@ test('an item the server handed out reaches the worker with its negative locatio
     // given by /send would be rebuilt as filler and everything it unlocks left out of logic.
     const p = logicPrep({}, { '0:4': [[77003, -1, 0, 0], [77004, -2, 0, 0]] });
     await monitor.answerAll(p, ['DaveSMetroid']);
-    assert.deepStrictEqual(p.asked[0][0].received, [[77003, -1, 0], [77004, -2, 0]]);
+    assert.deepStrictEqual(p.told[0][4], [[77003, -1, 0], [77004, -2, 0]]);
 });
 
 test('the worker is asked about the client\'s team, never another team\'s row or a bare slot number', async () => {
@@ -1124,13 +1325,35 @@ test('the worker is asked about the client\'s team, never another team\'s row or
         { '1:4': [[77001, 91000, 28, 1]], '0:4': [[66001, 1, 1, 1]], 4: [[55001, 1, 1, 1]] });
     p.client.team = 1;
     await monitor.answerAll(p, ['DaveSMetroid']);
-    assert.deepStrictEqual(p.asked, [[{ slot: 4, received: [[77001, 91000, 1]], checked: [82000] }]]);
+    assert.deepStrictEqual(p.asked, [[{ slot: 4, checked: [82000] }]]);
+    assert.deepStrictEqual(p.told, [{ 4: [[77001, 91000, 1]] }]);
+});
+
+test('the worker is told the items of every slot on the team, asked about or not, and none of another team\'s', async () => {
+    // Slot 9 is somebody nobody asked about, and ZackWord has goaled; what either received still
+    // counts toward a rule that waits on it. Team 1's slots 4 and 9 are other players who happen
+    // to share the numbers.
+    const p = logicPrep({}, {
+        '0:4': [[77001, 91000, 28, 1]],
+        '0:9': [[77003, 82001, 4, 1]],
+        '0:28': [[77002, 82000, 4, 1]],
+        '1:4': [[66001, 82002, 4, 1]],
+        '1:9': [[66002, 82003, 4, 1]]
+    }, null, { finished: { 28: 'goaled' } });
+    await monitor.answerAll(p, ['DaveSMetroid', 'ZackWord']);
+    assert.deepStrictEqual(p.asked, [[{ slot: 4, checked: [] }]], 'only the slot still playing is asked about');
+    assert.deepStrictEqual(p.told, [{
+        4: [[77001, 91000, 1]],
+        9: [[77003, 82001, 1]],
+        28: [[77002, 82000, 1]]
+    }]);
 });
 
 test('a slot with no tracker row is asked about with nothing received and nothing checked', async () => {
     const p = logicPrep({}, {});
     await monitor.answerAll(p, ['ZackWord']);
-    assert.deepStrictEqual(p.asked, [[{ slot: 28, received: [], checked: [] }]]);
+    assert.deepStrictEqual(p.asked, [[{ slot: 28, checked: [] }]]);
+    assert.deepStrictEqual(p.told, [{}]);
 });
 
 test('finished and unknown slots are answered without being sent to the worker', async () => {
@@ -1138,7 +1361,7 @@ test('finished and unknown slots are answered without being sent to the worker',
     // number to ask with.
     const p = logicPrep({}, {}, null, { finished: { 28: 'goaled' } });
     const out = await monitor.answerAll(p, ['ZackWord', 'NotARealSlot', 'DaveSMetroid']);
-    assert.deepStrictEqual(p.asked, [[{ slot: 4, received: [], checked: [] }]]);
+    assert.deepStrictEqual(p.asked, [[{ slot: 4, checked: [] }]]);
     assert.deepStrictEqual(out.results[0], { ok: false, reason: 'finished', slot: 'ZackWord', how: 'goaled' });
     assert.deepStrictEqual(out.results[1], { ok: false, reason: 'unknown-slot', slot: 'NotARealSlot' });
     assert.strictEqual(out.results[2].mode, 'logic');

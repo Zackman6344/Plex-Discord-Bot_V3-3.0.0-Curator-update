@@ -5,25 +5,33 @@ Why this exists
 `!ap next` used to guess from sphere numbers: a slot that had checked something in sphere N was
 taken to reach everything at or below N. Spheres describe the whole multiworld, not one player,
 so that listed thousands of locations whose items had not arrived yet. The only real answer is the
-one Archipelago itself gives: evaluate each location's access rule against the items the slot has
-received. Universal Tracker does that for one player at a time; this does it for every slot of a
-seed generated on this machine, from the same Archipelago install that generated it.
+one Archipelago itself gives: evaluate each location's access rule against the items received.
+Universal Tracker does that for one player at a time; this does it for every slot of a seed
+generated on this machine, from the same Archipelago install that generated it.
 
 How
 ---
 1. Import the frozen Archipelago install as a library. It is a cx_Freeze build, so its compiled
-   modules only load into the same Python minor version it was built with (3.13 for 0.6.7), and
+   modules only load into the same Python minor version it was built with (3.13 for 0.6.x), and
    only once a few things cx_Freeze's own startup does are repeated here (see bootstrap()).
-2. Re-roll the Players yamls with the seed's real number and run generation unchanged up to the
-   fill. Everything that decides logic (options, regions, rules, entrances, events, locked items)
-   is settled by then; the fill only places items, and it is the nine minutes of the run. The
+2. Re-roll the seed's yamls with its real number and run generation unchanged up to the fill.
+   Everything that decides logic (options, regions, rules, entrances, events, locked items) is
+   settled by then; the fill only places items, and it is the nine minutes of the run. The
    multidata has only the seed NAME, which is derived from the number. The number is on the first
    line of the spoiler inside the same output zip, and in the Generate log, which Archipelago
-   deletes after a week.
-3. Check the rebuild against the seed's multidata before trusting it: every slot's location ids,
-   then generation's own spheres replayed through the same evaluation queries use. A slot that
-   disagrees anywhere is answered with sphere 1 only, which needs nothing by definition.
-4. Answer queries until stdin closes.
+   deletes after a week. The yamls come from --players-dir, the bot's own copy of the ones the
+   Generate log names, because the Players folder moves on to the next async.
+3. Put generation's real items back into the rebuilt locations. Some rules read what a location
+   holds: Dungeon Defenders wraps every location in the multiworld so that one holding a hero's
+   action is only in logic once that hero has been received (hero_logic.install_hero_order_rule).
+4. Check the rebuild against the multidata before trusting it, by replaying generation's own
+   spheres: one state holding every slot's items, as the sphere search held them, must make
+   exactly each sphere's locations reachable in turn. A slot that disagrees anywhere is answered
+   with sphere 1 only, which needs nothing by definition. So is every slot when the rebuild cannot
+   be made at all; the multidata alone still says what sphere 1 is.
+5. Answer queries until stdin closes, each against one state built from every slot's received
+   items. A rule reading another slot's items (the Dungeon Defenders one above) is then answered
+   the way generation answered it, which a state holding one slot's items cannot do.
 
 Nothing is written into the Archipelago install. An audit hook refuses any attempt, and host.yaml's
 save-on-exit, ROM file dialogs and pip auto-updates are all switched off first.
@@ -35,24 +43,31 @@ freely while they import, so file descriptor 1 is pointed at stderr before anyth
 the protocol keeps a duplicate of the real one to itself.
 
   event    {"event": "progress", "stage": "importing"|"building"|"checking"}
-  event    {"event": "ready", "seedName": str, "slots": {slot: {"verified": bool, "reason"?: str}}, ...}
+  event    {"event": "ready", "seedName": str, "slots": {slot: {"verified": bool, "reason"?: str}},
+            "rebuildError": str|null, "injected": {...}|null, ...}
   event    {"event": "fatal", "error": str}                        (then exit 1)
-  request  {"id": n, "op": "inLogic", "slots": [{"slot": int, "received": [[item, location, flags], ...],
-                                                 "checked": [location, ...]}, ...]}
+  request  {"id": n, "op": "inLogic", "received": {slot: [[item, location, flags], ...]},
+            "slots": [{"slot": int, "checked": [location, ...]}, ...]}
   reply    {"id": n, "ok": true, "results": [{"slot": int, "verified": bool, "locations":
-            [[location, sphere|null], ...], "open": int, "reason"?: str} | {"slot": int, "error": str}]}
+            [[location, sphere|null, name|null], ...], "open": int, "reason"?: str}
+            | {"slot": int, "error": str}]}
   request  {"id": n, "op": "ping"}  ->  {"id": n, "ok": true}
 
-`received` is the tracker's NetworkItems for the slot, less the finder. `locations` is every
-unchecked location in logic when `verified`, and the unchecked sphere 1 locations when not. `open`
-counts every unchecked location either way.
+`received` holds every slot's NetworkItems from the room tracker, less the finder, whichever slots
+are asked about. `locations` is every unchecked location in logic when `verified`, and the
+unchecked sphere 1 locations when not. `open` counts every unchecked location either way. Names
+come from the data package inside the multidata.
 
 Usage
 -----
     <python 3.13> -O -s -S -B scripts/ap-logic-worker.py --ap-dir C:\\ProgramData\\Archipelago \\
-        --seed-name <seed name> --multidata <AP_<seed name>.zip> [--seed <seed number>]
+        --seed-name <seed name> --multidata <AP_<seed name>.zip> [--seed <seed number>] \\
+        [--players-dir <folder of the seed's yamls>] [--plando <the run's plando options>]
 
---seed is only needed when the output zip carries no spoiler to read the number from.
+--seed is only needed when the output zip carries no spoiler to read the number from. Without
+--players-dir the install's own Players folder is rolled, less any yaml whose players are not the
+seed's (select_players). --plando is the run's own setting from its Generate log, since host.yaml's
+may have changed since.
 
 -O because the frozen build compiled everything with optimize=1, and an assert that fires here but
 was stripped there would make the rebuild differ. -s -S so nothing installed into this Python can
@@ -64,6 +79,7 @@ import json
 import os
 import sys
 import time
+from collections import defaultdict
 
 T0 = time.perf_counter()
 
@@ -93,6 +109,8 @@ def parse_args(argv):
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--seed-name", required=True)
     parser.add_argument("--multidata", required=True)
+    parser.add_argument("--players-dir", default=None)
+    parser.add_argument("--plando", default=None)
     return parser.parse_args(argv)
 
 
@@ -235,7 +253,60 @@ class StopBeforeFill(Exception):
         self.multiworld = multiworld
 
 
-def rebuild(seed, seed_name, multidata):
+def select_players(multidata):
+    """The Players folder's yamls whose players are this seed's, copied to a folder of their own, or
+    None when the folder holds nothing else or cannot be read.
+
+    For a seed the bot never copied while its Generate log still named the files: the folder has
+    usually moved on to the next async, and one yaml too many renumbers every slot after it. A file
+    is the seed's when every player it holds is named like one of the seed's slots. A name with
+    {player} or {number} in it is matched as a pattern, and one that is not a plain string (weighted)
+    cannot be told apart, so its file is kept. Runs before anything is rolled, so the global random
+    stream is untouched; the rolled names and games are still checked against the seed afterwards.
+    """
+    import re
+    import shutil
+    import tempfile
+    import Generate
+    import settings
+
+    folder = str(settings.get_settings().generator.player_files_path)
+    names = {getattr(info, "name", None) for info in (multidata.get("slot_info") or {}).values()
+             if not getattr(info, "group_members", None)}
+
+    def matches(name):
+        if not isinstance(name, str):
+            return True
+        if "{" in name:
+            pattern = re.escape(name)
+            for key in ("player", "PLAYER", "number", "NUMBER"):
+                pattern = pattern.replace(re.escape("{" + key + "}"), r"\d*")
+            return any(isinstance(n, str) and re.fullmatch(pattern, n) for n in names)
+        return name in names
+
+    keep, extra = [], False
+    for entry in sorted(os.scandir(folder), key=lambda e: e.name.casefold()):
+        if not entry.is_file() or entry.name.startswith(".") or entry.name.lower().endswith(".ini"):
+            continue
+        try:
+            documents = [d for d in Generate.read_weights_yamls(entry.path) if d]
+        except Exception:
+            keep.append(entry.path)
+            continue
+        if all(matches(d.get("name") if isinstance(d, dict) else None) for d in documents):
+            keep.append(entry.path)
+        else:
+            extra = True
+    if not extra:
+        return None
+    chosen = tempfile.mkdtemp(prefix="ap-players-")
+    for path in keep:
+        shutil.copy2(path, chosen)
+    print(f"rolling {len(keep)} of the Players folder's yamls, the ones whose players are seed slots", file=sys.stderr)
+    return chosen
+
+
+def rebuild(seed, seed_name, multidata, players_dir=None, plando=None):
     """The seed's MultiWorld with every rule in place and nothing filled.
 
     Generate.main first and only then anything that imports worlds: options are rolled from the
@@ -252,20 +323,28 @@ def rebuild(seed, seed_name, multidata):
     if "worlds" in sys.modules:
         raise RuntimeError("worlds were imported before the yamls were rolled")
     scratch = tempfile.mkdtemp(prefix="ap-logic-")
-    args = Generate.mystery_argparse(["--seed", str(seed), "--skip_output", "--outputpath", scratch])
+    argv = ["--seed", str(seed), "--skip_output", "--outputpath", scratch]
+    if players_dir:
+        argv += ["--player_files_path", players_dir]
+    if plando is not None:
+        argv += ["--plando", plando]
+    args = Generate.mystery_argparse(argv)
+    # The run's own settings rather than today's host.yaml: main() has refused a race seed already,
+    # and a race flag set since for another async would reseed the roll from the clock.
+    args.race = False
     erargs, rolled_seed = Generate.main(args)
     if str(erargs.outputname) != str(seed_name):
         raise RuntimeError(f"seed {seed} rolls as {erargs.outputname}, not {seed_name}")
-    # The seed name comes from the seed number alone, so it cannot notice a Players folder that
-    # moved on to the next async. Players are numbered in filename order, so one yaml added or
-    # removed renumbers every slot after it; caught here, before the half-minute build.
+    # The seed name comes from the seed number alone, so it cannot notice a yaml folder that moved
+    # on to the next async. Players are numbered in filename order, so one yaml added or removed
+    # renumbers every slot after it; caught here, before the half-minute build.
     expected = {int(slot): (getattr(info, "name", None), getattr(info, "game", None))
                 for slot, info in (multidata.get("slot_info") or {}).items()
                 if not getattr(info, "group_members", None)}
     rolled = {int(p): (erargs.name[p], erargs.game[p]) for p in erargs.name}
     if rolled != expected:
         differing = sorted(p for p in set(rolled) | set(expected) if rolled.get(p) != expected.get(p))
-        raise RuntimeError(f"the Players folder no longer matches seed {seed_name} "
+        raise RuntimeError(f"the yamls no longer match seed {seed_name} "
                            f"({len(differing)} slot(s) differ, first slot {differing[0]})")
 
     import Main
@@ -295,19 +374,71 @@ def rebuild(seed, seed_name, multidata):
     return multiworld
 
 
-class Logic:
-    def __init__(self, multiworld, multidata):
-        from BaseClasses import CollectionState, ItemClassification
+def inject_placements(multiworld, multidata):
+    """Put generation's real items into the rebuilt, unfilled locations.
 
-        self.CollectionState = CollectionState
-        self.ItemClassification = ItemClassification
+    The pool's own Items go back where the multidata says they went, matched by receiver, code
+    and flags the way the fill handed them out, so a rule that looks at what a location holds sees
+    what it saw during generation. An item the pool cannot supply is made fresh.
+    """
+    from BaseClasses import ItemClassification
+
+    by_flags, by_code = defaultdict(list), defaultdict(list)
+    for item in multiworld.itempool:
+        code = item.code if isinstance(item.code, int) else \
+            multiworld.worlds[item.player].item_name_to_id.get(item.name)
+        by_flags[(item.player, code, item.flags)].append(item)
+        by_code[(item.player, code)].append(item)
+
+    def take(spares):
+        while spares:
+            item = spares.pop()
+            if item.location is None:
+                return item
+        return None
+
+    by_address = {(l.player, l.address): l for l in multiworld.get_locations() if isinstance(l.address, int)}
+    counts = {"placed": 0, "made": 0, "missing": 0}
+    for player, table in multidata["locations"].items():
+        for address, entry in table.items():
+            location = by_address.get((player, address))
+            if location is None or location.item is not None:
+                continue
+            code, receiver, flags = entry[:3]
+            item = take(by_flags.get((receiver, code, flags), [])) or take(by_code.get((receiver, code), []))
+            if item is None:
+                world = multiworld.worlds.get(receiver)
+                try:
+                    item = world.create_item(world.item_id_to_name[code])
+                    counts["made"] += 1
+                except Exception:
+                    counts["missing"] += 1
+                    continue
+            # Upgrades a world makes after the fill (Stardew's) reach the multidata as flags.
+            if flags & 1 and not item.advancement:
+                item.classification |= ItemClassification.progression
+            location.item = item
+            item.location = location
+            counts["placed"] += 1
+    return counts
+
+
+class Logic:
+    """What the rebuild says is in logic, or, with no rebuild, what the multidata alone says."""
+
+    def __init__(self, multiworld, multidata):
         self.multiworld = multiworld
         self.addressed = {}
-        self.events = {}
-        for player in multiworld.player_ids:
-            locations = multiworld.get_locations(player)
-            self.addressed[player] = [l for l in locations if isinstance(l.address, int)]
-            self.events[player] = [l for l in locations if l.address is None]
+        self.events = []
+        if multiworld is not None:
+            from BaseClasses import CollectionState, ItemClassification
+
+            self.CollectionState = CollectionState
+            self.ItemClassification = ItemClassification
+            for player in multiworld.player_ids:
+                self.addressed[player] = [l for l in multiworld.get_locations(player) if isinstance(l.address, int)]
+            # Every slot's events, not only the asked slot's: a rule may wait on another slot's.
+            self.events = [l for l in multiworld.get_locations() if l.address is None]
 
         self.sphere_of = {}
         for index, sphere in enumerate(multidata["spheres"], start=1):
@@ -320,10 +451,26 @@ class Logic:
         # The seed's own location ids per slot, which answers that do not come from the rebuild
         # are built from, so a slot the rebuild got wrong is still answered about its real world.
         self.seed_locations = {int(p): set(ids) for p, ids in multidata["locations"].items()}
+        self.members = {}
+        self.games = {}
+        for slot, info in (multidata.get("slot_info") or {}).items():
+            group = list(getattr(info, "group_members", ()) or ())
+            if group:
+                self.members[int(slot)] = group
+            self.games[int(slot)] = getattr(info, "game", None)
+        self.datapackage = multidata.get("datapackage") or {}
+        self.name_tables = {}
         self.item_cache = {}
         self.names_by_id = {}
         self.unmade = set()
         self.verified = {}
+
+    def location_names(self, player):
+        game = self.games.get(player)
+        if game not in self.name_tables:
+            table = (self.datapackage.get(game) or {}).get("location_name_to_id") or {}
+            self.name_tables[game] = {code: name for name, code in table.items()}
+        return self.name_tables[game]
 
     def item(self, world, item_id, flags, placed=True):
         """The Item the server's (id, flags) stands for, classified the way the server sent it.
@@ -373,33 +520,37 @@ class Logic:
         made.classification = server_flags if placed else made.classification | server_flags
         return made
 
-    def reachable(self, player, received, checked=()):
-        """Universal Tracker's evaluation (TrackerCore.updateTracker), strict tier only.
+    def state_for(self, received):
+        """One state holding every slot's received items, the way generation's sphere search held
+        every player's items at once. Start inventory is not among them, since the tracker API
+        leaves it out; CollectionState collects the multiworld's precollected items itself.
 
-        A fresh state every call: some worlds keep logic caches on the state, and a state reused
-        across calls would carry one slot's items into the next answer. Start inventory is not in
-        `received`; the tracker API leaves it out, and CollectionState collects the multiworld's
-        precollected items itself.
+        `received` is keyed by slot, as JSON gives it. An item addressed to an item-link group is
+        already in each member's list on the tracker, so nothing is expanded here.
         """
-        world = self.multiworld.worlds[player]
         state = self.CollectionState(self.multiworld)
-        for item_id, location, flags in received:
-            made = self.item(world, int(item_id), int(flags), placed=int(location) >= 0)
-            if made is not None:
-                state.collect(made, True)
-        state.sweep_for_advancements(locations=self.events[player])
-        done = set(checked)
-        return {l.address for l in self.addressed[player] if l.address not in done and l.can_reach(state)}
+        for player, items in (received or {}).items():
+            world = self.multiworld.worlds.get(int(player))
+            if world is None:
+                continue
+            for item_id, location, flags in items:
+                made = self.item(world, int(item_id), int(flags), placed=int(location) >= 0)
+                if made is not None:
+                    state.collect(made, True)
+        # Events only: every addressed location now holds its real item, and sweeping those would
+        # hand out everything reachable as if it had been checked.
+        state.sweep_for_advancements(locations=self.events)
+        return state
 
     def self_check(self, multidata):
-        """Replay generation's own spheres through reachable() and demand the same answer.
+        """Replay generation's own spheres and demand exactly the same answer, slot by slot.
 
-        Sphere k is exactly what became reachable once every item from the spheres before it was
-        collected. So for each slot, with the items it received from spheres before k, reachable()
-        has to return precisely its locations in spheres up to k: anything missing means the
-        rebuild is stricter than the real seed, anything extra means it is looser, and either way
-        that slot is not answered from the rebuild. This runs the exact code path queries use, so
-        it also covers the per-slot assumption (a rule reading another slot's items fails here).
+        Sphere k is what became reachable once every item from the spheres before it was
+        collected, every slot's at once. So one state is built up sphere by sphere from the
+        multidata's placements, through the same item and evaluation code queries use, and each
+        slot's newly reachable locations must be exactly its locations in that sphere: anything
+        missing means the rebuild is stricter than the real seed, anything extra that it is looser,
+        and either way that slot is not answered from the rebuild.
 
         The last multidata sphere is special. When generation left locations unreachable it yields
         an empty sphere and then all of them, and Main.py drops the empty one, so the last entry
@@ -409,59 +560,63 @@ class Logic:
         """
         spheres = multidata["spheres"]
         placements = multidata["locations"]
-        members = {}
-        for slot, info in (multidata.get("slot_info") or {}).items():
-            group = list(getattr(info, "group_members", ()) or ())
-            if group:
-                members[slot] = group
-
-        received_by = {}
-        for index, sphere in enumerate(spheres):
-            for finder, ids in sphere.items():
-                for location in ids:
-                    item_id, receiver, flags = placements[finder][location][:3]
-                    for player in members.get(receiver, [receiver]):
-                        received_by.setdefault(player, {}).setdefault(index, []).append((item_id, location, flags))
-
         last = len(spheres) - 1
         verdicts = {}
+        pending = {}
         for player in self.multiworld.player_ids:
-            name = self.multiworld.player_name[player]
-            mine = {l.address for l in self.addressed[player]}
-            if mine != set(placements.get(player, {})):
+            mine = {l.address: l for l in self.addressed[player]}
+            if set(mine) != set(placements.get(player, {})):
+                name = self.multiworld.player_name[player]
                 verdicts[player] = ("mismatch", f"location ids differ from the multidata for {name}")
-                continue
-            received, before, reached = [], set(), set()
-            verdict = None
-            try:
-                for index, sphere in enumerate(spheres):
-                    got = self.reachable(player, received)
-                    before = set(reached)
-                    reached |= set(sphere.get(player, ()))
+            else:
+                pending[player] = mine
+
+        try:
+            state = self.state_for({})
+            for index, sphere in enumerate(spheres):
+                for player, open_here in pending.items():
+                    if player in verdicts:
+                        continue
+                    try:
+                        newly = {a for a, l in open_here.items() if l.can_reach(state)}
+                    except Exception as err:
+                        verdicts[player] = ("mismatch", f"evaluation failed: {err!r}"[:300])
+                        continue
+                    want = set(sphere.get(player, ()))
                     if index < last:
-                        if got != reached:
-                            verdict = ("mismatch", f"sphere {index + 1}: {len(reached - got)} missing, "
-                                                   f"{len(got - reached)} early")
-                            break
-                    elif got == reached and got != before:
-                        verdict = ("real", None)
-                    elif got == before and got != reached:
-                        verdict = ("unreachable", None)
-                    elif got == reached:
-                        verdict = ("either", None)
-                    else:
-                        verdict = ("mismatch", f"final sphere: {len(got ^ reached)} differ")
-                    received.extend(received_by.get(player, {}).get(index, []))
-            except Exception as err:
-                verdict = ("mismatch", f"evaluation failed: {err!r}"[:300])
-            verdicts[player] = verdict or ("either", None)
+                        if newly != want:
+                            verdicts[player] = ("mismatch", f"sphere {index + 1}: {len(want - newly)} missing, "
+                                                            f"{len(newly - want)} early")
+                            continue
+                    elif want and newly == want:
+                        verdicts[player] = ("real", None)
+                    elif want and not newly:
+                        verdicts[player] = ("unreachable", None)
+                    elif newly != want:
+                        verdicts[player] = ("mismatch", f"final sphere: {len(newly ^ want)} differ")
+                    for address in newly:
+                        del open_here[address]
+                for finder, ids in sphere.items():
+                    for location in ids:
+                        item_id, receiver, flags = placements[finder][location][:3]
+                        for player in self.members.get(receiver, [receiver]):
+                            world = self.multiworld.worlds.get(player)
+                            made = self.item(world, item_id, flags) if world is not None else None
+                            if made is not None:
+                                state.collect(made, True)
+                state.sweep_for_advancements(locations=self.events)
+        except Exception as err:
+            reason = f"the replay failed: {err!r}"[:300]
+            for player in self.multiworld.player_ids:
+                verdicts.setdefault(player, ("mismatch", reason))
 
         # Slots that disagree cannot all be right, and nothing says which side is, so every slot
         # with a vote in it is answered from sphere 1 rather than trusting either.
         kinds = {v[0] for v in verdicts.values()}
         conflict = "unreachable" in kinds and "real" in kinds
         self.last_is_unreachable = None if conflict else "unreachable" in kinds
-        for player, (kind, reason) in verdicts.items():
+        for player in self.multiworld.player_ids:
+            kind, reason = verdicts.get(player, ("either", None))
             if kind == "mismatch":
                 self.verified[player] = (False, reason)
             elif conflict and kind in ("real", "unreachable"):
@@ -475,33 +630,58 @@ class Logic:
             return None
         return index
 
-    def answer(self, query):
+    def answer(self, query, state, fallback_reason):
         player = int(query["slot"])
         if player not in self.seed_locations:
             return {"slot": player, "error": "not a slot in this multiworld"}
         checked = set(int(c) for c in query.get("checked") or ())
         unchecked = self.seed_locations[player] - checked
-        ok, reason = self.verified.get(player, (False, "not checked"))
+        ok, reason = self.verified.get(player, (False, fallback_reason))
+        if ok and state is None:
+            ok, reason = False, fallback_reason
         if ok:
             try:
-                ids = self.reachable(player, query.get("received") or (), checked)
+                ids = {l.address for l in self.addressed[player] if l.address not in checked and l.can_reach(state)}
             except Exception as err:
                 print(f"P{player} evaluation failed: {err!r}", file=sys.stderr)
                 ok, reason = False, f"evaluation failed: {err!r}"[:300]
         if not ok:
             ids = {i for i in unchecked if self.sphere_of.get((player, i)) == 1}
+        names = self.location_names(player)
         result = {
             "slot": player,
             "verified": ok,
-            "locations": sorted(([i, self.sphere(player, i)] for i in ids), key=lambda p: (p[1] or 1 << 30, p[0])),
+            "locations": sorted(([i, self.sphere(player, i), names.get(i)] for i in ids),
+                                key=lambda entry: (entry[1] or 1 << 30, entry[0])),
             "open": len(unchecked),
         }
         if not ok:
             result["reason"] = reason
         return result
 
+    def answer_all(self, request, unavailable):
+        """Every asked slot, against one state built once for the whole request."""
+        queries = request.get("slots") or ()
+        received = request.get("received")
+        if received is None:
+            received = {str(q.get("slot")): q.get("received") or () for q in queries}
+        state, reason = None, unavailable
+        if self.multiworld is not None and any(self.verified.get(int(q["slot"]), (False,))[0] for q in queries):
+            try:
+                state = self.state_for(received)
+            except Exception as err:
+                print(f"could not build the state: {err!r}", file=sys.stderr)
+                reason = f"could not build the state: {err!r}"[:300]
+        results = []
+        for query in queries:
+            try:
+                results.append(self.answer(query, state, reason))
+            except Exception as err:
+                results.append({"slot": query.get("slot"), "error": f"{err!r}"[:300]})
+        return results
 
-def serve(logic):
+
+def serve(logic, unavailable):
     sys.stdin.reconfigure(encoding="utf-8")
     for line in sys.stdin:
         line = line.strip()
@@ -515,13 +695,7 @@ def serve(logic):
             if op == "ping":
                 send({"id": request_id, "ok": True})
             elif op == "inLogic":
-                results = []
-                for query in request.get("slots") or ():
-                    try:
-                        results.append(logic.answer(query))
-                    except Exception as err:
-                        results.append({"slot": query.get("slot"), "error": f"{err!r}"[:300]})
-                send({"id": request_id, "ok": True, "results": results})
+                send({"id": request_id, "ok": True, "results": logic.answer_all(request, unavailable)})
             else:
                 send({"id": request_id, "ok": False, "error": f"unknown op {op!r}"})
         except Exception as err:
@@ -549,37 +723,51 @@ def main(argv):
         fatal(f"could not load Archipelago: {err!r}")
     if str(multidata.get("seed_name")) != str(options.seed_name):
         fatal(f"{options.multidata} is seed {multidata.get('seed_name')}, not {options.seed_name}")
-    if multidata.get("race_mode"):
-        fatal("this seed was generated in race mode, which cannot be reproduced")
 
+    # Anything that stops the rebuild leaves the multidata, which still says what sphere 1 is, so
+    # every slot is answered from that instead of the worker giving up.
+    multiworld, rebuild_error, injected = None, None, None
     try:
         seed = seed_from_spoiler(os.path.abspath(options.multidata)) or options.seed
+        if multidata.get("race_mode"):
+            raise RuntimeError("the seed was generated in race mode, which cannot be reproduced")
+        if not seed:
+            raise RuntimeError("no seed number: the output zip has no spoiler and no Generate log names it")
+        send({"event": "progress", "stage": "building", "elapsedMs": elapsed_ms()})
+        if options.players_dir:
+            players_dir = os.path.abspath(options.players_dir)
+        else:
+            try:
+                players_dir = select_players(multidata)
+            except Exception as err:
+                print(f"could not pick the seed's yamls out of the Players folder: {err!r}", file=sys.stderr)
+                players_dir = None
+        multiworld = rebuild(seed, options.seed_name, multidata, players_dir, options.plando)
+        injected = inject_placements(multiworld, multidata)
     except Exception as err:
-        fatal(f"could not read the spoiler in {options.multidata}: {err!r}")
-    if not seed:
-        fatal(f"no seed number for {options.seed_name}: the output zip has no spoiler and no Generate log names it")
-
-    send({"event": "progress", "stage": "building", "elapsedMs": elapsed_ms()})
-    try:
-        multiworld = rebuild(seed, options.seed_name, multidata)
-    except Exception as err:
-        fatal(f"could not rebuild seed {options.seed_name}: {err!r}")
+        multiworld = None
+        rebuild_error = f"could not rebuild seed {options.seed_name}: {err!r}"[:400]
+        print(rebuild_error, file=sys.stderr)
 
     send({"event": "progress", "stage": "checking", "elapsedMs": elapsed_ms()})
     logic = Logic(multiworld, multidata)
-    logic.self_check(multidata)
+    if multiworld is not None:
+        logic.self_check(multidata)
 
     slots = {}
-    for player, (ok, reason) in sorted(logic.verified.items()):
-        slots[str(player)] = {"verified": ok, **({"reason": reason} if reason else {})}
+    for player in sorted(logic.seed_locations):
+        ok, reason = logic.verified.get(player, (False, rebuild_error or "not checked"))
+        slots[str(player)] = {"verified": ok, **({"reason": reason} if reason and not rebuild_error else {})}
     send({
         "event": "ready",
         "seedName": options.seed_name,
         "slots": slots,
         "lastSphereUnreachable": logic.last_is_unreachable,
+        "rebuildError": rebuild_error,
+        "injected": injected,
         "elapsedMs": elapsed_ms(),
     })
-    serve(logic)
+    serve(logic, rebuild_error or "not checked")
 
 
 if __name__ == "__main__":

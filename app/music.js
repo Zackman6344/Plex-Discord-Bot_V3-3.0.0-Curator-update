@@ -20,6 +20,7 @@ module.exports = function(client, bot) {
   const bookLibraryButtons = require('../helpers/bookLibraryButtons.js');
   const { createReadAlong } = require('../helpers/readAlong.js');
   const readAlongButtons = require('../helpers/readAlongButtons.js');
+  const archipelagoNextButtons = require('../helpers/archipelagoNextButtons.js');
   const restartHandoff = require('../helpers/restartHandoff.js');
 
   // At module init, not on ready: the music gate and utils.stop's shutdown both need it before
@@ -254,6 +255,7 @@ module.exports = function(client, bot) {
         let claimed = await playbackButtons.handle(interaction, bot, client, plexCommands, { onInteractionResponse });
         if (!claimed) claimed = await bookButtons.handle(interaction, bot, client, { onInteractionResponse });
         if (!claimed) claimed = await readAlongButtons.handle(interaction, bot, client, { onInteractionResponse });
+        if (!claimed) claimed = await archipelagoNextButtons.handle(interaction, bot, client, { onInteractionResponse });
         if (!claimed) await tagInference.handle(interaction, { onInteractionResponse });
         commandLog.finishInvocation(buttonLogId, { ok: true, ms: Date.now() - buttonStartedAt });
       } catch (err) {

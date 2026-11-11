@@ -10,8 +10,9 @@ pass of rules version 5 and what came with it: the one-time id move, short works
 plays, the sectioned library, the Calibre index and `!book calibre`. Phase 12 checks that sends
 made while the PC has lost Discord arrive late, and once. Phase 13 is the first live pass of the
 read-along's MOBI and AZW3 conversion and of `audiobookControls`, who may use a book card. Phase 14
-is the first live pass of chapter markers inside single-file books, and Phase 15 of the
-read-along's pictures from a scanned PDF.
+is the first live pass of chapter markers inside single-file books, Phase 15 of the read-along's
+pictures from a scanned PDF, and Phase 16 of `!ap next` loading when its room connects, from the
+bot's own copy of the seed, with pages and ⭐ hints.
 
 The bot now persists its own logs to `data/logs/`, so a failure you didn't happen to be watching
 is still there afterwards:
@@ -1039,6 +1040,111 @@ log, for the redaction step below.
       other Calibre record (or pinned to it with `!book edit <book> calibre <id>`): `!book link
       <book>` lists it "(PDF only: no text, so no pictures either)", and `!book calibre` adds "add
       an EPUB, MOBI or AZW3 to the record and its PDF's pictures can show too".
+
+## Phase 16: `!ap next` from a kept copy of the seed, with pages and hints (live)
+
+Built on 2026-11-10 and unit-tested offline, then run outside the bot against the live 35-slot
+room (seed 22585070207533418417, generated here on 2026-11-09 with Archipelago 0.6.8): the real
+logic worker on the real install, the room's real tracker and hints, and the real command's
+replies, with Discord faked. The worker copied the seed's 35 yamls and multidata, was ready 28 s
+after it started with 35 of 35 slots verified, and answered the 24 claimed slots in 184 ms. The
+build before this change verified 27 of 35 the evening the seed was made, and could not rebuild it
+at all once the `Players` folder changed the next morning. With no copy to roll, the worker picked
+the seed's 35 yamls out of the 40 in `Players` by player name, was ready in 24 s and verified 35 of
+35 (run outside the bot; its bot log line is the same `35/35 slots verified`). Nothing here has run
+in the bot or in Discord yet, and none of the 31 hinted locations in those 24 slots was in logic
+then, so a starred name has only been seen in the unit tests. Leave the five `ZackMafia*.yaml` in
+`C:\ProgramData\Archipelago\Players`; one step depends on them. Watch the bot log
+(`data/logs/bot-<date>.log`; Plex Bot Status shows its tail) for `[AP:Configured room]` lines.
+
+**Loading when the room connects**
+
+- [ ] Stop the bot and start it again (`!restart` keeps the room's connection and the running
+      worker, so it shows none of this). Type nothing. Within about a minute of `[AP:Configured
+      room] connected to`, the bot log has, in this order: `kept a copy of seed
+      22585070207533418417's 35 yaml(s) and multidata in ...` (this start only), `[AP:Configured
+      room] starting the logic worker for seed 22585070207533418417`, and about 30 s later
+      `[AP:Configured room] logic worker ready in N s: 35/35 slots verified against the
+      multidata`, with no `answers sphere 1 only` line after it.
+- [ ] `data/archipelago/seeds/22585070207533418417/` in the bot's folder holds `players/` with 35
+      yamls and no `ZackMafia*.yaml`, `AP_22585070207533418417.zip` (2.2 MB, the size of the one
+      in `C:\ProgramData\Archipelago\output`), and `seed.json`, which names seed
+      16496140521916006544 and the 35 files. There is no `22585070207533418417.partial` folder
+      beside it.
+- [ ] Task Manager → Details, with the Command line column added: the `python.exe` running
+      `ap-logic-worker.py` has `--players-dir` pointing at that `players` folder.
+- [ ] Stop and start the bot again, and type `/ap next` within 10 seconds of the `starting the
+      logic worker` line: the reply says the seed's logic is loading, then answers when the
+      `ready` line lands. There is no second `starting the logic worker` line, and no `kept a
+      copy` line this time.
+
+**Answers and hints**
+
+- [ ] Once the ready line is in, `/ap next`: the answer replaces "🧭 Working out what is open
+      across your 24 slot(s)…" within a few seconds, with no "Loading this seed's logic" step.
+      Its footer starts "In logic with the items each slot has received" and has no "Sphere 1
+      only where the seed's own logic is unavailable".
+- [ ] In that reply, a slot whose world holds hinted locations not yet in logic ends its line
+      ` · ⭐ N hinted locked`. The footer has "⭐ marks a location somebody has hinted." only when
+      a ⭐ shows above it. On 2026-11-10 none of the ten blocks that fit had one, since the 31 were
+      in slots the reply cut or named at the end, and the build tested then had the note anyway.
+- [ ] `/ap next slot: ZackLL1Warhammer` shows its line (`sphere 1: N in logic` after the name), 15
+      names, the italic closing line (`Also in logic: sphere 2 (N) · N still locked`, then
+      ` · ⭐ N hinted still locked` while it has one), `Page 1 of N`, the footer, and ◀ ▶ under
+      it with ◀ greyed out. On 2026-11-10 it was 228 in sphere 1 and 21 in sphere 2, 17 pages,
+      one hinted location locked.
+- [ ] When a hinted location in one of your worlds is in logic (none was on 2026-11-10; a `!hint`
+      for an item sitting in one of your worlds makes one), `/ap next slot: <that slot>` lists it
+      first, as `⭐ <name>`, and no page lists it a second time. Every location `!ap hints <that
+      slot>` names in that slot's world is either starred or counted in `⭐ N hinted still
+      locked`. `!ap hints` stars only priority hints, so it shows fewer stars.
+- [ ] The player waiting on one of those hints marks it Avoid in their Archipelago client's hint
+      list: the next `/ap next` neither stars it nor counts it.
+
+**Pages**
+
+- [ ] Press ▶ on the Warhammer reply: the same message turns to page 2, with no new message and
+      nobody pinged, and ◀ comes alive. Walk on to where sphere 2 starts: an italic `Sphere 2`
+      line comes before its first name, and a page that starts inside sphere 2 opens with that
+      line too. Every page keeps the slot's line and the closing line. On the last page ▶ is
+      greyed out, and ◀ walks back.
+- [ ] `!ap next ZackLL1Warhammer` gets the same pages and buttons as the slash form.
+- [ ] A second account presses ▶ on that reply: a private "Only the person who asked can turn
+      these pages.", and the page stays where it was. The asker's ▶ still turns it.
+- [ ] Leave a paged reply untouched for over 30 minutes, then press ▶: a private "This list has
+      expired. Ask for it again to see what is in logic now." A reply turned within the last 30
+      minutes still turns, since each turn starts the 30 minutes again.
+- [ ] Turn a page, `!restart`, and turn it again: it turns, since the lists live in the process.
+      Stop and start the bot, and the same reply's ▶ answers that the list has expired.
+
+**A `Players` folder that has moved on**
+
+- [ ] With the five `ZackMafia*.yaml` still in `Players` (40 yamls in all), stop and start the
+      bot: no `kept a copy` line, `35/35 slots verified` again, and no `no longer match` line.
+      The build before this change failed exactly here, at 2026-11-10 23:20 UTC: `the Players
+      folder no longer matches seed 22585070207533418417 (5 slot(s) differ, first slot 36)`.
+- [ ] The fallback when the copy itself is wrong: stop the bot, move one yaml out of the copy's
+      `players/` folder to the desktop, and start the bot. The log has one `logic worker ready in
+      N s, answering sphere 1 only until the cause is fixed (it tries again after 10 minutes):
+      could not rebuild seed 22585070207533418417: RuntimeError('the yamls no longer match ...`
+      line and no line per slot. `/ap next` answers every slot `sphere 1 only: N open · N further
+      in`, its footer says sphere 1 only is "where the seed's own logic is unavailable (the seed
+      could not be rebuilt; the bot log says why)", and it asks for no script.
+- [ ] Put the yaml back without stopping the bot. A `/ap next` within ten minutes of the ready
+      line still answers sphere 1 only, with no new `starting the logic worker` line. The first
+      one after ten minutes logs `starting the logic worker` again, says the seed's logic is
+      loading, and answers from the logic, with `35/35 slots verified` in the log.
+
+**When the worker cannot run at all**
+
+- [ ] In `/config` → Archipelago, blank the install (the worker stops), set the Python to
+      `C:\nothing\python.exe`, then put the install back. `/ap next`: the reply says the seed's
+      logic "could not be loaded; the bot log says why" and gives one command,
+      `python scripts\extract-spheres.py "C:\ProgramData\Archipelago\output\AP_22585070207533418417.zip"`.
+- [ ] Paste that command as it is into PowerShell in the bot's folder: it writes
+      `data\archipelago\spheres\22585070207533418417.json`, and the next `/ap next` answers every
+      slot sphere 1 only. Clear the Python setting: the next `/ap next` says the seed's logic is
+      loading, and about 30 s later answers from the logic again. Delete that `.json` afterwards.
 
 ---
 
