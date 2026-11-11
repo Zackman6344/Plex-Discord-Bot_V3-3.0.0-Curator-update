@@ -3,6 +3,8 @@
 // Front end for the Archipelago room monitor. The bot joins a multiworld as a read-only
 // tracker client and relays the server log into the channel the watch was created in.
 
+const fs = require('fs');
+const path = require('path');
 const { EmbedBuilder, escapeMarkdown } = require('discord.js');
 
 const config = require('../config/config.js');
@@ -11,6 +13,10 @@ const monitor = require('../helpers/archipelagoMonitor.js');
 const claims = require('../helpers/archipelagoClaims.js');
 const goals = require('../helpers/archipelagoGoals.js');
 const leaderboard = require('../helpers/leaderboard.js');
+const nextPages = require('../helpers/archipelagoNextButtons.js');
+const apLogic = require('../helpers/archipelagoLogic.js');
+
+const BOT_ROOT = path.join(__dirname, '..');
 
 const WATCH_ID_HELP = 'Watch ID — leave empty if there is only one room';
 
@@ -27,6 +33,7 @@ const LOGIC_UNAVAILABLE = {
     'not-generated-here': 'this seed was not generated here',
     'no-python': 'the Python it needs is not installed',
     failed: 'it could not be loaded; the bot log says why',
+    'rebuild-failed': 'the seed could not be rebuilt; the bot log says why',
     stopped: 'it was stopped while loading; ask again',
     unverified: 'the rebuild did not match this slot'
 };
@@ -801,29 +808,45 @@ module.exports = {
                     const status = await say(named
                         ? `🧭 Working out what is open for ${slotLabel(named)}…`
                         : `🧭 Working out what is open across your ${wanted.length} slot(s)…`);
-                    // The first `!ap next` for a seed starts the logic worker, which takes about a
-                    // minute; saying so beats a status line that looks stuck.
+                    // The first `!ap next` for a seed starts the logic worker, which takes about
+                    // half a minute; saying so beats a status line that looks stuck.
                     const onWait = () => (status && status.edit
-                        ? status.edit('🧭 Loading this seed\'s logic from the Archipelago install. About a minute the first time…').catch(() => {})
+                        ? status.edit('🧭 Loading this seed\'s logic from the Archipelago install. About half a minute…').catch(() => {})
                         : null);
                     const outcome = await monitor.suggestNextAll(id, wanted, { onWait });
-                    const reply = (text) => (status && status.edit ? status.edit(text).catch(() => say(text)) : say(text));
+                    // Text, or a payload with the page buttons. Mentions are off either way, as for say().
+                    const reply = (payload) => {
+                        const body = typeof payload === 'string'
+                            ? { content: payload, allowedMentions: { parse: [] } }
+                            : { ...payload, allowedMentions: { parse: [] } };
+                        return status && status.edit ? status.edit(body).catch(() => say(body)) : say(body);
+                    };
 
                     if (!outcome.ok) {
                         const noLogic = outcome.logic && LOGIC_UNAVAILABLE[outcome.logic.reason]
                             ? `I cannot use this seed's own logic (${LOGIC_UNAVAILABLE[outcome.logic.reason]}), and I have no sphere data for it either.\n`
                             : 'I have no sphere data for this multiworld.\n';
+                        // The command to run, with the real paths in and quoted, so it pastes into
+                        // PowerShell as it stands; `<placeholders>` there are a syntax error. Only
+                        // for a seed generated here, since only then is there a multidata to read.
+                        const seedName = outcome.want ? path.basename(outcome.want, '.json') : '';
+                        const apDir = String(config.archipelagoInstallDir || '').trim();
+                        // The zip named is one that is there: the install's output, else the bot's
+                        // own copy of it.
+                        const zip = seedName && apDir && !(outcome.logic && ['not-generated-here', 'no-seed', 'disabled', 'no-install'].includes(outcome.logic.reason))
+                            ? [path.join(apDir, 'output', `AP_${seedName}.zip`), apLogic.keptMultidata(seedName)]
+                                .find(candidate => fs.existsSync(candidate))
+                            : null;
+                        const spoiler = outcome.fallback ? path.relative(BOT_ROOT, outcome.fallback) : path.join('data', 'archipelago', 'spoilers', '<seed>.txt');
                         const why = {
                             'no-watch': `No watch with ID ${id}.`,
                             'not-a-room': 'This reads the room\'s tracker, so it only works for a watch made from a room URL.',
                             'no-tracker': 'That room does not link a tracker, so there is nothing to read checks from.',
-                            'need-spheres': noLogic +
-                                `Without the logic I can still list sphere 1, which needs nothing, given sphere data:\n` +
-                                `**Best source** — if you generated this seed, run:\n` +
-                                `\`python scripts/extract-spheres.py <Archipelago>/output/AP_<seed>.zip\`\n` +
-                                `That covers every location in the multiworld.\n` +
-                                `**Fallback** — drop the seed's spoiler log at \`${outcome.fallback || 'data/archipelago/spoilers/<seed>.txt'}\`, ` +
-                                `which only covers the placements the seed's completion depends on, about a tenth of them.`
+                            'need-spheres': noLogic + (zip
+                                ? 'Sphere 1, which needs nothing, can still be listed. From the bot\'s folder, run:\n'
+                                    + `\`python scripts\\extract-spheres.py "${zip}"\``
+                                : `Sphere 1, which needs nothing, can still be listed from the seed's spoiler log, saved as \`${spoiler}\` `
+                                    + 'in the bot\'s folder. It only covers the placements the seed\'s completion depends on, about a tenth of them.')
                         }[outcome.reason] || `I could not work that out${outcome.detail ? ` (${outcome.detail})` : ''}.`;
                         return reply(`🧭 ${why}`);
                     }
@@ -848,14 +871,18 @@ module.exports = {
                             : `🧭 All ${done.length} of your slots are finished — nothing left to suggest.`);
                     }
 
-                    // One slot gets its soonest sphere listed and every later sphere counted.
-                    // Several get a line each with a few names, so a player holding twenty still
-                    // gets an answer inside one message. Earliest sphere first, so the ones the
-                    // message limit cuts are the furthest along.
+                    // One slot gets the whole list, a page at a time. Several get a line each with a
+                    // few names, so a player holding twenty still gets an answer inside one message.
+                    // Earliest sphere first, so the ones the message limit cuts are the furthest along.
                     const many = live.length > 1;
                     const perSlot = many ? 3 : 15;
                     const count = (n) => Number(n).toLocaleString('en-US');
                     const sphereName = (s) => (s === null || s === undefined ? 'sphere unknown' : `sphere ${s}`);
+                    // Somebody hinted these and is waiting on what they hold, so they lead, marked.
+                    // A hinted location in a later sphere says which.
+                    const hintLine = (h, soonest) => `⭐ ${escapeMarkdown(h.name)}`
+                        + (h.sphere !== soonest ? ` · ${sphereName(h.sphere)}` : '');
+                    const heading = (s) => `_${sphereName(s).replace(/^s/, 'S')}_`;
 
                     // Asked about several, a slot with nothing to do is named in the footer rather
                     // than given a block; asked about one, its line is the whole answer.
@@ -864,13 +891,16 @@ module.exports = {
                     const listedSlots = live.filter(r => !idle.includes(r) && !exhausted.includes(r));
 
                     const names = (r, cap) => {
+                        const hinted = r.hinted || [];
+                        const hintedNames = new Set(hinted.map(h => h.name));
+                        const entries = [
+                            ...hinted.map(h => hintLine(h, r.sphere)),
+                            ...r.locations.filter(name => !hintedNames.has(name)).map(name => `• ${escapeMarkdown(name)}`)
+                        ];
                         // "…1 more" takes the line the one name would, so that name is shown.
-                        const shown = r.locations.length === cap + 1 ? cap + 1 : cap;
-                        const lines = r.locations.slice(0, shown).map(l => `• ${escapeMarkdown(l)}`);
-                        const more = r.locations.length - Math.min(shown, r.locations.length);
-                        if (more > 0) {
-                            lines.push(many || r.sphere === null ? `• …${count(more)} more` : `• …${count(more)} more in ${sphereName(r.sphere)}`);
-                        }
+                        const shown = entries.length === cap + 1 ? cap + 1 : cap;
+                        const lines = entries.slice(0, shown);
+                        if (entries.length > lines.length) lines.push(`• …${count(entries.length - lines.length)} more`);
                         return lines.length > 0 ? `\n${lines.join('\n')}` : '';
                     };
 
@@ -894,20 +924,75 @@ module.exports = {
                             return `${head} — sphere 1 only: ${count(r.total)} open${rest ? ` · ${count(rest)} further in` : ''}${names(r, cap)}`;
                         }
                         if (r.total === 0) return `${head} — nothing in logic yet; ${count(r.open)} still locked.`;
+                        const hintedLocked = r.hintedLocked > 0 ? ` · ⭐ ${count(r.hintedLocked)} hinted locked` : '';
+                        return `${head} — ${sphereName(r.sphere)}: ${count(r.locations.length)} in logic`
+                            + ` · +${count(r.total - r.locations.length)} later · ${count(rest)} locked${hintedLocked}${names(r, cap)}`;
+                    };
 
-                        const soonest = `${sphereName(r.sphere)}: ${count(r.locations.length)} in logic`;
-                        const later = r.later || [];
-                        if (many) {
-                            return `${head} — ${soonest} · +${count(r.total - r.locations.length)} later · ${count(rest)} locked${names(r, cap)}`;
-                        }
+                    // A one-slot reply walks the whole list: what somebody has hinted, then the
+                    // soonest sphere, then each later sphere under its own heading. The header and
+                    // the closing counts stay on every page.
+                    const pagesFor = (r, room) => {
+                        if (!r.ok || r.total === 0) return [blockFor(r, perSlot)];
+                        const rest = Number.isFinite(r.open) ? r.open - r.total : 0;
+                        const head = r.mode === 'sphere1'
+                            ? `**${r.slot}** — sphere 1 only: ${count(r.total)} open${rest ? ` · ${count(rest)} further in` : ''}`
+                            : `**${r.slot}** — ${sphereName(r.sphere)}: ${count(r.locations.length)} in logic`;
+                        const later = r.mode === 'sphere1' ? [] : (r.later || []);
                         const groups = later.slice(0, 6).map(g => `${sphereName(g.sphere)} (${count(g.count)})`).join(', ')
                             + (later.length > 6 ? ` and ${later.length - 6} more spheres` : '');
                         const tail = [
-                            later.length > 0 ? `Also in logic: ${groups}` : 'Nothing later in logic yet',
-                            ...(rest > 0 ? [`${count(rest)} still locked`] : [])
+                            ...(r.mode === 'sphere1' ? [] : [later.length > 0 ? `Also in logic: ${groups}` : 'Nothing later in logic yet']),
+                            ...(r.mode !== 'sphere1' && rest > 0 ? [`${count(rest)} still locked`] : []),
+                            ...(r.hintedLocked > 0 ? [`⭐ ${count(r.hintedLocked)} hinted still locked`] : [])
                         ];
-                        const closing = later.length > 0 || rest > 0 ? `\n_${tail.join(' · ')}_` : '';
-                        return `${head} — ${soonest}${names(r, cap)}${closing}`;
+                        const closing = r.mode === 'sphere1' || later.length > 0 || rest > 0 || r.hintedLocked > 0
+                            ? (tail.length > 0 ? `_${tail.join(' · ')}_` : '')
+                            : '';
+                        const entries = Array.isArray(r.all)
+                            ? r.all
+                            : r.locations.map(name => ({ name, sphere: r.sphere, hinted: false }));
+                        // Room for the header, the closing line and "Page 999 of 999".
+                        const space = room - head.length - closing.length - 24;
+
+                        const pages = [];
+                        let lines = [];
+                        let listed = 0;
+                        let used = 0;
+                        let current = r.sphere;
+                        const linesFor = (entry) => {
+                            if (entry.hinted) return [hintLine(entry, r.sphere)];
+                            const out = entry.sphere !== current ? [heading(entry.sphere)] : [];
+                            out.push(`• ${escapeMarkdown(entry.name)}`);
+                            return out;
+                        };
+                        entries.forEach((entry, index) => {
+                            let add = linesFor(entry);
+                            let size = add.reduce((n, line) => n + line.length + 1, 0);
+                            // A last entry that fits rides on this page rather than opening a page
+                            // of its own, as "…1 more" never takes the line the one name would.
+                            const lastFits = index === entries.length - 1 && listed === perSlot && used + size <= space;
+                            if (listed > 0 && ((listed >= perSlot && !lastFits) || used + size > space)) {
+                                pages.push(lines);
+                                lines = [];
+                                listed = 0;
+                                used = 0;
+                                current = r.sphere;
+                                add = linesFor(entry);
+                                size = add.reduce((n, line) => n + line.length + 1, 0);
+                            }
+                            lines.push(...add);
+                            listed += 1;
+                            used += size;
+                            if (!entry.hinted) current = entry.sphere;
+                        });
+                        if (lines.length > 0) pages.push(lines);
+                        return pages.map((page, i) => [
+                            head,
+                            ...page,
+                            closing,
+                            pages.length > 1 ? `_Page ${i + 1} of ${pages.length}_` : ''
+                        ].filter(Boolean).join('\n'));
                     };
 
                     // Counted from the slots actually answered; a slot that is not in the room is
@@ -942,30 +1027,33 @@ module.exports = {
                     const lead = live.some(r => r.ok && r.mode === 'logic')
                         ? 'In logic with the items each slot has received, by the seed\'s own rules; earliest sphere first. '
                         : '';
-                    const footer = `_${lead}Nothing here says what is in them.${fallbackNote}${skipped}${idleNote}_`;
+                    // Said only on a message that shows a ⭐, which a slot cut for length may not.
+                    const footerFor = (body) => `_${lead}Nothing here says what is in them.`
+                        + `${String(body).includes('⭐') ? ' ⭐ marks a location somebody has hinted.' : ''}${fallbackNote}${skipped}${idleNote}_`;
 
                     // 2000 characters is a hard limit and an oversized send is rejected outright.
-                    const budget = 1900 - header.length - footer.length;
+                    // Measured with the hint note, the longer of the two footers.
+                    const budget = 1900 - header.length - footerFor('⭐').length;
                     const ordered = monitor.orderBySoonest(listedSlots);
-                    const kept = [];
+                    const message = (body) => [header, body, footerFor(body)].filter(Boolean).join('\n');
                     if (!many) {
-                        // The one block is the whole answer, so it gives up names to fit rather
-                        // than its place.
-                        let cap = perSlot;
-                        let block = blockFor(ordered[0], cap);
-                        while (block.length + 2 > budget && cap > 0) block = blockFor(ordered[0], --cap);
-                        kept.push(block);
-                    } else {
-                        let used = 0;
-                        for (const r of ordered) {
-                            const block = blockFor(r, perSlot);
-                            if (used + block.length + 2 > budget) break;
-                            kept.push(block);
-                            used += block.length + 2;
+                        const pages = pagesFor(ordered[0], budget).map(message);
+                        if (pages.length > 1) {
+                            const token = nextPages.register({ userId: callerId, pages });
+                            return reply({ content: pages[0], components: [nextPages.row(token, 0, pages.length)] });
                         }
-                        if (kept.length < ordered.length) kept.push(`…and ${ordered.length - kept.length} more slot(s).`);
+                        return reply(pages[0]);
                     }
-                    return reply([header, kept.join('\n\n'), footer].filter(Boolean).join('\n'));
+                    const kept = [];
+                    let used = 0;
+                    for (const r of ordered) {
+                        const block = blockFor(r, perSlot);
+                        if (used + block.length + 2 > budget) break;
+                        kept.push(block);
+                        used += block.length + 2;
+                    }
+                    if (kept.length < ordered.length) kept.push(`…and ${ordered.length - kept.length} more slot(s).`);
+                    return reply(message(kept.join('\n\n')));
                 }
 
                 if (action === 'hintpings') {

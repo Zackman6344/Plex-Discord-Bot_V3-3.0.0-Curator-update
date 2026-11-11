@@ -151,11 +151,13 @@ const defaults = {
   'archipelagoItemMarkers' : true,
   // The Archipelago install `!ap next` rebuilds a seed's logic from, to list what each slot can
   // actually reach with the items it has received. Only seeds generated with this install can be
-  // rebuilt; any other room gets sphere 1 only, which needs nothing. Blank turns it off. The first
-  // `!ap next` for a seed takes about a minute, and the helper process then holds about 0.5 GB.
+  // rebuilt; any other room gets sphere 1 only, which needs nothing. Blank turns it off. The
+  // helper process loads when a room on such a seed connects, in about 30 s, and then holds about
+  // 0.5 GB. The first time, the seed's yamls and multidata are copied to
+  // data/archipelago/seeds/<seed>/, so the Players folder is free for the next async.
   'archipelagoInstallDir' : 'C:\\ProgramData\\Archipelago',
   // The Python that helper runs on. It has to be the version the install was built with (3.13
-  // for Archipelago 0.6.7). Blank finds it with the Windows `py` launcher.
+  // for Archipelago 0.6.7 and 0.6.8). Blank finds it with the Windows `py` launcher.
   'archipelagoPython' : '',
 
   // Give players a Discord role for taking part, and one per goal count.

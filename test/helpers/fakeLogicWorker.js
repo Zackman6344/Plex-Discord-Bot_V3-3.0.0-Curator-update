@@ -15,10 +15,14 @@
 //   garbage           as normal, with a non-JSON line before ready and before every reply
 //   noisy             as normal, after 100 numbered lines on stderr
 //   ignore-requests   ready, then reads every request and answers none
+//   rebuild-failed    ready with rebuildError set and no slot verified, then answers every slot
+//                     unverified with that error as its reason, as the real worker does once the
+//                     seed cannot be rebuilt and only the multidata's sphere 1 is left to go on
 //
-// An inLogic answer is built from its query, and carries the query back as `echo`, so a test can
-// tell whose answer it got. A query may carry delayMs to hold its reply back, which is how a test
-// gets two requests in flight and answered out of order.
+// An inLogic answer is built from its query and its own slot's entry in the request's received
+// map. It carries the query back as `echo` and the whole map as `echoReceived`, so a test can tell
+// whose answer it got and see exactly what the worker was sent. A query may carry delayMs to hold
+// its reply back, which is how a test gets two requests in flight and answered out of order.
 //
 // FAKE_LOGIC_WORKER_SPAWNS names a file each start appends its pid to: the only way to count the
 // processes acquire() started, and to make sure every one of them is gone before the next test.
@@ -53,15 +57,29 @@ function sendAndExit(message, code) {
 }
 
 const SLOTS = { 1: { verified: true }, 2: { verified: false, reason: 'sphere 3 did not replay' } };
+const rebuildFailed = mode === 'rebuild-failed';
+const seedName = args['seed-name'] || 'FAKE';
+// Worded as the real worker words a Players folder that has moved on to the next async.
+const REBUILD_ERROR = `could not rebuild seed ${seedName}: RuntimeError('the yamls no longer match seed ${seedName} (5 slot(s) differ, first slot 12)')`;
 
 function ready() {
     if (mode === 'garbage') process.stdout.write('Archipelago worlds loaded, not a protocol line\n');
     const message = {
         event: 'ready',
-        seedName: args['seed-name'] || 'FAKE',
-        slots: SLOTS,
+        seedName,
+        // The real worker gives no per-slot reason when the rebuild failed: rebuildError is it.
+        slots: rebuildFailed
+            ? Object.fromEntries(Object.keys(SLOTS).map(slot => [slot, { verified: false }]))
+            : SLOTS,
+        rebuildError: rebuildFailed ? REBUILD_ERROR : null,
         pid: process.pid,
-        args: { apDir: args['ap-dir'], seed: args.seed, seedName: args['seed-name'], multidata: args.multidata },
+        args: {
+            apDir: args['ap-dir'],
+            seed: args.seed,
+            seedName: args['seed-name'],
+            multidata: args.multidata,
+            playersDir: args['players-dir']
+        },
         elapsedMs: 0
     };
     if (mode === 'exit-after-ready') {
@@ -74,15 +92,18 @@ function ready() {
     serve();
 }
 
-function answer(query) {
-    const received = query.received || [];
+function answer(query, received) {
+    const own = received[String(query.slot)] || [];
     const checked = query.checked || [];
+    const id = query.slot * 1000 + own.length;
     return {
         slot: query.slot,
-        verified: true,
-        locations: [[query.slot * 1000 + received.length, 1]],
+        verified: !rebuildFailed,
+        locations: [[id, 1, `Location ${id}`]],
         open: checked.length,
-        echo: query
+        ...(rebuildFailed ? { reason: REBUILD_ERROR } : {}),
+        echo: query,
+        echoReceived: received
     };
 }
 
@@ -108,8 +129,9 @@ function serve() {
             send({ id: request.id, ok: true });
         } else if (request.op === 'inLogic') {
             const queries = request.slots || [];
+            const received = request.received || {};
             const delay = Math.max(0, ...queries.map(q => Number(q.delayMs) || 0));
-            setTimeout(() => send({ id: request.id, ok: true, results: queries.map(answer) }), delay);
+            setTimeout(() => send({ id: request.id, ok: true, results: queries.map(q => answer(q, received)) }), delay);
         } else {
             send({ id: request.id, ok: false, error: `unknown op '${request.op}'` });
         }
