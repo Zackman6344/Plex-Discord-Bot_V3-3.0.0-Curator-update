@@ -11,8 +11,10 @@ plays, the sectioned library, the Calibre index and `!book calibre`. Phase 12 ch
 made while the PC has lost Discord arrive late, and once. Phase 13 is the first live pass of the
 read-along's MOBI and AZW3 conversion and of `audiobookControls`, who may use a book card. Phase 14
 is the first live pass of chapter markers inside single-file books, Phase 15 of the read-along's
-pictures from a scanned PDF, and Phase 16 of `!ap next` loading when its room connects, from the
-bot's own copy of the seed, with pages and ⭐ hints.
+pictures from a scanned PDF, Phase 16 of `!ap next` loading when its room connects, from the
+bot's own copy of the seed, with pages and ⭐ hints, and Phase 17 of the Plex Media world: an
+Archipelago game made from the Plex library, with its accounts and consent, every way a play is
+counted, and an upload to archipelago.gg.
 
 The bot now persists its own logs to `data/logs/`, so a failure you didn't happen to be watching
 is still there afterwards:
@@ -39,7 +41,7 @@ command. Answer Q1 first — it splits the tree.
 
 - [ ] **Restart the bot and read the boot lines.** Registration only runs on `clientReady`
       ([app/music.js:16](app/music.js#L16)). You want to see
-      `Registered 56 slash commands in guild 396106436326981642 (instant).`
+      `Registered 57 slash commands in guild 396106436326981642 (instant).`
       Anything starting `Failed to register slash commands` is the answer — the error text names
       the cause (403 Missing Access, 401, invalid form body).
 - [ ] **Confirm the bot was invited with the `applications.commands` scope.** This is the #1
@@ -86,13 +88,13 @@ node -e "const k=require('./config/keys.js'),c=require('./config/config.js');con
 - [ ] `Process priority: above_normal` (or `normal`, if that is what `/config` → Voice says). On
       Linux or Docker without `CAP_SYS_NICE` there is one `Could not set process priority` warning
       instead, and the bot carries on.
-- [ ] `Loaded 56 commands (4 aliases)`: any `Failed to load N command file(s)` line means a
+- [ ] `Loaded 57 commands (4 aliases)`: any `Failed to load N command file(s)` line means a
       command file is broken and **silently unavailable on both paths**.
 - [ ] `Registered N slash commands …`: N should equal the number of slash-declaring commands
-      (56 on 2026-10-09; the aliases `?`, `plextest`, `archipelago` and `books` are correctly
-      excluded).
+      (57 on 2026-11-12, with `/apmedia`; the aliases `?`, `plextest`, `archipelago` and `books`
+      are correctly excluded).
 - [ ] Health monitor / event server / presence / theater lines appear as expected for the
-      toggles in config.
+      toggles in config, and `Plex Media started.` when `apMediaEnabled` is on.
 - [ ] No `Uncaught exception` / `Unhandled promise rejection` in the first 30s.
 
 ## Phase 2 — Slash registration integrity
@@ -112,8 +114,8 @@ without an argument but declares no option to supply one, the bug that shipped t
 audiobook suite it also checks that every choice value matches its option's type (a number on a
 STRING option takes down the whole registration), choice names of 1–100 characters, choices and
 autocomplete only on STRING, INTEGER or NUMBER, and Discord's 4,000-character budget per command.
-All 56 specs passed on 2026-10-10, the largest `/ap` at 2,783 characters and `/book` at 1,833
-(20 subcommands, with `text` and `link`).
+All 57 specs passed on 2026-11-12, 35,123 bytes of registration payload: the largest is `/book`
+at 2,917 characters (24 subcommands), then `/apmedia` at 2,794 (11) and `/ap` at 2,783 (22).
 
 - [ ] New/edited `slash:` block → re-run the validator.
 - [ ] Renamed or deleted a command → confirm the stale one disappeared from the picker (the `set()`
@@ -1145,6 +1147,315 @@ then, so a starred name has only been seen in the unit tests. Leave the five `Za
       `data\archipelago\spheres\22585070207533418417.json`, and the next `/ap next` answers every
       slot sphere 1 only. Clear the Python setting: the next `/ap next` says the seed's logic is
       loading, and about 30 s later answers from the logic again. Delete that `.json` afterwards.
+
+## Phase 17: Plex Media world (live)
+
+Built on 2026-11-11 and 2026-11-12 and tested offline only. `npm run test:apworld` generated real
+seeds with the frozen Archipelago 0.6.8 (solo lists, every kind with every timer, two Plex lists
+sharing titles beside ChecksFinder, season mode, 600 unlock copies, an item link): each passed a
+copy of archipelago.gg's upload check, MultiServer resolved a title by name, and the `!ap next`
+worker rebuilt the seeds it was given and verified every slot. In its scenario G a real
+MultiServer hosted one more seed on a loopback port, and the bot's real game, game client and room
+monitor played it: a Plex history row sent its title's checks, a locked title's checks waited in
+the bank until its unlock arrived through the multiworld, the room recorded the goal, and the relay
+never posted the game client's own join or leave. The other bot-side tests ran against a stand-in
+room server modelled on MultiServer 0.6.8. Plex and Discord were fakes throughout. Nothing below
+has met a room hosted with `ArchipelagoServer.exe` or archipelago.gg, a live Plex session or
+Discord yet: `/status/sessions` had no session playing when it was probed, so its field shapes are
+unverified, and no seed has been uploaded to archipelago.gg. Watch the bot log
+(`data/logs/bot-<date>.log`; Plex Bot Status shows its tail) for `Plex Media` lines, and
+`npm run logs -- --raw` for `apmedia-*` events.
+
+You need `ownerId` set, a second Discord account (Friend) with a Plex account of its own on this
+server (a shared or a managed user), and a third (Other) with none. The steps build three test
+seeds on this PC from folders of their own, so the real `Players` folder stays as it is, and host
+them one at a time on port 38281 with `ArchipelagoServer.exe` from `C:\ProgramData\Archipelago`,
+whose window takes server commands (`/send`, `/option`). They run on a watch of their own,
+added with `!ap watch` (its id is N below), so the room `/config` names keeps relaying your real
+game.
+
+**Turning it on, and the apworld**
+
+- [ ] Before enabling: `/apmedia status` answers "🎬 Plex Media is turned off. The bot owner can
+      turn it on with `!config`, under AP Media (`apMediaEnabled`).", `!help` has no `!apmedia ?`
+      line, and `!diag` shows `− ApMedia: apMediaEnabled is false in config/config.js`.
+- [ ] `/config` → AP Media lists six settings. Turn on "Plex Media world (/apmedia)": no restart,
+      the bot log has `Plex Media started.`, `!diag` shows `✓ ApMedia: 0 slots, 0 connected, no
+      linked accounts`, `!help`'s 🧩 ARCHIPELAGO section ends with the `!apmedia ?` line ("Plex
+      Media: your to-watch list as an Archipelago game."), and `!apmedia ?` shows the sub-help.
+- [ ] Optional, because turning `archipelagoEnabled` off stops every watch, the live room's relay
+      included, and the chat, joins and parts of that pause are never caught up: turn it off, and
+      `!diag` shows `⚠ ApMedia: needs the Archipelago monitor (archipelagoEnabled is off): …`. Turn
+      it back on: `!diag` is ✓ again.
+- [ ] Other runs `/apmedia apworld`: "⛔ Only the bot owner can hand out the apworld.", in public,
+      as every `apworld` reply is. You run it with nothing installed yet: `plex_media.apworld`
+      attached, "for Archipelago 0.6.8 or later", the install steps, and "This PC has no
+      plex_media.apworld installed yet (Archipelago's custom_worlds folder)."
+- [ ] Install it (Archipelago Launcher → **Install APWorld**, then restart the Launcher).
+      `/apmedia apworld` again: "This PC already has world 0.1.0 installed."
+- [ ] Another version: close every Archipelago program, then from the bot's folder run
+      `node -e "require('./helpers/apworldBuild.js').writeApworld('C:/ProgramData/Archipelago/custom_worlds/plex_media.apworld', { worldVersion: '0.0.9' })"`.
+      `/apmedia apworld`: "⚠️ This PC has world 0.0.9 installed, and this file is 0.1.0: install
+      it to bring the PC up to date." Install the attached file over it; the next `/apmedia
+      apworld` says 0.1.0 again.
+
+**Accounts and consent**
+
+- [ ] Other runs `/apmedia account`: "⛔ Only the bot owner can see and link Plex accounts." You:
+      a private list headed "Plex accounts on this server", your own marked `id 1, the server
+      owner`. `!apmedia account` in a channel answers "📬 Sent you the Plex account list by DM.",
+      and the list is in your DMs, not the channel.
+- [ ] `/apmedia account user:@Friend plex:<the first three letters of their Plex name>`: "No Plex
+      account is called `<abc>`. Did you mean `<name>` (id N)? Give its full name or its id.", and
+      nothing is linked. `!apmedia account @Friend <abc>` in a channel answers "📬 Sent you the Plex
+      accounts that match by DM.", and the question is in your DMs, not the channel.
+- [ ] `/apmedia account user:@Friend plex:<their Plex name>`: "<@Friend>: Linked to Plex account
+      `<name>` (account N), waiting for their consent: nothing is read until they accept." and
+      "📨 They have a DM with an Accept button." Friend's DM says what would be read, that
+      `/apmedia account plex:none` takes it back, and has an Accept button. Leave it unpressed.
+- [ ] Friend turns off direct messages from server members (the server's Privacy Settings). Link
+      them again the same way: "Their DMs are closed to the bot, so this channel asks them to open
+      them (naming them without a ping): link them again once they have." The channel message
+      starts "<@Friend>: the bot owner linked you to a Plex account for Plex Media, and your DMs are
+      closed to the bot.", has no button and no account name, and Friend gets no mention
+      notification. Friend turns their DMs back on, and you link them a third time: a new DM.
+- [ ] Friend presses the first Accept, in their DMs: the message becomes "The owner has linked
+      your Plex account again since this request: answer the newer one." and loses its button.
+- [ ] Friend presses the newest Accept: the message gains "✅ Accepted: the Plex history of
+      `<name>` (account N) counts for your Plex Media slots." and loses its button.
+      `/apmedia account user:@Friend` now ends "accepted".
+- [ ] `/apmedia account user:@Other plex:<Friend's Plex name>`: "Plex account `<name>` (id N) is
+      already linked to <@Friend>. Unlink it there first, or link it as shared if they use that
+      account together. To link it anyway, add `shared:True`." `plex:1` gets the same answer, naming
+      you "(as the server owner)". With `shared:True`, Other is linked, waiting, and their
+      DM says the account is also linked to <@Friend>. `/apmedia account user:@Other plex:none`.
+
+**Lists, and the three seeds**
+
+- [ ] `/apmedia yaml name:ZackPlex preset:mixed time-books:5 time-albums:5`: a private reply with
+      `ZackPlex.yaml` attached, a line of counts (entries by kind, locations, hours), "Starts with N
+      open; goal: finish K of M", "Next: put the file in Archipelago's Players folder before you
+      generate. …", and "Every title on the list is visible to the whole room and on the public
+      tracker." Ask for it again before the first answer comes: "⏳ Your last list is still being
+      built: wait for it, then ask again."
+- [ ] Friend: `/apmedia yaml name:FriendPlex preset:movies`. Check two of its titles against
+      Friend's Plex history: neither has been watched on Friend's account. The reply says to send
+      the file to the bot owner.
+- [ ] Other: `/apmedia yaml name:OtherPlex`: "Leaving out what you have already watched needs your
+      Plex account: ask the owner: `/apmedia account @you <plex name>`. Or build the list with
+      unwatched=false." Then `/apmedia yaml name:Zoë unwatched:False`: attached as `Zoë.yaml`.
+      Download it and note the name Discord kept: a rewritten `ë` would let two players' files meet
+      in one folder. With `unwatched:False` again, `name:Zack M.` gives `Zack_M-cd58afdb.yaml`, and
+      `name:Bad{1}` answers "The name cannot contain {, } or %."
+- [ ] `!apmedia yaml name=Picks movies=2 titles="<a movie title>; <a misspelt album title>"`, in a
+      channel: the reply is public, the movie is in the YAML, and the album is listed under "❓ Not
+      found" with a "did you mean". Friend's `/apmedia yaml name:X for:@Other`: "⛔ Only the bot
+      owner can build a list for someone else."
+- [ ] In `ZackPlex.yaml`, put `[Free](https://example.com) ` in front of the `"t"` value of its
+      last movie, one `FriendPlex.yaml` does not list, as a hand-edited YAML could. The list's
+      first titles start open, and a title on both lists is named from Friend's file.
+- [ ] Put `ZackPlex.yaml`, `FriendPlex.yaml` and a ChecksFinder YAML named `Finder` in a folder of
+      their own and generate it twice (`ArchipelagoGenerate.exe --player_files_path <folder>`):
+      seeds A and B, two seeds with the same slot names. Generate seed C from a folder of two
+      ChecksFinder YAMLs named `Finder` and `ZackPlex`. No generation logs a Plex Media error.
+      Host A: `ArchipelagoServer.exe --port 38281 <A's AP_*.zip>`.
+
+**Linking, and the welcome**
+
+- [ ] In a test channel, `!ap watch localhost:38281 Finder`. The reply names the watch's id (N),
+      and the watch connects, with joins and parts shown (on by default for a new watch).
+- [ ] Friend: `/apmedia link slot:FriendPlex watch:N` before claiming it: "Claim the slot first:
+      `!ap claim N FriendPlex` shows it is yours. Then link it again, or ask the bot owner to link
+      it for you." Friend runs `!ap claim N FriendPlex` and links again: "🔗 Linked `FriendPlex` on
+      watch #N.", with no warning.
+- [ ] You: `/apmedia link slot:zackplex watch:N`, in lower case: "🔗 Linked `ZackPlex` on watch
+      #N.", in the room's spelling.
+- [ ] Within seconds the test channel has one welcome per slot: "🎬 `ZackPlex` is in the game with
+      N of M titles open: <up to 8 titles, each with its runtime>. Goal: finish K.", then "Plex
+      account: the server owner (account 1).", then the `!ap claim N ZackPlex` and `!ap hintpings
+      N ZackPlex dm` commands. FriendPlex's says "Plex account: linked." and names no account. No
+      join or leave line naming `PlexMediaBot` posts.
+- [ ] `!diag`: `✓ ApMedia: 2 slots, 2 connected, Plex history read Nm ago` once the first read is
+      in. Your `/apmedia status` shows both slots, FriendPlex's block naming Friend; Friend's shows
+      only FriendPlex. Other's: "No Plex Media slot is linked." and how to claim and link one.
+- [ ] `!restart`: no join or leave line naming `PlexMediaBot`, before or after, and no refusal in
+      the bot log. Connect Archipelago's Text Client to `FriendPlex` and close it again: both its
+      join and its leave lines post.
+- [ ] The movie edited to carry a link: `/apmedia list show:locked` shows
+      `[Free](https://example.com) <title>` as typed, brackets and all, so its words do not stand
+      in for a link (Discord still makes the address itself one). In the ArchipelagoServer window,
+      give its full name: `/hint ZackPlex [Free](https://example.com) <title> (<year>)`.
+      `!ap hints N` lists the hint with the movie's name shown the same way.
+
+**Watching in Plex**
+
+- [ ] Set "Announcements" to "Every check". As the owner, play an open movie from ZackPlex's list
+      (`/apmedia list` shows them) in a Plex app. Within about 15 s the bot log has `Plex Media:
+      Plex sessions of account 1 are matched by User.id.` or `by User.title.`; note which.
+- [ ] At 15:00 into the movie, within about 20 s plus the batch window: "⏱️ `ZackPlex` **<Title
+      (Year)>**: 1 check sent", and seed A's window logs the location as found. `/apmedia status`:
+      "Last Plex session: **<Title (Year)>**, reached N%: Plex counts a watch at 90%."
+- [ ] Pause 5 to 10 s after passing 30:00 and wait: the 30:00 line still posts, within about 20 s
+      plus the batch window. While paused, drag the playhead 5 minutes on, wait 30 s, then resume:
+      nothing for the minutes dragged over.
+- [ ] Seek 30 minutes forward: nothing for the minutes skipped; the checkpoints after the new
+      place count again as they play.
+- [ ] Play on past 90%, or to the end: within 2 minutes (`apMediaHistorySeconds`) "✅ `ZackPlex`
+      watched **<Title (Year)>**, N checks sent", N covering the watch and every checkpoint not
+      sent yet, and `npm run logs -- --raw` has an `apmedia-credit` event with `source` `history`.
+- [ ] An episode of the show on the list, the same way: a checkpoint every 10 minutes, and the
+      episode's watch at its end.
+
+**Locked titles, unlocks and Wild Tickets**
+
+- [ ] Watch a title from `/apmedia list show:locked` (or `/apmedia check` it): "🔒 `ZackPlex`
+      watched **<Title>**, N checks waiting for its unlock". `/apmedia status` counts them as
+      banked, and seed A's window logs nothing for them.
+- [ ] In seed A's window, `/send ZackPlex <its unlock>`, named as `/apmedia list show:locked` says
+      opens it (a movie's unlock is its title and year, such as `The Matrix (1999)`). Within
+      seconds: "🔓 `ZackPlex` **<Title>** unlocked, N checks sent", and status counts none banked.
+- [ ] `/send ZackPlex Wild Ticket`, then `/apmedia redeem title:<a locked title>`: "🎟️ Spent a
+      Wild Ticket on **<Title>**. 0 tickets left.", and the title moves to ready. The same title
+      again: "**<Title>** is open already." Another locked title, with every ticket spent:
+      "`ZackPlex` has no Wild Ticket to spend (N received, N used)."
+- [ ] Friend's `/apmedia redeem title:<any title> slot:ZackPlex` and `/apmedia check
+      title:<any title> slot:ZackPlex`: "No linked Plex Media slot is called `ZackPlex`." Your
+      `/apmedia check` on `slot:FriendPlex` works.
+
+**Listening through the bot.** Do not `!seek` in a track that should count: a seek splits the
+listen, and each part has to reach 85% alone for the track itself.
+
+- [ ] In a voice channel, `!album <an open album from ZackPlex's list>`. After the first track
+      ends: "⏱️ `ZackPlex` **<Artist - Album>**: N checks sent", the track and any 5-minute album
+      checkpoint inside it. `!skip` the second a little after the album passes its next 5-minute
+      mark (`/apmedia status` and the track lengths tell where): "⏱️ … 1 check sent" for that
+      checkpoint, and nothing for the track. Play every track through, the skipped one again
+      included: when the last one counts, "✅ `ZackPlex` listened to **<Artist - Album>**, N checks
+      sent".
+- [ ] Have Friend start a track while you are out of the channel and join halfway: that track
+      earns you nothing, and the next one, heard from start to end, counts.
+- [ ] `/config` → AP Media → "Count music heard in voice" off: the next track earns nothing. Turn
+      it back on.
+- [ ] `/book play <the audiobook on ZackPlex's list>` and listen past 5:00 (the list's 5-minute
+      timer): "⏱️ `ZackPlex` **<Title by Author>**: 1 check sent" within about 15 s.
+- [ ] `/book pause` a second or two after passing 10:00: the 10:00 line still posts, within about
+      10 s of the pause. `/book resume`.
+- [ ] Without pausing again, `!restart` within 5 s of passing 15:00 (`/book goto 14:50` gets there
+      sooner). The bot log has `Audiobook session … ended (shutdown)`, and the 15:00 line posts
+      after the restart, once `ZackPlex` has reconnected. Its `apmedia-credit` event
+      (`npm run logs -- --raw`) has `banked` 1 when the shutdown closed the last stretch of
+      listening, and `sent` 1 when a 10-second poll caught it first: then `/book play` and try
+      again at 20:00.
+- [ ] `/book play`, with no title, resumes the book. `/book goto` past the next checkpoint: nothing
+      for the stretch jumped. Then `/book goto` to a minute before the end and let it play out (or
+      `/book finish`): within about a minute, "✅ `ZackPlex` finished **<Title by Author>**, N
+      checks sent".
+
+**Plex history arriving late**
+
+- [ ] In Plexamp on a phone, download an open album from ZackPlex's list, switch to airplane mode
+      and play two of its tracks through. Some hours later (Plexamp has been seen syncing up to 54
+      h late, and each history read covers 7 days), go back online: within a few minutes of the
+      sync, `npm run logs -- --raw` has an `apmedia-credit` event with `source` `history` for each
+      track, and the channel has their ⏱️ lines.
+
+**By hand, and naming titles**
+
+- [ ] `/apmedia check title:<an open movie not watched yet> at:45m`: "✅ **<Title (Year)>**: 3 checks
+      sent." (15m, 30m and 45m). The same again: "Nothing new: **<Title (Year)>**'s checks up to
+      there were counted already."
+- [ ] `!apmedia check <part of a longer title, found in no other list title>`: "Did you mean
+      **<Title (Year)>**? Type its title in full, or give its code: `<code>`.", and `/apmedia
+      status` shows nothing new. Pick a part such as `Wars` for Star Wars (1977): `Matrix` names The
+      Matrix (1999) in full, less its year and article. `!apmedia check <the same title in lower
+      case, without its year>` counts it.
+- [ ] `!apmedia check <another open movie> at 20`: its 15m checkpoint only, a bare number being
+      minutes. If the list holds a title with "at" and a number in it (Murder at 1600), checking
+      that title counts the film itself.
+- [ ] `/apmedia check title:<about 300 characters of words from list titles>`: "Nothing on
+      `ZackPlex`'s list matches …" at once, with no "Did you mean", and voice playing at the time
+      does not stutter.
+
+**Pages and hints**
+
+- [ ] `!apmedia list locked` in a channel (public, unlike `/apmedia list`) with more than 22 locked
+      titles: "Page 1 of N" and ◀ ▶. Friend presses ▶: a private "Only the person who asked can
+      turn these pages." You press ▶: the same message turns to page 2, and no new message posts.
+- [ ] Leave it untouched for over 30 minutes and press ▶: "This list has expired. Ask for it again
+      to see it as it is now." `/apmedia list show:locked` gives the same pages privately, and its
+      buttons turn for you.
+- [ ] In seed A's window `/option hint_cost 0`, then from the Text Client connected as `ZackPlex`,
+      `!hint_location Watch <an open movie's title and year>`: `/apmedia list` marks that movie
+      "💡 hinted for <the slot it is for>".
+
+**Across a restart**
+
+- [ ] Set "Log batch (seconds)" (`archipelagoBatchSeconds`) to 60, earn a line with
+      `/apmedia check`, and `!restart` within the minute: the line posts once, after the restart.
+      Set it back.
+- [ ] Turn "Plex Media world (/apmedia)" off: `/apmedia` answers that it is off, `!diag` says
+      disabled, and seed A's window shows both game clients leave. On again: `Plex Media
+      started.`, both reconnect, and no welcome posts again.
+
+**Refusals, a new seed and a lost watch**
+
+- [ ] Close seed A's server window and host seed C on the same port. Once the watch and the game
+      clients have reconnected, the test channel gets "🔴 `ZackPlex`: the room refused its Plex
+      Media client (`InvalidGame`). That slot plays another game in this room, not Plex Media:
+      `/apmedia unlink` it and link the room's Plex Media slot." and "🔴 `FriendPlex`: …
+      (`InvalidSlot`). The room has no slot …". `!diag`: `✗ ApMedia: 2 slots refused (ZackPlex:
+      InvalidGame, FriendPlex: InvalidSlot)`.
+- [ ] Close C and host A again. The refused slots stay down until `/apmedia retry`, run for each
+      slot (Friend may run their own): "🔄 Reconnecting `ZackPlex`.", then both connect with no new
+      welcome, and `!diag` is ✓ again.
+- [ ] A second watch of the same room: `!ap watch localhost:38281 Finder` again (its id is M), then
+      `/apmedia link slot:ZackPlex watch:M user:@Other`. Within seconds: "🔴 `ZackPlex`: the room
+      refused its Plex Media client (`duplicate`). This seed's `ZackPlex` is linked on watch #N
+      already, and only that link counts: `/apmedia unlink` this one." Your ZackPlex on watch N
+      stays connected. `/apmedia unlink`, picking `ZackPlex (watch #M)` from the slot list, then
+      `!ap unwatch M`.
+- [ ] In seed A's window `/option password secret`, then `!restart`: the watch keeps its
+      connection and the game clients reconnect, to "🔴 `ZackPlex`: … (`InvalidPassword`). The
+      room's password changed: set it with `!ap password N <password>`, then `/apmedia retry`."
+      `/option password none`, then `/apmedia retry` for each slot: both connect.
+- [ ] `/option compatibility 0`, then `!restart`: "🔴 `ZackPlex`: … (`IncompatibleVersion`). The
+      room was hosted with an exact-version compatibility setting, and the bot's client reports
+      0.6.1: host it with the default compatibility, then `/apmedia retry`." `/option compatibility
+      2`, then `!restart` again, with no `/apmedia retry`: both connect, and the bot log has `Plex
+      Media: ZackPlex connected after its refusal.` and the same line for `FriendPlex`.
+- [ ] Close A and host seed B on the same port: "🟡 `ZackPlex`: the room is on another seed now, so
+      this list from the old seed no longer counts. `/apmedia retry` adopts the new seed (the old
+      seed's progress does not carry over), or `/apmedia unlink` it.", for both slots, and
+      nothing counts for them. `/apmedia retry` for each slot (Friend may run their own):
+      "🔄 Reconnecting `ZackPlex`. It takes on the room's new seed: the old seed's progress does
+      not carry over.", then a new welcome for each.
+- [ ] `!ap unwatch N`: each slot posts "⚠️ `ZackPlex`: watch #N is gone, so its Plex Media client
+      stopped and nothing more counts for it. …", and `!diag` shows `✗ ApMedia: 2 slots lost their
+      watch (ZackPlex, FriendPlex)`. `/apmedia retry`: "Watch #N is gone: watch the room again, then
+      `/apmedia unlink` and `/apmedia link` the slot on its new watch."
+- [ ] Friend's `/apmedia unlink slot:FriendPlex`: "Unlinked `FriendPlex`.", plus "Its N unsent
+      checks went with it." when any were waiting. Unlink ZackPlex too.
+- [ ] Friend's `!apmedia account none`: "Your Plex account link is gone: its history is no longer
+      read for you.", and `/apmedia account user:@Friend` (yours) says they have none. Again: "No
+      Plex account is linked for you."
+
+**The archipelago.gg upload (owner, manual)**
+
+- [ ] Upload seed A's `AP_*.zip` at archipelago.gg and open a room. The upload is accepted, with no
+      data package or checksum error, and the room page lists ZackPlex and FriendPlex playing Plex
+      Media. Its tracker names ZackPlex's locations by title.
+- [ ] Open `https://archipelago.gg/api/slot_data_tracker/<tracker>`, where `<tracker>` is the id
+      at the end of the room page's tracker link. Each Plex Media slot's entry holds its titles and
+      options, with no `account` or `discord` key, and neither your Discord user id nor Friend's
+      appears anywhere on the page.
+- [ ] `!ap watch <the room's URL> Finder`, then `/apmedia link slot:ZackPlex watch:<its id>`: the
+      slot connects and posts its welcome. The relay names Plex Media items and locations by title,
+      such as `The Matrix (1999)` and `Watch The Matrix (1999)`, never `Unlock 12` or `Check 40`.
+- [ ] From a text client connected as `ZackPlex`, `!hint <the unlock of a locked title, as
+      /apmedia list show:locked names it>`: the room answers with where that unlock is, or, while
+      ZackPlex has too few hint points, "You can't afford the hint. You have N points and need at
+      least M." Either reply shows the room knew the title by name; "Didn't find something that
+      closely matches" would mean it did not. `!ap unwatch` the room when done.
 
 ---
 

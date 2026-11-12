@@ -1,0 +1,790 @@
+# apworld/tests/test_generate.py
+# Generates real seeds with the owner's frozen Archipelago 0.6.8 and the built dist/plex_media.apworld.
+#
+# Scenarios (SPEC 4.10): (a) two solo lists, one in the YAML text the bot itself writes (renderYaml()
+# of helpers/apMediaYaml.js, run through node -e) and the committed builder-1 fixture YAML, (b) a
+# mixed list with every kind and every timer, (c) two Plex lists sharing titles beside a ChecksFinder
+# slot, (d) season mode with checkpoints open to anything, (e) 600 unlock copies solo at spoiler 3
+# inside 90 s, and, beyond the SPEC's list, (f) two Plex lists naming one item link, which the world
+# must warn about and leave empty while the multiworld still generates. Every seed must ship a data
+# package of real names that passes archipelago.gg's upload check, name ids by title in MultiServer
+# (a !hint for a title resolves), put every slot_data id in that slot's own locations or starting
+# items, show titles in its spoiler, keep excluded checkpoints to filler, and give each location the
+# rule of its own unit and step. (c) is generated again in a child process under another
+# PYTHONHASHSEED and must come out identical, and the bot's own !ap next worker must rebuild (c) and
+# (f) and verify every slot, and pick (f)'s yamls out of a Players folder that has moved on.
+#
+# Harness: unittest, run by run.py after it builds dist/plex_media.apworld with node
+# scripts/build-apworld.js; prepare() loads Archipelago through ap_harness into a temp root that
+# run.py removes afterwards (outputs embed host.yaml's server_options). Generations run one at a time
+# because the PC runs hot. Bare assert is never used: -O strips it. Golden files are compared, or
+# rewritten when run.py gets --update-golden: fixtures/builder1_mixed.expect.json pins builder 1's
+# ids and names, test/fixtures/apmedia/slot_data_mixed.json is scenario (b)'s slot_data for the JS side.
+
+import collections
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+import unittest
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.dirname(os.path.dirname(HERE))
+sys.path.insert(0, HERE)
+import ap_harness  # noqa: E402
+
+GAME = "Plex Media"
+CHILD = os.path.join(HERE, "ap_child.py")
+FIXTURE_YAML = os.path.join(HERE, "fixtures", "builder1_mixed.yaml")
+FIXTURE_EXPECT = os.path.join(HERE, "fixtures", "builder1_mixed.expect.json")
+GOLDEN_SLOT_DATA = os.path.join(REPO, "test", "fixtures", "apmedia", "slot_data_mixed.json")
+FIXED_GENERATED_AT = 1731300000
+PLACEHOLDER = re.compile(r"\b(?:Unlock|Check) [0-9]+\b")
+
+STATE = {"root": None, "apworld": None, "update": False, "warnings": None}
+
+
+def prepare(root, apworld, update_golden=False):
+	STATE.update(root=root, apworld=apworld, update=update_golden)
+	ap_harness.load(root, apworld)
+	STATE["warnings"] = ap_harness.quiet_logging()
+
+
+def js(value):
+	return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def write_text(path, text):
+	with open(path, "w", encoding="utf-8", newline="\n") as handle:
+		handle.write(text)
+
+
+def write_list(folder, file_name, name, entries, options=None, extra=None, label=None):
+	info = {"builder": 1, "created_at": 1731200000, "label": label or f"{name} list", "account": 1, "discord": "1234"}
+	lines = [f"name: {js(name)}", f"description: {js(info['label'])}", "game: Plex Media", "requires:",
+	         "  version: 0.6.8", "  game:", "    Plex Media: 0.1.0", "Plex Media:"]
+	for key, value in {**(options or {}), **(extra or {})}.items():
+		lines.append(f"  {key}: {js(value)}")
+	lines.append(f"  list_info: {js(info)}")
+	lines.append("  entries:")
+	lines += [f"    - {js(entry)}" for entry in entries]
+	write_text(os.path.join(folder, file_name), "\n".join(lines) + "\n")
+
+
+def write_checksfinder(folder):
+	write_text(os.path.join(folder, "C_Checks.yaml"), "name: Check Probe\ngame: ChecksFinder\nChecksFinder: {}\n")
+
+
+def rendered_yaml(doc):
+	"""The bytes of the file /apmedia yaml would attach for doc: helpers/apMediaYaml.js renderYaml()."""
+	script = ("const { renderYaml } = require('./helpers/apMediaYaml.js'); "
+	          "process.stdout.write(renderYaml(JSON.parse(require('fs').readFileSync(0, 'utf8'))));")
+	proc = subprocess.run([shutil.which("node") or "node", "-e", script], input=json.dumps(doc).encode("utf-8"),
+	                      cwd=REPO, capture_output=True, timeout=120)
+	if proc.returncode:
+		raise AssertionError(f"renderYaml failed ({proc.returncode}): {proc.stderr.decode('utf-8', 'replace')}")
+	return proc.stdout
+
+
+def movie(rk, title, d, y=2000, guid=None):
+	entry = {"k": "movie", "id": guid or f"rk:{rk}", "rk": rk}
+	if guid:
+		entry["g"] = guid
+	entry.update(t=title, y=y, d=d)
+	return entry
+
+
+def episode(rk, show, sid, srk, sn, en, d):
+	return {"k": "episode", "id": f"rk:{rk}", "rk": rk, "t": f"Episode {en}", "sh": show, "sid": sid, "srk": srk,
+	        "sn": sn, "en": en, "d": d}
+
+
+def album(rk, artist, title, tracks, twin=None):
+	tr = [[rk * 10 + n, n, name, d, rk * 100 + n] for n, (name, d) in enumerate(tracks, 1)]
+	entry = {"k": "album", "id": f"plex://album/{rk}", "rk": rk, "g": f"plex://album/{rk}", "ar": artist, "t": title,
+	         "y": 2001, "d": sum(d for _n, d in tracks), "tr": tr}
+	if twin:
+		entry["alt"] = [[twin, [[twin * 10 + n, twin * 100 + n] for n in range(1, len(tracks) + 1)]]]
+	return entry
+
+
+def mix(pl, part, title, tracks):
+	tr = [[pl * 10 + part * 5 + n, n, name, d, pl * 100 + part * 10 + n, artist]
+	      for n, (name, artist, d) in enumerate(tracks, 1)]
+	return {"k": "mix", "id": f"pl:{pl}:{part}", "pl": pl, "part": part, "t": title,
+	        "d": sum(d for _n, _a, d in tracks), "tr": tr}
+
+
+def book(rk, work, title, author, parts):
+	return {"k": "book", "id": f"book:{work}", "w": work, "t": title, "au": author, "d": sum(parts),
+	        "pa": [[rk * 10 + n, rk * 100 + n, d] for n, d in enumerate(parts, 1)]}
+
+
+AMELIE = "Am" + chr(0xe9) + 'lie: "Le" #fabuleux ' + chr(0x1f37f)
+TOKYO = chr(0x6771) + chr(0x4eac)
+MATRIX = movie(2001, "The Matrix", 8160000, 1999, guid="plex://movie/5d7768b2")
+BREAKING = ("Breaking Point", "plex://show/5eb6f2a1", 2100)
+
+
+def mixed_entries():
+	return [
+		MATRIX,
+		movie(2002, "Halloween", 6360000, 2018),
+		movie(2003, "Halloween", 6300000, 2018),
+		movie(2004, "1917", 7140000, None),
+		movie(2005, "Popcorn", 600000, None),
+		movie(2006, AMELIE, 7380000, 2001),
+		*[episode(2100 + n, *BREAKING, 1, n, 2700000) for n in (1, 2, 3, 4)],
+		episode(2105, *BREAKING, 0, 1, 1500000),
+		episode(2201, "Tiny Show", "rk:2200", 2200, 1, 1, 1320000),
+		episode(2202, "Tiny Show", "rk:2200", 2200, 1, 2, 1320000),
+		album(2300, "Daft Punk", "Discovery", [("One More Time", 320000), ("Aerodynamic", 212000), ("Interlude", 15000),
+		                                       ("Digital Love", 301000)], twin=2310),
+		album(2400, "Daft Punk", "Discovery", [("Bonus Disc", 200000)]),
+		mix(2500, 1, "Road Trip Part 1", [("Song A", "Artist A", 200000), (TOKYO, "Artist B", 180000),
+		                                  ("Short One", "Artist C", 20000)]),
+		mix(2500, 2, "Road Trip Part 2", [("Song D", "Artist D", 240000)]),
+		book(2600, "jane-austen/pride-and-prejudice", "Pride and Prejudice", "Jane Austen", [3600000, 3000000]),
+		book(2700, "j-r-r-tolkien/the-hobbit", "The Hobbit", "J. R. R. Tolkien", [3600000, 3600000, 2400000]),
+	]
+
+
+MIXED_OPTIONS = {"timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 5, "timesanity_books": 30}
+
+RENDERED_ENTRIES = [MATRIX, movie(2004, "1917", 7140000, None), movie(2006, AMELIE, 7380000, 2001),
+                    episode(2101, *BREAKING, 1, 1, 2700000)]
+RENDERED_DOC = {"name": "Render Fan", "label": "Rendered list", "createdAt": 1731200000,
+                "options": {"goal_percent": 50, "wild_tickets": 1}, "entries": RENDERED_ENTRIES,
+                "listInfo": {"account": 1, "discord": "1234"}}
+
+
+class Seed:
+	def __init__(self, name, seed, write_players, spoiler=3):
+		self.folder = os.path.join(STATE["root"], name)
+		self.players = os.path.join(self.folder, "players")
+		self.out = os.path.join(self.folder, "out")
+		os.makedirs(self.players)
+		os.makedirs(self.out)
+		write_players(self.players)
+		self.seed = seed
+		started = time.time()
+		clock = time.perf_counter()
+		self.multiworld, self.zip = ap_harness.generate(self.players, self.out, seed, spoiler)
+		self.seconds = time.perf_counter() - clock
+		self.window = (int(started), int(time.time()) + 1)
+		self.md, self.spoiler = ap_harness.read_output(self.zip)
+		self.worlds = list(self.multiworld.get_game_worlds(GAME))
+
+	def remove(self):
+		shutil.rmtree(self.folder, ignore_errors=True)
+
+
+def golden(path, value):
+	"""value matches the committed file, or (run.py --update-golden) becomes it."""
+	if STATE["update"]:
+		os.makedirs(os.path.dirname(path), exist_ok=True)
+		write_text(path, json.dumps(value, ensure_ascii=False, indent="\t") + "\n")
+		return None
+	if not os.path.exists(path):
+		return f"{path} is missing: run run.py --update-golden once and commit it"
+	with open(path, encoding="utf-8") as handle:
+		committed = json.load(handle)
+	if committed != value:
+		return f"{os.path.basename(path)} no longer matches; if the change is deliberate, rerun with --update-golden"
+	return None
+
+
+def plain(value):
+	return json.loads(json.dumps(value))
+
+
+def slot_location_ids(entry):
+	ids = [checkpoint[1] for checkpoint in entry["cp"]]
+	if entry["k"] in ("movie", "episode"):
+		ids.append(entry["w"])
+	elif entry["k"] == "book":
+		ids.append(entry["f"])
+	else:
+		ids += [track[-1] for track in entry["tr"] if track[-1] is not None]
+	return ids
+
+
+class SeedChecks:
+	"""What every scenario's seed must pass; each subclass makes cls.seed in setUpClass."""
+
+	seed = None
+
+	@classmethod
+	def tearDownClass(cls):
+		if cls.seed is not None:
+			cls.seed.remove()
+
+	def test_data_package_ships_real_names_and_passes_the_upload_check(self):
+		import schema
+		import worlds
+		from worlds.AutoWorld import data_package_checksum
+
+		md = self.seed.md
+		package = md["datapackage"][GAME]
+		self.assertEqual(list(package), ["item_name_groups", "item_name_to_id", "location_name_groups",
+		                                 "location_name_to_id", "checksum"])
+		# WebHostLib/upload.py L27-34 and L55-67, as archipelago.gg runs it on upload.
+		games_package_schema = schema.Schema({
+			"item_name_groups": {str: [str]},
+			"item_name_to_id": {str: int},
+			"location_name_groups": {str: [str]},
+			"location_name_to_id": {str: int},
+			schema.Optional("checksum"): str,
+			schema.Optional("version"): int,
+		})
+		for game, game_data in md["datapackage"].items():
+			data = dict(game_data)
+			original = data.pop("checksum")
+			data = games_package_schema.validate(data)
+			data = {key: value for key, value in sorted(data.items())}
+			self.assertEqual(data_package_checksum(data), original, game)
+		units = {world.registry.unit_name[unit.key] for world in self.seed.worlds for unit in world.plan.units}
+		self.assertEqual(set(package["item_name_to_id"]), {"Popcorn", "Wild Ticket"} | units)
+		locations = set()
+		for world in self.seed.worlds:
+			locations |= set(md["locations"][world.player])
+		self.assertEqual(set(package["location_name_to_id"].values()), locations)
+		for name in list(package["item_name_to_id"]) + list(package["location_name_to_id"]):
+			self.assertIsNone(PLACEHOLDER.fullmatch(name), name)
+		static = worlds.network_data_package["games"][GAME]
+		self.assertEqual(static["item_name_to_id"]["Unlock 1"], 1347001001, "the static package is untouched")
+
+	def test_server_names_ids_by_title_and_resolves_a_hint(self):
+		import MultiServer
+		import Utils
+
+		md = self.seed.md
+		package = md["datapackage"][GAME]
+		ctx = MultiServer.Context("127.0.0.1", 0, "", "", 1, 10, False)
+		ctx.load(self.seed.zip)
+		for name, code in package["item_name_to_id"].items():
+			self.assertEqual(ctx.item_names[GAME][code], name)
+		for name, code in package["location_name_to_id"].items():
+			self.assertEqual(ctx.location_names[GAME][code], name)
+		self.assertIn("Movies", ctx.all_item_and_group_names[GAME])
+		world = self.seed.worlds[0]
+		unit = next(unit for unit in world.plan.units if unit.steps > unit.start)
+		name = world.registry.unit_name[unit.key]
+		picked, usable, _response = Utils.get_intended_text(name.lower(), ctx.all_item_and_group_names[GAME])
+		self.assertTrue(usable)
+		self.assertEqual(picked, name)
+		self.assertEqual(len(MultiServer.collect_hints(ctx, 0, world.player, picked)), unit.steps - unit.start)
+
+	def test_slot_data_ids_are_the_slots_own(self):
+		md = self.seed.md
+		for world in self.seed.worlds:
+			player = world.player
+			data = plain(md["slot_data"][player])
+			self.assertEqual(data["schema"], 1)
+			self.assertEqual(data["world_version"], "0.1.0")
+			low, high = self.seed.window
+			self.assertTrue(low <= data["generated_at"] <= high, data["generated_at"])
+			used = [i for entry in data["entries"] for i in slot_location_ids(entry)]
+			self.assertEqual(len(used), len(set(used)))
+			self.assertEqual(set(used), set(md["locations"][player]))
+			placed = collections.Counter(code for table in md["locations"].values()
+			                             for (code, receiver, _flags) in table.values() if receiver == player)
+			start = collections.Counter(md["precollected_items"][player])
+			self.assertEqual(len(data["units"]), len(world.plan.units))
+			for unit in data["units"]:
+				self.assertEqual(start[unit["id"]], unit["start"], unit["name"])
+				self.assertEqual(placed[unit["id"]], unit["steps"] - unit["start"], unit["name"])
+			self.assertEqual(placed[data["items"]["wild_ticket"]], world.plan.wild)
+			self.assertEqual(sum(start.values()), world.plan.start)
+
+	def test_spoiler_shows_titles_not_placeholders(self):
+		spoiler = self.seed.spoiler
+		found = PLACEHOLDER.search(spoiler)
+		self.assertIsNone(found, found and found[0])
+		for world in self.seed.worlds:
+			location = world.placed[0][0]
+			self.assertIn(location.name, spoiler)
+
+	def test_excluded_checkpoints_hold_only_filler(self):
+		from BaseClasses import LocationProgressType
+
+		md = self.seed.md
+		for world in self.seed.worlds:
+			filler_only = world.options.checkpoint_items.current_key == "filler_only"
+			checkpoint_ids = {world.registry.location_id[pe.checkpoint_key(minute)]
+			                  for pe in world.plan.entries for minute in pe.minutes}
+			for location, _pe in world.placed:
+				if location.address not in checkpoint_ids:
+					if location.name not in world.options.exclude_locations.value:
+						self.assertNotEqual(location.progress_type, LocationProgressType.EXCLUDED, location.name)
+					continue
+				excluded = location.progress_type == LocationProgressType.EXCLUDED
+				self.assertEqual(excluded, filler_only, location.name)
+				if filler_only:
+					_code, _receiver, flags = md["locations"][world.player][location.address]
+					self.assertEqual(flags & 0b011, 0, location.name)
+
+	def test_rules_use_their_own_unit_and_step(self):
+		from BaseClasses import CollectionState
+
+		for world in self.seed.worlds:
+			state = CollectionState(self.seed.multiworld)
+			player = world.player
+			for location, pe in world.placed:
+				unit = world.registry.unit_name[pe.unit]
+				state.prog_items[player] = collections.Counter({unit: pe.step - 1})
+				self.assertFalse(location.access_rule(state), location.name)
+				state.prog_items[player] = collections.Counter({unit: pe.step})
+				self.assertTrue(location.access_rule(state), location.name)
+			counter = "Plex Media Unlocked Entries"
+			state.prog_items[player] = collections.Counter({counter: world.plan.goal_count - 1})
+			self.assertFalse(world.goal_location.access_rule(state))
+			state.prog_items[player] = collections.Counter({counter: world.plan.goal_count})
+			self.assertTrue(world.goal_location.access_rule(state))
+
+	def test_goal_counter_follows_collect_and_remove(self):
+		from BaseClasses import CollectionState
+
+		counter = "Plex Media Unlocked Entries"
+		start = CollectionState(self.seed.multiworld)
+		# Without the sweep: after the fill a sweep would collect every placed copy a second time.
+		full = self.seed.multiworld.get_all_state(perform_sweep=False)
+		for world in self.seed.worlds:
+			player = world.player
+			self.assertEqual(start.prog_items[player][counter],
+			                 sum(unit.prefix[unit.start] for unit in world.plan.units))
+			self.assertEqual(full.prog_items[player][counter], len(world.plan.entries))
+			unit = max(world.plan.units, key=lambda u: (u.steps, u.key))
+			name = world.registry.unit_name[unit.key]
+			item = next(item for item in self.seed.multiworld.itempool if item.player == player and item.name == name)
+			full.remove(item)
+			self.assertEqual(full.prog_items[player][counter],
+			                 len(world.plan.entries) - (unit.prefix[unit.steps] - unit.prefix[unit.steps - 1]))
+			full.collect(item, True)
+			self.assertEqual(full.prog_items[player][counter], len(world.plan.entries))
+
+
+class A0_BuiltApworld(unittest.TestCase):
+	"""The file Archipelago loaded is the one scripts/build-apworld.js wrote, and its options match the table."""
+
+	def test_loaded_from_the_built_zip(self):
+		import zipfile
+		from worlds.AutoWorld import AutoWorldRegister
+
+		with zipfile.ZipFile(STATE["apworld"]) as archive:
+			self.assertIsNone(archive.testzip())
+			# The Launcher's Install APWorld check (worlds/LauncherComponents.py L148-155).
+			folders = [entry.name for entry in zipfile.Path(archive).iterdir() if entry.is_dir()]
+			self.assertEqual(folders, ["plex_media"])
+			archive.open("plex_media/__init__.py").close()
+		world = AutoWorldRegister.world_types[GAME]
+		self.assertEqual(world.world_version.as_simple_string(), "0.1.0")
+		self.assertEqual(world.manifest.get("minimum_ap_version"), "0.6.8")
+		loaded = os.path.join(STATE["root"], "worlds", "plex_media.apworld")
+		self.assertEqual(os.path.normcase(str(world.zip_path)), os.path.normcase(loaded))
+		with open(loaded, "rb") as installed, open(STATE["apworld"], "rb") as built:
+			self.assertEqual(installed.read(), built.read())
+		self.assertEqual(len(world.item_name_to_id), 20002)
+		self.assertEqual(len(world.location_name_to_id), 60000)
+
+	def test_option_classes_follow_the_table(self):
+		from worlds.AutoWorld import AutoWorldRegister
+
+		table = sys.modules[AutoWorldRegister.world_types[GAME].__module__ + ".constants"].OPTIONS
+		hints = AutoWorldRegister.world_types[GAME].options_dataclass.type_hints
+		for key, spec in table.items():
+			option = hints[key]
+			with self.subTest(option=key):
+				if spec["type"] == "range":
+					self.assertEqual((option.range_start, option.range_end, option.default),
+					                 (spec["min"], spec["max"], spec["default"]))
+				elif spec["type"] == "choice":
+					self.assertEqual([option.name_lookup[i] for i in sorted(option.name_lookup)], spec["values"])
+					self.assertEqual(option.name_lookup[option.default], spec["default"])
+				else:
+					self.assertEqual(bool(option.default), spec["default"])
+		for key in ("entries", "list_info", "accessibility"):
+			self.assertIn(key, hints)
+		self.assertNotIn("start_inventory_from_pool", hints)
+
+	def test_hidden_options_named_offs_and_world_flags(self):
+		from Options import NamedRange, Visibility
+		from worlds.AutoWorld import AutoWorldRegister
+
+		world = AutoWorldRegister.world_types[GAME]
+		hints = world.options_dataclass.type_hints
+		for key in ("entries", "list_info"):
+			self.assertEqual(hints[key].visibility, Visibility.none, key)
+		for key in ("timesanity_movies", "timesanity_episodes", "timesanity_albums", "timesanity_books"):
+			self.assertTrue(issubclass(hints[key], NamedRange), key)
+			self.assertEqual(hints[key].special_range_names, {"off": 0}, key)
+		self.assertIs(world.disable_ut, True)
+		self.assertEqual(tuple(world.required_client_version), (0, 5, 0))
+
+
+class A_FixtureSolo(SeedChecks, unittest.TestCase):
+	"""(a) the committed builder-1 YAML, rolled solo; its ids and names are frozen."""
+
+	@classmethod
+	def setUpClass(cls):
+		cls.seed = Seed("a_fixture", 101, lambda folder: shutil.copyfile(
+			FIXTURE_YAML, os.path.join(folder, "builder1_mixed.yaml")))
+
+	def test_builder_1_ids_and_names_are_unchanged(self):
+		md = self.seed.md
+		package = md["datapackage"][GAME]
+		data = plain(md["slot_data"][1])
+		data.pop("generated_at")
+		problem = golden(FIXTURE_EXPECT, {
+			"item_name_to_id": package["item_name_to_id"],
+			"location_name_to_id": package["location_name_to_id"],
+			"slot_data": data,
+		})
+		self.assertIsNone(problem, problem)
+
+	def test_fixture_reads_as_written(self):
+		data = plain(self.seed.md["slot_data"][1])
+		self.assertEqual((data["label"], data["created_at"]), ("Fixture list", 1731200000))
+		# list_info's account and discord stay in the YAML: slot_data is readable by any client of the slot.
+		self.assertNotIn("account", data)
+		self.assertNotIn("discord", data)
+		self.assertEqual((data["entry_count"], data["goal_count"]), (10, 8))
+		names = set(self.seed.md["datapackage"][GAME]["item_name_to_id"])
+		self.assertIn("1917 (movie)", names)
+		self.assertIn("Show: \"Quoted\" #1 " + chr(0x1f3ac) + ": Next 3 Episodes", names)
+
+
+class A_RenderedSolo(SeedChecks, unittest.TestCase):
+	"""(a) a list in the exact text the bot's renderYaml() writes, rolled solo."""
+
+	@classmethod
+	def setUpClass(cls):
+		cls.yaml = rendered_yaml(RENDERED_DOC)
+
+		def write_players(folder):
+			with open(os.path.join(folder, "Render_Fan.yaml"), "wb") as handle:
+				handle.write(cls.yaml)
+
+		cls.seed = Seed("a_rendered", 102, write_players)
+
+	def test_rendered_list_reads_as_written(self):
+		self.assertNotIn(b"\r", self.yaml)
+		data = plain(self.seed.md["slot_data"][1])
+		self.assertEqual((data["label"], data["created_at"], data["builder"]), ("Rendered list", 1731200000, 1))
+		self.assertNotIn("discord", data)
+		self.assertIn(b'"discord":"1234"', self.yaml)
+		self.assertEqual((data["entry_count"], data["goal_percent"], data["goal_count"]), (4, 50, 2))
+		# slot_data carries no wild_tickets. Dropped, the option's default 2 would give 2 here: W = clamp(wt, 0, 3).
+		world = self.seed.worlds[0]
+		self.assertEqual((world.options.wild_tickets.value, world.plan.wild), (1, 1))
+		self.assertEqual([entry["id"] for entry in data["entries"]], [entry["id"] for entry in RENDERED_ENTRIES])
+		names = set(self.seed.md["datapackage"][GAME]["item_name_to_id"])
+		for expected in ("The Matrix (1999)", "1917 (movie)", f"{AMELIE} (2001)", "Breaking Point: Next 3 Episodes"):
+			self.assertIn(expected, names)
+
+
+class B_MixedSolo(SeedChecks, unittest.TestCase):
+	"""(b) every kind and every timer; its slot_data is the JS side's golden file."""
+
+	@classmethod
+	def setUpClass(cls):
+		cls.seed = Seed("b_mixed", 202, lambda folder: write_list(folder, "B_Mixed.yaml", "Mixed Fan", mixed_entries(),
+		                                                         MIXED_OPTIONS, label="Mixed list"))
+
+	def test_slot_data_golden_file(self):
+		data = plain(self.seed.md["slot_data"][1])
+		data["generated_at"] = FIXED_GENERATED_AT
+		problem = golden(GOLDEN_SLOT_DATA, data)
+		self.assertIsNone(problem, problem)
+
+	def test_collisions_and_numeric_titles(self):
+		names = set(self.seed.md["datapackage"][GAME]["item_name_to_id"])
+		for expected in ("The Matrix (1999)", "Halloween (2018)", "Halloween (2018) [2003]", "1917 (movie)",
+		                 "Popcorn", "Popcorn [2005]", "Daft Punk - Discovery", "Daft Punk - Discovery [2400]",
+		                 "Breaking Point: Next 3 Episodes", "Road Trip Part 1 (playlist)",
+		                 "Pride and Prejudice by Jane Austen", f"{AMELIE} (2001)"):
+			self.assertIn(expected, names)
+		locations = self.seed.md["datapackage"][GAME]["location_name_to_id"]
+		self.assertIn("Daft Punk - Discovery #04 Digital Love", locations)
+		self.assertNotIn("Daft Punk - Discovery #03 Interlude", locations)
+		self.assertIn(f"Road Trip Part 1 #02 Artist B - {TOKYO}", locations)
+		self.assertIn("Breaking Point S00E01 @ 10m", locations)
+		self.assertIn("The Hobbit @ 2h", locations)
+		self.assertNotIn("The Hobbit @ 2h30m", locations)
+		self.assertIn("Halloween (2018) @ 15m [2003]", locations)
+		# Album and mix checkpoints run on the sum of the tracks (14m08s and 6m40s here), cut at 90%.
+		self.assertIn("Daft Punk - Discovery @ 5m", locations)
+		self.assertIn("Daft Punk - Discovery @ 10m", locations)
+		self.assertNotIn("Daft Punk - Discovery @ 15m", locations)
+		self.assertIn("Road Trip Part 1 @ 5m", locations)
+
+
+def shared_players(folder):
+	alpha = [MATRIX, movie(3001, "Alpha Only", 5400000),
+	         *[episode(2100 + n, *BREAKING, 1, n, 1500000) for n in (1, 2, 3, 4)],
+	         album(3100, "Band", "Record", [("One", 200000), ("Two", 200000), ("Three", 200000)])]
+	beta = [MATRIX, *[episode(2100 + n, *BREAKING, 1, n, 1500000) for n in (3, 4, 5, 6)],
+	        album(3100, "Band", "Record", [("One", 200000), ("Deux", 200000), ("Three", 200000)]),
+	        book(3200, "someone/beta-book", "Beta Book", "Someone", [3600000])]
+	write_list(folder, "A_Alpha.yaml", "Alpha Fan", alpha, {"timesanity_episodes": 10},
+	           {"local_items": ["Everything"]})
+	write_list(folder, "B_Beta.yaml", "Beta Fan", beta,
+	           {"timesanity_movies": 20, "timesanity_episodes": 15, "starting_unlocks": 1},
+	           {"start_hints": ["Unlock 1"], "exclude_locations": ["Check 1", "Check 2", "Check 3"],
+	            "start_inventory": {"Popcorn": 1}})
+	write_checksfinder(folder)
+
+
+def run_child(mode, players, target, *rest, hashseed=None):
+	"""ap_child.py <mode> <root> <players> <out or zip> <result> [seed], one child at a time."""
+	result = os.path.join(STATE["root"], f"child-{mode}.json")
+	env = dict(os.environ)
+	if hashseed is not None:
+		env["PYTHONHASHSEED"] = hashseed
+	command = [sys.executable, "-O", "-s", "-S", "-B", CHILD, mode, STATE["root"], players, target, result, *rest]
+	proc = subprocess.run(command, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace",
+	                      timeout=900)
+	if proc.returncode or not os.path.exists(result):
+		raise AssertionError(f"ap_child {mode} failed ({proc.returncode}):\n{proc.stderr[-4000:]}")
+	with open(result, encoding="utf-8") as handle:
+		return json.load(handle)
+
+
+def check_worker(test, seed, games):
+	"""The bot's !ap next worker rebuilds the seed, puts its placements back and verifies every slot."""
+	child = run_child("worker", seed.players, seed.zip)
+	test.assertEqual(child["games"], games)
+	for slot, (ok, reason) in child["verified"].items():
+		test.assertTrue(ok, f"slot {slot}: {reason}")
+	test.assertEqual(child["injected"]["missing"], 0)
+	for answer in child["answers"]:
+		test.assertTrue(answer["verified"], answer)
+		test.assertGreater(answer["now"], 0, answer)
+	return child
+
+
+class C_SharedTitles(SeedChecks, unittest.TestCase):
+	"""(c) two Plex lists that share titles, beside ChecksFinder."""
+
+	@classmethod
+	def setUpClass(cls):
+		cls.seed = Seed("c_shared", 303, shared_players)
+
+	def test_shared_titles_share_ids(self):
+		alpha, beta = self.seed.worlds
+		self.assertIs(alpha.registry, beta.registry)
+		registry = alpha.registry
+		self.assertEqual(sorted(u.key for u in alpha.plan.units if u.key in {v.key for v in beta.plan.units}),
+		                 ["album|plex://album/3100", "movie|plex://movie/5d7768b2", "show-ep3|plex://show/5eb6f2a1"])
+		md = self.seed.md
+		shared = set(md["locations"][alpha.player]) & set(md["locations"][beta.player])
+		self.assertIn(registry.location_id["ep|rk:2103|w"], shared)
+		self.assertIn(registry.location_id["album|plex://album/3100|t1|one"], shared)
+		self.assertNotIn(registry.location_id["album|plex://album/3100|t2|two"], set(md["locations"][beta.player]))
+
+	def test_common_options_point_at_real_names(self):
+		alpha, beta = self.seed.worlds
+		registry = alpha.registry
+		alpha_units = {registry.unit_name[u.key] for u in alpha.plan.units}
+		self.assertEqual(alpha.options.local_items.value, alpha_units)
+		album = registry.unit_name["album|plex://album/3100"]
+		self.assertEqual(beta.options.start_hints.value, {album})
+		self.assertEqual(beta.options.exclude_locations.value, {
+			registry.location_name["album|plex://album/3100|t1|one"],
+			registry.location_name["album|plex://album/3100|t2|deux"],
+		})
+		self.assertEqual(dict(beta.options.start_inventory.value), {})
+		self.assertIn("exclude_locations leaves out 1 location(s)", STATE["warnings"].getvalue())
+		md = self.seed.md
+		album_id = registry.unit_id["album|plex://album/3100"]
+		self.assertTrue(any(hint.item == album_id for hint in md["precollected_hints"][beta.player]))
+		alpha_ids = {registry.unit_id[u.key] for u in alpha.plan.units}
+		for finder, table in md["locations"].items():
+			for code, receiver, _flags in table.values():
+				if receiver == alpha.player and code in alpha_ids:
+					self.assertEqual(finder, alpha.player, "local_items keeps Alpha's unlocks in Alpha's list")
+
+	def test_bad_names_and_bad_lists_raise_option_errors_naming_the_player(self):
+		from Options import OptionError
+
+		alpha, _beta = self.seed.worlds
+		registry = alpha.registry
+		own = {registry.unit_name[u.key] for u in alpha.plan.units}
+		unknown = f"Unlock {len(registry.unit_keys) + 1}"
+		with self.assertRaises(OptionError) as caught:
+			alpha._real_items("local_items", {unknown}, own)
+		self.assertEqual(str(caught.exception), f"Alpha Fan: local_items names {unknown!r}, but this seed has "
+		                                        f"{len(registry.unit_keys)} Plex Media unlocks")
+		beta_only = f"Unlock {registry.unit_keys.index('book|book:someone/beta-book') + 1}"
+		with self.assertLogs("Plex Media", level="WARNING") as logs:
+			self.assertEqual(alpha._real_items("start_hints", {beta_only}, own), set())
+		self.assertEqual(logs.output, [f"WARNING:Plex Media:Alpha Fan: start_hints leaves out 1 unlock(s) that "
+		                               f"belong to other lists: {beta_only}"])
+
+		world_type = type(alpha)
+		hints = world_type.options_dataclass.type_hints
+		with self.assertRaises(OptionError) as caught:
+			hints["entries"]([MATRIX, dict(MATRIX, id="rk:9", t=" \t")]).verify(world_type, "Probe Fan", None)
+		self.assertEqual(str(caught.exception), "Plex Media list of Probe Fan: entry 2: t is empty")
+		newer = sys.modules[world_type.__module__ + ".constants"].BUILDER_VERSION + 1
+		with self.assertRaises(OptionError) as caught:
+			hints["list_info"]({"builder": newer}).verify(world_type, "Probe Fan", None)
+		self.assertTrue(str(caught.exception).startswith(
+			f"Plex Media list of Probe Fan: this list was built for Plex Media builder {newer}, "), caught.exception)
+
+		# verify() cannot see the plan's caps, so generate_early raises those, naming the player the same
+		# way. The world is shared with this class's other tests: its plan and list_info must come through.
+		plan, info, entries = alpha.plan, alpha.info, alpha.options.entries.value
+		alpha.options.entries.value = [book(3300, "someone/endless", "Endless", "Someone", [30_000_000_000])]
+		try:
+			with self.assertRaises(OptionError) as caught:
+				alpha.generate_early()
+		finally:
+			alpha.options.entries.value, alpha.info = entries, info
+		self.assertTrue(str(caught.exception).startswith("Plex Media list of Alpha Fan: the list makes "),
+		                caught.exception)
+		self.assertIn("at most 10000 fit in one slot", str(caught.exception))
+		self.assertIs(alpha.plan, plan)
+
+	def test_regenerates_identically_under_another_hash_seed(self):
+		mine = ap_harness.seed_digest(self.seed.md)
+		hashseed = "1" if os.environ.get("PYTHONHASHSEED") != "1" else "2"
+		child = run_child("regen", self.seed.players, os.path.join(self.seed.folder, "regen"), str(self.seed.seed),
+		                  hashseed=hashseed)
+		self.assertEqual(child["hashseed"], hashseed)
+		self.assertEqual(child["digest"], mine)
+		sys.stderr.write(f"\n(c) PYTHONHASHSEED={hashseed} child: locations {mine['locations'][:12]}, "
+		                 f"package {mine['checksum'][:12]}, slot_data {mine['slot_data'][:12]}, all equal\n")
+
+	def test_the_ap_next_worker_rebuilds_and_verifies_every_slot(self):
+		child = check_worker(self, self.seed, {"1": GAME, "2": GAME, "3": "ChecksFinder"})
+		sys.stderr.write(f"\n(c) !ap next worker: {sum(ok for ok, _r in child['verified'].values())} of "
+		                 f"{len(child['verified'])} slots verified, placements {child['injected']}\n")
+
+
+class D_SeasonMode(SeedChecks, unittest.TestCase):
+	"""(d) season mode, checkpoints open to any item, strict timesanity."""
+
+	@classmethod
+	def setUpClass(cls):
+		long_show = ("Long Show", "plex://show/60a1b2c3", 4100)
+		entries = [
+			*[episode(4100 + i, *long_show, sn, en, 2400000)
+			  for i, (sn, en) in enumerate([(1, 1), (1, 2), (2, 1), (2, 2), (3, 1), (0, 1)], 1)],
+			episode(4201, "Short Show", "rk:4200", 4200, 1, 1, 1320000),
+			episode(4202, "Short Show", "rk:4200", 4200, 1, 2, 1320000),
+			movie(4300, "Season Film", 6600000),
+		]
+		options = {"tv_unlock": "season", "checkpoint_items": "anything", "timesanity_strict": True}
+		cls.seed = Seed("d_season", 404, lambda folder: write_list(folder, "D_Season.yaml", "Season Fan", entries,
+		                                                          options))
+
+	def test_seasons_are_the_steps(self):
+		data = plain(self.seed.md["slot_data"][1])
+		self.assertEqual((data["tv_unlock"], data["checkpoint_items"], data["timesanity_strict"]),
+		                 ("season", "anything", True))
+		units = {unit["name"]: (unit["kind"], unit["steps"]) for unit in data["units"]}
+		self.assertEqual(units["Long Show: Next Season"], ("show", 4))
+		self.assertEqual(units["Short Show: Next Season"], ("show", 1))
+		steps = {entry["rk"]: entry["s"] for entry in data["entries"] if entry["k"] == "episode"}
+		self.assertEqual([steps[4100 + i] for i in range(1, 7)], [2, 2, 3, 3, 4, 1])
+
+
+class E_ScaleSolo(SeedChecks, unittest.TestCase):
+	"""(e) 600 unlock copies solo at spoiler 3, the size /apmedia yaml starts warning at."""
+
+	@classmethod
+	def setUpClass(cls):
+		entries = [movie(5000 + i, f"Film {i:03}", 6000000, 1950 + i % 70) for i in range(600)]
+		cls.seed = Seed("e_scale", 505, lambda folder: write_list(folder, "E_Scale.yaml", "Scale Fan", entries))
+
+	def test_generates_inside_90_seconds(self):
+		self.assertEqual(self.seed.worlds[0].plan.copies, 600)
+		self.assertLess(self.seed.seconds, 90.0)
+		sys.stderr.write(f"\n(e) 600 copies, {len(self.seed.worlds[0].placed)} locations: "
+		                 f"{self.seed.seconds:.1f} s at spoiler 3\n")
+
+
+PLEX_LINK = {"name": "PlexLink", "item_pool": ["Everything"], "replacement_item": None}
+
+
+def linked_players(folder):
+	extra = {"item_links": [PLEX_LINK]}
+	write_list(folder, "A_LinkA.yaml", "Link A", [MATRIX, movie(6001, "Only A", 5400000),
+	                                               movie(6002, "Third A", 5400000)], extra=extra)
+	write_list(folder, "B_LinkB.yaml", "Link B", [MATRIX, movie(6003, "Only B", 5400000)], extra=extra)
+
+
+class F_ItemLinks(SeedChecks, unittest.TestCase):
+	"""(f) two Plex lists naming one item link: the world warns, empties the link and keeps every unlock home."""
+
+	@classmethod
+	def setUpClass(cls):
+		cls.seed = Seed("f_links", 606, linked_players)
+
+	def group_id(self):
+		groups = self.seed.multiworld.get_game_groups(GAME)
+		self.assertEqual(len(groups), 1)
+		return groups[0]
+
+	def test_the_link_is_warned_about_and_left_empty(self):
+		from NetUtils import SlotType
+
+		multiworld, md = self.seed.multiworld, self.seed.md
+		group_id = self.group_id()
+		group = multiworld.groups[group_id]
+		self.assertEqual(group["name"], "PlexLink")
+		for key in ("item_pool", "local_items", "non_local_items"):
+			self.assertEqual(group[key], set(), key)
+		warnings = STATE["warnings"].getvalue()
+		self.assertIn("Plex Media cannot link items (item link PlexLink)", warnings)
+		for world in self.seed.worlds:
+			self.assertEqual(world.options.item_links.value, [], world.player_name)
+			self.assertIn(f"{world.player_name}: Plex Media ignores item_links", warnings)
+		self.assertEqual([item.name for item in multiworld.itempool if item.player == group_id], [])
+		receivers = {receiver for table in md["locations"].values() for _code, receiver, _flags in table.values()}
+		self.assertNotIn(group_id, receivers)
+		# With nothing left to share, link_items drops every member, so only the slot type still says group.
+		info = md["slot_info"][group_id]
+		self.assertEqual((info.type, list(info.group_members)), (SlotType.group, []))
+
+	def test_the_group_world_makes_items_from_a_players_registry(self):
+		group_world = self.seed.multiworld.worlds[self.group_id()]
+		self.assertIsNone(group_world.registry)
+		registry = self.seed.worlds[0].registry
+		first = registry.unit_keys[0]
+		expected = (registry.unit_name[first], registry.unit_id[first], group_world.player)
+		for name in ("Unlock 1", registry.unit_name[first]):
+			made = group_world.create_item(name)
+			self.assertEqual((made.name, made.code, made.player), expected, name)
+
+	def test_the_ap_next_worker_rebuilds_and_verifies_every_slot(self):
+		# Before ap-logic-worker.py told a group by its slot type, this member-less group read as a
+		# third player and the rebuild was refused, so !ap next fell back to sphere 1 for every slot.
+		check_worker(self, self.seed, {"1": GAME, "2": GAME})
+
+	def test_the_ap_next_worker_picks_only_the_seeds_yamls_from_a_players_folder(self):
+		# A Players folder that moved on to the next async. The link's group is no player of this seed,
+		# so a yaml whose player is named PlexLink is left out like the stranger's.
+		folder = os.path.join(self.seed.folder, "moved_on")
+		os.makedirs(folder)
+		for name in os.listdir(self.seed.players):
+			shutil.copyfile(os.path.join(self.seed.players, name), os.path.join(folder, name))
+		write_list(folder, "C_PlexLink.yaml", "PlexLink", [movie(6101, "Next Async", 5400000)])
+		write_list(folder, "D_Stranger.yaml", "Someone Else", [movie(6102, "Other Film", 5400000)])
+		child = run_child("select", folder, self.seed.zip)
+		self.assertEqual(child["kept"], ["A_LinkA.yaml", "B_LinkB.yaml"])
+
+
+def run(only=None, verbosity=2):
+	"""only: scenario class names to run (all when empty), to spare the PC a full pass."""
+	module = sys.modules[__name__]
+	if only:
+		suite = unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromTestCase(getattr(module, name))
+		                           for name in only)
+	else:
+		suite = unittest.defaultTestLoader.loadTestsFromModule(module)
+	return unittest.TextTestRunner(verbosity=verbosity, stream=sys.stderr).run(suite).wasSuccessful()

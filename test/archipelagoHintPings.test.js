@@ -77,6 +77,19 @@ test('the backlog present at first connect pings nobody', async (t) => {
     assert.strictEqual(discord.dms.length, 0);
 });
 
+test('a listed hint carries its location id and the finding slot number', async (t) => {
+    resetStores();
+    await connect(t, { hints: { 1: [hint({ location: 6100 })] } });
+
+    const rows = await waitFor(() => {
+        const list = monitor.listHints(0);
+        return list && list.length === 1 ? list : null;
+    }, 'the hint row');
+    assert.strictEqual(rows[0].location, 6100);
+    assert.strictEqual(rows[0].findingPlayer, 1);
+    assert.strictEqual(rows[0].finder, 'SlotA');
+});
+
 test('a hint placed after the baseline reaches the finder in the channel', async (t) => {
     resetStores();
     const { server, discord } = await connect(t, { hints: { 1: [hint({ location: 1 })] } });
@@ -161,4 +174,25 @@ test('the finder is pinged, not the receiver', async (t) => {
     // The receiver placed the hint and already knows. Only the finder can act on it.
     assert.match(ping.content, /<@finder>/);
     assert.ok(!ping.content.includes('<@receiver>'), 'the person who asked is not notified');
+});
+
+// The bug: escapeMarkdown leaves a masked link [text](url) working, and its maskedLink option escapes
+// only the first of several. The Plex Media world names its items and locations after titles a
+// player writes into their YAML, so a hint DM or a claim ping showed a clickable link as the bot.
+test('item and location names reach a ping as text, every masked link escaped', () => {
+    resetStores();
+    const body = monitor.hintPingBody({
+        asker: 'SlotB', item: '[Free](https://evil.example/a)',
+        where: 'Watch [x](https://evil.example/b) [y](https://evil.example/c)', slot: 'SlotA', priority: true
+    });
+    assert.doesNotMatch(body, /(^|[^\\])\[(Free|x|y)\]\(/);
+    assert.match(body, /is waiting on \*\*\\\[Free\]\(https:\/\/evil\.example\/a\)\*\* from your world `SlotA` .* it is at Watch \\\[x\]\(https:\/\/evil\.example\/b\) \\\[y\]\(https:\/\/evil\.example\/c\) \*\*\(priority\)\*\*\.$/);
+
+    claims.claim({ watchId: 7, slot: 'SlotA', userId: 'u1', pings: 'all' });
+    const state = { watch: { id: 7 }, client: { slotNameFor: () => 'SlotA' } };
+    const ping = monitor.pingFor(state, { receiving: 1, group: 'items', flags: 0, text: 'SlotB sent [Gift](https://evil.example/d) to SlotA ([y](https://evil.example/e))' });
+    assert.strictEqual(ping.userId, 'u1');
+    assert.doesNotMatch(ping.line, /(^|[^\\])\[(Gift|y)\]\(/);
+    assert.match(ping.line, /^<@u1> `SlotA` .* SlotB sent \\\[Gift\]\(https:\/\/evil\.example\/d\) to SlotA \(\\\[y\]\(https:\/\/evil\.example\/e\)\)$/);
+    resetStores();
 });

@@ -12,7 +12,7 @@ const path = require('path');
 const OVERRIDES_PATH = path.join(__dirname, '..', 'data', 'config.overrides.json');
 
 // Group render order for the wizard panel.
-const GROUPS = ['General', 'Access', 'Integrations', 'Broadcasts', 'Archipelago', 'Audiobooks', 'Voice'];
+const GROUPS = ['General', 'Access', 'Integrations', 'Broadcasts', 'Archipelago', 'AP Media', 'Audiobooks', 'Voice'];
 
 // Editable settings. `type`: bool | string | int | choice.
 //   secret          — never display the value; modal input starts blank.
@@ -71,6 +71,22 @@ const SETTINGS = [
     { key: 'archipelagoShowGoals', label: 'Show goals and releases', group: 'Archipelago', type: 'bool' },
     { key: 'archipelagoShowMisc', label: 'Show countdowns and server notices', group: 'Archipelago', type: 'bool' },
     { key: 'archipelagoShowDeaths', label: 'Show DeathLink deaths', group: 'Archipelago', type: 'bool', warn: 'Reconnects the room so the DeathLink tag is sent.' },
+
+    // A group of its own: the Archipelago menu is full at 25, and its keys re-apply the monitor.
+    // Labels stay short because the /config embed is near Discord's 6,000-character total.
+    { key: 'apMediaEnabled', label: 'Plex Media world (/apmedia)', group: 'AP Media', type: 'bool', warn: 'Needs the Archipelago monitor on: each slot connects through a watched room.' },
+    { key: 'apMediaChannelId', label: 'Post channel (blank = watch\'s)', group: 'AP Media', type: 'string', snowflake: true, allowEmpty: true },
+    { key: 'apMediaHistorySeconds', label: 'Plex history read (seconds)', group: 'AP Media', type: 'int', min: 30, max: 86400 },
+    { key: 'apMediaSessionSeconds', label: 'Plex sessions read (seconds)', group: 'AP Media', type: 'int', min: 5, max: 86400 },
+    { key: 'apMediaVoiceCredit', label: 'Count music heard in voice', group: 'AP Media', type: 'bool' },
+    {
+        key: 'apMediaAnnounce', label: 'Announcements', group: 'AP Media', type: 'choice',
+        choices: [
+            { label: 'Completions and unlocks', value: 'completions' },
+            { label: 'Every check', value: 'all' },
+            { label: 'Off (problems only)', value: 'off' },
+        ],
+    },
 
     { key: 'broadcastChannelId', label: 'Broadcast channel (fallback)', group: 'Broadcasts', type: 'string', snowflake: true },
     { key: 'kometaChannelId', label: 'Kometa channel', group: 'Broadcasts', type: 'string', snowflake: true },

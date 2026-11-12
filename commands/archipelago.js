@@ -46,6 +46,10 @@ const LOGIC_UNAVAILABLE = {
 // named `Zack_Word` rendered as `Zack\_Word`, and underscores are everywhere in slot names. The
 // only character that matters is the backtick, which would close the span early.
 const slotLabel = (name) => `\`${String(name || '').replace(/`/g, "'")}\``;
+// Item and location names are shown as text instead. escapeMarkdown alone leaves a masked link
+// [text](url) working, and the Plex Media world names its own after titles a player can write
+// into their YAML.
+const escapeName = (name) => monitor.escapeText(name);
 
 const CATEGORY_HELP = {
     items: 'item sends (and cheated items)',
@@ -880,7 +884,7 @@ module.exports = {
                     const sphereName = (s) => (s === null || s === undefined ? 'sphere unknown' : `sphere ${s}`);
                     // Somebody hinted these and is waiting on what they hold, so they lead, marked.
                     // A hinted location in a later sphere says which.
-                    const hintLine = (h, soonest) => `⭐ ${escapeMarkdown(h.name)}`
+                    const hintLine = (h, soonest) => `⭐ ${escapeName(h.name)}`
                         + (h.sphere !== soonest ? ` · ${sphereName(h.sphere)}` : '');
                     const heading = (s) => `_${sphereName(s).replace(/^s/, 'S')}_`;
 
@@ -895,7 +899,7 @@ module.exports = {
                         const hintedNames = new Set(hinted.map(h => h.name));
                         const entries = [
                             ...hinted.map(h => hintLine(h, r.sphere)),
-                            ...r.locations.filter(name => !hintedNames.has(name)).map(name => `• ${escapeMarkdown(name)}`)
+                            ...r.locations.filter(name => !hintedNames.has(name)).map(name => `• ${escapeName(name)}`)
                         ];
                         // "…1 more" takes the line the one name would, so that name is shown.
                         const shown = entries.length === cap + 1 ? cap + 1 : cap;
@@ -963,7 +967,7 @@ module.exports = {
                         const linesFor = (entry) => {
                             if (entry.hinted) return [hintLine(entry, r.sphere)];
                             const out = entry.sphere !== current ? [heading(entry.sphere)] : [];
-                            out.push(`• ${escapeMarkdown(entry.name)}`);
+                            out.push(`• ${escapeName(entry.name)}`);
                             return out;
                         };
                         entries.forEach((entry, index) => {
@@ -1116,8 +1120,8 @@ module.exports = {
                         ? `🔎 **Outstanding hints involving ${slotLabel(only)}** (watch #${id})`
                         : `🔎 **${rows.length} outstanding hint(s)** on watch #${id}`;
                     const all = sorted.map(h =>
-                        `• ${h.priority ? '⭐ ' : ''}**${escapeMarkdown(h.item)}** for ${slotLabel(h.receiver)}` +
-                        ` — in ${slotLabel(h.finder)}'s world at ${escapeMarkdown(h.where)}`);
+                        `• ${h.priority ? '⭐ ' : ''}**${escapeName(h.item)}** for ${slotLabel(h.receiver)}` +
+                        ` — in ${slotLabel(h.finder)}'s world at ${escapeName(h.where)}`);
 
                     // Same budgeting as `claims`: 2000 characters is a hard limit and an
                     // oversized send is rejected outright rather than truncated by Discord.

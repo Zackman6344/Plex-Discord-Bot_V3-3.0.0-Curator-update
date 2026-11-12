@@ -21,6 +21,7 @@ module.exports = function(client, bot) {
   const { createReadAlong } = require('../helpers/readAlong.js');
   const readAlongButtons = require('../helpers/readAlongButtons.js');
   const archipelagoNextButtons = require('../helpers/archipelagoNextButtons.js');
+  const apMediaButtons = require('../helpers/apMediaButtons.js');
   const restartHandoff = require('../helpers/restartHandoff.js');
 
   // At module init, not on ready: the music gate and utils.stop's shutdown both need it before
@@ -132,6 +133,14 @@ module.exports = function(client, bot) {
       bot.books.start();
     } catch (err) {
       logger.error('Audiobooks failed to start:', err.message || err);
+    }
+    // The Plex Media world. After the monitor, whose watches its slots connect through, and after
+    // the books it credits. It keeps this client and bot while apMediaEnabled is off, so turning it
+    // on in /config starts it without a restart.
+    try {
+      require('../helpers/apMediaGame.js').start({ discord: client, bot });
+    } catch (err) {
+      logger.error('Plex Media failed to start:', err.message || err);
     }
     // Announce boot to the broadcast channel so it's easy to confirm the bot is live.
     broadcast.broadcastStartup(client).catch((err) => logger.error('Startup broadcast failed:', err.message || err));
@@ -256,6 +265,7 @@ module.exports = function(client, bot) {
         if (!claimed) claimed = await bookButtons.handle(interaction, bot, client, { onInteractionResponse });
         if (!claimed) claimed = await readAlongButtons.handle(interaction, bot, client, { onInteractionResponse });
         if (!claimed) claimed = await archipelagoNextButtons.handle(interaction, bot, client, { onInteractionResponse });
+        if (!claimed) claimed = await apMediaButtons.handle(interaction, bot, client, { onInteractionResponse });
         if (!claimed) await tagInference.handle(interaction, { onInteractionResponse });
         commandLog.finishInvocation(buttonLogId, { ok: true, ms: Date.now() - buttonStartedAt });
       } catch (err) {
