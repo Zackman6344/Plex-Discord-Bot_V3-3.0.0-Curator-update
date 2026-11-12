@@ -1,0 +1,474 @@
+{
+	"item_name_to_id": {
+		"Popcorn": 1347000001,
+		"Wild Ticket": 1347000002,
+		"Daft Punk - Discovery": 1347001001,
+		"Pride and Prejudice by Jane Austen": 1347001002,
+		"Road Trip Part 1 (playlist)": 1347001003,
+		"The Matrix (1999)": 1347001004,
+		"Amélie: \"Le\" #fabuleux 🍿 (2001)": 1347001005,
+		"1917 (movie)": 1347001006,
+		"Show: \"Quoted\" #1 🎬: Next 3 Episodes": 1347001007
+	},
+	"location_name_to_id": {
+		"Daft Punk - Discovery #01 One More Time": 1347000001,
+		"Daft Punk - Discovery #02 Aerodynamic": 1347000002,
+		"Finish Pride and Prejudice": 1347000003,
+		"Pride and Prejudice @ 30m": 1347000004,
+		"Pride and Prejudice @ 1h": 1347000005,
+		"Pride and Prejudice @ 1h30m": 1347000006,
+		"Watch Show: \"Quoted\" #1 🎬 S01E01": 1347000007,
+		"Show: \"Quoted\" #1 🎬 S01E01 @ 10m": 1347000008,
+		"Watch Show: \"Quoted\" #1 🎬 S01E02": 1347000009,
+		"Show: \"Quoted\" #1 🎬 S01E02 @ 10m": 1347000010,
+		"Watch Show: \"Quoted\" #1 🎬 S01E03": 1347000011,
+		"Show: \"Quoted\" #1 🎬 S01E03 @ 10m": 1347000012,
+		"Watch Show: \"Quoted\" #1 🎬 S00E01": 1347000013,
+		"Show: \"Quoted\" #1 🎬 S00E01 @ 10m": 1347000014,
+		"Road Trip Part 1 #01 Artist A - Song A": 1347000015,
+		"Road Trip Part 1 #02 Artist B - 東京": 1347000016,
+		"Watch The Matrix (1999)": 1347000017,
+		"The Matrix (1999) @ 15m": 1347000018,
+		"The Matrix (1999) @ 30m": 1347000019,
+		"The Matrix (1999) @ 45m": 1347000020,
+		"The Matrix (1999) @ 1h": 1347000021,
+		"The Matrix (1999) @ 1h15m": 1347000022,
+		"The Matrix (1999) @ 1h30m": 1347000023,
+		"The Matrix (1999) @ 1h45m": 1347000024,
+		"The Matrix (1999) @ 2h": 1347000025,
+		"Watch Amélie: \"Le\" #fabuleux 🍿 (2001)": 1347000026,
+		"Amélie: \"Le\" #fabuleux 🍿 (2001) @ 15m": 1347000027,
+		"Amélie: \"Le\" #fabuleux 🍿 (2001) @ 30m": 1347000028,
+		"Amélie: \"Le\" #fabuleux 🍿 (2001) @ 45m": 1347000029,
+		"Amélie: \"Le\" #fabuleux 🍿 (2001) @ 1h": 1347000030,
+		"Amélie: \"Le\" #fabuleux 🍿 (2001) @ 1h15m": 1347000031,
+		"Amélie: \"Le\" #fabuleux 🍿 (2001) @ 1h30m": 1347000032,
+		"Amélie: \"Le\" #fabuleux 🍿 (2001) @ 1h45m": 1347000033,
+		"Watch 1917": 1347000034,
+		"1917 @ 15m": 1347000035,
+		"1917 @ 30m": 1347000036,
+		"1917 @ 45m": 1347000037,
+		"1917 @ 1h": 1347000038,
+		"1917 @ 1h15m": 1347000039,
+		"1917 @ 1h30m": 1347000040,
+		"1917 @ 1h45m": 1347000041
+	},
+	"slot_data": {
+		"schema": 1,
+		"game": "Plex Media",
+		"world_version": "0.1.0",
+		"builder": 1,
+		"created_at": 1731200000,
+		"label": "Fixture list",
+		"goal_percent": 80,
+		"goal_count": 8,
+		"entry_count": 10,
+		"tv_unlock": "episodes",
+		"episodes_per_unlock": 3,
+		"locked_watches": "bank",
+		"checkpoint_items": "filler_only",
+		"timesanity_strict": false,
+		"timesanity": {
+			"movie": 15,
+			"episode": 10,
+			"album": 0,
+			"book": 30
+		},
+		"items": {
+			"popcorn": 1347000001,
+			"wild_ticket": 1347000002
+		},
+		"units": [
+			{
+				"id": 1347001004,
+				"name": "The Matrix (1999)",
+				"kind": "movie",
+				"steps": 1,
+				"start": 1
+			},
+			{
+				"id": 1347001006,
+				"name": "1917 (movie)",
+				"kind": "movie",
+				"steps": 1,
+				"start": 1
+			},
+			{
+				"id": 1347001005,
+				"name": "Amélie: \"Le\" #fabuleux 🍿 (2001)",
+				"kind": "movie",
+				"steps": 1,
+				"start": 1
+			},
+			{
+				"id": 1347001007,
+				"name": "Show: \"Quoted\" #1 🎬: Next 3 Episodes",
+				"kind": "show",
+				"steps": 2,
+				"start": 0
+			},
+			{
+				"id": 1347001001,
+				"name": "Daft Punk - Discovery",
+				"kind": "album",
+				"steps": 1,
+				"start": 0
+			},
+			{
+				"id": 1347001003,
+				"name": "Road Trip Part 1 (playlist)",
+				"kind": "mix",
+				"steps": 1,
+				"start": 0
+			},
+			{
+				"id": 1347001002,
+				"name": "Pride and Prejudice by Jane Austen",
+				"kind": "book",
+				"steps": 1,
+				"start": 0
+			}
+		],
+		"entries": [
+			{
+				"k": "movie",
+				"id": "plex://movie/5d7768b2",
+				"rk": 1501,
+				"g": "plex://movie/5d7768b2",
+				"t": "The Matrix",
+				"y": 1999,
+				"d": 8160000,
+				"u": 1347001004,
+				"s": 1,
+				"w": 1347000017,
+				"cp": [
+					[
+						15,
+						1347000018
+					],
+					[
+						30,
+						1347000019
+					],
+					[
+						45,
+						1347000020
+					],
+					[
+						60,
+						1347000021
+					],
+					[
+						75,
+						1347000022
+					],
+					[
+						90,
+						1347000023
+					],
+					[
+						105,
+						1347000024
+					],
+					[
+						120,
+						1347000025
+					]
+				]
+			},
+			{
+				"k": "movie",
+				"id": "rk:1502",
+				"rk": 1502,
+				"t": "1917",
+				"y": null,
+				"d": 7140000,
+				"u": 1347001006,
+				"s": 1,
+				"w": 1347000034,
+				"cp": [
+					[
+						15,
+						1347000035
+					],
+					[
+						30,
+						1347000036
+					],
+					[
+						45,
+						1347000037
+					],
+					[
+						60,
+						1347000038
+					],
+					[
+						75,
+						1347000039
+					],
+					[
+						90,
+						1347000040
+					],
+					[
+						105,
+						1347000041
+					]
+				]
+			},
+			{
+				"k": "movie",
+				"id": "plex://movie/5d77a1c0",
+				"rk": 1503,
+				"g": "plex://movie/5d77a1c0",
+				"t": "Amélie: \"Le\" #fabuleux 🍿",
+				"y": 2001,
+				"d": 7380000,
+				"u": 1347001005,
+				"s": 1,
+				"w": 1347000026,
+				"cp": [
+					[
+						15,
+						1347000027
+					],
+					[
+						30,
+						1347000028
+					],
+					[
+						45,
+						1347000029
+					],
+					[
+						60,
+						1347000030
+					],
+					[
+						75,
+						1347000031
+					],
+					[
+						90,
+						1347000032
+					],
+					[
+						105,
+						1347000033
+					]
+				]
+			},
+			{
+				"k": "episode",
+				"id": "rk:1601",
+				"rk": 1601,
+				"sh": "Show: \"Quoted\" #1 🎬",
+				"sid": "plex://show/5d9c0874",
+				"srk": 1600,
+				"sn": 1,
+				"en": 1,
+				"t": "Pilot",
+				"d": 1320000,
+				"u": 1347001007,
+				"s": 1,
+				"w": 1347000007,
+				"cp": [
+					[
+						10,
+						1347000008
+					]
+				]
+			},
+			{
+				"k": "episode",
+				"id": "rk:1602",
+				"rk": 1602,
+				"sh": "Show: \"Quoted\" #1 🎬",
+				"sid": "plex://show/5d9c0874",
+				"srk": 1600,
+				"sn": 1,
+				"en": 2,
+				"t": "Second",
+				"d": 1320000,
+				"u": 1347001007,
+				"s": 1,
+				"w": 1347000009,
+				"cp": [
+					[
+						10,
+						1347000010
+					]
+				]
+			},
+			{
+				"k": "episode",
+				"id": "rk:1603",
+				"rk": 1603,
+				"sh": "Show: \"Quoted\" #1 🎬",
+				"sid": "plex://show/5d9c0874",
+				"srk": 1600,
+				"sn": 1,
+				"en": 3,
+				"t": "Third",
+				"d": 1320000,
+				"u": 1347001007,
+				"s": 2,
+				"w": 1347000011,
+				"cp": [
+					[
+						10,
+						1347000012
+					]
+				]
+			},
+			{
+				"k": "episode",
+				"id": "rk:1604",
+				"rk": 1604,
+				"sh": "Show: \"Quoted\" #1 🎬",
+				"sid": "plex://show/5d9c0874",
+				"srk": 1600,
+				"sn": 0,
+				"en": 1,
+				"t": "Behind the Scenes",
+				"d": 1320000,
+				"u": 1347001007,
+				"s": 1,
+				"w": 1347000013,
+				"cp": [
+					[
+						10,
+						1347000014
+					]
+				]
+			},
+			{
+				"k": "album",
+				"id": "plex://album/5d07c9a3",
+				"rk": 1700,
+				"g": "plex://album/5d07c9a3",
+				"ar": "Daft Punk",
+				"t": "Discovery",
+				"y": 2001,
+				"d": 547000,
+				"tr": [
+					[
+						1701,
+						1,
+						"One More Time",
+						320000,
+						9001,
+						1347000001
+					],
+					[
+						1702,
+						2,
+						"Aerodynamic",
+						212000,
+						9002,
+						1347000002
+					],
+					[
+						1703,
+						3,
+						"Interlude",
+						15000,
+						9003,
+						null
+					]
+				],
+				"alt": [
+					[
+						1710,
+						[
+							[
+								1711,
+								9011
+							],
+							[
+								1712,
+								9012
+							],
+							[
+								1713,
+								9013
+							]
+						]
+					]
+				],
+				"u": 1347001001,
+				"s": 1,
+				"cp": []
+			},
+			{
+				"k": "mix",
+				"id": "pl:1800:1",
+				"pl": 1800,
+				"part": 1,
+				"t": "Road Trip Part 1",
+				"d": 380000,
+				"tr": [
+					[
+						1801,
+						1,
+						"Song A",
+						200000,
+						9101,
+						"Artist A",
+						1347000015
+					],
+					[
+						1802,
+						2,
+						"東京",
+						180000,
+						9102,
+						"Artist B",
+						1347000016
+					]
+				],
+				"u": 1347001003,
+				"s": 1,
+				"cp": []
+			},
+			{
+				"k": "book",
+				"id": "book:jane-austen/pride-and-prejudice",
+				"w": "jane-austen/pride-and-prejudice",
+				"t": "Pride and Prejudice",
+				"au": "Jane Austen",
+				"d": 6600000,
+				"pa": [
+					[
+						1901,
+						9201,
+						3600000
+					],
+					[
+						1902,
+						9202,
+						3000000
+					]
+				],
+				"u": 1347001002,
+				"s": 1,
+				"f": 1347000003,
+				"cp": [
+					[
+						30,
+						1347000004
+					],
+					[
+						60,
+						1347000005
+					],
+					[
+						90,
+						1347000006
+					]
+				]
+			}
+		]
+	}
+}

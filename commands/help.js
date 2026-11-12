@@ -100,7 +100,14 @@ module.exports = {
                         ? '**🧩 ARCHIPELAGO**\n' +
                           `> \`${prefix}ap watch [room url] [slot]\` — Relay a multiworld's server log into this channel.\n` +
                           `> \`${prefix}ap list\` / \`${prefix}ap filter\` — Review watches and pick which log lines get posted.\n` +
-                          `> \`${prefix}ap catchup\` — Post the item sends, goals and hints missed while the bot was down.\n\n`
+                          `> \`${prefix}ap catchup\` — Post the item sends, goals and hints missed while the bot was down.\n` +
+                          // Plex Media runs on the monitor's watches, so it is one line here: with
+                          // every opt-in section on and the 5-character prefix /config allows, the
+                          // description is 4,095 characters of Discord's 4,096.
+                          (config.apMediaEnabled
+                              ? `> \`${prefix}apmedia ?\` — Plex Media: your to-watch list as an Archipelago game.\n`
+                              : '') +
+                          '\n'
                         : '') +
 
                     '**📊 ADMIN / DIAGNOSTIC**\n' +

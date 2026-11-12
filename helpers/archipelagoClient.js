@@ -30,6 +30,7 @@ const crypto = require('crypto');
 const WebSocket = require('ws');
 const logger = require('./logger.js');
 const dataCache = require('./archipelagoData.js');
+const { BOT_GAME_TAG } = require('./apMediaContracts.js');
 
 // Claimed protocol version. Servers refuse clients *older* than their minimum and have no
 // upper bound, so tracking a recent release is the safe direction to be wrong in.
@@ -108,6 +109,27 @@ for (const [group, types] of Object.entries(CATEGORY_GROUPS)) {
 
 function groupOf(type) {
     return TYPE_TO_GROUP[type] || 'misc';
+}
+
+// AP 0.6.8's Part print has no tags field (MultiServer on_client_left builds {type, team, slot}),
+// so the only trace of who left is the Python tag list the server ends its text with:
+// "Zack (Team #1) has left the game. Client(0.6.1), ['AP', 'PlexMediaBot', 'NoText']."
+const BOT_PART_TAIL = new RegExp(`\\[[^\\]]*'${BOT_GAME_TAG}'[^\\]]*\\]\\.?\\s*$`);
+
+/**
+ * Is this join/part/tags broadcast about the bot's own Plex Media game client?
+ * That client plays a slot of the room, usually not the one a watch observes from, and joins and
+ * leaves on every restart and reconnect, so its presence lines are the bot narrating itself just as
+ * the observer's own are. A person playing the same slot carries their own client's tags and still
+ * relays.
+ */
+function isBotGamePresence(packet) {
+    if (!packet || !['Join', 'Part', 'TagsChanged'].includes(packet.type)) return false;
+    if (Array.isArray(packet.tags)) return packet.tags.includes(BOT_GAME_TAG);
+    if (packet.type !== 'Part') return false;
+    const parts = Array.isArray(packet.data) ? packet.data : [];
+    const text = parts.map(part => (part && part.text !== undefined && part.text !== null ? String(part.text) : '')).join('');
+    return BOT_PART_TAIL.test(text);
 }
 
 /**
@@ -398,7 +420,7 @@ class ArchipelagoClient extends EventEmitter {
     isSelfDirected(packet) {
         if (!packet) return false;
         if (packet.type === 'Tutorial') return true;
-        return this.isSelfPresence(packet);
+        return this.isSelfPresence(packet) || isBotGamePresence(packet);
     }
 
     /** Done with, however it happened: nothing sent to this slot from here on matters. */
@@ -413,6 +435,49 @@ class ArchipelagoClient extends EventEmitter {
     get tags() {
         return this.deathlink ? ['Tracker', 'DeathLink'] : ['Tracker'];
     }
+
+    // The four methods below are where a game client (helpers/apMediaClient.js) differs from this
+    // observer; each default is the observer's behaviour exactly. test/archipelagoConnect.test.js
+    // pins the observer's Connect: no game, no items, the Tracker tag, no slot_data.
+    connectPacket() {
+        return {
+            cmd: 'Connect',
+            game: '',
+            name: this.slot,
+            password: this.password,
+            uuid: this.uuid,
+            version: CLIENT_VERSION,
+            items_handling: 0,
+            tags: this.tags,
+            slot_data: false
+        };
+    }
+
+    // The observer names every item and location it relays, so it loads each game's package. A
+    // client that never shows a name skips that: on a room with multi-MB packages it is a
+    // synchronous parse on the event loop that also feeds the voice frames.
+    wantsDataPackages() {
+        return true;
+    }
+
+    // A client acting for one slot has no use for this room-wide read: three keys per slot, and the
+    // answer carries every hint in the room.
+    subscribeRoomState() {
+        const keys = [...this._statusKeys(), ...this._hintKeys()];
+        this._roomStateKeys = new Set(keys);
+        this.roomStateReadAt = null;
+        if (keys.length > 0) {
+            this._send({ cmd: 'Get', keys });
+            this._send({ cmd: 'SetNotify', keys });
+        } else {
+            this.roomStateReadAt = Date.now();
+        }
+    }
+
+    // Called at the start of every connection attempt, before the address is resolved, so a client
+    // whose room can be re-pointed or re-passworded under it connects to the current one. It may
+    // stop the client, which ends the attempt.
+    refreshTarget() {}
 
     lookupTables() {
         return {
@@ -493,6 +558,8 @@ class ArchipelagoClient extends EventEmitter {
 
         let address;
         try {
+            this.refreshTarget();
+            if (this.stopped) return;
             address = await this._resolveAddress();
         } catch (err) {
             this.emit('status', { state: 'error', detail: err.message, expected: this.isWakingRoom() });
@@ -681,34 +748,26 @@ class ArchipelagoClient extends EventEmitter {
         // re-pointed watch carry the old multiworld's goal key into a different room.
         this.seedName = packet.seed_name ? String(packet.seed_name) : null;
 
-        const missing = [];
-        for (const game of packet.games || []) {
-            const checksum = this.pendingChecksums[game];
-            const cached = await dataCache.load(game, checksum);
-            if (cached) {
-                this.itemNames.set(game, cached.items);
-                this.locationNames.set(game, cached.locations);
-            } else {
-                missing.push(game);
+        if (this.wantsDataPackages()) {
+            const missing = [];
+            for (const game of packet.games || []) {
+                const checksum = this.pendingChecksums[game];
+                const cached = await dataCache.load(game, checksum);
+                if (cached) {
+                    this.itemNames.set(game, cached.items);
+                    this.locationNames.set(game, cached.locations);
+                } else {
+                    missing.push(game);
+                }
+            }
+
+            if (missing.length > 0) {
+                logger.debug(`[AP:${this.label}] fetching data packages for ${missing.length} game(s)`);
+                this._send({ cmd: 'GetDataPackage', games: missing });
             }
         }
 
-        if (missing.length > 0) {
-            logger.debug(`[AP:${this.label}] fetching data packages for ${missing.length} game(s)`);
-            this._send({ cmd: 'GetDataPackage', games: missing });
-        }
-
-        this._send({
-            cmd: 'Connect',
-            game: '',
-            name: this.slot,
-            password: this.password,
-            uuid: this.uuid,
-            version: CLIENT_VERSION,
-            items_handling: 0,
-            tags: this.tags,
-            slot_data: false
-        });
+        this._send(this.connectPacket());
     }
 
     async _handleDataPackage(packet) {
@@ -863,15 +922,7 @@ class ArchipelagoClient extends EventEmitter {
         // Cleared for the same reason as the slot maps above: a reconnect may be to a different
         // multiworld, and holding another room's hints would report them as this one's.
         this.hints.clear();
-        const keys = [...this._statusKeys(), ...this._hintKeys()];
-        this._roomStateKeys = new Set(keys);
-        this.roomStateReadAt = null;
-        if (keys.length > 0) {
-            this._send({ cmd: 'Get', keys });
-            this._send({ cmd: 'SetNotify', keys });
-        } else {
-            this.roomStateReadAt = Date.now();
-        }
+        this.subscribeRoomState();
 
         this.emit('status', { state: 'connected', detail: this.address, slots: this.slotsOnTeam().length });
     }

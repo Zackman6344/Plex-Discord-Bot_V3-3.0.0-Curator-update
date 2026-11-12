@@ -501,7 +501,9 @@ async function executeTurn(game, bot, message, allTracks, client) {
 
     const turnMsg = await channel.send(baseMessageText);
     if (!isLive(game)) return;
-    const clip = { key: targetObj.plexKey, title: "Secret Track", artist: "???" };
+    // secret: helpers/apMediaVoice.js credits nothing for it, since a Plex Media credit line or the
+    // Archipelago relay's send line would name the album before anyone has guessed.
+    const clip = { key: targetObj.plexKey, title: "Secret Track", artist: "???", secret: true };
     bot.songQueue.unshift(clip);
     await bot.playSong(message, targetObj.duration ? Math.floor(targetObj.duration / 2) : 60000);
     // Stopped while the clip was joining or loading: without this the turn would open anyway,

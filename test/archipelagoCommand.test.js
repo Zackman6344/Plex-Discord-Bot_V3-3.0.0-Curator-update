@@ -709,6 +709,41 @@ test('several slots list hinted locations ahead of their other names and count t
         `no star on a slot with no hints: ${reply.final}`);
 });
 
+// The Plex Media world names its locations after titles a player can write into their YAML, and
+// escapeMarkdown alone leaves a masked link [text](url) working.
+const LINKED = 'Watch [Free](https://evil.example/a) [x](https://evil.example/b)';
+const LINKED_SHOWN = 'Watch \\[Free](https://evil.example/a) \\[x](https://evil.example/b)';
+const HINTED_LINK = 'Watch [Hint](https://evil.example/c)';
+const LIVE_LINK = /(^|[^\\])\[(Free|x|Hint|Gift)\]\(/m;
+
+test('!ap next shows a masked link in a location name as text, for one slot and for several', async (t) => {
+    await claimAll(['ZackWord', 'ZackBanner']);
+    const linked = () => logicAnswer('ZackWord', [[1, [HINTED_LINK, LINKED]]], 2, { hinted: [HINTED_LINK] });
+
+    const one = await askNext(t, answered(linked()), { args: ['next', 'ZackWord'] });
+    assert.ok(one.final.includes(`⭐ Watch \\[Hint](https://evil.example/c)\n• ${LINKED_SHOWN}\n`), one.final);
+    assert.doesNotMatch(one.final, LIVE_LINK);
+
+    const several = await askNext(t, answered(linked(), inLogic('ZackBanner', ['Gate'], 4)));
+    assert.ok(several.final.includes(`⭐ Watch \\[Hint](https://evil.example/c)\n• ${LINKED_SHOWN}\n`), several.final);
+    assert.doesNotMatch(several.final, LIVE_LINK);
+});
+
+test('!ap hints shows a masked link in an item or location name as text', async (t) => {
+    await addWatch(['ZackWord']);
+    const real = monitor.listHints;
+    monitor.listHints = () => [{
+        finder: 'ZackWord', receiver: 'ZackWord', item: '[Gift](https://evil.example/d)',
+        where: LINKED, priority: true, entrance: ''
+    }];
+    t.after(() => { monitor.listHints = real; });
+
+    const text = said(await run('hints'));
+    assert.ok(text.includes(
+        `• ⭐ **\\[Gift](https://evil.example/d)** for \`ZackWord\` — in \`ZackWord\`'s world at ${LINKED_SHOWN}`), text);
+    assert.doesNotMatch(text, LIVE_LINK);
+});
+
 // The star is explained only where it can appear, so a reply with no hints carries no extra words.
 test('the footer explains the star when a slot has a hinted location, in logic or still locked, and not otherwise', async (t) => {
     await claimAll(['ZackWord']);

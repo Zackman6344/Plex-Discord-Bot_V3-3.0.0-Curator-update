@@ -259,7 +259,13 @@ class Bot extends EventEmitter{
 			artist = track.grandparentTitle;
 		}
 		const album = track.parentTitle;
-		return {'artist' : artist, 'title': title, 'key': key, 'album': album};
+		// For helpers/apMediaVoice.js, which matches a track heard in voice to a Plex Media list
+		// title and needs its length. PMS sends ratingKey as a string.
+		const ratingKey = Number(track.ratingKey);
+		const duration = Number(track.duration);
+		return {'artist' : artist, 'title': title, 'key': key, 'album': album,
+			'ratingKey': Number.isSafeInteger(ratingKey) && ratingKey > 0 ? ratingKey : null,
+			'duration': Number.isFinite(duration) && duration > 0 ? duration : null};
 	};
 
 	/**
@@ -699,6 +705,29 @@ class Bot extends EventEmitter{
 		return !!this.isPlaying;
 	}
 
+	/**
+	 * The ids of the people who can hear a voice channel: humans in it who are not deafened.
+	 *
+	 * Read from guild.voiceStates.cache, as helpers/bookEngine.js's voiceSnapshot does: the bot has
+	 * no GuildMembers intent, so channel.members misses anyone whose member is not cached. Keyed by
+	 * the cache's own keys, since a VoiceState's id is its user's id.
+	 */
+	voiceListeners(guild, channelId) {
+		const ids = [];
+		const cache = guild && guild.voiceStates && guild.voiceStates.cache;
+		if (!cache || typeof cache[Symbol.iterator] !== 'function') return ids;
+		const botId = this.client && this.client.user && this.client.user.id;
+		for (const [key, vs] of cache) {
+			if (!vs || vs.channelId !== channelId) continue;
+			const id = String(key);
+			const user = vs.member && vs.member.user;
+			if (id === botId || (user && user.bot)) continue;
+			if (vs.deaf || vs.selfDeaf || vs.serverDeaf) continue;
+			ids.push(id);
+		}
+		return ids;
+	}
+
 	stop() {
 		// A runPlayback still waiting on the join or the download has no player yet for this to
 		// stop, so it checks these once the wait is over.
@@ -935,6 +964,9 @@ class Bot extends EventEmitter{
 				// stop from here on is a stop of this one.
 				const stopsBefore = this.stopGeneration;
 				const stopped = () => this.stopGeneration !== stopsBefore;
+				// Who could hear this track when it started. 'track-heard' credits only the people
+				// there at both ends, so joining for the last second of a song earns nothing.
+				let startListeners = null;
 				this.dispatcher = createAudioPlayer({
 					behaviors: {
 						noSubscriber: NoSubscriberBehavior.Stop,
@@ -946,7 +978,21 @@ class Bot extends EventEmitter{
 				// ffmpeg, emits 'finish' once the whole download has been written in, with about a
 				// megabyte of audio still buffered ahead of the player: 2.5 minutes at lowestaudio.
 				// 'end' comes once ffmpeg has read it all, still about 30 s before the audio runs out.
-				this.dispatcher.on(AudioPlayerStatus.Idle, () => {
+				this.dispatcher.on(AudioPlayerStatus.Idle, (oldState) => {
+					// Read before dispatcherFunc: it moves the queue on, and after the last track
+					// playbackCompletion clears this.voiceChannel. playbackDuration counts only audio
+					// that went out (from the seek point after a !seek), so a seek near the end does not
+					// pass for a listen. readableEnded tells the stream's end from a stop, and survives
+					// voice destroying the stream just before this runs.
+					const heard = {
+						entry: track,
+						heardMs: oldState?.resource?.playbackDuration ?? 0,
+						startMs: seekMs || 0,
+						natural: !!oldState?.resource?.playStream?.readableEnded,
+						guildId: channel.guild?.id ?? null,
+						channelId: channel.id,
+						startListeners: startListeners || []
+					};
 					readstream.destroy();
 					// A paused player goes Idle too, when its stream fails or stops being readable.
 					this.isPaused = false;
@@ -957,8 +1003,23 @@ class Bot extends EventEmitter{
 					// (a requester outside voice, !artist between album lookups), is not this player's.
 					if (stopped() && (this.playRun !== run || this.songQueue[0] !== this.stoppedEntry)) return;
 					dispatcherFunc()
+					// Last, so no listener can change what plays next. This runs inside the AudioPlayer's
+					// state setter, so listeners defer their work, and a throw would escape into voice's
+					// audio cycle.
+					try {
+						this.emit('track-heard', heard);
+					} catch (err) {
+						logger.warn('A track-heard listener failed:', (err && err.message) || err);
+					}
 				})
 				this.dispatcher.on(AudioPlayerStatus.Playing, () => {
+					if (startListeners === null) {
+						try {
+							startListeners = this.voiceListeners(channel.guild, channel.id);
+						} catch (_) {
+							startListeners = [];
+						}
+					}
 					// unpause() moves the player from Paused back to Playing, which emits this again.
 					if (announced) return;
 					// A player stopped while still buffering reaches Playing anyway once ffmpeg's output

@@ -48,6 +48,16 @@
 # book_text/ is the read-along's cache of each linked ebook's extracted text (copyrighted, from
 # your own library), the ebook links you set with !book link, and who turned the read-along on.
 /data/book_text/
+# apmedia_slots.json binds Plex Media Archipelago slots to Discord users and holds their unsent
+# checks; apmedia_accounts.json links Discord users to Plex accounts on your server, with their
+# consent; apmedia_marks.json records which Plex history rows the bot has already read. Each is
+# written through a .tmp, slots and accounts also keep a .bak, and an unreadable file is moved
+# to .corrupt-*. Each slot's cached slot_data lives under data/archipelago/, already ignored above.
+/data/apmedia_*.json
+/data/apmedia_*.json.bak
+/data/apmedia_*.json.tmp
+/data/apmedia_*.json.bak.tmp
+/data/apmedia_*.json.corrupt-*
 
 # Player data written by the games and AI commands. Every one of these is keyed by Discord
 # user ID and belongs to whoever runs the bot, not to the code.
@@ -65,6 +75,9 @@
 /config/plex_requests.json
 /character_sheets.json
 /playtime_stats.json
+
+# Build output: npm run build:apworld writes the Plex Media world here for the owner to install.
+/dist/
 
 # Local tooling and scratch files that end up in the project root.
 /.claude/

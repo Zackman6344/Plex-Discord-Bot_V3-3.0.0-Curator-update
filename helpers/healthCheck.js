@@ -121,6 +121,16 @@ function checkArchipelago() {
     return { status: 'ok', detail: `${s.connected}/${s.total} room(s) connected` };
 }
 
+// Required on first use: commands/test.js loads this file, so every test that loads the commands
+// would otherwise load the game too.
+function checkApMedia() {
+    try {
+        return require('./apMediaGame.js').health();
+    } catch (err) {
+        return { status: 'error', detail: `Plex Media health check failed: ${err && err.message ? err.message : err}` };
+    }
+}
+
 async function runHealthCheck() {
     const [plex, tautulliRes, playniteRes] = await Promise.all([
         checkPlex(),
@@ -135,7 +145,8 @@ async function runHealthCheck() {
         tautulli: tautulliRes,
         playnite: playniteRes,
         eventServer: checkEventServer(),
-        archipelago: checkArchipelago()
+        archipelago: checkArchipelago(),
+        apMedia: checkApMedia()
     };
 }
 
@@ -156,4 +167,4 @@ function formatHealthCheck(results) {
     return lines.join('\n');
 }
 
-module.exports = { runHealthCheck, formatHealthCheck };
+module.exports = { runHealthCheck, formatHealthCheck, checkApMedia };

@@ -186,6 +186,25 @@ const defaults = {
   // death of its own.
   'archipelagoShowDeaths' : false,
 
+  // --- Plex Media world (/apmedia, or the AP Media page of /config) ---
+  // An Archipelago game made from this Plex library: each slot is one person's list of titles,
+  // items from the multiworld unlock them, and watching or listening sends the checks. Needs the
+  // Archipelago monitor on, because every slot connects through one of its watched rooms. Applied
+  // at once from /config. Not archipelago* keys on purpose: the monitor re-applies its whole config
+  // on every one of those.
+  'apMediaEnabled' : false,
+  // Where completions, unlocks and refusals are posted. Blank posts in the watch's own channel.
+  'apMediaChannelId' : '',
+  // Seconds between reads of the linked accounts' Plex history (watches and listens), and of the
+  // live sessions that earn timestamp checkpoints while a title plays.
+  'apMediaHistorySeconds' : 120,
+  'apMediaSessionSeconds' : 15,
+  // Also count music the bot plays in Discord voice, for the people listening; its audiobooks count either way.
+  'apMediaVoiceCredit' : true,
+  // 'completions' posts a title finished, banked or unlocked; 'all' also every credit that
+  // finishes nothing (checkpoints, album tracks); 'off' posts nothing but refusals and other problems.
+  'apMediaAnnounce' : 'completions',
+
   // --- Audiobooks and podcasts (/book, or the Audiobooks page of /config) ---
   // Plays long-form audio from the music library with a saved place per listener. Off by default
   // because it reads the whole music section to build its catalog and opens a loopback port.

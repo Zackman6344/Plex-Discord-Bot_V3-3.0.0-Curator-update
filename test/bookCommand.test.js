@@ -53,7 +53,9 @@ const SALT = 'avery-quill/the-salt-crown';
 const saved = {
 	audiobooksEnabled: config.audiobooksEnabled,
 	archipelagoEnabled: config.archipelagoEnabled,
+	apMediaEnabled: config.apMediaEnabled,
 	ownerId: config.ownerId,
+	commandPrefix: config.commandPrefix,
 	rebuild: bookLibrary.rebuild,
 	getPlex: plexClient.getPlex
 };
@@ -80,7 +82,9 @@ test.afterEach(() => {
 	directors = [];
 	config.audiobooksEnabled = saved.audiobooksEnabled;
 	config.archipelagoEnabled = saved.archipelagoEnabled;
+	config.apMediaEnabled = saved.apMediaEnabled;
 	config.ownerId = saved.ownerId;
+	config.commandPrefix = saved.commandPrefix;
 	bookLibrary.rebuild = saved.rebuild;
 	plexClient.getPlex = saved.getPlex;
 	cleanup();
@@ -776,22 +780,38 @@ test('a failed rescan shows the error code, never the Plex host', async () => {
 
 // ---- help -------------------------------------------------------------------------------------
 
-test('the help embed fits with Archipelago and audiobooks on or off', async () => {
+// The bug: with every opt-in section on, the Plex Media section pushed the description past
+// Discord's 4,096 characters at the 5-character prefix /config accepts, and the embed threw before
+// anything was sent: !help answered nothing.
+test('the help embed fits with Archipelago, audiobooks and Plex Media on or off, at every prefix /config accepts', async () => {
+	const { SETTINGS } = require('../helpers/configStore.js');
+	const maxPrefix = SETTINGS.find((s) => s.key === 'commandPrefix').maxLen;
+	assert.ok(maxPrefix >= 1);
 	const lengths = {};
-	for (const ap of [false, true]) {
-		for (const books of [false, true]) {
-			config.archipelagoEnabled = ap;
-			config.audiobooksEnabled = books;
-			let embed = null;
-			await help.command.process(null, null, { channel: { async send(p) { embed = p.embeds[0].data; } }, author: {} });
-			const total = embed.title.length + embed.description.length + embed.footer.text.length;
-			assert.ok(embed.description.length <= 4096, `AP ${ap}, books ${books}: ${embed.description.length}`);
-			assert.ok(total <= 6000);
-			assert.strictEqual(/book play \[title\]/.test(embed.description), books, 'the line shows only while audiobooks are on');
-			lengths[`${ap}/${books}`] = embed.description.length;
+	for (let size = 1; size <= maxPrefix; size++) {
+		config.commandPrefix = '!'.repeat(size);
+		for (const ap of [false, true]) {
+			for (const books of [false, true]) {
+				for (const media of [false, true]) {
+					config.archipelagoEnabled = ap;
+					config.audiobooksEnabled = books;
+					config.apMediaEnabled = media;
+					let embed = null;
+					await help.command.process(null, null, { channel: { async send(p) { embed = p.embeds[0].data; } }, author: {} });
+					const where = `prefix ${size}, AP ${ap}, books ${books}, Plex Media ${media}`;
+					assert.ok(embed, `${where}: sent`);
+					const total = embed.title.length + embed.description.length + embed.footer.text.length;
+					assert.ok(embed.description.length <= 4096, `${where}: ${embed.description.length}`);
+					assert.ok(total <= 6000, where);
+					assert.strictEqual(/book play \[title\]/.test(embed.description), books, 'the line shows only while audiobooks are on');
+					assert.strictEqual(/apmedia \?/.test(embed.description), ap && media, 'the Plex Media line shows only with the Archipelago section, while it is on');
+					lengths[`${size}/${ap}/${books}/${media}`] = embed.description.length;
+				}
+			}
 		}
 	}
-	assert.ok(lengths['true/true'] - lengths['true/false'] <= 160, 'one short line');
+	assert.ok(lengths['1/true/true/false'] - lengths['1/true/false/false'] <= 160, 'one short line');
+	assert.ok(lengths['1/true/true/true'] - lengths['1/true/true/false'] <= 80, 'one short Plex Media line');
 });
 
 test('text and link are /book subcommands, in the usage line and the sub-help', () => {

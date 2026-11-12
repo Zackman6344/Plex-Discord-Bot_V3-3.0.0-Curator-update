@@ -54,6 +54,13 @@ const MAX_PING_MESSAGES = 2;
 // covers cases a local regex did not, notably code blocks and headers.
 const { escapeMarkdown } = require('discord.js');
 
+// escapeMarkdown leaves a masked link [text](url) working, and its maskedLink option escapes only
+// the first of several in one string. Item and location names come from the worlds, and the Plex
+// Media world names its own after titles a player can write into their YAML.
+function escapeText(text) {
+    return escapeMarkdown(String(text)).replace(/\[/g, '\\[');
+}
+
 const DEFAULT_FILTERS = { items: true, hints: true, chat: true, joins: true, goals: true, misc: true, deaths: false };
 const FILTER_GROUPS = Object.keys(CATEGORY_GROUPS);
 // The room described by config/config.js gets a reserved id. It is rebuilt from config rather
@@ -82,6 +89,10 @@ let holdGivenUp = false;
 let configBound = false;
 let savedWatchesLoaded = false;
 const states = new Map();
+// The Plex Media game clients connect to the rooms these watches name, and an open socket keeps a
+// hosted room awake, so they need to hear when a watch goes, moves or is rebuilt rather than find
+// out on their next poll. See onWatchChange.
+const watchListeners = new Set();
 
 function loadStore() {
     if (!usable) return { nextId: 1, watches: [] };
@@ -520,7 +531,7 @@ function pingFor(state, line) {
 
     const claim = claims.find(state.watch.id, slot);
     if (!shouldPing(claim, line)) return null;
-    const text = escapeMarkdown(stripAnsi(line.text)).substring(0, 200);
+    const text = escapeText(stripAnsi(line.text)).substring(0, 200);
     return { userId: claim.userId, line: `<@${claim.userId}> \`${slot.replace(/`/g, "'")}\` — ${text}` };
 }
 
@@ -549,6 +560,13 @@ function connectionNotice(state, phase, detail) {
     if (phase !== 'connected' || state.announcedConnected) return null;
     return `🟢 **${state.watch.label}** — watching as \`${state.watch.slot}\` on \`${detail}\`. ` +
         `Reconnects stay quiet from here.`;
+}
+
+/** The text of one hint ping, to the channel or by DM. */
+function hintPingBody({ asker, item, where, slot, priority }) {
+    return `🔎 \`${escapeMarkdown(String(asker))}\` is waiting on ` +
+        `**${escapeText(item)}** from your world \`${String(slot).replace(/`/g, "'")}\` ` +
+        `— it is at ${escapeText(where)}${priority ? ' **(priority)**' : ''}.`;
 }
 
 /**
@@ -599,11 +617,7 @@ async function announceHints(state) {
         const item = tables.itemName(tables.gameForSlot(hint.receiving_player), hint.item) || `Item#${hint.item}`;
         const where = tables.locationName(tables.gameForSlot(hint.finding_player), hint.location) || `Location#${hint.location}`;
         const asker = tables.playerName(hint.receiving_player) || `Player#${hint.receiving_player}`;
-        const priority = hint.status === HINT_PRIORITY ? ' **(priority)**' : '';
-
-        const body = `🔎 \`${escapeMarkdown(String(asker))}\` is waiting on ` +
-            `**${escapeMarkdown(item)}** from your world \`${slot.replace(/`/g, "'")}\` ` +
-            `— it is at ${escapeMarkdown(where)}${priority}.`;
+        const body = hintPingBody({ asker, item, where, slot, priority: hint.status === HINT_PRIORITY });
 
         if (mode === 'dm') await dmClaimant(state, claim.userId, body);
         else await sendIfCurrent(state, `<@${claim.userId}> ${body}`, [claim.userId]);
@@ -1351,6 +1365,7 @@ function startWatch(watch) {
         startCompletionPoll(state);
         startCatchupPoll(state);
     }
+    notifyWatchChange(watch.id, 'added');
     return state;
 }
 
@@ -1405,6 +1420,7 @@ function restartWatch(id, { sameRoom = true } = {}) {
         // gates: until the fresh handshake lands, `!ap claim ZackWordd` would be stored as typed.
         // A restart is exactly when the room may be unreachable, so that window is not short.
         state.client.slotNames = existing.client.slotNames;
+        state.client.slotGames = existing.client.slotGames;
         state.client.slotGroups = existing.client.slotGroups;
         state.client.seedName = existing.client.seedName;
         // And the team those names are keyed under. Without it a fresh client defaults to team 0
@@ -1419,6 +1435,7 @@ function restartWatch(id, { sameRoom = true } = {}) {
     startCompletionPoll(state);
     startCatchupPoll(state);
     persist();
+    notifyWatchChange(id, sameRoom ? 'restarted' : 'repointed');
     return state;
 }
 
@@ -1469,6 +1486,7 @@ function syncConfigWatch() {
             const dropped = releaseClaimsFor(existing, CONFIG_WATCH_ID);
             logger.info('Archipelago configured room cleared — its settings are no longer complete' +
                 (dropped > 0 ? `, ${dropped} slot claim(s) released with it` : ''));
+            notifyWatchChange(CONFIG_WATCH_ID, 'removed');
         }
         return null;
     }
@@ -1550,7 +1568,8 @@ function applyConfig({ boot = false } = {}) {
     logic.configChanged();
     if (!config.archipelagoEnabled) {
         if (states.size > 0) {
-            for (const id of [...states.keys()]) {
+            const ids = [...states.keys()];
+            for (const id of ids) {
                 stopWatch(id);
                 dropPipeline(id);
             }
@@ -1558,6 +1577,7 @@ function applyConfig({ boot = false } = {}) {
             logic.stopAll();
             savedWatchesLoaded = false;
             logger.info('Archipelago monitor stopped — archipelagoEnabled is off');
+            for (const id of ids) notifyWatchChange(id, 'disabled');
         } else if (boot) {
             logger.debug('Archipelago monitor disabled (config.archipelagoEnabled is false)');
         }
@@ -1717,6 +1737,7 @@ function removeWatch(id) {
     // state is already gone, so the role sync borrows this one purely for its channel and guild.
     const releasedClaims = releaseClaimsFor(state, id);
     persist();
+    notifyWatchChange(id, 'removed');
     return { ...state.watch, releasedClaims };
 }
 
@@ -2449,7 +2470,10 @@ function listHints(id) {
         item: tables.itemName(tables.gameForSlot(hint.receiving_player), hint.item) || `Item#${hint.item}`,
         where: tables.locationName(tables.gameForSlot(hint.finding_player), hint.location) || `Location#${hint.location}`,
         priority: hint.status === HINT_PRIORITY,
-        entrance: hint.entrance || ''
+        entrance: hint.entrance || '',
+        // /apmedia list marks a hinted title by its id: its name may be clipped or collision-tagged.
+        location: hint.location,
+        findingPlayer: hint.finding_player
     }));
 }
 
@@ -2476,6 +2500,56 @@ function listWatches() {
 function getWatch(id) {
     const state = states.get(id);
     return state ? state.watch : null;
+}
+
+/**
+ * What a watch's room says about one slot, for binding a Plex Media game client to it.
+ *
+ * The server matches a Connect's slot name exactly, so a binding has to keep `canonical`, never
+ * the spelling somebody typed. A null `game` while `known` is true means the game has not been
+ * read yet, never that the slot plays another one.
+ * @returns {{known: boolean, canonical: string|null, slotId: number|null, game: string|null}|null}
+ *   null if there is no such watch; `known` false until the watch has read the room
+ */
+function describeSlot(watchId, name) {
+    const state = states.get(Number(watchId));
+    if (!state) return null;
+    if (!knowsRoom(state)) return { known: false, canonical: null, slotId: null, game: null };
+    const client = state.client;
+    const canonical = client.canonicalSlotName(name);
+    const slotId = canonical ? client.slotIdFor(canonical) : null;
+    const game = slotId === null ? null : (client.slotGames.get(slotId) || null);
+    return { known: true, canonical, slotId, game };
+}
+
+/**
+ * Hear about watches being added, removed, restarted, re-pointed at another room, or dropped by
+ * turning archipelagoEnabled off. Called after the change, so getWatch already answers for the
+ * new state.
+ * @param {(event: {watchId: number, change: 'added'|'removed'|'restarted'|'repointed'|'disabled', watch: Object|null}) => void} fn
+ * @returns {() => void} unsubscribe
+ */
+function onWatchChange(fn) {
+    if (typeof fn !== 'function') throw new TypeError('onWatchChange needs a function');
+    watchListeners.add(fn);
+    return () => { watchListeners.delete(fn); };
+}
+
+// A listener is somebody else's code running inside addWatch, removeWatch and applyConfig, so
+// whatever it throws stays here: half-applied watch state is worse than a missed notice.
+function notifyWatchChange(watchId, change) {
+    if (watchListeners.size === 0) return;
+    const event = { watchId, change, watch: getWatch(watchId) };
+    for (const fn of [...watchListeners]) {
+        try {
+            const result = fn(event);
+            if (result && typeof result.catch === 'function') {
+                result.catch(err => logger.warn(`[AP] watch change listener failed: ${err.message || err}`));
+            }
+        } catch (err) {
+            logger.warn(`[AP] watch change listener threw: ${err.message || err}`);
+        }
+    }
 }
 
 // For !diag. A disconnect is normal (a hosted room sleeps, a server restarts) and the client
@@ -2536,6 +2610,8 @@ module.exports = {
     pollCompletion,
     listWatches,
     getWatch,
+    describeSlot,
+    onWatchChange,
     getStatus,
     describeTarget,
     chunkLines,
@@ -2543,6 +2619,9 @@ module.exports = {
     chunkEntries,
     shouldRelay,
     shouldPing,
+    pingFor,
+    hintPingBody,
+    escapeText,
     catchUp,
     catchupTiming,
     relayTiming,

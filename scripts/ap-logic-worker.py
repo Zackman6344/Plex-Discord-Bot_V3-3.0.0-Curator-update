@@ -247,6 +247,12 @@ def read_multidata(path):
     return restricted_loads(zlib.decompress(raw[1:]))
 
 
+def is_group(info):
+    # link_items drops every member of an item link with nothing left to share (a Plex Media link
+    # always), so only the slot type still says group.
+    return bool(getattr(info, "group_members", None)) or bool(int(getattr(info, "type", 1)) & 2)
+
+
 class StopBeforeFill(Exception):
     def __init__(self, multiworld):
         super().__init__("stopped before fill")
@@ -272,7 +278,7 @@ def select_players(multidata):
 
     folder = str(settings.get_settings().generator.player_files_path)
     names = {getattr(info, "name", None) for info in (multidata.get("slot_info") or {}).values()
-             if not getattr(info, "group_members", None)}
+             if not is_group(info)}
 
     def matches(name):
         if not isinstance(name, str):
@@ -340,7 +346,7 @@ def rebuild(seed, seed_name, multidata, players_dir=None, plando=None):
     # renumbers every slot after it; caught here, before the half-minute build.
     expected = {int(slot): (getattr(info, "name", None), getattr(info, "game", None))
                 for slot, info in (multidata.get("slot_info") or {}).items()
-                if not getattr(info, "group_members", None)}
+                if not is_group(info)}
     rolled = {int(p): (erargs.name[p], erargs.game[p]) for p in erargs.name}
     if rolled != expected:
         differing = sorted(p for p in set(rolled) | set(expected) if rolled.get(p) != expected.get(p))

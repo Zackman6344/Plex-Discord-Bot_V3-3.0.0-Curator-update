@@ -611,6 +611,7 @@ test('!hitster stop while the clip joins over music leaves the music that resume
 	await startGame(w, w.old, bot);
 	const clip = bot.songQueue[0];
 	assert.strictEqual(clip.title, 'Secret Track');
+	assert.strictEqual(clip.secret, true, 'marked so Plex Media credits nothing for it');
 
 	await play(w, w.old, bot, 'host', 'stop');
 	bot.hold.resolve();

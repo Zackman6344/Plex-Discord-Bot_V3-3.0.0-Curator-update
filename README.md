@@ -139,6 +139,14 @@ module.exports = {
   'archipelagoShowMisc'   : true,
   'archipelagoShowDeaths' : false,         // DeathLink; reconnects the room to add the tag
 
+  // Plex Media world (see below). All editable from /config → AP Media, all live.
+  'apMediaEnabled'        : false,         // /apmedia and the world; needs archipelagoEnabled too
+  'apMediaChannelId'      : '',            // where its lines post; blank = each watch's own channel
+  'apMediaHistorySeconds' : 120,           // how often the linked accounts' Plex history is read (30-86400)
+  'apMediaSessionSeconds' : 15,            // how often live Plex sessions are read, for checkpoints (5-86400)
+  'apMediaVoiceCredit'    : true,          // count music the bot plays in voice (its audiobooks count either way)
+  'apMediaAnnounce'       : 'completions', // or 'all' (checkpoints and tracks too) or 'off' (problems only)
+
   // Audiobooks and podcasts (see below). All editable from /config → Audiobooks, all live.
   'audiobooksEnabled'            : false,  // turn /book on; off = no library reads, no proxy port
   'audiobooksExcludeFromMusic'   : true,   // keep catalogued books out of music pickers and search
@@ -188,10 +196,11 @@ its own. Changes save instantly and **persist across restarts**.
   intent, and `kometaTheaterEnabled` decides whether the Kometa log is tailed. **Turning
   `kometaTheaterEnabled` on silences the Kometa cards until that restart**, since webhooks go to
   the theater as soon as it is saved and the theater has not started.
-- The sections are General, Access, Integrations, Broadcasts, Archipelago, Audiobooks and Voice.
-  Every Audiobooks and Voice setting applies at once, with no restart: turning
-  `audiobooksEnabled` on makes `/book` work on its next use, and `processPriority` and
-  `voiceHealthEnabled` switch over as soon as they are saved.
+- The sections are General, Access, Integrations, Broadcasts, Archipelago, AP Media, Audiobooks
+  and Voice. Every AP Media, Audiobooks and Voice setting applies at once, with no restart:
+  turning `apMediaEnabled` on starts the Plex Media world, turning `audiobooksEnabled` on makes
+  `/book` work on its next use, and `processPriority` and `voiceHealthEnabled` switch over as soon
+  as they are saved.
 - Integrations holds the four Calibre settings for the read-along and the Calibre index, which
   Audiobooks turns on with `audiobookCalibreSort`. `calibrePassword` is masked in
   the panel like the Tautulli API key and never written to the logs, and a `calibreUrl` with a
@@ -1128,6 +1137,10 @@ A few take a required option, because they can't do anything without one:
 | `/book sleep` | `after:`, minutes from the list, `End of this chapter`, or `Off` |
 | `/book forget` | `title:`, then a confirm button |
 | `/book edit` | `title:`, the book; with no `field:` it shows where each detail came from |
+| `/apmedia yaml` | `name:`, the slot name the list is for |
+| `/apmedia link` / `unlink` | `slot:`, the slot name in the room |
+| `/apmedia check` / `redeem` | `title:`, a title on your list, from the autocomplete |
+| `/apmedia announce` | `mode:`, `on` or `off` |
 
 Run `npm run check:slash` after editing any command's `slash` block. Registration is
 all-or-nothing, so a single malformed spec makes *every* slash command disappear at once.
@@ -1305,6 +1318,228 @@ The claim, goal, role and catch-up files (`archipelago_claims.json`, `archipelag
 The bot needs **Manage Roles**, and its own role has to sit above the ones it creates. Without the permission it logs once per guild and leaves that guild alone. Only roles the bot created are ever assigned or deleted; their ids are recorded in `data/archipelago_roles.json`, so a role you made by hand that happens to share a name is never touched.
 
 Two things worth knowing before switching it on: the room sees a client join on the slot being watched, and a held connection stops a room hosted on archipelago.gg from idling to sleep. Watches survive a restart and reconnect on their own, including after a hosted room comes back on a new port.
+
+### 🎬 Plex Media world (Archipelago)
+
+Off unless `apMediaEnabled` is set. The Plex Media world is an Archipelago game made from your
+Plex library: each slot is one person's list of titles, items from the multiworld unlock them, and
+watching or listening sends the checks. It needs the room monitor above (`archipelagoEnabled`):
+each slot's game client connects through a watched room. The player's side lives with the world
+itself. Its [game page](apworld/plex_media/docs/en_Plex%20Media.md) lists the items, locations and
+YAML options, and its [setup guide](apworld/plex_media/docs/setup_en.md) walks a player through
+joining.
+
+**What a list holds.** Movies, TV episodes, music and audiobooks. Music comes as whole albums, or
+as a Plex audio playlist cut into parts of up to 15 tracks, and audiobooks come from `/book`'s
+catalog. A list mixes random picks (narrowed by genre, years, and what that person has not watched
+yet), hand-picked titles, and a Plex playlist or collection. A few titles start open
+(`starting_unlocks`: 3 unlock copies by default, more on a long list), and the multiworld sends the
+rest: one unlock per movie, album, playlist part or book, and one per 3 episodes of a show
+(`episodes_per_unlock`, or a season at a time with `tv_unlock: season`). A Wild Ticket (2 by
+default, fewer on a short list) opens a locked title of the player's choosing. The goal is to
+finish 80% of the list (`goal_percent`), and the bot sends it once that many titles are done.
+
+**Timesanity.** Every title also has checkpoints at fixed times into it: every 15 minutes of a
+movie, every 10 of an episode and every 30 of an audiobook by default, and none in albums and
+playlist parts unless the YAML sets `timesanity_albums`. A 102-minute movie has checkpoints at 15m,
+30m, 45m, 1h, 1h15m and 1h30m, and none in its last 10%. A checkpoint counts when playback passes
+it while playing. Finishing a title also sends all of its checkpoints, so a watch the bot could not
+follow live still pays out; `timesanity_strict: true` turns that off. Checkpoints hold only filler
+by default (`checkpoint_items: filler_only`).
+
+**How a play is counted.** Only plays after the seed was generated count. The bot sees them in
+five places:
+
+- **Plex history** of each linked account, read every `apMediaHistorySeconds` (120). A movie or an
+  episode counts once Plex marks it watched, at 90%, and an album or playlist track once Plex logs
+  the play. Each read covers the last 7 days, so a Plexamp play made offline and synced up to 54
+  hours later still counts.
+- **Live Plex sessions**, read every `apMediaSessionSeconds` (15), send checkpoints while a title
+  plays, the stretch played just before a pause included. A seek forward earns nothing: a step
+  counts only while it fits the time that passed, and a move made while paused is a seek.
+- **Music the bot plays in voice** counts a track once 85% of it has played, for each person who
+  was in the channel both when it started and when it ended, minus the deafened. A track cut
+  short by `!skip` still sends the album or playlist checkpoints it played past.
+  Hitster clips count for nothing, since a credit line would give the song away mid-round.
+  `apMediaVoiceCredit` turns this off. The bot's own playback never reaches Plex history.
+- **The bot's audiobook player** sends a book's checkpoints as they are listened through, and its
+  finish once the book is marked finished (its last part plays out, or `/book finish`). Both count
+  only for the person playing the book.
+- **By hand**, with `/apmedia check`, for anything the bot could not see.
+
+A title played before its unlock arrives keeps its checks banked (`locked_watches: bank`, the
+default), and they go out with a 🔓 line when the unlock comes. With `ignore`, it counts for
+nothing.
+
+**Friends.** A slot linked to their Discord account is all a friend needs for the music they hear
+through the bot, and the audiobooks they play on it, to count. For their Plex watching to count,
+the owner links them to their Plex account on this server with `/apmedia account`, and they accept:
+the bot sends them an Accept button by DM, with the account's name. When their DMs are closed, it
+asks them in the channel, naming them without a ping, to open them, and the owner links them
+again. Only they can press the button, it expires after 7 days, and linking them again makes an
+older button stale. **The bot reads nobody's Plex history before they accept**, and anyone can
+take their own link back with `/apmedia account plex:none` (`!apmedia account none`). The owner
+counts as Plex account 1, the server owner, with consent, unless they link themselves to another
+account. History is read with the server owner's token: `homeOwnerToken` in `config/plex.js`, or
+`token` while `homeOwnerToken` is blank. A managed user's token cannot read other accounts.
+
+The account has to be named in full, or by its id: part of a name gets "Did you mean `alice`
+(id 5)?" and links nobody. **An account already linked to someone is refused, naming them**, and
+account 1 counts as the owner's while they have linked no other. For two people who really watch on
+one account, the owner adds `shared` (`shared:True`, or `shared=yes` on `!`); whatever either of
+them plays on it then counts for both, and the consent request says so. When the last link to an
+account goes, the history rows already read for it go too.
+
+**Setting it up.** The owner's side, start to finish:
+
+1. In `/config`, turn on `archipelagoEnabled` (Archipelago) and `apMediaEnabled` (AP Media).
+   Neither needs a restart.
+2. Run `/apmedia apworld`. It attaches `plex_media.apworld` and says whether this PC's Archipelago
+   already has it, has another version, or holds a broken copy. Install it on the PC that
+   generates seeds: in the Archipelago Launcher choose **Install APWorld**, pick the file, and
+   restart the Launcher. **Keep it installed for as long as any Plex Media seed's room is in
+   use**: `!ap next` rebuilds the seed with it, and without it answers every slot in that room
+   from sphere 1.
+3. Link your friends' Plex accounts with `/apmedia account user:@them plex:<their Plex name>`, and
+   let them accept. Their lists can then leave out what they have already watched.
+4. Each player builds a list with `/apmedia yaml` and sends you the file; `for:@user` builds one
+   for someone else. Put every file, yours included, in Archipelago's `Players` folder.
+5. Generate the seed and host it as usual, on archipelago.gg or on this PC.
+6. Watch its room, from `/config` → Archipelago or with `!ap watch <room url> <slot>`.
+7. Each player claims their slot with `!ap claim <slot>`, then links it with
+   `/apmedia link <slot>`. You can link one for someone with `/apmedia link slot:<slot> user:@them`.
+   `/apmedia link` means the room `/config` names (watch 0) unless told otherwise, so for a room
+   added with `!ap watch`, give its id to both: `!ap claim <id> <slot>` and
+   `/apmedia link slot:<slot> watch:<id>`.
+8. The slot's game client connects, and a welcome line names the titles open so far. Its lines
+   then post in the watch's channel, or in `apMediaChannelId`.
+
+**Privacy.** **Every title on a list is visible to the whole room and to the public tracker**:
+hints, the spoiler and the room's log name the real titles. The slot data the tracker also serves
+names no Discord user or Plex account; only the YAML file carries them. The bot reads a friend's
+Plex history only after they accept, and only ever posts titles from their own list. Its welcome
+line says a friend's Plex account is linked without naming it. A title is posted as text: a
+masked link written into a YAML (`[text](url)`) shows as typed, so its words cannot stand in for
+the address. Discord still makes the address itself a link. `/apmedia`
+replies are private except `apworld`'s, while the `!apmedia` forms answer in the channel, as
+`!book` does, so `!apmedia status` there shows which Plex account is linked to you. The account
+list, and the "Did you mean" answer to part of an account name, are the prefix replies that go by
+DM.
+
+**Limits.**
+
+- Item links are ignored: generation logs a warning and the link stays empty. `!ap next` still
+  works for such a seed.
+- A new seed starts fresh. When a watched room moves to another seed, each bound slot says so and
+  stops counting, and `/apmedia retry` takes the new seed on without the old seed's progress.
+- Universal Tracker cannot follow this game. `/apmedia status` and `/apmedia list` stand in for it.
+- A `!seek` splits a listen in two, and each part has to reach 85% on its own for the track to
+  count; the checkpoints each part played past count either way.
+- One slot of a seed counts through one link: linked again through a second watch of the same
+  room, it is refused (`duplicate`) and earns nothing.
+- Two things have not been tried against the real thing yet: reading a live session from Plex's
+  `/status/sessions`, and uploading a seed to archipelago.gg. Phase 17 of
+  [BUGTESTING.md](BUGTESTING.md) covers both.
+
+**What it posts.** `apMediaAnnounce` decides: `completions` (the default) posts a title finished,
+banked or unlocked, `all` adds a line for every credit that finishes nothing (a checkpoint, an
+album track), and `off` posts none of those and no welcome. A refusal, a lost watch and a new seed
+are posted whatever it says. Lines go out at most once per `archipelagoBatchSeconds` in each
+channel, every line of the batch however many, and never ping anyone. While no Discord client can
+post them (a `!restart`), up to 200 lines per channel wait for 5 minutes, and the log says how many
+older ones it dropped. A player can silence their own slot with `/apmedia announce off`.
+
+**Health, logs and files.** `!diag` and the 15-minute health check carry an `ApMedia:` line. It
+warns while `archipelagoEnabled` is off, shows an error for a refused slot, a slot whose watch is
+gone (naming 5 slots at most), or 3 failed Plex history reads in a row, and otherwise reads like
+`2 slots, 2 connected, Plex history read 1m ago`. The command log (`npm run logs -- --raw`) gains
+`apmedia-credit`, `apmedia-refused`, `apmedia-stale`, `apmedia-orphaned` and `apmedia-goal`
+lines. Slot links and their unsent checks are kept in `data/apmedia_slots.json`, Plex account
+links and consent in `data/apmedia_accounts.json`, the Plex history rows already read in
+`data/apmedia_marks.json`, and each slot's slot_data under `data/archipelago/apmedia/`. All of
+them are gitignored.
+
+**Building and testing the world.** `npm run build:apworld` writes `dist/plex_media.apworld`
+(gitignored), the same file `/apmedia apworld` attaches. `npm run test:apworld` runs
+`py -3.13 -O -s -S -B apworld/tests/run.py`: the pure tests always, then real seed generations
+with the frozen Archipelago at `C:\ProgramData\Archipelago` when it is installed, writing nothing
+into it, and one run of the bot's side against a real MultiServer room. `--pure` stops after the
+pure tests, and `--only A,F` runs scenarios by name prefix: `A` both solo lists, `F` the item-link
+seed with the `!ap next` worker's checks, `G` that run against MultiServer. `--update-golden`
+rewrites the golden files. Use it only for a deliberate change of ids or names, and raise
+`BUILDER_VERSION` in `helpers/apMediaContracts.js` and `apworld/plex_media/constants.py` with it:
+a seed that is already running keeps the names and ids it was generated with.
+
+### 🎬 Plex Media world commands
+
+Off until the owner enables it in `!config` (or `/config`) → AP Media; until then every
+`/apmedia` subcommand answers "🎬 Plex Media is turned off…". `!apmedia ?` (or a bare `!apmedia`)
+shows the sub-help, even while it is off. **Every `/apmedia` reply is private to you except
+`apworld`.** The owner's subcommands need `ownerId` set: while it is blank nobody can use them,
+unlike `/config`'s first-run bootstrap.
+
+| Command | Who | What it does |
+| ------- | --- | ------------ |
+| `/apmedia yaml <name> [options]` | Anyone; with `for:`, the owner | Builds a list from the library and attaches it as a YAML for the next seed, with its counts, how many titles start open and what the goal needs. See **Building a list** below. |
+| `/apmedia apworld` | Owner | Attaches `plex_media.apworld`, built in memory, with the install steps, and compares it with `<archipelagoInstallDir>\custom_worlds\plex_media.apworld`, which it only reads. The reply is public. |
+| `/apmedia account [user] [plex] [shared]` | Owner; anyone, for `plex:none` on themselves | No user: the server's Plex accounts. A user alone: who they are linked to. A user and a Plex name (in full) or id: links them, and they get an Accept button. An account already linked to someone else needs `shared:True`. `plex:none` unlinks them, and on its own takes back your own link. |
+| `/apmedia link <slot> [user] [watch]` | The player holding the `!ap claim` on that slot; the owner, for anyone | Ties a Plex Media slot of a watched room (watch 0 unless `watch:` says otherwise) to a Discord user. |
+| `/apmedia unlink <slot>` | The bound player, or the owner | Drops the link. Its unsent checks go with it, and the reply says how many. |
+| `/apmedia retry [slot]` | The bound player, or the owner | Reconnects a refused, stale or orphaned slot. A stale one takes on the room's new seed and starts over. |
+| `/apmedia status [slot] [user]` | Anyone, for their own slots; the owner, for anyone's, and for every slot when nothing is named | Per slot: titles done, the goal, ready and locked counts, checks waiting or banked, Wild Tickets, the connection, the Plex account, how far the last Plex session got, and the last credit. |
+| `/apmedia list [show] [slot]` | The bound player, or the owner | `ready` (the default), `locked` or `done` titles, grouped by show, album, playlist and kind, each with its runtime. A locked title names the item that opens it, and 💡 marks one somebody hinted. A long list gets ◀ ▶ buttons that only the asker can use, for 30 minutes after their last use. |
+| `/apmedia check <title> [at] [slot]` | The bound player, or the owner | Counts a title by hand: finished, or with `at:` (`45m`, `1h30m`, `1:30:00`) its checkpoints up to that time. |
+| `/apmedia redeem <title> [slot]` | The bound player | Spends a Wild Ticket on a locked title. On a show it opens the episodes of that title's step. |
+| `/apmedia announce <on\|off> [slot]` | The bound player | Turns the slot's lines in the channel on or off. Refusals and other problems are posted either way. |
+
+Where the slot is optional, leaving it out picks your only linked slot; `status` then shows all of
+yours.
+
+**On `!`.** The same subcommands take their options as text:
+
+```
+!apmedia yaml name=Zack movies=10 titles="Alien; Aliens" unwatched=false
+!apmedia link <slot> [@user] [watch=n]
+!apmedia list [ready|locked|done] [slot]
+!apmedia check <title> [at 1h30m | @1h30m | at=45:00] [slot=x]
+!apmedia redeem <title> [slot=x]
+!apmedia announce on|off [slot]
+!apmedia account [@user <name|id|none>] [shared=yes]
+!apmedia account none
+```
+
+`!apmedia accounts` works as well as `!apmedia account`, and `!apmedia reconnect` as well as
+`!apmedia retry`. Prefix replies are public in the channel, as `!book`'s are, apart from the
+account list and the "Did you mean" answer to part of an account name, which go by DM.
+
+**Naming a title for `check` and `redeem`.** A title counts only when it is named in full or by
+its code, which is what the slash autocomplete fills in (`#n`, its place in the list, works too).
+The year, a leading The, A or An, an album's artist and a book's author may be left out, so
+`the matrix` names The Matrix (1999). A part of a title, or a typo, gets "Did you mean **Aliens
+(1986)**?" and **nothing is credited or spent on a guess**. A text over 200 characters is matched
+exactly or not at all, with no suggestions. In `!apmedia check <title> at <time>`
+a bare number is minutes (`The Matrix at 90`), and a text that is a whole list title is that title:
+`Murder at 1600` is the film.
+
+**Building a list: `/apmedia yaml`.** The slot name is 1 to 16 characters, with no `{`, `}` or
+`%`. With nothing else given it picks 15 random movies; `preset:` also takes `tv` (3 shows),
+`music` (10 albums), `books` (3 audiobooks) and `mixed` (6 movies, 1 show, 4 albums and 1 book).
+`movies`, `shows`, `albums` and `books` set totals, hand-picks included. `titles:` takes hand-picks
+split by `;`, each with an optional `movie:`, `show:` (with a season range such as `S1-2`),
+`album:` or `book:` in front. `playlist:` and `collection:` add a Plex playlist or collection in
+its own order, and `genre:` and `years:` (`1990` or `1990-1999`) narrow the random picks.
+`unwatched` (on by default) leaves out what the list's player has watched, read from their own
+linked Plex account; without one, build with `unwatched:false` or have the owner link it. The
+timers are `time-movies`, `time-episodes`, `time-albums` and `time-books`, in minutes, 0 for off.
+`goal-percent`, `tv-unlock`, `episodes-per-unlock` and `max-episodes` (episodes per random show,
+24 by default) are options of their own, and the rarer settings go in `more:` as key=value, the way
+the prefix form writes them: `label`, `starting_unlocks`, `wild_tickets`, `strict`,
+`locked_watches` and `checkpoint_items`, as in `more:wild_tickets=3 strict=true`. The file is named
+after the slot, accents and other scripts included, and gains a short hash when a character had to
+change: `Zack M.` becomes `Zack_M-cd58afdb.yaml`. A list is refused above 2,000 titles, 2,000
+unlock copies or 10,000 locations, and warned about above 600 copies, 1,500 locations or 50 hours
+to the goal. A person builds one list at a time, and the bot two at once in all; another ask
+meanwhile is told to wait.
 
 ### 🛠️ Owner / Admin commands
 

@@ -7,7 +7,9 @@
 		"start": "node index.js",
 		"test": "node --test test/*.test.js",
 		"check:slash": "node scripts/validate-slash.js",
-		"logs": "node scripts/logs.js"
+		"logs": "node scripts/logs.js",
+		"build:apworld": "node scripts/build-apworld.js",
+		"test:apworld": "py -3.13 -O -s -S -B apworld/tests/run.py"
 	},
 	"author": "danxfisher, irbyk, zackman634",
 	"license": "ISC",

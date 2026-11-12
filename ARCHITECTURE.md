@@ -15,12 +15,15 @@ This is a Discord bot that wraps a Plex Media Server, ties in optional integrati
 | `commands/`     | One file per Discord command. Auto-loaded by `commands/index.js`.            |
 | `commands/playlist.js/` | Sub-commands of `!playlist` (it's a directory named `*.js` — see Quirks). |
 | `commands/book.js/` | `/book` and `!book`: `index.js` holds the slash spec, autocomplete and dispatch, and requires `play.js`, `controls.js`, `library.js`, `admin.js`, `text.js` (the read-along's `text` and `link`), `marks.js` (its `marks` and `unmark`), `edit.js` and `calibre.js` by name. Same directory trick as `playlist.js/`. |
+| `commands/apmedia.js/` | `/apmedia` and `!apmedia`, the Plex Media world: `index.js` holds the slash spec, autocomplete, sub-help and dispatch, and requires `common.js` and the eleven subcommand files (`yaml.js`, `apworld.js`, `account.js`, `link.js`, `unlink.js`, `retry.js`, `status.js`, `list.js`, `check.js`, `redeem.js`, `announce.js`) by name. Same directory trick. |
 | `helpers/`      | Shared utilities: API clients, Gemini wrapper, logger, health check, etc.    |
 | `config/`       | Config files (`config.js`, `keys.js`, `plex.js`) + `.example.js` templates.  |
 | `lang/`         | Localized message strings + the `String.prototype.format` polyfill.          |
 | `data/`         | Persistent state files (leaderboards, character sheets, playtime, requests). |
 | `playlists/`    | User-created custom playlists (one `.playlist` JSON file per playlist).      |
 | `test/`         | Smoke tests for helpers. Run with `npm test`.                                |
+| `apworld/`      | The Plex Media Archipelago world: `plex_media/` is the Python package that `npm run build:apworld` and `/apmedia apworld` pack into `plex_media.apworld`, and `tests/` is what `npm run test:apworld` runs. |
+| `dist/`         | Build output, gitignored: `npm run build:apworld` writes `plex_media.apworld` here. |
 | `compendium/`   | (Optional) Houses `FightClub5e.xml` for the D&D character commands.          |
 
 ---
@@ -40,19 +43,20 @@ When you run `node index.js`:
    - Registers the `clientReady` and `messageCreate` event handlers.
 6. Calls `client.login(keys.botToken)`. Discord login is async, so the next two steps run in the same tick, before the gateway answers.
 7. Installs `uncaughtException` / `unhandledRejection` handlers (log only, don't exit).
-8. Installs `SIGTERM` / `SIGINT` handlers for graceful shutdown. `utils.stop()` calls `bot.books.shutdown()` first, before the music queue is emptied: book saves are synchronous, and `process.exit` follows straight after. `bot.readAlong.shutdown()` comes next, after the books; it also kills any running EPUB parse child, and the read-along pictures' PDF child with its tools (`bookPictures.shutdown()`, a synchronous `taskkill /T /F`). Each session's end queues the edit that turns its open read-along DM page into a stub. On `!restart` that edit goes out; on `SIGINT` or `SIGTERM` the process exits first, so the page keeps its text and buttons until it is clicked, and the click answers that the book is no longer playing (or adopts the page into a book playing then).
+8. Installs `SIGTERM` / `SIGINT` handlers for graceful shutdown. `utils.stop()` calls `bot.books.shutdown()` first, before the music queue is emptied: book saves are synchronous, and `process.exit` follows straight after. `bot.readAlong.shutdown()` comes next, after the books; it also kills any running EPUB parse child, and the read-along pictures' PDF child with its tools (`bookPictures.shutdown()`, a synchronous `taskkill /T /F`). Each session's end queues the edit that turns its open read-along DM page into a stub. On `!restart` that edit goes out; on `SIGINT` or `SIGTERM` the process exits first, so the page keeps its text and buttons until it is clicked, and the click answers that the book is no longer playing (or adopts the page into a book playing then). `apMediaGame.stop()` follows the Archipelago monitor's detach: it stops the Plex Media game clients, the Plex pollers and the voice and book listeners, and holds any line not yet posted for the next Discord client (see "Plex Media world (Archipelago)").
 9. On `clientReady` (Discord ready), `app/music.js` calls `startHealthMonitor(client)`, which runs an initial health check and schedules re-checks every 15 minutes.
 10. Still on `clientReady`, `app/music.js` calls `startEventServer(client)` (`helpers/eventServer.js`). When `config.eventServerEnabled` is true it opens a localhost-only HTTP listener that relays Kometa run + Playnite game-launch pushes to the broadcast channel; otherwise it logs "disabled" and no-ops.
 11. Then `app/music.js` calls `startGamePresence(client)` (`helpers/gamePresence.js`). When `config.gamePresenceEnabled` is true it subscribes to `presenceUpdate` and broadcasts games the owner starts (detected via Discord activity). No-op otherwise. The `GuildPresences` intent it needs is added in `app/utils.js` only when the flag is on, so the default keeps login working.
 12. `app/music.js` calls `startKometaTheater(client)` (`helpers/kometaTheater.js`). When `config.kometaTheaterEnabled` is true it starts tailing `config.kometaLogPath` to narrate Kometa runs in-character (and `broadcast.broadcastKometaRun` routes run boundaries + changes to it instead of factual cards). No-op otherwise.
 13. `app/music.js` calls `startArchipelagoMonitor(client)` (`helpers/archipelagoMonitor.js`), which reopens any saved Archipelago watches. Returns immediately when `config.archipelagoEnabled` is false, which is the default.
 14. `app/music.js` calls `bot.books.start()`, which hands over to `helpers/bookLibrary.js`: read the stored catalog, rebuild it in the background if the library changed, and arm the hourly library check. Returns `null` and arms nothing while `config.audiobooksEnabled` is false, which is the default. If the setting is switched on later, the first `/book play` or `/book library` arms it.
-15. Finally `app/music.js` calls `broadcast.broadcastStartup(client)`. When `config.broadcastStartup` is true it posts a "System has started" card to a single channel (the general `broadcastChannelId`, else the first configured channel), confirming the bot is live and the listener is bound. No-op when the toggle is off or no channel is set.
+15. `app/music.js` calls `apMediaGame.start({ discord: client, bot })` (`helpers/apMediaGame.js`), after the monitor its slots connect through and the books it credits. It keeps the client and bot even while `config.apMediaEnabled` is false, the default, and binds `/config` changes once per process, so turning the setting on starts the Plex Media world with no restart. See "Plex Media world (Archipelago)".
+16. Finally `app/music.js` calls `broadcast.broadcastStartup(client)`. When `config.broadcastStartup` is true it posts a "System has started" card to a single channel (the general `broadcastChannelId`, else the first configured channel), confirming the bot is live and the listener is bound. No-op when the toggle is off or no channel is set.
 
 A clean boot looks like:
 ```
 INFO  Process priority: above_normal
-INFO  Loaded 56 commands (4 aliases)
+INFO  Loaded 57 commands (4 aliases)
 INFO  Bot ready — logged in as <BotName>
 INFO  Boot health check:
   ✓ Config: all required keys present
@@ -61,6 +65,8 @@ INFO  Boot health check:
   − Tautulli: disabled
   − Playnite: disabled
   − EventServer: disabled
+  − Archipelago: archipelagoEnabled is false in config/config.js
+  − ApMedia: apMediaEnabled is false in config/config.js
 INFO  Health monitor scheduled — re-checking every 15 minutes
 ```
 
@@ -110,6 +116,12 @@ On every `messageCreate`:
 3. Strip the prefix, lowercase the first word, look it up in the command registry.
 4. Call `cmd.process(bot, client, message, query)`. Sync throws are caught and logged.
 
+On `interactionCreate`, a button is offered to six handlers in turn, and each returns false for a
+custom id outside its namespace: `helpers/playbackButtons.js` (`playback:`), `bookButtons.js`
+(`book:`), `readAlongButtons.js` (`bookread:`, `bookpage:`), `archipelagoNextButtons.js`
+(`apnext:`), `apMediaButtons.js` (`apmedia:`) and last `tagInference.js` (`tagprop:`). The click is
+logged with path `button` and the first two `:` parts of its custom id as the command.
+
 On `interactionCreate`, a string select menu whose `customId` starts `book:lib:` (the library's
 menus) is logged with path `select`, command `book:lib:<action>` and args `<customId> <values>`,
 and handed to `helpers/bookButtons.js`. **Every other select menu gets no answer from here**, so
@@ -145,7 +157,7 @@ Two signature styles coexist in the codebase:
 | `tagSidecar.js`            | Local store of **approved, AI-inferred** track tags filling the gap where Plex has none (~70% of tracks here). Plex always wins per dimension; an inferred dimension Plex later fills is marked `supersededAt` rather than deleted. Atomic writes, persisted pending proposals, and the `discoveryPercent` / `repeatMemory` tuning. Writes `data/inferred_tags.json`. Never writes to Plex. |
 | `tagInference.js`          | Asks Gemini to fill only the dimensions Plex is missing, constrained to the library's own vocabulary, and renders the approval card. Nothing is stored without a human clicking Approve; the handler answers every click through an update → reply → followUp → channel fallback chain and leaves the proposal live if the disk write fails. |
 | `recentPicks.js`           | Short memory of tracks already served, so a library's well-tagged minority doesn't monopolise every AI-curated queue. A score *handicap*, not a ban. Writes `data/recent_picks.json`. |
-| `healthCheck.js`           | Validates config + tries each integration (Plex/Gemini/Tautulli/Playnite). Returns a structured `{config, plex, gemini, tautulli, playnite}` result. Used by `!diag` and the boot monitor. |
+| `healthCheck.js`           | Validates config + tries each integration (Plex/Gemini/Tautulli/Playnite), and reads the event server, the Archipelago monitor and the Plex Media world. Returns a structured `{config, plex, gemini, tautulli, playnite, eventServer, archipelago, apMedia}` result, and exports `checkApMedia()` on its own too. Used by `!diag` and the boot monitor. |
 | `healthMonitor.js`         | Runs `runHealthCheck()` at boot + every 15 minutes. Logs status transitions and DMs the owner (if `config.ownerId` is set) on any change. |
 | `tautulliAPI.js`           | Wraps the Tautulli HTTP API. Currently exposes `getLibraryStats()`. Disabled unless `config.tautulliEnabled`.                          |
 | `playniteAPI.js`           | Wraps the local Playnite HTTP server (port 8787). Exposes `getLibrary()`, `searchGame(q)`, `launchGame(id)`, `getStats()`. Disabled unless `config.playniteEnabled`. |
@@ -168,6 +180,19 @@ Two signature styles coexist in the codebase:
 | `leaderboard.js`           | One ranked-list renderer. Only the Archipelago leaderboard calls in so far; the four game commands still carry their own copies and disagree on the fourth-place marker. |
 | `archipelagoGoals.js`      | Lifetime count of multiworlds each user has goaled, keyed `<seed>::<slot>` so it outlives the watch that saw it and so a slot changing hands cannot re-credit a finished game. Recording is idempotent, because the goal set is rebuilt on every reconnect. Goals only, never releases. Migrates the original user-keyed file shape on read. |
 | `archipelagoRoles.js`      | Creates and assigns the participant role and the per-count "N Games Goaled" roles, and deletes count roles nobody holds. Records every role id it creates in `data/archipelago_roles.json` and only ever touches those. Degrades to doing nothing rather than throwing. |
+| `apMediaContracts.js`      | The Plex Media world's shared names, ids, limits, YAML option table, settings, store paths and data shapes (`CreditEvent`, slot_data). `apworld/plex_media/constants.py` mirrors it and `naming.py` mirrors its `sanitizeText`. Ids, keys and names are frozen per `BUILDER_VERSION`. See "Plex Media world (Archipelago)". |
+| `apMediaGame.js`           | The Plex Media orchestrator: one game client per bound slot, the one serialized queue every credit and change runs on, refusal, stale and lost-watch notices, the goal, the welcome, batched announcements held across `!restart`, `health()`, and the data API `/apmedia` calls. |
+| `apMediaClient.js`         | `ApMediaClient`, the observer client made a game client through its four hooks: connects as `Plex Media` with items, sends checks and the goal, re-reads its watch before every attempt. |
+| `apMediaCredit.js`         | Pure: the slot index built from slot_data, the hits an event lands on (rating key, part id, work id, `artist\|title`, or a metadata match), the location ids a hit earns, unlocks, Wild Tickets, progress, `parseDuration` and `normTitle`. |
+| `apMediaStore.js`          | Bindings and account links (both durable jsonStore stores), Plex history marks, and the slot_data cache under `data/archipelago/apmedia/`. Never keeps a field named like a password, token or secret. |
+| `apMediaWatch.js`          | Plex history (a 7-day window read every poll, a seen-set, the credit floor) and live sessions (timesanity spans) of the consented accounts, as credit events; `backfill` for a slot joining an account already read. |
+| `apMediaVoice.js`          | The bot's own music in voice as credit, from `app/bot.js`'s `track-heard`: 85% of a track heard, for the people present at both ends; a shorter listen earns the album or playlist checkpoints it played past, and a Hitster clip nothing. Off with `apMediaVoiceCredit`. |
+| `apMediaBooks.js`          | The bot's audiobooks as credit: 10 s spans read from the book engine, and finished bookmarks every 60 s. |
+| `apMediaPlex.js`           | Read-only Plex client for the world: history, sessions, accounts, sections, listings and metadata (a 2,000-item cache). The token travels only in the `X-Plex-Token` header, and its `PmsError` carries a `code` and never the token. |
+| `apMediaYaml.js`           | The YAML builder behind `/apmedia yaml`: hand-picks, a playlist or collection, random picks, the unwatched rule, album curation and twin copies, caps and warnings, and `renderYaml`. |
+| `apMediaPlan.js`           | The JavaScript twin of the world's `plan.py` (units, steps, starting copies, Wild Tickets, checkpoint minutes, the goal count), checked against `test/fixtures/apmedia/plan_cases.json`. |
+| `apMediaButtons.js`        | The `apmedia:page:` page buttons (asker only, 30 minutes) and the stateless `apmedia:consent:` Accept button. |
+| `apworldBuild.js`          | Packs `apworld/plex_media` into a reproducible, store-only `.apworld` zip in memory and checks its manifest; `readApworldManifest` reads an installed copy's manifest without writing anything. |
 | `aiGameRecommender.js`     | "Pick a game" AI helper. Uses centralized `getModel()`. Powers `!pickgame`.                                                            |
 | `aiCharacterMapper.js`     | Maps gaming/media habits to a D&D class. Uses centralized `getModel()`. Powers `!buildcharacter`.                                      |
 | `characterStorage.js`      | Persists character sheets to `data/characters.json`. Used by `!buildcharacter` and `!mysheet`.                                          |
@@ -222,7 +247,7 @@ Three files in `config/`. The two with secrets are **gitignored**; templates are
 
 | File                   | Tracked? | What it holds                                                              |
 | ---------------------- | -------- | -------------------------------------------------------------------------- |
-| `config/config.js`     | yes      | Feature flags + display strings: `commandPrefix`, `listenChannel`, `playlistsDir`, `serverName`, `ownerId`, `launchRoleId`, `playniteEnabled`, `tautulliEnabled` + `tautulliApiKey` + `tautulliUrl`, `language`, `youtube_quality`, the broadcast block (`broadcastChannelId`, `eventServerEnabled`, `eventServerPort`, `eventServerToken`, `broadcastKometa`, `broadcastGameLaunch`), `archipelagoEnabled` + `archipelagoBatchSeconds`, `archipelagoInstallDir` + `archipelagoPython` for `!ap next`, the audiobook settings (online lookup and `audiobookCalibreSort` included), the nine read-along settings (five of them for Calibre) and the two voice settings (tables below). |
+| `config/config.js`     | yes      | Feature flags + display strings: `commandPrefix`, `listenChannel`, `playlistsDir`, `serverName`, `ownerId`, `launchRoleId`, `playniteEnabled`, `tautulliEnabled` + `tautulliApiKey` + `tautulliUrl`, `language`, `youtube_quality`, the broadcast block (`broadcastChannelId`, `eventServerEnabled`, `eventServerPort`, `eventServerToken`, `broadcastKometa`, `broadcastGameLaunch`), `archipelagoEnabled` + `archipelagoBatchSeconds`, `archipelagoInstallDir` + `archipelagoPython` for `!ap next`, the audiobook settings (online lookup and `audiobookCalibreSort` included), the nine read-along settings (five of them for Calibre), the two voice settings and the six Plex Media settings (tables below). |
 | `config/keys.js`       | **no**   | `botToken` (Discord) + `geminiApiKey` (Gemini). Copy from `keys.example.js`. |
 | `config/plex.js`       | **no**   | Plex `hostname`, `port`, `https`, `token` (the bot's default user), `homeOwnerToken` (optional, only for cross-account playlist features), `managedUser`, `options`. Copy from `plex.example.js`. |
 
@@ -285,6 +310,26 @@ characters, 12 s between page turns, 1.5 s jump coalescing, 1.5 s before a DM sa
 the 30 s transient memo, the 10-minute background re-check, the 120 s parse timeout, and the
 300 MB EPUB limit.
 
+**Plex Media settings** (`/config` → AP Media). All apply live: `apMediaGame` subscribes to
+`configStore.onChange`, so `apMediaEnabled` starts or halts the world and the two intervals re-arm
+the watcher, and the other three are read each time they are used. None is named `archipelago*`:
+the monitor re-applies its whole configuration on every save of one of those.
+
+| Key | Type | Default | What it does |
+| --- | ---- | ------- | ------------ |
+| `apMediaEnabled` | bool | `false` | Turns `/apmedia` and the world on. Needs `archipelagoEnabled` too, since every slot connects through a watched room; while that is off the health line says so. |
+| `apMediaChannelId` | snowflake or blank | `''` | Where credit lines, the welcome and notices post. Blank posts in each watch's own channel. |
+| `apMediaHistorySeconds` | int 30–86400 | `120` | Seconds between reads of the consented accounts' Plex history. |
+| `apMediaSessionSeconds` | int 5–86400 | `15` | Seconds between reads of live Plex sessions, which earn checkpoints while a title plays. |
+| `apMediaVoiceCredit` | bool | `true` | Credit music the bot plays in voice (`apMediaVoice`). The bot's audiobooks are credited either way: `apMediaBooks` does not read it. |
+| `apMediaAnnounce` | choice `completions` `all` `off` | `'completions'` | `completions` posts a title finished, banked or unlocked; `all` adds a line for credit that finishes nothing; `off` posts no credit line and no welcome. Notices post in every mode. |
+
+The watcher clamps both intervals to a day too (`MAX_POLL_S`), because Node runs a timer set past
+about 24.8 days after 1 ms. The constants are code: the 7-day history window, 10 tries before a
+failing history row is given up, the 2.5x-plus-20 s session bound, the 85% voice line, the 10 s
+book span poll and the 60 s finish poll, the 5-minute hold of unposted lines, and the 7-day expiry
+of an Accept button.
+
 ---
 
 ## Data & state
@@ -316,6 +361,10 @@ All persistent runtime state lives under `data/`. The directory is created if mi
 | `data/archipelago_roles.json`     | `helpers/archipelagoRoles.js`       |
 | `data/archipelago_catchup.json`   | `helpers/archipelagoCatchup.js`     |
 | `data/archipelago/datapackage/*.json` | `helpers/archipelagoData.js`    |
+| `data/apmedia_slots.json`         | `helpers/apMediaStore.js` (Plex Media slot bindings with their unsent and banked checks; durable, with an hourly `.bak`) |
+| `data/apmedia_accounts.json`      | `helpers/apMediaStore.js` (Discord user to Plex account links and their consent; durable, with an hourly `.bak`) |
+| `data/apmedia_marks.json`         | `helpers/apMediaStore.js` (per Plex account, the history rows already read) |
+| `data/archipelago/apmedia/<seed>/<slot>.json` | `helpers/apMediaStore.js` (each bound slot's slot_data, written once) |
 | `data/kometa_theater.json`        | `helpers/kometaTheater.js` (personas + the `seen` set, keyed `library::collection`) |
 | `data/kometa_theater_queue.json`  | `helpers/kometaTheater.js` (rendered-but-unposted transmissions) |
 | `data/kometa_theater_tail.json`   | `helpers/kometaTheater.js` (log byte offset + whether a session was open) |
@@ -428,7 +477,7 @@ A `10062 Unknown interaction` on a *fast* defer means the event reached the bot 
 
 **The adapter contract** (`helpers/interactionAdapter.js`): `message.content` is rebuilt in prefix form (`!name args`) rather than set to the bare argument string, because several commands parse arguments as `content.split(' ').slice(1)` and would otherwise lose the first one. The first call to `message.reply(...)` or `message.channel.send(...)` routes through `interaction.editReply(...)`, which appears in chat as the bot's response to the slash command. Subsequent calls go through the real `interaction.channel.send(...)`. That means commands like `!trivia` (which post a "Loading..." status, then edit it, then post game messages) work unchanged: the initial `channel.send` becomes the slash command's primary response, then the game's follow-up messages are normal channel posts.
 
-**Coverage:** every command in `commands/` declares a `slash` block. The loader picks up 56 command entries (54 files plus the `playlist.js/` and `book.js/` directories) and logs `Loaded 56 commands (4 aliases)`; the aliases `?`, `plextest`, `archipelago` and `books` are prefix-only, so 56 slash commands register. Subcommand sets include `/playlist`, `/request`, `/hitster`, `/library`, `/list`, `/tags`, `/ap`, `/book`, `/voicehealth` and the game commands. `npm run check:slash` validates the whole set against Discord's rules without booting the bot: 56 commands, 28,352 bytes of registration payload, the largest `/ap` at 2,783 of 4,000 characters, and `/book` at 2,560 with 23 subcommands (measured 2026-10-16, after `/book edit` and its ten field choices). `test/validateSlash.test.js` warns early when `/book` reaches 2,700, well inside Discord's 4,000.
+**Coverage:** every command in `commands/` declares a `slash` block. The loader picks up 57 command entries (54 files plus the `playlist.js/`, `book.js/` and `apmedia.js/` directories) and logs `Loaded 57 commands (4 aliases)`; the aliases `?`, `plextest`, `archipelago` and `books` are prefix-only, so 57 slash commands register. Subcommand sets include `/playlist`, `/request`, `/hitster`, `/library`, `/list`, `/tags`, `/ap`, `/apmedia`, `/book`, `/voicehealth` and the game commands. `npm run check:slash` validates the whole set against Discord's rules without booting the bot: 57 commands and 35,123 bytes of registration payload, measured 2026-11-12. The largest is `/book` at 2,917 of 4,000 characters with 24 subcommands, then `/apmedia` at 2,794 with 11 and `/ap` at 2,783 with 22. `test/validateSlash.test.js` warns early when `/book` reaches 3,100, well inside Discord's 4,000.
 
 `scripts/validate-slash.js` exports `validate(commands)` so its rules are tested (`test/validateSlash.test.js`). Beyond names, descriptions, option counts and required-before-optional, it checks:
 
@@ -538,15 +587,19 @@ no file editing or restart needed for most settings.
   between settings. `test/configStore.test.js` asserts all three limits with every setting at
   its longest rendering (Archipelago measures 1,337 characters unsplit, 991 + 345 split), runs
   the fields through discord.js's own `EmbedBuilder`, and checks that every setting stays
-  reachable. Nothing checks Discord's 6,000-character total per embed, which discord.js leaves
-  to the API; the worst case measures 3,473.
+  reachable. `test/apMediaConfig.test.js` checks Discord's 6,000-character total per embed, which
+  discord.js leaves to the API: with the AP Media group the worst case measures 5,839
+  (2026-11-12).
 - **Change hook.** `configStore.onChange(fn)` fires after a save is written and applied to the
   live config object. The Archipelago monitor subscribes so a new room, channel or filter takes
   effect on the next batch instead of the next boot. `processPriority.js` and `voiceHealth.js`
   subscribe so a change to either Voice setting applies at once. The audiobook settings need no
-  subscription: the engine reads them each time it uses them.
-- **Groups.** General, Access, Integrations, Broadcasts, Archipelago, Audiobooks and Voice, in
-  that order.
+  subscription: the engine reads them each time it uses them. `apMediaGame.js` subscribes once per
+  process: `apMediaEnabled` starts or halts the Plex Media world, the two Plex poll intervals
+  re-arm its watcher, and any `archipelago*` key re-checks every Plex Media slot against its watch.
+- **Groups.** General, Access, Integrations, Broadcasts, Archipelago, AP Media, Audiobooks and
+  Voice, in that order. AP Media is a group of its own: the Archipelago group already holds 25
+  settings, and every save of an `archipelago*` key re-applies the monitor.
 - **Schema + persistence** live in `helpers/configStore.js`: the `SETTINGS` list (key, label,
   group, type, `secret`/`restartRequired`/`snowflake` flags, validators), pure `validate` /
   `formatValue`, and `writeOverride` (persists to `data/config.overrides.json` + mutates the
@@ -786,7 +839,9 @@ Covered by `test/archipelagoCatchup.test.js` (the store and `buildCatchup`), thr
 
 Two kinds of packet are addressed to this connection rather than reporting room activity, and
 both were reaching the channel. `client.isSelfDirected(packet)` recognises them and `shouldRelay`
-drops them unconditionally, ahead of the category filters.
+drops them unconditionally, ahead of the category filters. The same check also catches the join and
+leave lines of the bot's own Plex Media game client, on any slot, by its `PlexMediaBot` tag: see
+"The game client" under "Plex Media world (Archipelago)".
 
 **The bot's own join.** The room announces every client that attaches to a slot, the watched one
 included, so each reconnect produced `ZackWord (Team #1) tracking Wordipelago has joined.
@@ -1250,6 +1305,16 @@ Five `ZackMafia*.yaml` for the next game had gone into `Players` that morning, s
 seed's 35, and rolled as slots 36 to 40. The message now reads `the yamls no longer match`, since
 the folder is usually the bot's copy.
 
+**An item-link group is told by its slot type** (`is_group`). Both this
+comparison and `select_players` leave groups out of the expected players, and both once took a
+group to be a slot with a non-empty `group_members`. `link_items` drops every member of a link with
+nothing left to share, and a Plex Media link always has nothing, since the world empties its pool:
+the group stays in `slot_info` with `group_members` empty and slot type 2. Counted as a player, it
+failed every seed whose Plex Media YAMLs named an item link with `the yamls no longer match ...
+first slot 3`, and `!ap next` answered the whole room from sphere 1. A slot is now a group when it
+lists members or its type has the group flag (2) set; scenario F of `apworld/tests/test_generate.py`
+runs both functions on such a seed.
+
 `Main.main` then runs as it is, with `distribute_items_restrictive` and `flood_items` swapped for a
 function that raises with the multiworld in hand. Everything that decides logic (options, regions, rules, entrances, events,
 locked items) is settled by then; the fill only places items, and it is where the nine minutes of a
@@ -1675,6 +1740,542 @@ columns are dropped where they are read rather than carried around and filtered 
 | `data/archipelago_goals.json` | Lifetime goal tally per Discord user id. Gitignored. Overridable with `PLEXBOT_AP_GOALS_FILE`. |
 | `data/archipelago_roles.json` | Ids of the roles the bot created, per guild. Deleting it orphans those roles rather than breaking anything: the bot makes fresh ones and stops managing the old. Overridable with `PLEXBOT_AP_ROLES_FILE`. |
 | `data/archipelago_catchup.json` | Per `<watchId>::<seed>`: the item, goal and hint keys already posted or filtered, when the baseline was taken, the last successful post, and the finished slots at that moment. Gitignored. Deleting it costs one silent baseline per watch on the next catch-up, and anything missed before that is not posted. Records for a watch are dropped when it is unwatched, and a new seed on the same watch replaces the old one's. Overridable with `PLEXBOT_AP_CATCHUP_FILE`. |
+
+---
+
+## Plex Media world (Archipelago)
+
+Off unless `apMediaEnabled` is set, and it needs `archipelagoEnabled` too. An Archipelago world,
+game `Plex Media` (`apworld/plex_media/`), made from the owner's Plex library: each slot is one
+person's list of movies, TV episodes, albums, audio playlist parts and audiobooks, items from the
+multiworld unlock its titles, and finishing a title, or playing past fixed times inside it (the
+"timesanity" checkpoints), sends location checks. The bot builds the lists (`/apmedia yaml`), hands
+out the world file (`/apmedia apworld`), plays every bound slot as a real game client, and credits
+what it sees in Plex history and live sessions, in its own voice playback and in its audiobook
+player. The rules a player reads ship inside the apworld,
+[`docs/en_Plex Media.md`](apworld/plex_media/docs/en_Plex%20Media.md) and
+[`docs/setup_en.md`](apworld/plex_media/docs/setup_en.md); the operator's side is in `README.md`.
+
+Built and tested offline on 2026-11-11 and 2026-11-12: `npm run test:apworld` generates real seeds
+with the frozen Archipelago 0.6.8, and its scenario G plays one end to end through the real
+`apMediaGame` against a real MultiServer 0.6.8 on a loopback port; the Node tests run the bot side
+against a stand-in room server modelled on MultiServer 0.6.8. Plex and Discord are fakes in both.
+**None of it has met a room hosted with `ArchipelagoServer.exe` or archipelago.gg, a live Plex
+session or Discord yet**; Phase 17 of `BUGTESTING.md` is the checklist that does.
+
+### Module map
+
+| File | Role |
+| ---- | ---- |
+| `apworld/plex_media/__init__.py` | `PlexMediaWorld`: builds the seed's registry in `stage_generate_early`, puts the real names on the Item and Location objects, keeps the goal counter in `collect` and `remove`, takes `Unlock i` in `create_item`, writes slot_data, and swaps the seed's data package into the multidata in `stage_modify_multidata`. |
+| `apworld/plex_media/options.py` | The twelve YAML options, plus `entries` and `list_info`, which the bot writes and the options page hides. |
+| `apworld/plex_media/entries.py`, `plan.py` | Each entry validated (an `EntryError` names its index), then one slot's plan: units, steps, starting copies dealt round-robin, the Wild Ticket count, checkpoint minutes, the goal count and the caps. |
+| `apworld/plex_media/registry.py`, `naming.py` | The seed's one table of units and locations across every Plex slot, with ids and unique names; display names and the text sanitiser. |
+| `apworld/plex_media/slotdata.py`, `datapackage.py`, `rules.py`, `constants.py` | slot_data schema 1; the seed's data package and its checksum; access rules; the ids, names and limits that `helpers/apMediaContracts.js` mirrors. |
+| `apworld/tests/` | `run.py` (`npm run test:apworld`), `test_pure.py`, `test_generate.py`, `test_e2e.py` with its Node half `e2e_bot.test.js`, `ap_harness.py`, `ap_child.py`, `purelib.py`, `make_plan_cases.py` and `fixtures/`. See "Testing it" below. |
+| `helpers/apMediaGame.js` | The orchestrator: one game client per binding, the queue, notices and announcements, `health()`, and the data API `/apmedia` calls. |
+| `helpers/apMediaClient.js` | `ApMediaClient`, the game client. |
+| `helpers/apMediaCredit.js` | Pure credit logic over a slot's index. |
+| `helpers/apMediaWatch.js`, `apMediaVoice.js`, `apMediaBooks.js` | The automatic credit sources: Plex history and sessions, the bot's music in voice, the bot's audiobooks. |
+| `helpers/apMediaStore.js` | Bindings, account links, history marks and the slot_data cache. |
+| `helpers/apMediaPlex.js` | The read-only Plex client. |
+| `helpers/apMediaYaml.js`, `apMediaPlan.js` | The YAML builder, and the JavaScript twin of `plan.py`. |
+| `helpers/apMediaButtons.js` | The page buttons and the Accept button. |
+| `helpers/apMediaContracts.js` | Names, ids, limits and data shapes shared by all of the above. |
+| `helpers/apworldBuild.js`, `scripts/build-apworld.js` | The `.apworld` zip, and `npm run build:apworld`. |
+| `commands/apmedia.js/` | `/apmedia`. Every permission check is made here: `apMediaGame` trusts its caller. |
+
+Changed for it: `helpers/archipelagoClient.js` (four hooks and the self-presence rule),
+`helpers/archipelagoMonitor.js` (`describeSlot`, `onWatchChange`, two `listHints` fields,
+`restartWatch` sharing `slotGames`, and every masked link escaped in claim pings and hint pings),
+`app/bot.js` (`track-heard`), `app/music.js` (the start and the button router), `app/utils.js` (the
+stop), `helpers/healthCheck.js` (`checkApMedia`), `helpers/configStore.js` and `config/config.js`
+(the AP Media group), `commands/help.js` (one line in the Archipelago section, shown while
+`apMediaEnabled` is on), `scripts/ap-logic-worker.py` (`is_group`, under "The logic worker"),
+`commands/archipelago.js` (`!ap next` and `!ap hints` show item and location names through the
+monitor's `escapeText`, now exported), `commands/test.js` (`!diag` pings nobody and is cut to fit
+2,000 characters) and `commands/hitster.js` (the clip is marked `secret`, so it earns no Plex
+Media credit).
+
+### How a play becomes a check
+
+```
+Plex history and sessions ──> apMediaWatch ─┐
+'track-heard' (app/bot.js) ─> apMediaVoice ─┤
+book engine and bookmarks ──> apMediaBooks ─┼─> CreditEvent
+/apmedia check ───────────────────> manual ─┘        │
+                                                     v
+apMediaGame's queue ─> apMediaCredit (hits, location ids) ─> pending or banked ─> ApMediaClient ─> the room
+```
+
+**One event shape** (`CreditEvent`, `apMediaContracts.js`): `{type: 'complete' | 'span', source:
+'history' | 'session' | 'voice' | 'book' | 'manual', at}`, with `accountId` and `ratingKey` from
+Plex, the Discord `userIds` plus the track's `ratingKey`, `partId`, `artist` and `title` from voice,
+`workId` and `workIds` from books, and `fromMs` and `toMs` on a span. A history or session event
+goes to the bindings whose user's consented Plex account is its `accountId`; a voice or book event
+to the bindings whose Discord user is in `userIds`. Only `active` and `refused` bindings earn, and
+**an event dated before the slot's `generated_at` counts for nothing**.
+
+**Where it lands** (`apMediaCredit.js`, pure). The slot's index, built from its slot_data, maps
+rating keys, part ids, catalog work ids and a normalised `artist|title` to hits: a whole title, a
+track of an album or playlist part, or a part of a book, each with its span in the title's own
+timeline. Album tracks are keyed by the album's artist, since slot_data names no artist per track,
+and the normaliser drops punctuation, so `AC/DC` and `AC DC` do not meet; a rating key or part id
+is tried first. A rating key from history or a session that the index does not hold costs one Plex
+metadata read and a second try by guid: a movie by its own guid, an episode by its show's guid with
+its season and episode number, an album track by its album's guid and track number. That finds a
+twin copy of an album on another drive, and a title Plex re-keyed after a rescan. A miss is
+remembered per index (at most 20,000) and logged once per process, at info for a movie or an
+episode and at debug for anything else, since most music a listener plays is on no list. A slot
+with no movies, episodes or albums skips the read. `locationsFor(hit, event, strict)` then gives
+the location ids: a completed title earns its watch, finish or track locations plus every
+checkpoint unless `timesanity_strict`; a completed track earns its own location and the checkpoints
+inside its span; a completed book part earns the checkpoints inside its span, and the last part
+also earns the finish, with every checkpoint of the book unless `timesanity_strict`; a span earns
+the checkpoints it passed.
+
+**The queue.** Everything that changes a binding runs on one promise chain in `apMediaGame.js`:
+every credit source, each slot's connection, inventory and checks, and every `/apmedia` change.
+`apMediaBooks` delivers spans and finishes from separate timers, and without the queue two credits
+would read the same pending list and the second write would drop the first one's checks. Plex
+metadata reads run before a credit joins the queue, so a slow read holds up nothing else. **A
+repeat is free**: ids already checked, pending or banked are dropped first, and a credit with
+nothing new writes nothing and posts nothing. `apMediaBooks` re-sends every finished bookmark each
+minute and a span every 10 s while a book plays, and `apMediaVoice` sends one event per `!loop`
+pass.
+
+**Locked or open.** New ids for an open title (its unit's count has reached the entry's step, or a
+Wild Ticket opened it) join the binding's `pending` list and go out in a `LocationChecks`. A locked
+title's ids are banked under `locked_watches: bank` and dropped under `ignore`. **Nothing is judged
+locked before the slot's client has reported its inventory**: at boot, while a room is unreachable,
+and between a `Connected` and its items, a credit is banked provisionally and saved, and the next
+`items` sorts it out. A wrong "locked" under `ignore` would drop that credit for good. Each `items`
+also releases the banked ids whose titles are open now.
+
+**The sources.**
+
+- **History** (`apMediaWatch.js`). Every `apMediaHistorySeconds` it reads
+  `/status/sessions/history/all` for each consented account that has a crediting binding with a
+  known list, from the earliest `generated_at` among that account's bindings, oldest first, 300
+  rows a page, over a 7-day window. A row counts once, by its `historyKey`: a high-water mark on
+  `viewedAt` alone loses rows, because Plexamp inserts offline plays up to 54 hours late with their
+  original `viewedAt` (measured on this server). Rows with no `ratingKey`, or dated before 2000,
+  are marked seen and skipped. A poll's mark is written only after every event of the poll has been
+  applied, so a crash repeats a credit, which is free, rather than losing it. A row whose credit
+  fails is read again on the next poll, at most 10 polls in a row, and then given up with a log line
+  pointing at `/apmedia check`.
+- **Sessions** (`apMediaWatch.js`). Every `apMediaSessionSeconds` it reads `/status/sessions` and
+  turns a playing session's forward step into a span, while the step fits the wall time that
+  passed (2.5 times it, plus 20 s), which a seek does not. A playing poll whose offset has not moved
+  keeps the earlier wall time, since Plex reports `viewOffset` only every so often. A paused or
+  buffering row reports where playback stopped, so the step that ends on it counts too when the
+  poll before was playing: without that, a checkpoint passed in the seconds before a pause was never
+  earned. Between two polls that are not playing, a move is a scrub and counts for nothing, and the
+  baseline still resets at every poll that is not playing. A session's user
+  is the local account whose id is `User.id`, or else whose name is `User.title` (the owner's
+  `User.id` may be their plex.tv id), and the bot log says once which matched. It also keeps how far
+  each account got in each title, for `/apmedia status`. **The session fields are unverified on this
+  server**: no session was playing when `/status/sessions` was probed.
+- **Voice** (`apMediaVoice.js`). `app/bot.js` emits `track-heard` from every music player's Idle,
+  with the queue entry, `heardMs` (the resource's `playbackDuration`, the audio that actually went
+  out), `startMs` (where in the track the resource began: 0, or a `!seek`'s offset), whether the
+  stream ended on its own, and the people in the channel at the track's first Playing. A track
+  counts at 85% of its length heard (Tautulli's line), or, when no length is known anywhere, at a
+  natural end after 30 s of audio. A shorter listen is a span from `startMs` to `startMs + heardMs`,
+  which earns the album or playlist checkpoints it played past, as the same stretch through Plexamp
+  does. A queue entry marked `secret` (`commands/hitster.js`'s clip) earns nothing: its credit line
+  and the relay's send line would name the album before anyone had guessed. Credit goes to the
+  people present at both ends, minus the deafened. The work waits for `setImmediate`, because the event fires inside the
+  AudioPlayer's state setter. Off while `apMediaVoiceCredit` is false.
+- **Books** (`apMediaBooks.js`). Every 10 s while a book session exists, the step each playing
+  session moved, bounded by the wall time at 1.5 times its speed plus 5 s; the engine's pause, stop,
+  start and move notifications close and open steps where they happen, so the seconds before a pause
+  count. The seconds between the last poll and a jump are lost: the engine has overwritten the place
+  it jumped from by the time it reports the move. Every 60 s, each bound user's finished bookmarks.
+  A step credits only the session's own listener, and a finish only the bookmark's owner.
+  Work ids go through the catalog, which knows a renamed work by its old ids, and each event carries
+  the current id first and the old ones after, since slot_data keeps the id the list was built with.
+- **By hand** (`/apmedia check`): a completion of the whole title, or a span from 0 to `at:`.
+
+### Ids, names and the data package
+
+AP 0.6.8 fixes item and location names and ids at import and has no per-seed data package. The
+world's class tables therefore hold placeholders on ids every seed shares: `Popcorn` (filler) is
+item 1,347,000,001, `Wild Ticket` (useful) 1,347,000,002, `Unlock i` is 1,347,001,000 + i (i up to
+20,000), and location `Check j` is 1,347,000,000 + j (j up to 60,000). Item and location ids are
+separate namespaces, so Popcorn and `Check 1` share an id. In `stage_generate_early` the world
+builds one registry from every Plex slot's list. Units and locations are unioned by key, so two
+lists holding the same movie share its unlock and its locations; ids come from sorted keys only;
+the first player to list a key names it. A name that clashes, ignoring case, with another or with a
+reserved name (Popcorn, Wild Ticket, Victory, the goal counter, Plex Media Goal, every group name,
+and the placeholder spellings) gains a tag in brackets: the rating key, the show's rating key for a
+show's unlock, `<playlist>:<part>` for a playlist part, or the catalog id for a book. A name that
+would be all digits (a movie with no year, such as 1917) gains its kind: `1917 (movie)`. The real
+names go on the Item and Location objects, so the fill, the rules and the spoiler see titles.
+
+**`stage_modify_multidata` swaps a per-seed data package into the multidata**
+(`multidata["datapackage"]["Plex Media"]`): a new dict with the real names on the placeholder ids,
+its four keys in alphabetical order, its groups as sorted lists, and `checksum` computed on exactly
+that dict. MultiServer, archipelago.gg and every client name items and locations by it.
+archipelago.gg's upload re-sorts the keys and recomputes the checksum, and refuses a seed whose
+checksum differs; a copy of that check passes in scenarios A to F of `test:apworld`, and a real
+upload is still to be done (Phase 17). `worlds.network_data_package` is never touched.
+
+**Nothing in the world may depend on a clock, a random draw or set order.** The `!ap next` worker
+rebuilds the seed in another process, under another hash seed, and replays generation's placements
+by the placeholder names, so `create_item` takes `Unlock i` to mean registry unit i. Scenario C of
+`test:apworld` regenerates its seed under another `PYTHONHASHSEED` and requires the same locations
+and checksum. Universal Tracker regenerates one slot on its own, which would give other ids, so the
+world sets `disable_ut`. **A Plex Media seed therefore needs the apworld installed on the bot's PC
+for its room's whole life**; without it the worker answers every slot from sphere 1.
+
+Ids, keys and names are frozen per `BUILDER_VERSION` (1, in both `apMediaContracts.js` and
+`constants.py`). A change to anything an id or a name is derived from ships as a new builder
+version, and `entries.py` keeps rolling every YAML an earlier builder wrote. `test:apworld` compares
+two golden files, `apworld/tests/fixtures/builder1_mixed.expect.json` (builder 1's ids and names)
+and `test/fixtures/apmedia/slot_data_mixed.json`, which only `--update-golden` rewrites, and
+`test/fixtures/apmedia/plan_cases.json`, which only `make_plan_cases.py` rewrites.
+
+Generation also translates the name-keyed common options to the slot's own real names
+(`local_items`, `non_local_items` and `start_hints` by unit; `exclude_locations`,
+`priority_locations` and `start_location_hints` by location; `Everything` and `Everywhere` to the
+slot's own units and locations), ignores `start_inventory` with a warning, since `starting_unlocks`
+opens the first titles, and empties item links with a warning: their unlocks carry each seed's own
+titles.
+
+### slot_data (schema 1)
+
+**The bot never derives an id: every location and item id it sends or counts is read from
+slot_data.** Its top level holds `schema`, `game`, `world_version`, `builder`, `generated_at`,
+`created_at`, `label`, `goal_percent`, `goal_count`, `entry_count`, `tv_unlock`,
+`episodes_per_unlock`, `locked_watches`, `checkpoint_items`, `timesanity_strict`, `timesanity`
+(minutes per kind; the album timer covers playlist parts), `items` (the Popcorn and Wild Ticket
+ids), `units` (`{id, name, kind, steps, start}`, `start` being the copies given at the start) and
+`entries`, in list order. Each entry repeats its YAML fields and adds `u` (its unit's item id), `s`
+(the copies of that unit it needs), its main location ids (`w` for a movie or an episode, `f` for a
+book, and a last element on each album or playlist track, `null` under 30 s) and `cp`, its
+checkpoints as `[minute, location id]`.
+
+**slot_data names no person.** The room hands it to any client joined as the slot, and
+archipelago.gg's tracker API (`/api/slot_data_tracker/<tracker>`) serves it to anyone, so the
+Discord user id and Plex account id that `/apmedia yaml` writes into `list_info` stay in the YAML.
+
+**A hand-edited list cannot make it any size.** `entries.py` refuses a list whose entries come to
+more than 16 MiB as slot_data's JSON, and an `id`, `sid` or book `w` over 1,000 characters, and cuts
+longer display text at 1,000 characters. A list at every cap of `/apmedia yaml` comes to about 3 MiB
+(`test_pure.py` builds one), and the bot's game client takes at most 128 MiB a frame. The id cap
+also bounds the data package: a book's id is the bracket tag of each of its names when two titles
+clash. Names clip titles at 100 characters, so the text cut renames nothing.
+
+**`generated_at` is the credit floor.** `fill_slot_data` writes `int(time.time())` there, outside
+logic, so determinism holds. `apMediaCredit.indexSlot` refuses slot_data without a positive number
+in it, and the game turns that refusal into a `refused` binding with reason `slot_data`, never a
+credit from time 0. slot_data is fetched once per seed and slot: the client's Connect asks for it
+only while the cache under `data/archipelago/apmedia/` has none, and a cached copy that cannot be
+indexed is dropped, so the next Connect asks again.
+
+### The game client (`helpers/apMediaClient.js`)
+
+`ArchipelagoClient` has four hooks whose defaults are the observer's behaviour exactly;
+`test/archipelagoConnect.test.js` still pins the observer's Connect.
+
+| Hook | The observer | `ApMediaClient` |
+| ---- | ------------ | --------------- |
+| `connectPacket()` | `game: ''`, `items_handling: 0`, the `Tracker` tag, `slot_data: false` | `game: 'Plex Media'`, `items_handling: 7`, tags `AP`, `PlexMediaBot` and `NoText`, `slot_data` only when it is not cached, version 0.6.1 |
+| `wantsDataPackages()` | true: it names everything it relays | false: it never shows a name, and a multi-megabyte package is a synchronous parse on the thread that feeds voice |
+| `subscribeRoomState()` | `Get` and `SetNotify` on every slot's status and hint keys | nothing |
+| `refreshTarget()` | nothing | re-reads the watch's address and password before every connection attempt; no watch stops the client with `orphaned` |
+
+The server refuses checks and a goal from `Tracker`, `TextOnly` and `HintGame` clients, so the game
+client carries none of those tags. `NoText` keeps chat and the item feed off its socket, since the
+watch on the same room relays them already.
+
+Its events: `connected` (`{seedName, team, slot, slotId, slotData, checked, missing}`), then
+exactly one `items` (`{items, added}`), because MultiServer puts the first `ReceivedItems` in the
+`Connected` frame and sends none at all to a slot that holds nothing; then an `items` per change,
+`checked` (`{ids}`, from `RoomUpdate`), `invalid`, `orphaned`, and the inherited `fatal`
+(`{reason, errors}`) and `status`. A `ReceivedItems` at index 0 replaces the list, one at the
+list's length appends, and any other sends `Sync` and is dropped. `sendChecks` and `sendGoal`
+return true only when the socket took the frame. A re-pointed or re-passworded watch gets a fresh
+client object: `stop()` then `start()` on one client could run packets still queued from its old
+socket.
+
+**The bot's own join and leave lines stay out of the relay.** `isSelfDirected` is also true for a
+`Join` or `TagsChanged` whose tags include `PlexMediaBot`, and for a `Part` whose text ends in a
+Python tag list holding it, such as `Zack (Team #1) has left the game. Client(0.6.1), ['AP',
+'PlexMediaBot', 'NoText'].`: AP 0.6.8's `Part` carries no tags field, only that text. A person's own
+client on the same slot has its own tags and still relays. The rule is room-wide, so any client
+tagged `PlexMediaBot` on any slot is hidden, a second bot or a spoofed tag included.
+
+**The monitor's side** (`helpers/archipelagoMonitor.js`). `describeSlot(watchId, name)` answers
+from the watch's observer what its room says about a slot: `{known, canonical, slotId, game}`, or
+null for no such watch. `known` is false until the watch has read the room, and a null `game` with
+`known` true means not read yet, never another game. `onWatchChange(fn)` returns an unsubscribe and
+calls `fn({watchId, change, watch})` synchronously after a watch is `added`, `removed`, `restarted`
+(the same room), `repointed` or `disabled` (by `archipelagoEnabled` going off); a listener's throw
+is logged and swallowed, and a listener must not call back into the monitor, so the game queues its
+work. `listHints` rows carry `location` and `findingPlayer`, and `/apmedia list` marks a title as
+hinted by location id among the hints whose finder is the slot itself: a clipped or collision-tagged
+name would not match. `restartWatch` hands the fresh client the old one's `slotGames` along with its
+`slotNames`, so `describeSlot` knows a slot's game straight after `!ap retry`.
+
+### Bindings, refusals and the goal
+
+A binding (`data/apmedia_slots.json`, key `<watchId>::<slot in lower case>`) ties one slot of one
+watch to one Discord user: `watchId`, `slot`, `userId`, `boundAt`, `boundBy`, `seedName`, `state`,
+`stateDetail`, `pending`, `banked`, `redeemed`, `wildUsed`, `goalSent`, `announce`, `welcomed`,
+`lastCredit` and `lastTarget`, plus two fields the game adds: `backfillSeed` (the seed whose history
+backfill has run) and `watchChannelId` (the watch's channel, kept for a notice after the watch is
+gone). The slot is stored in the room's spelling, from `describeSlot`, and put right again before
+every connect, so a name linked before the watch had read the room needs no `InvalidSlot` round
+trip.
+
+| State | Earns | Means | Way out |
+| ----- | ----- | ----- | ------- |
+| `active` | yes | connected, or trying to | |
+| `refused` | yes | the room refused the client (`InvalidSlot`, `InvalidGame`, `InvalidPassword`, `IncompatibleVersion`), its slot_data cannot be read (`slot_data`), or another binding holds this seed's slot already (`duplicate`) | `/apmedia retry`, a change of its watch, or any `start()`; the next `Connected` makes it `active` |
+| `stale` | no | the watched room moved to another seed | `/apmedia retry` takes the new seed on and clears `pending`, `banked`, `redeemed`, `wildUsed`, `goalSent`, `welcomed`, `lastCredit` and `backfillSeed` |
+| `orphaned` | no | the watch was removed | `/apmedia retry` once a watch with the same id exists again; an `added` watch never revives one, since watch ids are reused |
+
+A refused slot keeps earning: a changed room password refuses the client, and a retry with the new
+one sends what was earned meanwhile. Each refusal posts one notice with its fix, and the same
+refusal again (every `start()` retries refused slots) posts nothing more; `/apmedia retry` clears
+`stateDetail`, so a manual retry reports again. `archipelagoEnabled` going off parks every client
+without orphaning anything.
+
+**One slot of a seed, one binding.** The key holds the watch id, and `addWatch` does not compare
+targets, so two watches can point at one room and one slot can be bound through each, by two
+people: one list would then count both people's watching and spend each Wild Ticket twice. So at
+`Connected`, before the seed is taken, a binding that finds another crediting binding already
+holding the same seed and slot (ignoring case, and not itself refused as `duplicate`) refuses
+itself with reason `duplicate` and a fix naming that watch. It never stores the seed, so it has no
+list and earns nothing; it counts once the other link goes and it is retried.
+
+**The goal** is sent once `done` reaches `goal_count`, and again on every `Connected`: the server
+keeps a goal, so a repeat is harmless, and a goal lost to a dropped socket goes out again. It is
+never announced, since the relay posts the room's own `Goal` line.
+
+**Accounts** (`data/apmedia_accounts.json`): `{[discordUserId]: {accountId, name, linkedAt,
+linkedBy, consent, consentAt}}`. The owner (`config.ownerId`) with no record reads as Plex account
+1, the server owner, with consent. Anyone else's link starts `pending`, and the watcher reads no
+history for it until it is `granted`: the owner's token reads every account on the server, and the
+link alone is the owner's choice. The owner linking themselves is granted at once, and so is a
+re-link to the same account already granted. `grantConsent(userId, {linkedAt})` refuses a link made
+since the button was drawn. A binding that joins an account the history poll has already read gets
+one backfill read from its own `generated_at`, credited to that binding alone, since the poll's
+seen-set and its 7-day window would otherwise hide the earlier rows.
+
+**One account, one person, unless shared.** Consent is asked of the person linked, never of the
+person whose history the account holds, so `linkAccount` refuses an account another Discord user's
+record holds, and account 1 while the owner reads as it unlinked, with a message naming them and
+their ids in `heldBy`; the owner linking themselves gets the same answer. `shared: true` links it
+anyway, for people who watch on one account together, and the result's `sharedWith` lets the
+consent request say so. `unlinkAccount(userId)` is open to the user themselves through
+`/apmedia account plex:none`. When an account's last link goes (by unlink, or a re-link to another
+account; the owner's implicit account 1 counts as a link), `forgetAccount` removes its history mark
+and `apMediaWatch.forget(accountId)` drops its session samples; a history pass reading the account
+at that moment sees its epoch change and writes no mark back. A later link reads from the seed's
+start again, which the dedupe makes free.
+
+### Announcements
+
+| Line | When |
+| ---- | ---- |
+| ✅ `ZackPlex` watched **The Matrix (1999)**, 9 checks sent | a title becomes done (`listened to` for music, `finished` for a book) |
+| 🔒 `ZackPlex` watched **Alien (1979)**, 9 checks waiting for its unlock | a completion is banked |
+| 🔓 `ZackPlex` **Alien (1979)** unlocked, 9 checks sent | banked checks go out |
+| ⏱️ `ZackPlex` **The Matrix (1999)**: 1 check sent | `all` only: sent credit that finishes nothing |
+| 🔒 `ZackPlex` **Alien (1979)**: 1 check waiting for its unlock | `all` only: banked credit that finishes nothing |
+| 🎬 `ZackPlex` is in the game with 5 of 35 titles open: The Matrix (1999) (2h16m), … Goal: finish 28. | the welcome, once per binding, at its first `items` (open titles need the inventory), with its Plex account (`Plex account: linked.` for a friend, whose account name stays out of the channel; the owner's as account 1) and the `!ap claim` and `!ap hintpings … dm` commands |
+| 🔴 `ZackPlex`: the room refused its Plex Media client (`InvalidPassword`). *fix* | a refusal; posted in every mode |
+| 🟡 `ZackPlex`: the room is on another seed now, … | a new seed; posted in every mode |
+| ⚠️ `ZackPlex`: watch #0 is gone, … | the watch was removed; posted in every mode |
+
+Each refusal's fix names its own way out: the room's spelling of the slot for `InvalidSlot`,
+unlinking and linking the room's Plex Media slot for `InvalidGame`, `/config` or `!ap password` for
+`InvalidPassword`, hosting with the default compatibility for `IncompatibleVersion`, because the
+client reports version 0.6.1 and an exact-version room wants its own, and unlinking this binding for
+`duplicate`. A room's own words in a refusal (its errors, a quoted slot_data value) are cut to 100
+characters, and the slot_data one goes in inline code, since a room server can send any text.
+
+Lines are batched per channel for `archipelagoBatchSeconds` into messages of at most 1,900
+characters, sent with `allowedMentions: { parse: [] }`, titles through `escapeText` and slot names in
+inline code. `escapeText` is `escapeMarkdown` with every `[` escaped as well: a list title can come
+from a hand-edited YAML, discord.js leaves a masked link `[text](url)` working, and its `maskedLink`
+option escapes only the first of several in one string. Every line of a batch is posted; only lines
+held while no Discord client can post them are capped, at 200 per channel, with a warning that
+counts the dropped ones. The channel is `apMediaChannelId`, else the watch's channel, else the
+binding's `watchChannelId`. `apMediaAnnounce` `off` and a binding's own `announce: false` silence
+the credit lines and the welcome, never a notice. Credit made while the inventory was unknown is
+announced at the next `items`, against what the room reported, so a title done before is not
+announced again. Those notes live in module memory, which `!restart` keeps; after a stop and start
+of the bot in between, the credit is announced with a 🔓 line instead.
+
+### `/apmedia` and its buttons
+
+`commands/apmedia.js/index.js` gates every subcommand on `apMediaEnabled`, read on each call (the
+`?` sub-help shows anyway), and makes each permission check before calling the game. The owner
+gates are strict, since they read Plex accounts, hand out the world file or act for somebody else:
+with `ownerId` blank nobody passes. A self-link needs the caller's `!ap claim` on that slot
+(`archipelagoMonitor.listClaims`); claiming never takes a slot somebody else holds, and without the
+check anybody could link a friend's slot to themselves and fill the friend's list with their own
+watching. `slash.ephemeral` is a function that keeps every reply private except `apworld`'s. One
+`say()` sends every reply: it never rejects, clips at 2,000 characters by code point with code
+fences kept balanced, and sends later slash replies as private follow-ups, where the adapter would
+post them in the channel.
+
+`yaml` fills `accountId` from the consented account of the person the list is for, never the
+owner's for someone else, and refuses `accountId` or `discordUserId` typed in. The slash form has 22
+options; a subcommand takes at most 25, so `label`, `starting_unlocks`, `wild_tickets`, `strict`,
+`locked_watches` and `checkpoint_items` arrive through one `more` option in the prefix's key=value
+form. Anyone may build, and one build reads every movie, show and album listing and then the
+tracks or episodes of each pick (286 Plex requests for a large list on a library the owner's size),
+so `yaml` runs one build per caller and two at once in all, kept in module memory, and answers the
+rest with a wait; the builder gives the event loop a turn before each hand-pick and builds each
+query's bigrams once. `check` and `redeem` take a title only when it is named in full or by its
+code: the game's `findEntry` also matches any part of a title, and "Alien" is a part of "Aliens
+(1986)". A miss gets up to three suggestions from an edit distance against every title on the list,
+on the main thread, so a text over 200 characters once normalised gets none, and a pair whose lengths
+differ by more than the closeness allows is never scored. `check`'s prefix text is tried whole as a
+title before it is split at its last `at` or `@`. `account` takes a Plex name in full or an id: a
+link reads that account's whole history, so part of a name gets "Did you mean", sent by DM on the
+prefix path, where it would name accounts in the channel. With the friend's DMs closed it posts
+neither the button nor the account's name in the channel: it asks them there to open their DMs.
+`account plex:none` (`!apmedia account none`) runs for anyone on their own link, before the owner
+gate. `apworld` packs
+the world in memory (`apworldBuild.buildApworld()`) and only reads
+`<archipelagoInstallDir>/custom_worlds/plex_media.apworld` with `readApworldManifest`: missing,
+another `world_version`, no manifest, or not a zip, which stops every Archipelago program on the PC
+from starting while it sits there. A Plex failure shows only its `PmsError` code (`UNREACHABLE`,
+`TIMEOUT`, `HTTP_401` and the rest); the message, which names the Plex host and port, goes to the
+bot log.
+
+Autocomplete answers from memory: slots from the bindings, titles from the slot indexes (`redeem`
+offers locked titles only), and playlists from the game's YAML builder (`apMediaGame.builder()`, one
+per process). The game warms that playlist cache when it starts, and a cache 10 minutes old starts
+one background refresh, never awaited.
+
+| Custom id | Kept | Who |
+| --------- | ---- | --- |
+| `apmedia:page:<token>:<n>` | The pages of a long `list` or `status` reply, rendered when the command ran, in memory for 30 minutes after their last use, at most 50 lists, oldest out first. `!restart` keeps them; a stop and start of the bot drops them. | The asker only; anyone else gets a private refusal. |
+| `apmedia:consent:<discordId>.<linkedAt in base 36>` | Nothing: the click is checked against the account store, so the button works after a restart. It expires 7 days after `linkedAt`, and a re-link restamps `linkedAt`, which makes an older button stale. | The named user only. The click is deferred before `grantConsent`, because the game answers from its queue and Discord gives a click 3 seconds. |
+
+### Lifecycle and health
+
+**Boot.** On `clientReady`, after `startArchipelagoMonitor` and `bot.books.start()`, each in its own
+try/catch, `app/music.js` calls `apMediaGame.start({ discord: client, bot })`. It keeps the client
+and the bot even while `apMediaEnabled` is off, and binds `configStore.onChange` once per process
+(see "Plex Media settings"). Running, it subscribes to `onWatchChange`, starts the watcher,
+attaches voice and books, builds a client for every `active` or `refused` binding, releases held
+lines, warms the playlist cache, and logs `Plex Media started.`.
+
+**Stop and `!restart`.** `app/utils.js` `stop()` calls `apMediaGame.stop()` after the monitor's
+detach and before `restartHandoff.endAll`: the watcher, the voice and book listeners and every game
+client stop, and lines not yet posted are held. `bot.books.shutdown()` runs first in `stop()`, and
+`apMediaBooks`' detach delivers the steps the engine closed during it, so on a `!restart`, which
+keeps the process, listening up to the shutdown is still credited: banked provisionally, since the
+game clients are gone by the time it lands, and announced at the slot's first `items` after the
+restart. `!restart` then runs `start()` again in the same process. Bindings live in the store, and
+the slot indexes, the watcher and the announcement buffers in module memory, so all of that
+survives; each game client reconnects, its join and leave lines hidden by the tag. Held lines go out through the next Discord client if it
+comes within 5 minutes (`HOLD_MS`), at most 200 per channel; older ones are dropped with a warning.
+
+**Health** (`helpers/healthCheck.js` `checkApMedia()` → `apMediaGame.health()`, shown as
+`ApMedia:` by `!diag` and the 15-minute check):
+
+| Status | Detail |
+| ------ | ------ |
+| `disabled` | `apMediaEnabled is false in config/config.js` |
+| `missing` | `needs the Archipelago monitor (archipelagoEnabled is off): Plex Media slots connect through its watches` |
+| `error` | one or more of `failed to start: …`, `2 slots refused (ZackPlex: InvalidGame, FriendPlex: InvalidSlot)`, `1 slot lost its watch (FriendPlex)` (`2 slots lost their watch (…)`) and `the Plex history read failed 3 times in a row (…)`, joined by `; `. At most 5 slots are named, then `and N more`, and each name and reason is cut to 60 characters with any backtick made a quote: slot names are the players' and reasons the room's, and `!diag` shows the detail to anyone inside one code block. |
+| `ok` | `2 slots, 2 connected, Plex history read 4m ago`. The last part reads `no linked accounts` while the poll has no consented account to read, and earlier failures are then not counted, or `Plex history not read yet`; before the first start the detail is `2 slots, waiting to start` |
+
+**Command log.** `apmedia-credit` (`{slot, source, title, sent, banked}`) for each credit that sent
+or banked something, `apmedia-refused` (`{slot, watchId, reason}`), `apmedia-stale` and
+`apmedia-orphaned` (`{slot, watchId}`), and `apmedia-goal` (`{slot, done, goal}`) the first time a
+slot's goal goes out. Its bot-log lines start with `Plex Media`.
+
+### Files and stores
+
+| File | Role |
+| ---- | ---- |
+| `data/apmedia_slots.json` | Bindings, with their `pending` and `banked` checks. Durable (fsync before the rename, an hourly `.bak`), since those checks exist nowhere else once their history row is marked seen. Compact JSON. Overridable with `PLEXBOT_APMEDIA_SLOTS_FILE`. |
+| `data/apmedia_accounts.json` | Plex account links and consent, by Discord user id. Durable, with a `.bak`. Overridable with `PLEXBOT_APMEDIA_ACCOUNTS_FILE`. |
+| `data/apmedia_marks.json` | Per Plex account: the newest `viewedAt` read, and the history keys already seen inside the 7-day window. Removed when the account's last link goes. Not durable: a lost mark only re-reads history from the seed's start, and the dedupe makes that free. Overridable with `PLEXBOT_APMEDIA_MARKS_FILE`. |
+| `data/archipelago/apmedia/<seed>/<slot>.json` | Each bound slot's slot_data, written once through a `.tmp` and a rename. Every path segment is the name's letters, digits, `_` and `-` (at most 32) plus the first 12 hex digits of its SHA-256, so no seed or slot name reaches outside the folder or meets another. A seed's folder goes when its last binding does. Overridable with `PLEXBOT_APMEDIA_CACHE_DIR`. |
+| `dist/plex_media.apworld` | `npm run build:apworld`'s output. |
+
+All of them are gitignored: `/data/apmedia_*.json` with its `.bak`, `.tmp` and `.corrupt-*`
+companions, the cache with the rest of `data/archipelago/`, and `/dist/`. `.dockerignore` leaves
+`dist/` and `apworld/tests/` out of the image and keeps `apworld/plex_media/`, which `/apmedia
+apworld` packs at run time. No record keeps a field named like a password, token or secret, at any
+depth, and `lastTarget` keeps only whether the room has a password. Under the test runner each store
+is memory-only unless its env var is set, the jsonStore rule, and so is the cache.
+
+### Testing it
+
+**`npm run test:apworld`** runs `py -3.13 -O -s -S -B apworld/tests/run.py`, the flags the frozen
+build and the `!ap next` worker run with: `-O` because the install was compiled with `optimize=1`,
+`-s -S` so nothing installed into that Python shadows what `library.zip` ships, `-B` so nothing is
+compiled into `apworld/plex_media`. `test_pure.py` always runs: entries, the plan, the registry,
+naming, slot_data, the data package and the rules, with no Archipelago imports, plus checks that
+`constants.py` still mirrors `apMediaContracts.js` and that `plan_cases.json` has not drifted. When
+`C:\ProgramData\Archipelago` exists, `run.py` builds `dist/plex_media.apworld` with node and
+`test_generate.py` generates real seeds with it, one at a time, through `ap_harness.py`, which
+bootstraps the frozen install the way the worker does into a temp root (its own `host.yaml`,
+`user_path` and `AP_TEST_WORLDS`) that `run.py` removes afterwards, since outputs embed
+`host.yaml`'s server options; `test_e2e.py` runs after it in the same root. Nothing is written into
+the install. The scenarios, picked with `--only` by class-name prefix across both files:
+
+- `A0`: Archipelago loaded the built file, which passes the Launcher's Install APWorld check, and
+  its options match the table.
+- `A`: two solo lists, the committed builder-1 fixture YAML and a list `helpers/apMediaYaml.js`'s
+  `renderYaml` wrote, through `node -e`.
+- `B`: every kind with every timer; its slot_data is the JavaScript side's golden file.
+- `C`: two Plex lists sharing titles beside a ChecksFinder slot, generated again in a child process
+  under another `PYTHONHASHSEED`, and rebuilt by the real `!ap next` worker, which must verify every
+  slot.
+- `D`: season mode, with checkpoints open to any item.
+- `E`: 600 unlock copies solo at spoiler level 3, inside 90 s.
+- `F`: two Plex lists naming one item link, which must generate with the link left empty, and the
+  worker's rebuild and its `select_players`, which must keep only the seed's own YAMLs.
+- `G` (`test_e2e.py`): the bot's side end to end. One list as `renderYaml` writes it is generated
+  beside a ChecksFinder slot and hosted by MultiServer inside the test process on a free loopback
+  port, the way its `main()` hosts a seed, minus the console and the save file. Then
+  `apworld/tests/e2e_bot.test.js`, under `node --test` with every `PLEXBOT_*` variable removed,
+  plays it with the real `apMediaGame`, `ApMediaClient`, `apMediaWatch` and `archipelagoMonitor`, a
+  memory store, a fake Plex server and fake Discord, and reads the room's own record back over
+  loopback. A history row of the open title must put exactly its watch and checkpoints into the
+  room, the locked title's checks must stay banked until its unlock arrives through the multiworld,
+  the room must record the goal, the relay must never post the game client's own join or leave,
+  and nothing may land in `data/`.
+
+Every seed of A to F must ship a data package of real names that passes the copy of
+archipelago.gg's upload check, let MultiServer resolve a title by name, keep every slot_data id
+among its own slot's locations or starting items, show titles in its spoiler, keep the excluded
+checkpoints to filler, give each location its own unit's rule, and keep the goal counter in step
+through `collect` and `remove`. `--pure` stops after `test_pure.py`, and `--update-golden` rewrites
+the two golden files instead of comparing them. `make_plan_cases.py` regenerates
+`test/fixtures/apmedia/plan_cases.json`, which `test/apMediaPlan.test.js` checks the JavaScript plan
+against.
+
+**The Node side** (`test/apMedia*.test.js`, `test/apworldBuild.test.js`). The orchestrator tests run
+the real `apMediaGame` and the real `ApMediaClient` against `test/helpers/apMediaServer.js`, a
+stand-in room built for game clients (Connect checks, `Connected` with its first `ReceivedItems`,
+`Sync`, `LocationChecks` answered by `RoomUpdate`, `StatusUpdate`, and the `ConnectionRefused`
+kinds), with the real store in memory, the real watcher, voice and books modules over fakes, a fake
+monitor and fake Discord, and timers fired by hand. `test/fixtures/apmediaPlex/` is an invented
+library in Plex's JSON shapes, string rating keys and late history rows included, served through a
+fake fetch. Every store env var points at a temp path, as in every other test.
+
+**Known gaps**, each accepted or waiting on Phase 17: a `!seek` splits a voice listen and each part
+is judged against the 85% alone for the track (the checkpoints each part played past count either
+way); the seconds between a session's last poll and its stop, and before its first sight, cannot be
+read back from `/status/sessions`; in strict mode, completing a one-part book still earns its
+checkpoints, since the part's span covers them; a stopped music player whose late Idle comes after a
+newer run started reports nothing; the session field shapes and an archipelago.gg upload are
+unverified; and DMs with buttons, `editReply` with an attachment and an ephemeral page turn have only
+met fakes.
 
 ---
 
@@ -4070,11 +4671,13 @@ The read-along tests add `PLEXBOT_BOOK_TEXT_DIR` and its three `PLEXBOT_BOOK_TEX
 
 The read-along pictures tests add `PLEXBOT_BOOK_PICTURES_FILE`. `test/helpers/fakePdfTools.js` stands in for Calibre's poppler tools and ffmpeg (`node fakePdfTools.js <pdftotext|pdftoppm|ffmpeg|xpdf> ...`): the "PDF" is a JSON spec written by `writeFakePdf(file, { mode, pages })`, with modes `ok`, `damaged`, `encrypted` (exit 1, as Calibre's poppler gives for a password, with an `/Encrypt` trailer entry in the file), `no-text`, `hang` and `hang-tree` and per-page `failPages` and `hangPages`; `fakeTools()` gives the `{ exe, args }` tools a job takes, and ffmpeg reads its spec from `--fake-spec`. `test/bookPicturesWorker.test.js` forks real children, one of them through the real scan and alignment on a 7-page fake PDF; its stretched time cap runs on a fake fork under `node:test` mock timers (`setTimeout` and `Date`), so 55 minutes pass in milliseconds. The scan and alignment tests typeset a generated book in two columns (`test/fixtures/bookPictures/synth.js`), so no real book text is used.
 
+The Plex Media tests add `PLEXBOT_APMEDIA_SLOTS_FILE`, `PLEXBOT_APMEDIA_ACCOUNTS_FILE`, `PLEXBOT_APMEDIA_MARKS_FILE` and `PLEXBOT_APMEDIA_CACHE_DIR` where a test needs the store on disk; without them it is memory-only. The game client runs against `test/helpers/apMediaServer.js`, a stand-in room for game clients beside `apServer.js`'s observer one, and Plex is `test/fixtures/apmediaPlex/`'s invented library behind a fake fetch. The world itself is tested in Python by `npm run test:apworld`, which `npm test` does not run: it needs `py -3.13`, and its frozen-Archipelago half needs the install at `C:\ProgramData\Archipelago`. Its scenario G also runs `apworld/tests/e2e_bot.test.js`, the bot's side against a real MultiServer, which sits outside `test/` and so outside `npm test`. See "Testing it" under "Plex Media world (Archipelago)".
+
 ---
 
 ## Quirks worth knowing
 
-- **`commands/playlist.js/` is a directory** with `.js` in its name. The auto-loader's regex (`/\.js$/`) matches the directory name, and Node resolves the `require()` to `commands/playlist.js/index.js`. Clever but surprising; rename later if it becomes confusing. `commands/book.js/` does the same, and its `index.js` requires its five subcommand files by name, so a stray file dropped in that directory never becomes a command.
+- **`commands/playlist.js/` is a directory** with `.js` in its name. The auto-loader's regex (`/\.js$/`) matches the directory name, and Node resolves the `require()` to `commands/playlist.js/index.js`. Clever but surprising; rename later if it becomes confusing. `commands/book.js/` does the same, and its `index.js` requires its five subcommand files by name, so a stray file dropped in that directory never becomes a command. `commands/apmedia.js/` is the third, with `common.js` and eleven subcommand files, also required by name.
 - **The `Bot` class instantiates its own `PlexAPI`** in `app/bot.js`, separate from `helpers/plexClient.js`'s shared instance. Two TCP connection pools to the same Plex server. Legacy from before the helper existed; could be unified later.
 - **`iceName` was a typo** in the Bot class's PlexAPI options — fixed in this iteration to `deviceName`. The Bot now identifies itself correctly to Plex.
 - **`!youtube` works in two modes**: a URL plays directly; anything else hits `@distube/ytsr` for search and plays the top video result.
@@ -4210,6 +4813,12 @@ failed to spawn or its stream errored) and `book-save-failed` (a bookmark write 
 once per failure streak, with `Audiobook bookmarks are being saved again.` in the bot log on
 recovery).
 
+The Plex Media world adds five: `apmedia-credit` (`{slot, source, title, sent, banked}`, for a
+credit that sent or banked a check), `apmedia-refused` (`{slot, watchId, reason}`),
+`apmedia-stale` and `apmedia-orphaned` (`{slot, watchId}`), and `apmedia-goal`
+(`{slot, done, goal}`, once per slot). A `/apmedia` button click is logged with path `button` and
+the command `apmedia:page` or `apmedia:consent`.
+
 The read-along keeps book text out of both sinks. `commandLog.summarise` records any payload
 carrying a `bookpage:` component as `[book text not logged]`, which covers DM sends seen by the
 `messageCreate` recorder, ephemeral replies and button reports alike, and `calibrePassword` joins
@@ -4277,3 +4886,7 @@ them as a transcript, with `--errors`, `--command=`, `--user=`, `--since=`, `--n
 | Voice-health log                 | `commands/voicehealth.js`            | `helpers/voiceHealth.js`, `voiceHealthFormat.js`; hooks in `app/bot.js` and `bookEngine.js` |
 | Process priority                 | `app/utils.js` `start()`             | `helpers/processPriority.js`                                |
 | Sends through a connection drop  | `app/utils.js` `start()` (`rest`)    | `helpers/discordRetry.js`                                   |
+| Plex Media world (the apworld)   | `apworld/plex_media/`, `npm run build:apworld`, `/apmedia apworld` | `helpers/apworldBuild.js`; `apworld/tests/` (`npm run test:apworld`) |
+| Plex Media world (in the bot)    | `commands/apmedia.js/`, the `apmedia:*` buttons, `apMediaGame.start()` in `app/music.js` | `helpers/apMediaGame.js` (orchestrator), `apMediaClient.js`, `apMediaCredit.js`, `apMediaStore.js`, `apMediaButtons.js`; `apMediaContracts.js` |
+| Plex Media credit sources        | Plex history and sessions, `track-heard` in `app/bot.js`, the book engine | `helpers/apMediaWatch.js` (with `apMediaPlex.js`), `apMediaVoice.js`, `apMediaBooks.js` |
+| Plex Media lists                 | `/apmedia yaml` (`commands/apmedia.js/yaml.js`) | `helpers/apMediaYaml.js`, `apMediaPlan.js`, `apMediaPlex.js` |
