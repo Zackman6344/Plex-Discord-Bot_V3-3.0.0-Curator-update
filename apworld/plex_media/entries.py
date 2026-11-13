@@ -228,7 +228,9 @@ def parse_entries(value):
 	if not isinstance(value, (list, tuple)):
 		raise EntryError(None, f"entries must be a list, not {type(value).__name__}")
 	if not value:
-		raise EntryError(None, "the list is empty: give it at least one title")
+		# What a YAML from the Archipelago Options Creator says until the bot fills in its titles.
+		raise EntryError(None, "this YAML has no titles yet. Attach it to /apmedia yaml in Discord, and the bot "
+		                       "picks them from the Plex library.")
 	if len(value) > MAX_ENTRIES:
 		raise EntryError(None, f"the list has {len(value)} entries; at most {MAX_ENTRIES} fit in one slot, "
 		                       "so split it across two slots")

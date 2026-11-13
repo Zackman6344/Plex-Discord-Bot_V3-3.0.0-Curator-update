@@ -45,7 +45,7 @@ for (const mod of [yaml, apworld, account, link, unlink, retry, status, list, ch
 	for (const name of mod.names) HANDLERS[name] = mod;
 }
 
-const deps = { game: null, builder: null, monitor: null, apworld: null, buttons: null, installedApworld: undefined };
+const deps = { game: null, builder: null, monitor: null, apworld: null, buttons: null, installedApworld: undefined, fetch: null };
 let sharedBuilder = null;
 
 function game() {
@@ -87,15 +87,16 @@ function offText(p) {
 const SLOT = (description, required = false) => ({ name: 'slot', type: 'STRING', description, required, autocomplete: true });
 const TITLE = (description) => ({ name: 'title', type: 'STRING', description, required: true, autocomplete: true });
 const MINUTES = (name, what, given) => ({ name, type: 'INTEGER', description: `${what} checkpoint every N minutes (0 is off, default ${given})` });
-const PRESET_CHOICES = Object.keys(contracts.PRESETS).map((value) => ({ name: value, value }));
+const PRESET_CHOICES = [...Object.keys(contracts.PRESETS), 'none'].map((value) => ({ name: value, value }));
 const ONE_SLOT = 'The linked slot (empty: your only one)';
 
 const SUBCOMMANDS = [
 	{ name: 'yaml', description: 'Build your Plex Media list: a YAML for the next Archipelago seed',
 		options: [
-			{ name: 'name', type: 'STRING', required: true, description: 'Your slot name in the room, 1-16 characters' },
+			{ name: 'name', type: 'STRING', description: 'Your slot name in the room, 1-16 characters (with a file: the file\'s name)' },
+			{ name: 'file', type: 'ATTACHMENT', description: 'A YAML from the Archipelago Launcher\'s Options Creator, or an earlier list, to fill in', omitFromQuery: true },
 			{ name: 'for', type: 'USER', description: 'Owner: build it for someone else', omitFromQuery: true },
-			{ name: 'preset', type: 'STRING', description: 'A starting mix when no counts are given (default movies)', choices: PRESET_CHOICES },
+			{ name: 'preset', type: 'STRING', description: 'A starting mix when no counts are given (default movies; none: only what you count or name)', choices: PRESET_CHOICES },
 			{ name: 'movies', type: 'INTEGER', description: 'Movies in all, hand-picks included (0-200)' },
 			{ name: 'shows', type: 'INTEGER', description: 'TV shows in all (0-50)' },
 			{ name: 'albums', type: 'INTEGER', description: 'Music albums in all (0-200)' },
@@ -106,7 +107,7 @@ const SUBCOMMANDS = [
 			{ name: 'genre', type: 'STRING', description: 'Random picks of this genre only' },
 			{ name: 'years', type: 'STRING', description: 'Random picks from these years only: 1990 or 1990-1999' },
 			{ name: 'unwatched', type: 'BOOLEAN', description: 'Leave out what you watched (default true; needs your Plex account)' },
-			{ name: 'max-episodes', type: 'INTEGER', description: 'Episodes per random show (1-500, default 24)' },
+			{ name: 'max-episodes', type: 'INTEGER', description: 'Most episodes from one show (1-500, default 24)' },
 			MINUTES('time-movies', 'Movie', 15),
 			MINUTES('time-episodes', 'Episode', 10),
 			MINUTES('time-albums', 'Album and playlist', 0),
@@ -211,6 +212,7 @@ function helpEmbed(bot) {
 			'Your Plex to-watch list as an Archipelago game: items from the multiworld unlock its titles, and watching or listening sends the checks. Everything works as `/apmedia ...` too.\n\n' +
 			'**\u{1F4DD} JOINING A SEED**\n' +
 			`> \`${p}apmedia yaml name=You [movies=10] [titles="Alien; Aliens"] [unwatched=false]\`: Build your list and send the file to the owner. Keys: preset, movies, shows, albums, books, titles, playlist, collection, genre, years, unwatched, max_episodes, time_movies, time_episodes, time_albums, time_books, goal_percent, tv_unlock, episodes_per_unlock, label, starting_unlocks, wild_tickets, strict, locked_watches, checkpoint_items.\n` +
+			`> Or make the YAML in the Archipelago Launcher's Options Creator and attach it to \`${p}apmedia yaml\` (\`/apmedia yaml file:\`): the bot picks the titles its list settings ask for and keeps every other setting. Keys you type replace the file's.\n` +
 			`> \`${p}ap claim <slot>\`, then \`${p}apmedia link <slot> [watch=n]\`: Once the seed is up, tie your slot to you.\n\n` +
 			'**\u{1F37F} PLAYING**\n' +
 			`> \`${p}apmedia list [ready|locked|done] [slot]\`: Your titles by show and album; \u{1F4A1} marks one somebody hinted.\n` +
@@ -353,7 +355,8 @@ module.exports = {
 				monitor,
 				apworld: apworldBuild,
 				buttons: buttons(),
-				installedApworld
+				installedApworld,
+				fetch: (...args) => (deps.fetch || globalThis.fetch)(...args)
 			};
 			try {
 				return await handler.run(ctx);

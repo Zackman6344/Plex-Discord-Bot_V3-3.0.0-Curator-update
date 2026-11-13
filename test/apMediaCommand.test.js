@@ -5,7 +5,11 @@
 // slash, a second reply included (the adapter would post it publicly), and no reply pings or runs
 // past 2,000 characters; the YAML options parse the same from `key="a value"` text and from slash
 // options, the bot alone fills in the Plex account and Discord id, and nobody's list is filtered by
-// somebody else's history; a check's time reads as 1h30m, @1h30m or 1:30:00, and a whole list title
+// somebody else's history; a YAML attached to yaml is fetched from Discord's file server only, up to
+// 8 MB and within 15 s, its settings reach the builder with the typed options on top, a list from
+// before the bot saved its list settings waits for the command to say what to pick, and one build
+// per person covers the download; what a file names that the library lacks comes back escaped or as code, and
+// a finished YAML over 8 MB is refused rather than sent; a check's time reads as 1h30m, @1h30m or 1:30:00, and a whole list title
 // is never split at its "at"; a check or a Wild Ticket goes only to a title named in full; a
 // self-link needs the !ap claim; the owner may name anybody's slot only where the spec lets them,
 // and nobody may while ownerId is blank; the account list stays private; the Accept button reaches
@@ -17,21 +21,29 @@
 // interactionAdapter.adaptInteraction as app/music.js does (the slash()/prefix() fakes of
 // test/bookCommand.test.js), with a recording stand-in for helpers/apMediaGame.js (its findEntry
 // keeps the real one's order: a code, the whole title, a movie's title alone, then any part), the
-// YAML builder and the apworld builder swapped in through the command's _internal.use; the real
+// YAML builder, the apworld builder and the file download's fetch swapped in through the command's
+// _internal.use (a fetch stand-in answers with a Response, so nothing leaves the machine); the real
 // helpers/apMediaButtons.js; the real config module, its fields saved and restored; one test writes
-// a real apworld under os.tmpdir() and removes it.
+// a real apworld under os.tmpdir() and removes it. The reply to a file naming what the library lacks
+// runs the real YAML builder over the fake Plex of test/fixtures/apmediaPlex, as
+// test/apMediaYaml.test.js does.
 
 const test = require('node:test');
 const assert = require('node:assert');
+const { Collection, ApplicationCommandOptionType } = require('discord.js');
 
 const config = require('../config/config.js');
 const slashRegistry = require('../helpers/slashRegistry.js');
 const { adaptInteraction } = require('../helpers/interactionAdapter.js');
 const buttons = require('../helpers/apMediaButtons.js');
 const yamlModule = require('../helpers/apMediaYaml.js');
-const { PmsError } = require('../helpers/apMediaPlex.js');
+const { PmsError, createPms } = require('../helpers/apMediaPlex.js');
+const { buildLibrary, fakeLongForm, fakeCatalog, fakeBookmarks } = require('./fixtures/apmediaPlex/library.js');
+const { createFakePlex } = require('./fixtures/apmediaPlex/fakePms.js');
 const apmedia = require('../commands/apmedia.js');
 const common = require('../commands/apmedia.js/common.js');
+const yamlCommand = require('../commands/apmedia.js/yaml.js');
+const { creatorYaml } = require('./fixtures/apmedia/creatorYaml.js');
 
 const OWNER = '100000000000000009';
 const ANA = '100000000000000001';
@@ -81,7 +93,7 @@ function reply(p) {
 	return { payload: p, async edit() { return this; } };
 }
 
-function prefixMessage(who, query, { mentions = [] } = {}) {
+function prefixMessage(who, query, { mentions = [], attachments = [] } = {}) {
 	const calls = [];
 	return {
 		calls,
@@ -90,6 +102,7 @@ function prefixMessage(who, query, { mentions = [] } = {}) {
 		guild: { id: G },
 		content: `!apmedia ${query}`,
 		mentions: { users: { first: () => mentions[0], get: (id) => mentions.find((u) => u.id === id) } },
+		attachments: new Collection(attachments.map((a) => [a.id, a])),
 		channel: { id: CH, name: 'media', async send(p) { calls.push(['send', p]); return reply(p); }, async sendTyping() { calls.push(['typing']); } },
 		async reply(p) { calls.push(['reply', p]); return reply(p); }
 	};
@@ -110,7 +123,8 @@ function slashCall(who, sub, values = {}) {
 			data: [],
 			getSubcommand: () => sub,
 			get: (name) => (values[name] === undefined || (values[name] && values[name].id) ? null : { name, value: values[name] }),
-			getUser: (name) => (values[name] && values[name].id ? values[name] : null)
+			getUser: (name) => (values[name] && values[name].id && !values[name].url ? values[name] : null),
+			getAttachment: (name) => (values[name] && values[name].url ? values[name] : null)
 		},
 		async editReply(p) { calls.push(['editReply', p]); return reply(p); },
 		async followUp(p) { calls.push(['followUp', p]); return reply(p); }
@@ -227,7 +241,7 @@ function stubBuilder(over = {}) {
 }
 
 function use(over) {
-	const parts = { game: stubGame(), builder: stubBuilder(), ...over };
+	const parts = { game: stubGame(), builder: stubBuilder(), fetch: async () => { throw new Error('a test fetched without a stand-in'); }, ...over };
 	restore = apmedia._internal.use(parts);
 	return parts;
 }
@@ -411,8 +425,10 @@ test('yaml refuses what it cannot read before the builder runs', async () => {
 	const { builder } = use();
 	const said = async (q) => first(await runPrefix(ana(), q)).content;
 	assert.match(await said('yaml name=Zack moovies=3'), /I do not know the option moovies\. The options are: name, preset/);
-	assert.match(await said('yaml name=Zack accountId=1'), /filled in by the bot/);
-	assert.match(await said('yaml name=Zack discord=1'), /filled in by the bot/);
+	assert.match(await said('yaml name=Zack accountId=1'), /accountId is filled in by the bot from the linked Plex account; leave it out\./);
+	assert.match(await said('yaml name=Zack account=1'), /^account is filled in by the bot from the linked Plex account; leave it out\./);
+	assert.match(await said('yaml name=Zack discord=1'), /discord is filled in by the bot with the Discord id of the person the list is for; leave it out\./);
+	assert.match(await said('yaml name=Zack Discord_User_Id=1'), /^Discord\\_User\\_Id is filled in by the bot with/, 'the key is shown as typed, its Markdown escaped');
 	assert.match(await said('yaml name=Zack movies=3 movies=4'), /movies is given twice/);
 	assert.match(await said('yaml Zack Plex movies=3'), /Write each option as key=value/);
 	assert.match(await said('yaml movies=3'), /Give the list a slot name/);
@@ -488,8 +504,26 @@ test('yaml attaches the file and answers with the summary, escaped, and the next
 	assert.match(mine.content, /a list for <@100000000000000002>/);
 	assert.match(mine.content, /Players folder/);
 	builder.build = async () => { throw new Error(yamlModule.ACCOUNT_FIX); };
-	assert.strictEqual(first(await runSlash(ana(), 'yaml', { name: 'Zack' })).content, `\u274C ${yamlModule.ACCOUNT_FIX}`);
+	assert.strictEqual(first(await runSlash(ana(), 'yaml', { name: 'Zack' })).content, `\u274C ${yamlModule.ACCOUNT_FIX.replace('unwatched=false.', '`unwatched:false`.')}`,
+		'the option as the slash command spells it');
 	assert.match(first(await runSlash(owner(), 'yaml', { name: 'Bennie', for: ben() })).content, /<@100000000000000002> has no Plex account linked with their consent/);
+});
+
+// Discord refuses an upload over the server's limit (10 MiB without boosts), and say() only logs a
+// refused reply, so the player would hear nothing back.
+test('a finished YAML over 8 MB is answered with a refusal instead of an upload Discord would refuse', async () => {
+	const { builder } = use();
+	const { REPLY_FILE_MAX } = yamlCommand;
+	assert.strictEqual(REPLY_FILE_MAX, 8 * 1024 * 1024);
+	const made = (bytes) => async () => ({ yaml: 'x'.repeat(bytes), fileName: 'Zack.yaml', summary: builder.summary });
+	builder.build = made(REPLY_FILE_MAX + 1);
+	const over = first(await runSlash(ana(), 'yaml', { name: 'Zack' }));
+	assert.strictEqual(over.content, '\u274C The finished YAML would be 8.1 MB, over the 8 MB the bot sends through Discord: build a shorter list.');
+	assert.strictEqual(over.files, undefined);
+	builder.build = made(Math.round(9.5 * 1024 * 1024));
+	assert.match(first(await runSlash(ana(), 'yaml', { name: 'Zack' })).content, /would be 9\.5 MB, over the 8 MB/);
+	builder.build = made(REPLY_FILE_MAX);
+	assert.strictEqual(first(await runSlash(ana(), 'yaml', { name: 'Zack' })).files[0].attachment.length, REPLY_FILE_MAX, '8 MB itself is sent');
 });
 
 // The bug: anyone could start any number of builds at once, and each reads every listing of the
@@ -530,6 +564,437 @@ async function waitTurns(cond) {
 	for (let i = 0; i < 50 && !cond(); i++) await turns(1);
 	assert.ok(cond(), 'timed out');
 }
+
+// ---- yaml with a file -------------------------------------------------------------------------
+
+const CREATOR = creatorYaml();
+
+function attachment(name, text, over = {}) {
+	return {
+		id: '300000000000000001',
+		name,
+		url: `https://cdn.discordapp.com/attachments/${CH}/300000000000000001/${encodeURIComponent(name)}?ex=1&is=2&hm=3`,
+		size: Buffer.byteLength(text, 'utf8'),
+		contentType: 'application/x-yaml; charset=utf-8',
+		...over
+	};
+}
+
+/** A fetch that answers with the text and records what it was asked. */
+function fileFetch(text, { status = 200 } = {}) {
+	const calls = [];
+	const fetch = async (url, init) => {
+		calls.push({ url, init });
+		return new Response(text, { status });
+	};
+	fetch.calls = calls;
+	return fetch;
+}
+
+test('yaml with a file: its settings reach the builder, the bot fills in the account, and the reply says where they came from', async () => {
+	const fetch = fileFetch(CREATOR);
+	const { builder, game } = use({ fetch });
+	game.accounts.set(ANA, { accountId: 7, name: 'Friend', consent: 'granted', implicit: false });
+	const r = first(await runSlash(ana(), 'yaml', { file: attachment('Zack.yaml', CREATOR) }));
+	assert.strictEqual(fetch.calls.length, 1);
+	assert.strictEqual(fetch.calls[0].url, attachment('Zack.yaml', CREATOR).url);
+	const params = builder.calls[0][1];
+	assert.deepStrictEqual([params.name, params.preset, params.movies, params.shows, params.albums, params.books, params.titles], ['Zack', 'mixed', 6, 2, 4, 1, 'Alien; Aliens']);
+	assert.deepStrictEqual(params.passthrough.map(([key]) => key), ['progression_balancing', 'accessibility', 'goal_percent', 'local_items', 'non_local_items',
+		'start_inventory', 'start_hints', 'start_location_hints', 'exclude_locations', 'priority_locations']);
+	assert.deepStrictEqual([params.accountId, params.discordUserId], [7, ANA]);
+	assert.deepStrictEqual(r.files.map((f) => f.name), ['Zack.yaml']);
+	assert.match(r.content, /^\u{1F4DD} `Zack`: your list, attached as `Zack\.yaml`\./u);
+	assert.match(r.content, /\n\u{1F4C4} Settings from `Zack\.yaml`\.\n/u);
+	assert.match(r.content, /\n\u26A0\uFE0F Left random in your file for Archipelago to roll: Goal Percent \(`goal_percent`\), default 80\. The numbers above use the default\.\n/);
+	assert.doesNotMatch(r.content, /replaced by a fresh pick|options you typed/);
+	assert.match(r.content, /claim the slot with `!ap claim Zack`, then link it with `\/apmedia link Zack`/);
+	assert.deepStrictEqual(r.allowedMentions, NO_PINGS);
+});
+
+test('yaml with a file on the prefix path takes the message\'s attachment, with nothing typed', async () => {
+	const { builder } = use({ fetch: fileFetch(CREATOR) });
+	const calls = await runPrefix(ana(), 'yaml', { attachments: [attachment('Zack.yaml', CREATOR)] });
+	assert.deepStrictEqual([builder.calls[0][1].name, builder.calls[0][1].movies, builder.calls[0][1].discordUserId], ['Zack', 6, ANA]);
+	assert.match(first(calls).content, /Settings from `Zack\.yaml`\./);
+});
+
+test('options typed with a file replace the file\'s, and the reply says so', async () => {
+	const { builder } = use({ fetch: fileFetch(CREATOR) });
+	const r = first(await runSlash(ana(), 'yaml', {
+		file: attachment('Zack.yaml', CREATOR), name: 'Kim', preset: 'tv', 'goal-percent': 70, more: 'label="Kim\'s picks" wild_tickets=5'
+	}));
+	const params = builder.calls[0][1];
+	assert.deepStrictEqual([params.name, params.preset, params.movies, params.shows, params.albums, params.books], ['Kim', 'tv', 0, 2, 0, 0],
+		'the counts the file left at preset follow the typed preset; its number stays');
+	assert.deepStrictEqual([params.goalPercent, params.label, params.wildTickets], [70, 'Kim\'s picks', '5']);
+	assert.ok(!params.passthrough.some(([key]) => key === 'goal_percent'), 'the typed goal replaces the random one');
+	assert.match(r.content, /^\u{1F4DD} `Kim`: your list/u);
+	assert.match(r.content, /Settings from `Zack\.yaml`; the options you typed replace the file's\./);
+	assert.doesNotMatch(r.content, /Left random in your file/);
+	assert.match(r.content, /`\/apmedia link Kim`/);
+});
+
+test('a list the bot wrote, attached again, gets fresh titles and the reply says how many it replaced', async () => {
+	const movie = (rk) => ({ k: 'movie', id: `rk:${rk}`, rk, t: `Film ${rk}`, y: 2000, d: 6000000 });
+	let text = '';
+	const { builder } = use({ fetch: async () => new Response(text) });
+	text = yamlModule.renderYaml({ name: 'Zack', createdAt: 1794398400, list: { list_preset: 'music' }, entries: [movie(1), movie(2), movie(3)] });
+	const r = first(await runSlash(ana(), 'yaml', { file: attachment('Zack.yaml', text) }));
+	assert.deepStrictEqual([builder.calls[0][1].preset, builder.calls[0][1].albums, builder.calls[0][1].movies], ['music', 10, 0]);
+	assert.match(r.content, /\n\u267B\uFE0F The file's 3 titles were replaced by a fresh pick from Plex\.\n/);
+	text = yamlModule.renderYaml({ name: 'Zack', createdAt: 1794398400, entries: [movie(1)] });
+	assert.match(first(await runSlash(ana(), 'yaml', { file: attachment('Zack.yaml', text) })).content, /\n\u267B\uFE0F The file's 1 title was replaced by a fresh pick from Plex\.\n/);
+
+	// A list from before the bot saved its list settings says nothing about what to pick.
+	text = yamlModule.renderYaml({ name: 'Zack', label: 'Album club', createdAt: 1794398400, entries: [movie(1), movie(2)] }).replace(/^ {2}list_(?!info).*\n/gm, '');
+	builder.calls.length = 0;
+	assert.match(first(await runSlash(ana(), 'yaml', { file: attachment('Zack.yaml', text) })).content, /^\u274C This list comes from an older version of the bot, which did not save what to pick: /);
+	assert.deepStrictEqual(builder.calls, []);
+	const typed = first(await runSlash(ana(), 'yaml', { file: attachment('Zack.yaml', text), preset: 'music' })).content;
+	assert.deepStrictEqual([builder.calls[0][1].preset, builder.calls[0][1].label, builder.calls[0][1].albums], ['music', 'Album club', undefined], 'the typed preset decides, as without a file');
+	assert.match(typed, /Settings from `Zack\.yaml`; the options you typed replace the file's\.\n\u267B\uFE0F The file's 2 titles were replaced/);
+});
+
+test('the reply cuts a long file name to 60 characters inside its code span', async () => {
+	use({ fetch: fileFetch(CREATOR) });
+	const ellipsis = String.fromCharCode(0x2026);
+	const name = `${'A'.repeat(70)}.yaml`;
+	const r = first(await runSlash(ana(), 'yaml', { file: attachment(name, CREATOR) }));
+	assert.ok(r.content.includes(`Settings from \`${'A'.repeat(59)}${ellipsis}\`.`), r.content);
+	const shortName = `${'B'.repeat(55)}.yaml`;
+	assert.ok(first(await runSlash(ana(), 'yaml', { file: attachment(shortName, CREATOR) })).content.includes(`Settings from \`${shortName}\`.`), 'a name of 60 is shown whole');
+});
+
+test('a file the bot cannot use is refused before the builder runs; its text reaches the reply only in a code span', async () => {
+	let serve = fileFetch('');
+	const { builder } = use({ fetch: (...args) => serve(...args) });
+	const said = async (values) => first(await runSlash(ana(), 'yaml', values)).content;
+	const other = creatorYaml().replace('game: Plex Media', 'game: "*Clique* <@&123> `x`"');
+	serve = fileFetch(other);
+	assert.strictEqual(await said({ file: attachment('other.yaml', other) }), '\u274C The file\'s game is `*Clique* <@&123> \'x\'`, and the bot fills in Plex Media lists only.');
+	const nameless = creatorYaml().replace('name: Zack\n', '');
+	serve = fileFetch(nameless);
+	assert.strictEqual(await said({ file: attachment('x.yaml', nameless) }), '\u274C The file has no name: give the slot one with the name option.');
+	serve = fileFetch(nameless);
+	assert.match(await said({ file: attachment('x.yaml', nameless), name: 'Kim' }), /`Kim`: your list/, 'a typed name stands in for a missing one');
+	builder.calls.length = 0;
+	serve = fileFetch('gone', { status: 404 });
+	assert.strictEqual(await said({ file: attachment('x.yaml', CREATOR) }), '\u274C Discord did not hand over the file (HTTP 404): attach it again.');
+	serve = fileFetch(CREATOR);
+	assert.strictEqual(await said({ file: attachment('big.yaml', CREATOR, { size: 9 * 1024 * 1024 }) }), '\u274C That file is 9 MB, and the bot reads files up to 8 MB.');
+	assert.strictEqual(serve.calls.length, 0, 'a file too big by its own size is never fetched');
+	assert.deepStrictEqual(builder.calls, []);
+	assert.match(await said({}), /^Give the list a slot name: `!apmedia yaml name=You movies=10`, or attach a YAML from the Archipelago Options Creator\./);
+	assert.match(await said({ file: attachment('Zack.yaml', CREATOR), for: ben() }), /Only the bot owner can build a list for someone else/);
+	assert.strictEqual(serve.calls.length, 0, 'the owner gate comes before the download');
+});
+
+test('a list the bot wrote for someone else is refused under their slot name: the owner adds for, anyone may give it a new name', async () => {
+	const movie = (rk) => ({ k: 'movie', id: `rk:${rk}`, rk, t: `Film ${rk}`, y: 2000, d: 6000000 });
+	const anas = yamlModule.renderYaml({ name: 'Ana', createdAt: 1794398400, listInfo: { account: 5, discord: ANA }, entries: [movie(1)] });
+	let served = anas;
+	const { builder, game } = use({ fetch: async () => new Response(served) });
+	game.accounts.set(ANA, { accountId: 5, name: 'Ana', consent: 'granted', implicit: false });
+	const said = async (who, values = {}) => {
+		served = anas;
+		return first(await runSlash(who, 'yaml', { file: attachment('Ana.yaml', anas), ...values })).content;
+	};
+	assert.strictEqual(await said(owner()), `\u274C This list was built for <@${ANA}>. To pick it again for them, add \`for:@them\`. To make it a list of your own, give it a new name with \`name:Name\`.`);
+	assert.strictEqual(await said(ben()), `\u274C This list was built for <@${ANA}>. To make it a list of your own, give it a new name with \`name:Name\`.`);
+	assert.deepStrictEqual(builder.calls, [], 'nothing is built under the wrong person');
+	assert.match(await said(owner(), { for: ana() }), /^\u{1F4DD} `Ana`: a list for <@100000000000000001>, attached/u);
+	assert.deepStrictEqual([builder.calls[0][1].discordUserId, builder.calls[0][1].accountId], [ANA, 5]);
+	assert.match(await said(ana()), /`Ana`: your list, attached/, 'the person it was built for picks it again');
+	assert.match(await said(ben(), { name: 'Ben' }), /`Ben`: your list, attached/, 'under a new name it is a new slot');
+	assert.strictEqual(builder.calls[2][1].discordUserId, BEN);
+	assert.match(first(await runPrefix(owner(), 'yaml', { attachments: [attachment('Ana.yaml', anas)] })).content, /add `for=@them`\. To make it a list of your own, give it a new name with `name=Name`\.$/);
+
+	// Renamed by hand, it is a new slot; under Ana's slot name it stays hers.
+	const renamed = anas.replace('name: "Ana"', 'name: "Ben"');
+	const asBen = async (values = {}) => {
+		served = renamed;
+		return first(await runSlash(ben(), 'yaml', { file: attachment('Ben.yaml', renamed), ...values })).content;
+	};
+	builder.calls.length = 0;
+	assert.match(await asBen(), /^\u{1F4DD} `Ben`: your list, attached/u);
+	assert.match(await asBen({ name: 'Ben' }), /^\u{1F4DD} `Ben`: your list, attached/u, 'the name the refusal advises');
+	assert.deepStrictEqual(builder.calls.map(([, p]) => p.discordUserId), [BEN, BEN]);
+	assert.strictEqual(await asBen({ name: 'Ana' }), `\u274C This list was built for <@${ANA}>. To make it a list of your own, give it a new name with \`name:Name\`.`);
+	assert.strictEqual(await said(owner(), { name: 'Ana' }), `\u274C This list was built for <@${ANA}>. To pick it again for them, add \`for:@them\`. To make it a list of your own, `
+		+ 'give it a new name with `name:Name`.', 'the owner typing her slot name still needs for:');
+	assert.strictEqual(builder.calls.length, 2);
+
+	// A list from before list_info named the slot names it in its first line, so a rename there works too.
+	const older = anas.replace('"slot":"Ana",', '');
+	const olderAs = async (who, text, values = {}) => {
+		served = text;
+		return first(await runSlash(who, 'yaml', { file: attachment('list.yaml', text), ...values })).content;
+	};
+	const olderRenamed = older.replace('name: "Ana"', 'name: "Ben"');
+	builder.calls.length = 0;
+	assert.match(await olderAs(ben(), olderRenamed), /^\u{1F4DD} `Ben`: your list, attached/u);
+	assert.match(await olderAs(ben(), olderRenamed, { name: 'Ben' }), /^\u{1F4DD} `Ben`: your list, attached/u, 'the name the refusal advises');
+	assert.deepStrictEqual(builder.calls.map(([, p]) => p.discordUserId), [BEN, BEN]);
+	assert.strictEqual(await olderAs(ben(), olderRenamed, { name: 'Ana' }), `\u274C This list was built for <@${ANA}>. To make it a list of your own, give it a new name with \`name:Name\`.`);
+	assert.match(await olderAs(owner(), older, { name: 'Ana' }), /^\u274C This list was built for <@100000000000000001>\. To pick it again for them, add `for:@them`\./);
+	assert.strictEqual(builder.calls.length, 2);
+});
+
+test('the owner\'s own list given to someone else with for: is refused with a fix that fits: a new name', async () => {
+	const movie = (rk) => ({ k: 'movie', id: `rk:${rk}`, rk, t: `Film ${rk}`, y: 2000, d: 6000000 });
+	const mine = yamlModule.renderYaml({ name: 'Zack', createdAt: 1794398400, listInfo: { account: 1, discord: OWNER }, entries: [movie(1)] });
+	const { builder, game } = use({ fetch: async () => new Response(mine) });
+	game.accounts.set(ANA, { accountId: 5, name: 'Ana', consent: 'granted', implicit: false });
+	const r = first(await runSlash(owner(), 'yaml', { file: attachment('Zack.yaml', mine), for: ana() }));
+	assert.strictEqual(r.content, `\u274C This is your own list. To build a new list for <@${ANA}> from it, give it a new name with \`name:Name\`.`);
+	assert.match(first(await runSlash(owner(), 'yaml', { file: attachment('Zack.yaml', mine), for: ana(), name: 'Ana' })).content, /^\u{1F4DD} `Ana`: a list for <@100000000000000001>/u);
+	assert.deepStrictEqual(builder.calls.map(([, p]) => p.discordUserId), [ANA]);
+});
+
+test('a Plex account link that waits for consent says to accept it, not to link the account again', async () => {
+	const failing = stubBuilder({ async build() { throw new Error(yamlModule.ACCOUNT_FIX); } });
+	const { game } = use({ builder: failing, fetch: fileFetch(CREATOR) });
+	game.accounts.set(ANA, { accountId: 7, name: 'Friend', consent: 'pending', implicit: false });
+	assert.strictEqual(first(await runSlash(ana(), 'yaml', { name: 'Ana' })).content, '\u274C Leaving out what you have already watched needs your Plex account, and its link '
+		+ 'waits for you to accept it in the bot\'s DM (or ask the owner to link it again). Or build the list with `unwatched:false`.');
+	const offInFile = '`unwatched:false` (or List: Unwatched Only (`list_unwatched`) set to false in the file).';
+	assert.ok(first(await runSlash(ana(), 'yaml', { file: attachment('Zack.yaml', CREATOR) })).content.endsWith(`Or build the list with ${offInFile}`));
+	assert.match(first(await runSlash(owner(), 'yaml', { name: 'Ana', for: ana() })).content, /^<@100000000000000001> has not accepted the link to their Plex account yet, so what they watched cannot be left out: they accept it in the bot's DM, or build with `unwatched:false`\.$/);
+	game.accounts.delete(ANA);
+	assert.strictEqual(first(await runSlash(ana(), 'yaml', { file: attachment('Zack.yaml', CREATOR) })).content, `\u274C ${yamlModule.ACCOUNT_FIX.replace('unwatched=false.', offInFile)}`);
+	assert.strictEqual(first(await runPrefix(ana(), 'yaml name=Ana')).content, `\u274C ${yamlModule.ACCOUNT_FIX.replace('unwatched=false.', '`unwatched=false`.')}`,
+		'without a file or a pending link, the option as the prefix command spells it');
+});
+
+test('a list built while the Plex account link waits for consent says so: nothing watched is known until it is accepted', async () => {
+	const { builder, game } = use();
+	game.accounts.set(ANA, { accountId: 7, name: 'Friend', consent: 'pending', implicit: false });
+	const own = first(await runSlash(ana(), 'yaml', { name: 'Ana' })).content;
+	assert.match(own, /\n\u26A0\uFE0F Your Plex account link waits for you to accept it in the bot's DM: until you do, the bot knows nothing you watched\.\n/);
+	const theirs = first(await runSlash(owner(), 'yaml', { name: 'Ana', for: ana() })).content;
+	assert.match(theirs, /\n\u26A0\uFE0F <@100000000000000001> has not accepted the link to their Plex account yet: until they do, the bot knows nothing they watched\.\n/);
+	assert.deepStrictEqual(builder.calls.map(([, p]) => p.accountId), [null, null], 'the waiting account is never read');
+	game.accounts.set(ANA, { accountId: 7, name: 'Friend', consent: 'granted', implicit: false });
+	assert.doesNotMatch(first(await runSlash(ana(), 'yaml', { name: 'Ana' })).content, /waits for you|not accepted/);
+});
+
+test('on the prefix path a screenshot beside the command is left alone: the file is the first text attachment', async () => {
+	const shot = { id: '300000000000000009', name: 'screen.png', url: 'https://cdn.discordapp.com/attachments/1/2/screen.png', size: 5000, contentType: 'image/png' };
+	const fetch = fileFetch(CREATOR);
+	const { builder } = use({ fetch });
+	assert.match(first(await runPrefix(ana(), 'yaml name=Ana movies=3', { attachments: [shot] })).content, /^\u{1F4DD} `Ana`: your list/u);
+	assert.deepStrictEqual([fetch.calls.length, builder.calls[0][1].movies], [0, '3'], 'a typed build, nothing fetched');
+	assert.match(first(await runPrefix(ana(), 'yaml', { attachments: [shot, attachment('Zack.yaml', CREATOR)] })).content, /Settings from `Zack\.yaml`\./);
+	assert.match(first(await runPrefix(ana(), 'yaml', { attachments: [attachment('message.txt', CREATOR, { contentType: 'text/plain; charset=utf-8' })] })).content, /Settings from `message\.txt`\./,
+		'a long message Discord turned into a text file');
+	assert.strictEqual(fetch.calls.length, 2);
+	// A pasted note before the YAML, or a .csv, does not stand in for it.
+	const note = attachment('message.txt', 'remember the snacks', { id: '300000000000000002', contentType: 'text/plain; charset=utf-8' });
+	const csv = attachment('list.csv', 'a,b', { id: '300000000000000003', contentType: 'text/csv' });
+	assert.match(first(await runPrefix(ana(), 'yaml', { attachments: [note, csv, attachment('Zack.yaml', CREATOR)] })).content, /Settings from `Zack\.yaml`\./);
+	assert.strictEqual(fetch.calls[2].url, attachment('Zack.yaml', CREATOR).url);
+
+	// A short YAML pasted into the message stays message text, and the reply asks for the file.
+	const asked = builder.calls.length;
+	const pasted = '\u274C The bot reads a YAML only as a file: drag the file into Discord with `!apmedia yaml` as its message, or use `/apmedia yaml file:`.';
+	assert.strictEqual(first(await runPrefix(ana(), `yaml\n${CREATOR}`)).content, pasted);
+	assert.strictEqual(first(await runPrefix(ana(), `yaml \`\`\`yaml\n${CREATOR}\`\`\``)).content, pasted, 'in a code block too');
+	assert.strictEqual(builder.calls.length, asked);
+});
+
+test('a reply with many warnings keeps its head, the next step and the tracker line, and counts the lines it left out', async () => {
+	const { fitLines, CONTENT_MAX } = yamlCommand;
+	assert.strictEqual(CONTENT_MAX, 2000);
+	const tail = ['Next: send this file to the bot owner.', 'Every title on the list is visible to the whole room and on the public tracker.'];
+	assert.deepStrictEqual(fitLines(['head'], ['a', 'b'], tail), ['head', 'a', 'b', ...tail], 'what fits is sent whole');
+	assert.deepStrictEqual(fitLines(['x'.repeat(2100)], [], []), ['x'.repeat(2100)], 'with no line to leave out, nothing is counted');
+	const middle = Array.from({ length: 40 }, (_, i) => `${i} ${'w'.repeat(100)}`);
+	const fit = fitLines(['head'], middle, tail);
+	assert.ok(fit.join('\n').length <= CONTENT_MAX, String(fit.join('\n').length));
+	assert.deepStrictEqual(fit.slice(-2), tail);
+	const shown = fit.length - 4;
+	assert.deepStrictEqual(fit.slice(1, 1 + shown), middle.slice(0, shown), 'the first lines, in order');
+	assert.strictEqual(fit[fit.length - 3], `\u2026 and ${40 - shown} more lines not shown.`);
+	assert.ok(fitLines(['head'], [...middle.slice(0, shown), 'x'.repeat(5000)], tail).includes('\u2026 and 1 more line not shown.'), 'one line too long to fit is counted');
+	assert.deepStrictEqual(fitLines(['head'], ['x'.repeat(2500), 'a', 'b'], tail), ['head', 'a', 'b', '\u2026 and 1 more line not shown.', ...tail],
+		'a line too long to fit does not hide the short ones after it');
+	const skipped = fitLines(['head'], ['x'.repeat(1900), ...middle], tail);
+	assert.ok(skipped.join('\n').length <= CONTENT_MAX && skipped[1] === middle[0], 'the lines after it fill the room');
+	assert.strictEqual(skipped[skipped.length - 3], `\u2026 and ${41 - (skipped.length - 4)} more lines not shown.`, 'the count takes in the line left out');
+
+	const loud = stubBuilder();
+	loud.summary = { ...loud.summary, warnings: Array.from({ length: 30 }, (_, i) => `Warning ${i}: ${'x'.repeat(80)}`) };
+	use({ builder: loud });
+	const r = first(await runSlash(ana(), 'yaml', { name: 'Ana' }));
+	assert.ok(r.content.length <= CONTENT_MAX && !r.content.endsWith('\u2026'), 'never clipped by say()');
+	assert.match(r.content, /more lines not shown\.\nNext: send this file to the bot owner\. .*\nEvery title on the list is visible to the whole room and on the public tracker\.$/);
+});
+
+function realBuilder(mutate = null) {
+	const lib = buildLibrary({});
+	if (mutate) mutate(lib);
+	const plex = createFakePlex(lib);
+	const pms = createPms({ loadConfig: () => ({ hostname: 'localhost', port: '32400', https: false, token: 'FAKE-OWNER-TOKEN-0123456789', homeOwnerToken: '' }), fetchImpl: plex.fetch });
+	return yamlModule.createBuilder({ pms, catalogStore: fakeCatalog(), longForm: fakeLongForm(lib), bookmarks: fakeBookmarks(), now: () => Date.UTC(2026, 10, 11), random: () => 0.5 });
+}
+
+// The prefix reply is public, and a file is anybody's text: a playlist, collection or title the
+// library lacks is said back, and it must stay text there.
+test('a playlist, collection or title from a file that the library lacks comes back in a code span, so its links and mentions stay text', async () => {
+	const bait = '[Free Nitro](https://example.invalid/claim) **now** <@&123456789012345678> @everyone';
+	let body = '';
+	use({ builder: realBuilder(), fetch: async () => new Response(body) });
+	const said = {
+		list_playlist: 'No playlist called `[Free Nitro](https://example.invalid/claim) **now** <@&1234',
+		list_collection: 'No movie or TV collection called `[Free Nitro](https://example.invalid/claim) **now** <@&1234',
+		list_titles: 'Nothing on the list: no title matched what was asked for. Not found: `[Free Nitro](https://example.invalid/claim) **now** <@&1234',
+	};
+	for (const [key, start] of Object.entries(said)) {
+		body = creatorYaml({ list_preset: 'none', list_shows: 'preset', list_titles: '\'\'', list_unwatched: 'false', [key]: JSON.stringify(bait) });
+		const r = first(await runPrefix(ana(), 'yaml', { attachments: [attachment('Zack.yaml', body)] }));
+		assert.ok(r.content.startsWith(`\u274C ${start}`), r.content);
+		assert.doesNotMatch(r.content.replace(/`[^`]*`/g, ''), /Free Nitro|\]\(|\*\*|<@&|@everyone/, `${key}: nothing of it outside a code span`);
+		assert.deepStrictEqual(r.allowedMentions, NO_PINGS);
+	}
+	// The library's own names, which those refusals list, stay text as well.
+	use({ builder: realBuilder((lib) => {
+		lib.playlists[1].title = bait;
+		lib.collections[3][0].title = bait;
+	}), fetch: async () => new Response(body) });
+	for (const [key, start] of [['list_playlist', 'No playlist called `Nothing Like It`. Playlists: '], ['list_collection', 'No movie or TV collection called `Nothing Like It`. Some collections: ']]) {
+		body = creatorYaml({ list_preset: 'none', list_shows: 'preset', list_titles: '\'\'', list_unwatched: 'false', [key]: '"Nothing Like It"' });
+		const r = first(await runPrefix(ana(), 'yaml', { attachments: [attachment('Zack.yaml', body)] }));
+		assert.ok(r.content.startsWith(`\u274C ${start}`) && r.content.includes('Free Nitro'), r.content);
+		assert.doesNotMatch(r.content.replace(/`[^`]*`/g, ''), /Free Nitro|\]\(|\*\*|<@&|@everyone/, `${key}: the library's names in code spans`);
+	}
+});
+
+test('a list the filters leave empty is refused with the warnings that say which filter emptied it', async () => {
+	use({ builder: realBuilder() });
+	const r = first(await runSlash(ana(), 'yaml', { name: 'Ana', preset: 'none', movies: 3, genre: 'Polka', unwatched: false }));
+	assert.match(r.content, /^\u274C Nothing on the list: nothing in the library fits these settings\.\n\u26A0\uFE0F /);
+	assert.match(r.content, /\n\u26A0\uFE0F Movies has no Polka genre\.(\n|$)/);
+	assert.deepStrictEqual(r.allowedMentions, NO_PINGS);
+
+	// The warnings carry the file's own text, escaped, and a mention in it reads as typed.
+	const bait = '[Free Nitro](https://example.invalid/claim) **now**';
+	const escaped = first(await runSlash(ana(), 'yaml', { name: 'Ana', preset: 'none', movies: 3, genre: bait, unwatched: false })).content.split('\n');
+	assert.ok(escaped.includes('\u26A0\uFE0F Movies has no \\[Free Nitro](https://example.invalid/claim) \\*\\*now\\*\\* genre.'), escaped.join('\n'));
+	const mention = first(await runSlash(ana(), 'yaml', { name: 'Ana', preset: 'none', movies: 3, genre: '<@&123456789012345678> @everyone', unwatched: false })).content;
+	assert.doesNotMatch(mention.replace(/`[^`]*`/g, ''), /(?<!\\)<@[!&]?\d+>|(?<!\\)@(?:everyone|here)/, mention);
+	assert.ok(mention.includes('Movies has no \\<@&123456789012345678> \\@everyone genre.'), mention);
+	// A channel, a command, a timestamp and a custom emoji read as typed too.
+	const tags = first(await runSlash(ana(), 'yaml', { name: 'Ana', preset: 'none', movies: 3, genre: '<#123> </x:4> <t:1:R> <:e:5> <a:f:6>', unwatched: false })).content;
+	assert.ok(tags.includes('Movies has no \\<#123> \\</x:4> \\<t:1:R> \\<:e:5> \\<a:f:6> genre.'), tags);
+	assert.doesNotMatch(tags.replace(/`[^`]*`/g, ''), /(?<!\\)<[#/:]|(?<!\\)<t:|(?<!\\)<a:/, tags);
+
+	// Fifty titles not found, 60 characters each, are named ten at a time, and the filter warnings still fit.
+	const titles = Array.from({ length: 50 }, (_, i) => `${'t'.repeat(57)}${String(i).padStart(3, '0')}`).join('; ');
+	const many = first(await runSlash(ana(), 'yaml', { name: 'Ana', preset: 'none', movies: 3, genre: 'Polka', titles, unwatched: false })).content;
+	assert.ok(many.length <= 2000 && /`t{57}009` and 40 more\.\n/.test(many) && many.endsWith('\u26A0\uFE0F Only 0 of 3 movies fit the filters.'), many);
+	assert.ok(many.includes('\u26A0\uFE0F Movies has no Polka genre.'), many);
+});
+
+test('a file build holds its place from the download on: one build per person, freed again after a refused file', async () => {
+	let release;
+	const gate = new Promise((resolve) => { release = resolve; });
+	const asked = [];
+	let body = CREATOR;
+	const { builder } = use({
+		fetch: async (url) => {
+			asked.push(url);
+			if (asked.length === 1) await gate;
+			return new Response(body);
+		}
+	});
+	const firstRun = runSlash(ana(), 'yaml', { file: attachment('Zack.yaml', CREATOR) });
+	await waitTurns(() => asked.length === 1);
+	assert.strictEqual(first(await runSlash(ana(), 'yaml', { name: 'Ana2' })).content, '\u23F3 Your last list is still being built: wait for it, then ask again.');
+	assert.deepStrictEqual(builder.calls, [], 'nothing is built while the file downloads');
+	release();
+	assert.match(first(await firstRun).content, /`Zack`: your list, attached/);
+	body = 'game: Clique\n';
+	assert.match(first(await runSlash(ana(), 'yaml', { file: attachment('Zack.yaml', body) })).content, /^\u274C /);
+	assert.match(first(await runSlash(ana(), 'yaml', { name: 'Ana' })).content, /`Ana`: your list, attached/, 'a refused file frees its place');
+});
+
+test('the attached file comes from Discord\'s file server only, up to 8 MB, within 15 s, as UTF-8', async (t) => {
+	const { readAttachment, FILE_TIMEOUT_MS } = yamlCommand;
+	const asked = [];
+	const answer = (body, init) => async (url, opts) => {
+		asked.push({ url, opts });
+		return typeof body === 'function' ? body() : new Response(body, init);
+	};
+	const file = (over) => ({ name: 'Zack.yaml', url: 'https://cdn.discordapp.com/attachments/1/2/Zack.yaml?ex=1', size: 10, ...over });
+
+	for (const url of ['http://cdn.discordapp.com/attachments/1/2/Zack.yaml', 'https://cdn.discordapp.com.evil.example/Zack.yaml', 'https://discord.com/Zack.yaml',
+		'https://example.com/Zack.yaml', 'file:///C:/Zack.yaml', 'not a url', undefined]) {
+		await assert.rejects(readAttachment(file({ url }), { fetch: answer('x') }), /^Error: That file is not on Discord's file server: attach the YAML to the command itself\.$/, String(url));
+	}
+	await assert.rejects(readAttachment(file({ size: 9 * 1024 * 1024 }), { fetch: answer('x') }), /^Error: That file is 9 MB, and the bot reads files up to 8 MB\.$/);
+	assert.deepStrictEqual(asked, [], 'nothing is fetched for a file refused by its host or its size');
+
+	const over = 'x'.repeat(yamlModule.FILE_MAX_BYTES + 1);
+	await assert.rejects(readAttachment(file(), { fetch: answer(over) }), /^Error: That file is over 8 MB, the most the bot reads\.$/, 'a file whose size said less is cut off at the limit');
+	let read = false;
+	const lying = { ok: true, status: 200, headers: new Headers({ 'content-length': String(yamlModule.FILE_MAX_BYTES + 1) }), body: null, arrayBuffer: async () => { read = true; return new ArrayBuffer(0); } };
+	await assert.rejects(readAttachment(file(), { fetch: answer(() => lying) }), /^Error: That file is over 8 MB/);
+	assert.strictEqual(read, false, 'a stated length over the limit is refused unread');
+	assert.strictEqual(await readAttachment(file(), { fetch: answer(() => ({ ok: true, status: 200, headers: new Headers(), body: null, arrayBuffer: async () => new TextEncoder().encode('a: 1\n').buffer })) }), 'a: 1\n');
+
+	await assert.rejects(readAttachment(file(), { fetch: answer('gone', { status: 404 }) }), /^Error: Discord did not hand over the file \(HTTP 404\): attach it again\.$/);
+	await assert.rejects(readAttachment(file(), { fetch: answer('moved', { status: 302 }) }), /\(HTTP 302\)/);
+	await assert.rejects(readAttachment(file(), { fetch: async () => { throw new TypeError('fetch failed: https://cdn.discordapp.com/attachments/1/2/Zack.yaml?ex=1'); } }),
+		(err) => err.message === 'Discord could not hand over the file: try again in a minute.', 'no URL in what the player sees');
+
+	await assert.rejects(readAttachment(file(), { fetch: answer(new Uint8Array([0x6e, 0x61, 0xff, 0xfe])) }), /^Error: The file is not UTF-8 text: save it as UTF-8 \(the Options Creator does\) and attach it again\.$/);
+	assert.strictEqual(await readAttachment(file(), { fetch: answer(new Uint8Array([0xef, 0xbb, 0xbf, 0x61, 0x3a, 0x20, 0x31])) }), 'a: 1', 'the byte order mark is dropped');
+
+	asked.length = 0;
+	assert.strictEqual(await readAttachment(file({ url: 'https://media.discordapp.net/attachments/1/2/Zack.yaml', size: undefined }), { fetch: answer('b: 2\n') }), 'b: 2\n');
+	assert.strictEqual(asked[0].url, 'https://media.discordapp.net/attachments/1/2/Zack.yaml');
+	assert.strictEqual(asked[0].opts.redirect, 'error', 'a redirect away from the file server is never followed');
+
+	assert.strictEqual(FILE_TIMEOUT_MS, 15000);
+	t.mock.timers.enable({ apis: ['setTimeout'] });
+	let signal = null;
+	const hang = (url, opts) => new Promise((resolve, reject) => {
+		signal = opts.signal;
+		opts.signal.addEventListener('abort', () => reject(Object.assign(new Error('This operation was aborted'), { name: 'AbortError' })));
+	});
+	let settled = null;
+	readAttachment(file(), { fetch: hang }).then(() => { settled = 'read'; }, (err) => { settled = err; });
+	t.mock.timers.tick(FILE_TIMEOUT_MS - 1);
+	await turns(5);
+	assert.deepStrictEqual([settled, signal.aborted], [null, false], 'still waiting at 14.999 s');
+	t.mock.timers.tick(1);
+	await turns(5);
+	assert.ok(settled instanceof Error, `given up at 15 s: ${settled}`);
+	assert.strictEqual(settled.message, 'Discord took more than 15 s to hand over the file: try again in a minute.');
+	assert.strictEqual(signal.aborted, true);
+});
+
+test('the yaml slash spec: file is an attachment read straight off the interaction, name is optional, and /apmedia stays valid', () => {
+	const spec = apmedia._internal.SUBCOMMANDS.find((s) => s.name === 'yaml');
+	const fileOption = spec.options.find((o) => o.name === 'file');
+	assert.deepStrictEqual(fileOption, { name: 'file', type: 'ATTACHMENT', description: 'A YAML from the Archipelago Launcher\'s Options Creator, or an earlier list, to fill in', omitFromQuery: true });
+	assert.ok(spec.options.every((o) => !o.required), 'name is required in code only when no file gives one');
+	assert.ok(spec.options.length <= 25, `${spec.options.length} options`);
+	assert.deepStrictEqual(spec.options.find((o) => o.name === 'preset').choices.map((c) => c.value), ['movies', 'tv', 'music', 'books', 'mixed', 'none']);
+
+	const built = slashRegistry.buildSpec('apmedia', apmedia.command.slash);
+	const yamlBuilt = built.options.find((o) => o.name === 'yaml');
+	assert.strictEqual(yamlBuilt.options.find((o) => o.name === 'file').type, ApplicationCommandOptionType.Attachment);
+	assert.strictEqual(yamlBuilt.options.find((o) => o.name === 'name').required, false);
+	const { validate, commandChars, COMMAND_CHAR_BUDGET } = require('../scripts/validate-slash.js');
+	assert.deepStrictEqual(validate({ apmedia: apmedia.command }).problems, []);
+	assert.ok(commandChars(built) < COMMAND_CHAR_BUDGET, `${commandChars(built)} of ${COMMAND_CHAR_BUDGET} characters`);
+	assert.strictEqual(slashCall(ana(), 'yaml', { file: attachment('Zack.yaml', CREATOR) }).query, 'yaml', 'the attachment id never reaches the logged query text');
+	const help = apmedia._internal.helpEmbed(BOT).data.description;
+	assert.match(help, /Options Creator and attach it to `!apmedia yaml` \(`\/apmedia yaml file:`\)/);
+	assert.ok(help.length <= 4096);
+});
 
 // ---- apworld ----------------------------------------------------------------------------------
 

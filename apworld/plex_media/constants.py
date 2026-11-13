@@ -8,7 +8,7 @@
 
 GAME = "Plex Media"
 APWORLD_NAME = "plex_media"
-WORLD_VERSION = "0.1.0"
+WORLD_VERSION = "0.2.0"
 MIN_AP_VERSION = "0.6.8"
 BUILDER_VERSION = 1
 SLOT_DATA_SCHEMA = 1
@@ -65,6 +65,38 @@ OPTIONS = {
 	"timesanity_albums": {"type": "range", "min": 0, "max": 240, "default": 0},
 	"timesanity_books": {"type": "range", "min": 0, "max": 1440, "default": 30},
 	"wild_tickets": {"type": "range", "min": 0, "max": 20, "default": 2},
+}
+
+# The list settings, in the order the YAML writes them (after OPTIONS): what the bot picks from the
+# Plex library when /apmedia yaml fills in a YAML's titles, which lets a player start the YAML in the
+# Archipelago Options Creator. Generation never reads them, so a seed's ids, names and slot_data are
+# the same with or without them. A count at preset (-1, out of the slider's range so no number means
+# it by accident) takes its number from PRESETS[list_preset]; none sets those counts to 0.
+LIST_OPTIONS = {
+	"list_preset": {"type": "choice", "values": ["movies", "tv", "music", "books", "mixed", "none"],
+	                "default": "movies"},
+	"list_movies": {"type": "named_range", "min": 0, "max": 200, "special": {"preset": -1}, "default": "preset"},
+	"list_shows": {"type": "named_range", "min": 0, "max": 50, "special": {"preset": -1}, "default": "preset"},
+	"list_albums": {"type": "named_range", "min": 0, "max": 200, "special": {"preset": -1}, "default": "preset"},
+	"list_books": {"type": "named_range", "min": 0, "max": 50, "special": {"preset": -1}, "default": "preset"},
+	"list_titles": {"type": "text", "default": ""},
+	"list_playlist": {"type": "text", "default": ""},
+	"list_collection": {"type": "text", "default": ""},
+	"list_genre": {"type": "text", "default": ""},
+	"list_years": {"type": "text", "default": ""},
+	"list_unwatched": {"type": "toggle", "default": True},
+	"list_max_episodes": {"type": "range", "min": 1, "max": 500, "default": 24},
+	"list_label": {"type": "text", "default": ""},
+}
+
+# What each list_preset gives the counts left at preset; a kind left out is 0. The bot applies these
+# (helpers/apMediaContracts.js PRESETS); the world only quotes them in list_preset's description.
+PRESETS = {
+	"movies": {"movies": 15},
+	"tv": {"shows": 3},
+	"music": {"albums": 10},
+	"books": {"books": 3},
+	"mixed": {"movies": 6, "shows": 1, "albums": 4, "books": 1},
 }
 
 

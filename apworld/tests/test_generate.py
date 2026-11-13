@@ -6,7 +6,12 @@
 # mixed list with every kind and every timer, (c) two Plex lists sharing titles beside a ChecksFinder
 # slot, (d) season mode with checkpoints open to anything, (e) 600 unlock copies solo at spoiler 3
 # inside 90 s, and, beyond the SPEC's list, (f) two Plex lists naming one item link, which the world
-# must warn about and leave empty while the multiworld still generates. Every seed must ship a data
+# must warn about and leave empty while the multiworld still generates, and (h) a list with every
+# list_* setting changed, which must give the same seed as the list without them. A1 runs the
+# Archipelago Options Creator's own rules (OptionsCreator.py in AP 0.6.8) on the world's options:
+# its groups, a widget for every option, what it exports for an untouched form, and that such a
+# YAML, like the Launcher's own template, stops at the "no titles yet" message until the bot fills
+# it in. Every seed must ship a data
 # package of real names that passes archipelago.gg's upload check, name ids by title in MultiServer
 # (a !hint for a title resolves), put every slot_data id in that slot's own locations or starting
 # items, show titles in its spoiler, keep excluded checkpoints to filler, and give each location the
@@ -37,6 +42,7 @@ sys.path.insert(0, HERE)
 import ap_harness  # noqa: E402
 
 GAME = "Plex Media"
+WORLD_VERSION = "0.2.0"
 CHILD = os.path.join(HERE, "ap_child.py")
 FIXTURE_YAML = os.path.join(HERE, "fixtures", "builder1_mixed.yaml")
 FIXTURE_EXPECT = os.path.join(HERE, "fixtures", "builder1_mixed.expect.json")
@@ -284,7 +290,7 @@ class SeedChecks:
 			player = world.player
 			data = plain(md["slot_data"][player])
 			self.assertEqual(data["schema"], 1)
-			self.assertEqual(data["world_version"], "0.1.0")
+			self.assertEqual(data["world_version"], WORLD_VERSION)
 			low, high = self.seed.window
 			self.assertTrue(low <= data["generated_at"] <= high, data["generated_at"])
 			used = [i for entry in data["entries"] for i in slot_location_ids(entry)]
@@ -381,7 +387,8 @@ class A0_BuiltApworld(unittest.TestCase):
 			self.assertEqual(folders, ["plex_media"])
 			archive.open("plex_media/__init__.py").close()
 		world = AutoWorldRegister.world_types[GAME]
-		self.assertEqual(world.world_version.as_simple_string(), "0.1.0")
+		self.assertEqual(world.world_version.as_simple_string(), WORLD_VERSION)
+		self.assertEqual(sys.modules[world.__module__ + ".constants"].WORLD_VERSION, WORLD_VERSION)
 		self.assertEqual(world.manifest.get("minimum_ap_version"), "0.6.8")
 		loaded = os.path.join(STATE["root"], "worlds", "plex_media.apworld")
 		self.assertEqual(os.path.normcase(str(world.zip_path)), os.path.normcase(loaded))
@@ -423,6 +430,313 @@ class A0_BuiltApworld(unittest.TestCase):
 			self.assertEqual(hints[key].special_range_names, {"off": 0}, key)
 		self.assertIs(world.disable_ut, True)
 		self.assertEqual(tuple(world.required_client_version), (0, 5, 0))
+
+	def test_each_timer_reads_an_unquoted_off_as_off(self):
+		import Utils
+		from worlds.AutoWorld import AutoWorldRegister
+
+		hints = AutoWorldRegister.world_types[GAME].options_dataclass.type_hints
+		for key in ("timesanity_movies", "timesanity_episodes", "timesanity_albums", "timesanity_books"):
+			option = hints[key]
+			with self.subTest(option=key):
+				# Archipelago reads YAML 1.1, where unquoted off, no and false are all the boolean false.
+				for written in ("off", "Off", "no", "false"):
+					read = Utils.parse_yaml(f"{key}: {written}\n")[key]
+					self.assertIs(read, False, written)
+					self.assertEqual(option.from_any(read).value, 0, written)
+				for given in ("off", "OFF", "false", "False", 0, "0"):
+					self.assertEqual(option.from_any(given).value, 0, given)
+				# true keeps Range's rule, the default when it is not 0, which the bot's parser follows.
+				if option.default:
+					self.assertEqual(option.from_any(True).value, option.default)
+				else:
+					with self.assertRaises(Exception):
+						option.from_any(True)
+
+	def test_tooltips_name_options_as_the_creator_shows_them(self):
+		import re
+
+		from Options import Visibility
+		from worlds.AutoWorld import AutoWorldRegister
+
+		world = AutoWorldRegister.world_types[GAME]
+		constants = sys.modules[world.__module__ + ".constants"]
+		hints = world.options_dataclass.type_hints
+		shown = {key: option for key, option in hints.items()
+		         if option.__module__ == world.__module__ + ".options" and option.visibility & Visibility.simple_ui}
+		self.assertEqual(set(shown), {*constants.OPTIONS, *constants.LIST_OPTIONS})
+		titles = [option.display_name for option in shown.values()]
+		keys = [key for key in hints if "_" in key]
+		for key, option in shown.items():
+			doc = option.__doc__
+			with self.subTest(option=key):
+				# The Options Creator labels each option with its display_name; a YAML key is never on screen.
+				for other in keys:
+					self.assertIsNone(re.search(rf"\b{re.escape(other)}\b", doc), other)
+				# filter_tooltip (OptionsCreator.py L44-51) turns each newline into a line break, so a name
+				# wrapped across two source lines would break on screen too.
+				for found in re.finditer(r"List:\s", doc):
+					self.assertTrue(any(doc.startswith(title, found.start()) for title in titles),
+					                doc[found.start():found.start() + 40])
+		self.assertIn("taking up to List: Episodes per Show episodes from each",
+		              " ".join(shown["list_shows"].__doc__.split()))
+
+	def test_list_option_classes_follow_the_list_table(self):
+		from Options import Choice, DefaultOnToggle, FreeText, NamedRange, Range, TextChoice, Toggle, Visibility
+		from worlds.AutoWorld import AutoWorldRegister
+
+		world = AutoWorldRegister.world_types[GAME]
+		table = sys.modules[world.__module__ + ".constants"].LIST_OPTIONS
+		hints = world.options_dataclass.type_hints
+		self.assertEqual([key for key in hints if key in table], list(table))
+		for key, spec in table.items():
+			option = hints[key]
+			with self.subTest(option=key):
+				self.assertEqual(option.visibility, Visibility.all)
+				self.assertTrue(option.__doc__.startswith("The bot reads this when it fills in your titles (/apmedia "
+				                                          "yaml): "), option.__doc__)
+				if spec["type"] == "named_range":
+					self.assertTrue(issubclass(option, NamedRange))
+					self.assertEqual((option.range_start, option.range_end), (spec["min"], spec["max"]))
+					self.assertEqual(option.special_range_names, spec["special"])
+					self.assertEqual(option.default, spec["special"][spec["default"]])
+				elif spec["type"] == "range":
+					self.assertTrue(issubclass(option, Range) and not issubclass(option, NamedRange))
+					self.assertEqual((option.range_start, option.range_end, option.default),
+					                 (spec["min"], spec["max"], spec["default"]))
+				elif spec["type"] == "choice":
+					self.assertTrue(issubclass(option, Choice) and not issubclass(option, TextChoice))
+					self.assertEqual([option.name_lookup[i] for i in sorted(option.name_lookup)], spec["values"])
+					self.assertEqual(option.name_lookup[option.default], spec["default"])
+				elif spec["type"] == "toggle":
+					self.assertTrue(issubclass(option, DefaultOnToggle if spec["default"] else Toggle))
+					self.assertEqual(bool(option.default), spec["default"])
+				else:
+					self.assertEqual(spec["type"], "text")
+					self.assertTrue(issubclass(option, FreeText))
+					self.assertEqual(option.default, spec["default"])
+		self.assertEqual(hints["list_preset"].__doc__.splitlines()[1:], [
+			"movies: 15 movies", "tv: 3 shows", "music: 10 albums", "books: 3 audiobooks",
+			"mixed: 6 movies, 1 show, 4 albums and 1 audiobook",
+			"none: 0 of each, so the list holds only the counts you set and the titles, playlist or collection you name",
+		])
+
+
+# OptionsCreator.py in AP 0.6.8, disassembled from lib/library.zip: create_option (L520-536) asks in
+# this order, and an option it matches nothing for gets "This option isn't supported by the option
+# creator". It reads web.option_groups (create_options_panel L602-612) and offers what it stores for
+# an option the player leaves alone (create_range L330, create_named_range L361-381, create_toggle
+# L446, create_choice L419, create_free_text L391, create_option_set_list_counter L499-505).
+def creator_widget(option):
+	from Options import Choice, FreeText, NamedRange, OptionCounter, OptionList, OptionSet, Range, TextChoice, Toggle
+
+	for kind, base in (("named_range", NamedRange), ("range", Range), ("toggle", Toggle), ("text_choice", TextChoice),
+	                   ("choice", Choice), ("text", FreeText)):
+		if issubclass(option, base):
+			return kind
+	if any(issubclass(option, base) for base in (OptionSet, OptionList, OptionCounter)):
+		return "list"
+	return None
+
+
+def creator_panel(world):
+	"""{group name: [(option name, class)]} as the Creator lays them out, hidden options left out."""
+	from Options import Visibility
+
+	groups = {name: [] for name in ["Game Options", *(group.name for group in world.web.option_groups)]}
+	for key, option in world.options_dataclass.type_hints.items():
+		group = next((group.name for group in world.web.option_groups if option in group.options), "Game Options")
+		groups[group].append((key, option))
+	shown = {name: [(key, option) for key, option in options if key and option.visibility & Visibility.simple_ui]
+	         for name, options in groups.items()}
+	return {name: options for name, options in shown.items() if options}
+
+
+def creator_untouched(option):
+	"""What the Creator exports for an option nobody touched, or None when it has no widget for it."""
+	import copy
+
+	from Options import OptionCounter
+
+	kind = creator_widget(option)
+	if kind in ("range", "text"):
+		return option.default
+	if kind == "named_range":
+		if option.default not in option.special_range_names and option.default in option.special_range_names.values():
+			return next(name for name, value in option.special_range_names.items() if value == option.default)
+		return option.default
+	if kind == "toggle":
+		return bool(option.default)
+	if kind in ("choice", "text_choice"):
+		return option.default if isinstance(option.default, str) else option.name_lookup[option.default]
+	if kind == "list":
+		return copy.deepcopy(option.default) if issubclass(option, OptionCounter) else sorted(option.default)
+	return None
+
+
+def creator_export(world, name):
+	"""The file the Creator's Export Options writes for an untouched form (OptionsCreator.export_options)."""
+	import Utils
+
+	values = {}
+	for options in creator_panel(world).values():
+		for key, option in options:
+			if creator_widget(option) is not None:
+				values[key] = creator_untouched(option)
+	return Utils.dump({"name": name, "description": f"YAML generated by Archipelago {Utils.__version__}.",
+	                   "game": world.game, world.game: values}, sort_keys=False)
+
+
+def launcher_template():
+	"""The text of the Launcher's Generate Template Options file for Plex Media, made once per root."""
+	import Options
+
+	folder = os.path.join(STATE["root"], "templates")
+	path = os.path.join(folder, f"{GAME}.yaml")
+	if not os.path.exists(path):
+		Options.generate_yaml_templates(folder, False)
+	with open(path, encoding="utf-8-sig") as handle:
+		return handle.read()
+
+
+LIST_GROUP = "Your list (the bot picks the titles)"
+NO_TITLES = ("this YAML has no titles yet. Attach it to /apmedia yaml in Discord, and the bot picks them from the "
+             "Plex library.")
+
+
+class A1_OptionsCreator(unittest.TestCase):
+	"""The Archipelago Options Creator's rules, run on the loaded world: what a player sees and exports."""
+
+	@staticmethod
+	def loaded():
+		from worlds.AutoWorld import AutoWorldRegister
+
+		world = AutoWorldRegister.world_types[GAME]
+		return world, sys.modules[world.__module__ + ".constants"]
+
+	def test_every_game_and_list_option_gets_a_widget_in_its_group(self):
+		world, constants = self.loaded()
+		panel = creator_panel(world)
+		names = {group: [key for key, _option in options] for group, options in panel.items()}
+		self.assertEqual(list(names)[:4], ["Game Options", LIST_GROUP, "Unlocks and goal", "Timesanity"])
+		self.assertEqual(names["Game Options"], ["progression_balancing", "accessibility"])
+		self.assertEqual(names[LIST_GROUP], list(constants.LIST_OPTIONS))
+		self.assertEqual(names["Unlocks and goal"], ["starting_unlocks", "goal_percent", "tv_unlock",
+		                                             "episodes_per_unlock", "locked_watches", "wild_tickets"])
+		self.assertEqual(names["Timesanity"], ["checkpoint_items", "timesanity_strict", "timesanity_movies",
+		                                       "timesanity_episodes", "timesanity_albums", "timesanity_books"])
+		shown = {key: option for options in panel.values() for key, option in options}
+		for key in ("entries", "list_info"):
+			self.assertNotIn(key, shown)
+		for key in [*constants.OPTIONS, *constants.LIST_OPTIONS]:
+			with self.subTest(option=key):
+				self.assertIn(key, shown)
+				self.assertIsNotNone(creator_widget(shown[key]))
+		for key, spec in constants.LIST_OPTIONS.items():
+			self.assertEqual(creator_widget(shown[key]), spec["type"], key)
+		# The templates list each group in the group's own order; the Creator uses the dataclass's.
+		from Options import get_option_groups
+
+		templated = get_option_groups(world)
+		for group in (LIST_GROUP, "Unlocks and goal", "Timesanity"):
+			self.assertEqual(list(templated[group]), names[group], group)
+
+	def test_an_untouched_form_exports_the_list_defaults(self):
+		world, constants = self.loaded()
+		hints = world.options_dataclass.type_hints
+		untouched = {key: creator_untouched(hints[key]) for key in constants.LIST_OPTIONS}
+		self.assertEqual(untouched, {"list_preset": "movies", "list_movies": "preset", "list_shows": "preset",
+		                             "list_albums": "preset", "list_books": "preset", "list_titles": "",
+		                             "list_playlist": "", "list_collection": "", "list_genre": "", "list_years": "",
+		                             "list_unwatched": True, "list_max_episodes": 24, "list_label": ""})
+		for key in ("list_movies", "list_shows", "list_albums", "list_books"):
+			option = hints[key]
+			# data/optionscreator.kv puts the slider at min(max(default, start), end) for a number default,
+			# and create_named_range then names the special on the button.
+			self.assertEqual(min(max(option.default, option.range_start), option.range_end), 0, key)
+			self.assertEqual(creator_untouched(option).title(), "Preset", key)
+
+	def test_counts_take_preset_by_name_and_by_number(self):
+		world, _constants = self.loaded()
+		hints = world.options_dataclass.type_hints
+		for key in ("list_movies", "list_shows", "list_albums", "list_books"):
+			option = hints[key]
+			with self.subTest(option=key):
+				# Range.from_text reads default and true as the default, and false as 0, whenever range_start is
+				# 0 and the default is not: so a YAML boolean on a count means preset or none to AP.
+				for given in (option.default, "preset", "Preset", -1, "-1", "default", True, "true"):
+					self.assertEqual(option.from_any(given).value, -1, given)
+				for given, value in ((0, 0), (False, 0), ("low", 0), ("high", option.range_end),
+				                     (option.range_end, option.range_end), (str(option.range_end), option.range_end)):
+					self.assertEqual(option.from_any(given).value, value, given)
+				for bad in (-2, option.range_end + 1, "lots"):
+					with self.assertRaises(Exception, msg=bad):
+						option.from_any(bad)
+
+	def test_a_creator_yaml_stops_at_no_titles_until_the_bot_fills_it_in(self):
+		import Generate
+		import Utils
+		from Options import OptionError
+
+		world, _constants = self.loaded()
+		text = creator_export(world, "Creator Fan")
+		weights = Utils.parse_yaml(text)
+		self.assertNotIn("requires", weights)
+		self.assertEqual(weights[GAME]["list_movies"], "preset")
+		with self.assertRaises(OptionError) as caught:
+			Generate.roll_settings(weights)
+		self.assertEqual(str(caught.exception), f"Plex Media list of Creator Fan: {NO_TITLES}")
+		filled = Utils.parse_yaml(text)
+		filled[GAME]["entries"] = [MATRIX]
+		rolled = Generate.roll_settings(filled)
+		self.assertEqual((rolled.list_preset.current_key, rolled.list_movies.value, rolled.list_titles.value,
+		                  rolled.list_unwatched.value, rolled.list_max_episodes.value), ("movies", -1, "", 1, 24))
+
+	def test_the_template_offers_every_list_setting(self):
+		import Utils
+
+		text = launcher_template()
+		template = Utils.parse_yaml(text)[GAME]
+		world, constants = self.loaded()
+		self.assertEqual([key for key in template if key in constants.LIST_OPTIONS], list(constants.LIST_OPTIONS))
+		self.assertNotIn("entries", template)
+		self.assertNotIn("list_info", template)
+		self.assertIn(f"# {LIST_GROUP} #", text)
+		self.assertIn("preset: 50 # equivalent to -1", text)
+		self.assertEqual(template["list_movies"], {"preset": 50, "random": 0, "random-low": 0, "random-high": 0,
+		                                           "random-range-0-200": 0})
+		self.assertEqual(template["list_preset"], {"movies": 50, "tv": 0, "music": 0, "books": 0, "mixed": 0, "none": 0})
+		self.assertEqual(template["list_titles"], {"": 50})
+		self.assertEqual(template["list_unwatched"], {"false": 0, "true": 50})
+		hints = world.options_dataclass.type_hints
+		for key in constants.LIST_OPTIONS:
+			weights = template[key]
+			picked = max(weights, key=weights.get)
+			option = hints[key]
+			self.assertEqual(option.from_any(picked).value, option.from_any(option.default).value, key)
+
+	def test_the_launcher_template_stops_at_no_titles_until_the_bot_fills_it_in(self):
+		import Generate
+		import Utils
+		from Options import OptionError
+
+		text = launcher_template()
+		weights = Utils.parse_yaml(text)
+		# timesanity_albums defaults to its special off, so the template writes an unquoted off for it,
+		# which YAML 1.1 reads as false.
+		self.assertIn("    off: 50 # equivalent to 0\n", text)
+		self.assertEqual(weights[GAME]["timesanity_albums"][False], 50)
+		with self.assertRaises(OptionError) as caught:
+			Generate.roll_settings(weights)
+		self.assertEqual(str(caught.exception), f"Plex Media list of {weights['name']}: {NO_TITLES}")
+		filled = Utils.parse_yaml(text)
+		filled[GAME]["entries"] = [MATRIX]
+		rolled = Generate.roll_settings(filled)
+		world, constants = self.loaded()
+		hints = world.options_dataclass.type_hints
+		for key in [*constants.OPTIONS, *constants.LIST_OPTIONS]:
+			self.assertEqual(getattr(rolled, key).value, hints[key].from_any(hints[key].default).value, key)
+		self.assertEqual(rolled.timesanity_albums.value, 0)
 
 
 class A_FixtureSolo(SeedChecks, unittest.TestCase):
@@ -777,6 +1091,57 @@ class F_ItemLinks(SeedChecks, unittest.TestCase):
 		write_list(folder, "D_Stranger.yaml", "Someone Else", [movie(6102, "Other Film", 5400000)])
 		child = run_child("select", folder, self.seed.zip)
 		self.assertEqual(child["kept"], ["A_LinkA.yaml", "B_LinkB.yaml"])
+
+
+# Every list setting at a value other than its default. list_label differs from the list_info label
+# H writes, so a world that took its slot_data label from list_label would change the seed.
+LIST_SETTINGS = {"list_preset": "none", "list_movies": 7, "list_shows": 2, "list_albums": 0, "list_books": 1,
+                 "list_titles": "Alien; show: Lost S1-2", "list_playlist": "Road Trip", "list_collection": "Pixar",
+                 "list_genre": "Horror", "list_years": "1990-1999", "list_unwatched": False, "list_max_episodes": 6,
+                 "list_label": "Renamed list"}
+H_LABEL = "Settings list"
+
+
+class H_ListSettingsIgnored(SeedChecks, unittest.TestCase):
+	"""(h) the mixed list with every list_* setting changed: the same seed as the list without them."""
+
+	bare = None
+
+	@classmethod
+	def setUpClass(cls):
+		def players(extra):
+			return lambda folder: write_list(folder, "H_List.yaml", "Settings Fan", mixed_entries(), MIXED_OPTIONS,
+			                                 extra, label=H_LABEL)
+
+		cls.bare = Seed("h_plain", 808, players(None))
+		cls.seed = Seed("h_settings", 808, players(LIST_SETTINGS))
+
+	@classmethod
+	def tearDownClass(cls):
+		if cls.bare is not None:
+			cls.bare.remove()
+		super().tearDownClass()
+
+	def test_the_settings_were_read(self):
+		self.assertNotEqual(LIST_SETTINGS["list_label"], H_LABEL)
+		options = self.seed.worlds[0].options
+		for key, value in LIST_SETTINGS.items():
+			option = getattr(options, key)
+			read = option.current_key if key == "list_preset" else option.value
+			self.assertEqual(read, int(value) if isinstance(value, bool) else value, key)
+		self.assertEqual(self.bare.worlds[0].options.list_movies.value, -1)
+		self.assertEqual(plain(self.seed.md["slot_data"][1])["label"], H_LABEL)
+
+	def test_the_seed_is_the_same_without_them(self):
+		md, other = self.seed.md, self.bare.md
+		self.assertEqual(ap_harness.seed_digest(md), ap_harness.seed_digest(other))
+		self.assertEqual(md["datapackage"][GAME], other["datapackage"][GAME])
+		self.assertEqual(md["locations"], other["locations"])
+		self.assertEqual(md["precollected_items"], other["precollected_items"])
+		data, bare_data = plain(md["slot_data"][1]), plain(other["slot_data"][1])
+		data.pop("generated_at")
+		bare_data.pop("generated_at")
+		self.assertEqual(data, bare_data)
 
 
 def run(only=None, verbosity=2):

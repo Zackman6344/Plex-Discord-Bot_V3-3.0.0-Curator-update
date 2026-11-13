@@ -4,14 +4,18 @@
 # These decide every id and name a Plex seed carries, so they are pinned here without the AP install:
 # per-field validation, the text cut and the id and list-size caps, steps and prefix tables for both
 # TV modes, checkpoint minutes at the 0.9 cut, starting copies, the Wild Ticket clamp, goal rounding,
-# the union of two slots, name collisions, the plan's caps, slot_data naming no person, and that
-# constants.py and sanitize_text still mirror helpers/apMediaContracts.js.
+# the union of two slots, name collisions, the plan's caps, slot_data naming no person, the list
+# settings (list_*) as the Options Creator offers them and that they move no id, name or slot_data,
+# that constants.py and sanitize_text still mirror helpers/apMediaContracts.js, and that run.py
+# loads and runs every test file that holds scenarios. The option classes themselves import AP, so
+# test_generate.py's A0 and A1 check them against these tables.
 #
 # Harness: plain unittest, run by run.py or on its own with py -3.13 -O -s -S -B apworld/tests/test_pure.py.
 # purelib loads the modules through a stub package, so __init__.py (and AP) never loads. Bare
 # assert is never used: -O strips it. The JS mirror checks run node on helpers/apMediaContracts.js
 # and skip when node is not on PATH.
 
+import ast
 import copy
 import hashlib
 import json
@@ -158,7 +162,8 @@ class ValidationTest(unittest.TestCase):
 				self.assertIn(fragment, str(caught.exception))
 
 	def test_list_level_errors(self):
-		for value, fragment in (([], "the list is empty"), ("x", "entries must be a list"), ({}, "entries must be a list"),
+		for value, fragment in (([], "this YAML has no titles yet"), ("x", "entries must be a list"),
+		                        ({}, "entries must be a list"),
 		                        ([movie(n, "F") for n in range(C.MAX_ENTRIES + 1)], "at most 2000")):
 			with self.subTest(fragment=fragment):
 				with self.assertRaises(P.entries.EntryError) as caught:
@@ -169,6 +174,14 @@ class ValidationTest(unittest.TestCase):
 			P.entries.parse_entries([movie(1, "A"), movie(2, "B"), movie(1, "A again")])
 		self.assertEqual(caught.exception.index, 2)
 		self.assertIn("repeats entry 1 (movie|rk:1)", str(caught.exception))
+
+	def test_a_list_without_titles_says_to_let_the_bot_fill_it_in(self):
+		# The Options Creator's YAML has no entries, and AP reads a missing option as its default, [].
+		with self.assertRaises(P.entries.EntryError) as caught:
+			P.entries.parse_entries([])
+		self.assertIsNone(caught.exception.index)
+		self.assertEqual(str(caught.exception), "this YAML has no titles yet. Attach it to /apmedia yaml in Discord, "
+		                                        "and the bot picks them from the Plex library.")
 
 	def test_specials_and_extra_fields_are_allowed(self):
 		special = episode(5, 0, 1)
@@ -599,6 +612,69 @@ class OutputTest(unittest.TestCase):
 		self.assertEqual([opened(1, [0, 1], c) for c in range(0, 3)], [0, 1, 0])
 
 
+COUNT = {"type": "named_range", "special": {"preset": -1}, "default": "preset"}
+TEXT = {"type": "text", "default": ""}
+# The list settings as designed, in the order the bot writes them.
+DESIGNED_LIST_OPTIONS = {
+	"list_preset": {"type": "choice", "values": ["movies", "tv", "music", "books", "mixed", "none"], "default": "movies"},
+	"list_movies": dict(COUNT, min=0, max=200),
+	"list_shows": dict(COUNT, min=0, max=50),
+	"list_albums": dict(COUNT, min=0, max=200),
+	"list_books": dict(COUNT, min=0, max=50),
+	"list_titles": TEXT,
+	"list_playlist": TEXT,
+	"list_collection": TEXT,
+	"list_genre": TEXT,
+	"list_years": TEXT,
+	"list_unwatched": {"type": "toggle", "default": True},
+	"list_max_episodes": {"type": "range", "min": 1, "max": 500, "default": 24},
+	"list_label": TEXT,
+}
+# The types AP 0.6.8's Options Creator gives a widget (OptionsCreator.create_option); test_generate.py's
+# A1 runs its dispatch on the real classes.
+CREATOR_TYPES = ("named_range", "range", "toggle", "choice", "text")
+# One value of every list setting, none of them its default.
+LIST_SETTINGS = {"list_preset": "none", "list_movies": 7, "list_shows": 2, "list_albums": 0, "list_books": 1,
+                 "list_titles": "Alien; show: Lost S1-2", "list_playlist": "Road Trip", "list_collection": "Pixar",
+                 "list_genre": "Horror", "list_years": "1990-1999", "list_unwatched": False, "list_max_episodes": 6,
+                 "list_label": "Mixed Fan's list"}
+
+
+class ListSettingsTest(unittest.TestCase):
+	def test_the_list_settings_are_the_designed_table(self):
+		self.assertEqual(C.LIST_OPTIONS, DESIGNED_LIST_OPTIONS)
+		self.assertEqual(list(C.LIST_OPTIONS), list(DESIGNED_LIST_OPTIONS))
+		self.assertFalse(set(C.LIST_OPTIONS) & set(C.OPTIONS))
+		self.assertEqual(C.LIST_OPTIONS["list_preset"]["values"], list(C.PRESETS) + ["none"])
+		self.assertEqual(set(LIST_SETTINGS), set(C.LIST_OPTIONS))
+		for key, spec in {**C.OPTIONS, **C.LIST_OPTIONS}.items():
+			with self.subTest(option=key):
+				self.assertIn(spec["type"], CREATOR_TYPES)
+				for name, number in spec.get("special", {}).items():
+					# A slider or a typed count can never mean preset by accident.
+					self.assertFalse(spec["min"] <= number <= spec["max"], name)
+
+	def test_list_settings_move_no_id_name_or_slot_data(self):
+		cases = {case[0]: case for case in make_plan_cases.cases()}
+		_name, options, entries = cases["everything mixed"]
+		info = P.entries.parse_list_info({"created_at": 5, "label": "L"})
+		built = []
+		# The world hands the plan only OPTIONS (options.option_values); this holds even if the list
+		# settings reached it.
+		for given in (options, {**options, **LIST_SETTINGS}):
+			plan = plan_of(entries, **given)
+			registry = registry_of(plan)
+			data = P.slotdata.build_slot_data(plan, registry, info, C.WORLD_VERSION, 1731300000)
+			built.append({"plan": P.plan.summary(plan), "units": registry.unit_name, "unit_ids": registry.unit_id,
+			              "locations": registry.location_name, "location_ids": registry.location_id,
+			              "package": P.datapackage.build_package(registry), "slot_data": data})
+		for part in built[0]:
+			with self.subTest(part=part):
+				self.assertEqual(built[1][part], built[0][part])
+		self.assertNotIn("list_", json.dumps(list(built[1]["slot_data"])))
+		self.assertNotIn(LIST_SETTINGS["list_label"], json.dumps(built[1]["slot_data"], ensure_ascii=False))
+
+
 def run_node(script):
 	node = shutil.which("node")
 	if node is None:
@@ -637,6 +713,7 @@ class MirrorTest(unittest.TestCase):
 			"  BASE_ID: c.BASE_ID, UNLOCK_OFFSET: c.UNLOCK_OFFSET, MAX_UNLOCKS: c.MAX_UNLOCKS, MAX_CHECKS: c.MAX_CHECKS,\n"
 			"  IDS: c.IDS, NAMES: c.NAMES, ITEM_GROUPS: c.ITEM_GROUPS, LOCATION_GROUPS: c.LOCATION_GROUPS,\n"
 			"  KINDS: c.KINDS, TIMER_KIND: c.TIMER_KIND, LIMITS: c.LIMITS, OPTIONS: c.OPTIONS,\n"
+			"  LIST_OPTIONS: c.LIST_OPTIONS === undefined ? null : c.LIST_OPTIONS, PRESETS: c.PRESETS,\n"
 			"  ids: [c.unlockId(1), c.unlockId(20000), c.checkId(1), c.checkId(60000), c.unlockName(7), c.checkName(9)],\n"
 			"  sanitized: samples.map(c.sanitizeText),\n"
 			"  units: units.map((e) => [c.entryKey(e), c.unitKey(e), c.unitKey(e, {tvUnlock: 'season'}),\n"
@@ -659,6 +736,8 @@ class MirrorTest(unittest.TestCase):
 			           "slotNameMax": C.SLOT_NAME_MAX, "titleMax": C.TITLE_MAX, "warnCopies": C.WARN_COPIES,
 			           "warnLocations": C.WARN_LOCATIONS, "warnHoursToGoal": C.WARN_HOURS_TO_GOAL},
 			"OPTIONS": C.OPTIONS,
+			"LIST_OPTIONS": C.LIST_OPTIONS,
+			"PRESETS": C.PRESETS,
 			"ids": [C.unlock_id(1), C.unlock_id(20000), C.check_id(1), C.check_id(60000), C.unlock_name(7),
 			        C.check_name(9)],
 			"sanitized": [P.naming.sanitize_text(sample) for sample in SAMPLES],
@@ -670,10 +749,59 @@ class MirrorTest(unittest.TestCase):
 			with self.subTest(key=key):
 				self.assertEqual(js[key], mine[key])
 
+	def test_list_counts_follow_the_bots_ranges_and_default_preset(self):
+		js = run_node("const c = require('./helpers/apMediaContracts.js');\n"
+		              "process.stdout.write(JSON.stringify({ranges: c.COUNT_RANGES, preset: c.DEFAULT_PRESET}));\n")
+		for kind in ("movies", "shows", "albums", "books"):
+			spec = C.LIST_OPTIONS[f"list_{kind}"]
+			with self.subTest(kind=kind):
+				self.assertEqual({"min": spec["min"], "max": spec["max"]}, js["ranges"][kind])
+		episodes = C.LIST_OPTIONS["list_max_episodes"]
+		self.assertEqual({"min": episodes["min"], "max": episodes["max"], "default": episodes["default"]},
+		                 js["ranges"]["maxEpisodes"])
+		self.assertEqual(C.LIST_OPTIONS["list_preset"]["default"], js["preset"])
+
+	def test_the_manifest_carries_the_world_version(self):
+		# fill_slot_data falls back to WORLD_VERSION when AP reads no version from the manifest.
+		with open(os.path.join(purelib.SRC, "archipelago.json"), encoding="utf-8") as handle:
+			self.assertEqual(json.load(handle)["world_version"], C.WORLD_VERSION)
+
 	def test_sanitiser_is_idempotent(self):
 		for sample in SAMPLES:
 			once = P.naming.sanitize_text(sample)
 			self.assertEqual(P.naming.sanitize_text(once), once)
+
+
+def parse_source(path):
+	with open(path, encoding="utf-8") as handle:
+		return ast.parse(handle.read(), path)
+
+
+class RunnerTest(unittest.TestCase):
+	def test_run_py_runs_every_file_that_holds_scenarios(self):
+		# run.py runs only the modules it loads and loops over, so a file it leaves out is skipped
+		# with nothing failing to show it.
+		tests = os.path.dirname(os.path.abspath(__file__))
+		holding = set()
+		for name in sorted(os.listdir(tests)):
+			if not (name.startswith("test_") and name.endswith(".py")) or name == "test_pure.py":
+				continue
+			tree = parse_source(os.path.join(tests, name))
+			if any(isinstance(node, ast.ClassDef) and any(ast.unparse(base) in ("unittest.TestCase", "TestCase")
+			                                               for base in node.bases) for node in tree.body):
+				holding.add(name)
+		self.assertGreaterEqual(holding, {"test_generate.py", "test_e2e.py", "test_creator.py"})
+		runner = parse_source(os.path.join(tests, "run.py"))
+		loaded = {}
+		for node in ast.walk(runner):
+			if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
+			        and ast.unparse(node.value.func) == "load"):
+				loaded[ast.unparse(node.targets[0])] = node.value.args[1].value
+		self.assertEqual(sorted(loaded.values()), sorted(holding))
+		picked = next(node.value for node in ast.walk(runner)
+		              if isinstance(node, ast.Assign) and ast.unparse(node.targets[0]) == "picked")
+		looped = next(node.iter for node in ast.walk(picked) if isinstance(node, ast.comprehension))
+		self.assertEqual(sorted(ast.unparse(element) for element in looped.elts), sorted(loaded))
 
 
 if __name__ == "__main__":

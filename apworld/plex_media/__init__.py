@@ -26,7 +26,7 @@ from .constants import (COUNTER, GAME, GOAL_LOCATION, MAX_CHECKS, MAX_UNLOCKS, P
                         static_location_table, unlock_name)
 from .datapackage import build_package, checksummed
 from .entries import EntryError, parse_entries, parse_list_info
-from .options import PlexMediaOptions, option_values
+from .options import PlexMediaOptions, option_groups, option_values
 from .plan import PlanError, plan_slot
 from .registry import Registry, RegistryError
 from .rules import has, opened_by
@@ -45,6 +45,7 @@ class PlexMediaLocation(Location):
 
 class PlexMediaWeb(WebWorld):
 	theme = "partyTime"
+	option_groups = option_groups
 	tutorials = [Tutorial(
 		"Multiworld Setup Guide",
 		"Build a Plex Media list with the Plex Discord Bot and play it in a multiworld.",

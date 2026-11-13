@@ -1,6 +1,6 @@
 # apworld/tests/run.py
-# Runs the apworld's tests: test_pure.py always, then test_generate.py and test_e2e.py against the
-# frozen Archipelago.
+# Runs the apworld's tests: test_pure.py always, then test_generate.py, test_e2e.py and
+# test_creator.py against the frozen Archipelago.
 #
 # npm run test:apworld runs py -3.13 -O -s -S -B apworld/tests/run.py, the flags the frozen build and
 # the !ap next worker run with: -O because the install was compiled with optimize=1 (an assert that
@@ -11,8 +11,9 @@
 #
 #   --update-golden  rewrite the golden files instead of comparing with them
 #   --pure           run test_pure.py only
-#   --only A,G       run only those scenario classes of test_generate.py and test_e2e.py (by name
-#                    prefix; G is the end-to-end run against MultiServer)
+#   --only A,G       run only those scenario classes of test_generate.py, test_e2e.py and
+#                    test_creator.py (by name prefix; G is the end-to-end run against MultiServer,
+#                    H the list settings and the Options Creator's files)
 #
 # Exit status 0 when everything that ran passed, 1 otherwise.
 
@@ -70,14 +71,15 @@ def scenarios(module, only):
 
 
 def run_generate(update_golden, only):
-	# Both load before prepare(): its bootstrap takes this folder off sys.path, and test_e2e imports
-	# test_generate's helpers from it.
+	# All load before prepare(): its bootstrap takes this folder off sys.path, and test_e2e and
+	# test_creator import test_generate's helpers from it.
 	generate = load("plex_media_test_generate", "test_generate.py")
 	# Under its import name too, so that import finds this copy, the one prepare() sets up, and does
 	# not load a second one whose STATE nobody prepares.
 	sys.modules["test_generate"] = generate
 	e2e = load("plex_media_test_e2e", "test_e2e.py")
-	picked = [(module, scenarios(module, only)) for module in (generate, e2e)]
+	creator = load("plex_media_test_creator", "test_creator.py")
+	picked = [(module, scenarios(module, only)) for module in (generate, e2e, creator)]
 	if only and not any(classes for _module, classes in picked):
 		say(f"No scenario matches {', '.join(only)}.")
 		return False
@@ -85,6 +87,7 @@ def run_generate(update_golden, only):
 	try:
 		generate.prepare(root, APWORLD, update_golden)
 		e2e.prepare(root)
+		creator.prepare(root, update_golden)
 		ok = True
 		for module, classes in picked:
 			# An empty list runs the whole module, so a module --only picked nothing from is skipped.
