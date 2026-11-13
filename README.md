@@ -1137,7 +1137,7 @@ A few take a required option, because they can't do anything without one:
 | `/book sleep` | `after:`, minutes from the list, `End of this chapter`, or `Off` |
 | `/book forget` | `title:`, then a confirm button |
 | `/book edit` | `title:`, the book; with no `field:` it shows where each detail came from |
-| `/apmedia yaml` | `name:`, the slot name the list is for |
+| `/apmedia yaml` | none, but it needs `name:`, the slot name the list is for, or `file:`, a YAML that names one |
 | `/apmedia link` / `unlink` | `slot:`, the slot name in the room |
 | `/apmedia check` / `redeem` | `title:`, a title on your list, from the autocomplete |
 | `/apmedia announce` | `mode:`, `on` or `off` |
@@ -1399,11 +1399,15 @@ account goes, the history rows already read for it go too.
    generates seeds: in the Archipelago Launcher choose **Install APWorld**, pick the file, and
    restart the Launcher. **Keep it installed for as long as any Plex Media seed's room is in
    use**: `!ap next` rebuilds the seed with it, and without it answers every slot in that room
-   from sphere 1.
+   from sphere 1. Every YAML the bot writes requires the world version it ships with
+   (`requires:` names Plex Media 0.2.0), and Archipelago refuses those files while an older
+   version is installed, so install the file again whenever `/apmedia apworld` says the PC has
+   another version.
 3. Link your friends' Plex accounts with `/apmedia account user:@them plex:<their Plex name>`, and
    let them accept. Their lists can then leave out what they have already watched.
-4. Each player builds a list with `/apmedia yaml` and sends you the file; `for:@user` builds one
-   for someone else. Put every file, yours included, in Archipelago's `Players` folder.
+4. Each player builds a list with `/apmedia yaml`, from its options or from a YAML they made in the
+   Archipelago Options Creator (below), and sends you the file the bot returns; `for:@user` builds
+   one for someone else. Put every file, yours included, in Archipelago's `Players` folder.
 5. Generate the seed and host it as usual, on archipelago.gg or on this PC.
 6. Watch its room, from `/config` → Archipelago or with `!ap watch <room url> <slot>`.
 7. Each player claims their slot with `!ap claim <slot>`, then links it with
@@ -1413,6 +1417,29 @@ account goes, the history rows already read for it go too.
    `/apmedia link slot:<slot> watch:<id>`.
 8. The slot's game client connects, and a welcome line names the titles open so far. Its lines
    then post in the watch's channel, or in `apMediaChannelId`.
+
+**A list from the Options Creator.** Archipelago 0.6.8 ships a visual Options Creator, and a
+player can make their YAML there and have the bot fill in the titles:
+
+1. Get `plex_media.apworld`: only the owner can run `/apmedia apworld`, and its reply is public,
+   so anyone in that channel can save the file from it.
+2. On the player's own PC, with Archipelago 0.6.8 or later, open the Archipelago Launcher, choose
+   **Install APWorld**, pick the file, and restart the Launcher.
+3. Open **Options Creator** from the Launcher, pick **Plex Media** in the game list, and type the
+   slot name under Player Name (1 to 16 characters, no `{`, `}` or `%`).
+4. Set the options. The group **Your list (the bot picks the titles)** tells the bot what to pick:
+   a preset, a count per kind, titles, a playlist or a collection, a genre and years for the
+   random picks, whether to leave out what the player has watched, episodes per show, and the
+   list's name. The other groups hold the game options, which the bot copies into the finished
+   file as they are.
+5. Choose **Export Options** and save the file.
+6. Attach it to `/apmedia yaml` (`file:`), or to a `!apmedia yaml` message. The bot picks the
+   titles from the library and replies with the finished YAML.
+7. Send that file to the owner. The Creator's own file holds no titles: generated as it is, it
+   stops with "Plex Media list of <name>: this YAML has no titles yet. Attach it to /apmedia yaml
+   in Discord, and the bot picks them from the Plex library."
+
+**Filling in a YAML**, under the commands below, covers what the bot keeps, replaces and refuses.
 
 **Privacy.** **Every title on a list is visible to the whole room and to the public tracker**:
 hints, the spoiler and the room's log name the real titles. The slot data the tracker also serves
@@ -1437,9 +1464,14 @@ DM.
   count; the checkpoints each part played past count either way.
 - One slot of a seed counts through one link: linked again through a second watch of the same
   room, it is refused (`duplicate`) and earns nothing.
-- Two things have not been tried against the real thing yet: reading a live session from Plex's
-  `/status/sessions`, and uploading a seed to archipelago.gg. Phase 17 of
-  [BUGTESTING.md](BUGTESTING.md) covers both.
+- The Options Creator's Item & Location Options (`local_items`, `exclude_locations` and the rest)
+  offer only the world's fixed names: `Unlock 1` to `Unlock 20000`, `Check 1` to `Check 60000`,
+  Popcorn, Wild Ticket, Everything and Everywhere. A title gets its item and its locations only
+  when the seed is generated. Everything and Everywhere mean the player's own list.
+- Four things have not been tried against the real thing yet: reading a live session from Plex's
+  `/status/sessions`, uploading a seed to archipelago.gg, the Options Creator's own window (the
+  tests copy its rules from the 0.6.8 build), and a YAML attached in Discord and downloaded from
+  its file server. Phase 17 of [BUGTESTING.md](BUGTESTING.md) covers all four.
 
 **What it posts.** `apMediaAnnounce` decides: `completions` (the default) posts a title finished,
 banked or unlocked, `all` adds a line for every credit that finishes nothing (a checkpoint, an
@@ -1464,11 +1496,16 @@ them are gitignored.
 `py -3.13 -O -s -S -B apworld/tests/run.py`: the pure tests always, then real seed generations
 with the frozen Archipelago at `C:\ProgramData\Archipelago` when it is installed, writing nothing
 into it, and one run of the bot's side against a real MultiServer room. `--pure` stops after the
-pure tests, and `--only A,F` runs scenarios by name prefix: `A` both solo lists, `F` the item-link
-seed with the `!ap next` worker's checks, `G` that run against MultiServer. `--update-golden`
-rewrites the golden files. Use it only for a deliberate change of ids or names, and raise
-`BUILDER_VERSION` in `helpers/apMediaContracts.js` and `apworld/plex_media/constants.py` with it:
-a seed that is already running keeps the names and ids it was generated with.
+pure tests, and `--only A0,F` runs scenarios by the class name's part before its first underscore:
+`A0` the built file, `A1` the Options Creator's rules, `A` both solo lists, `F` the item-link seed
+with the `!ap next` worker's checks, `G` that run against MultiServer, and `H` the list settings
+and three Options Creator exports, two of which the bot fills in and Archipelago generates
+together. `--update-golden` rewrites the golden files: builder 1's ids and names, one seed's
+slot_data for the bot's tests, and the three Options Creator exports. Use it only for a deliberate
+change. A change of ids or names also needs `BUILDER_VERSION` raised in
+`helpers/apMediaContracts.js` and `apworld/plex_media/constants.py`: a seed that is already
+running keeps the names and ids it was generated with. Scenario H and the bot's tests of a
+player's own file need the `yaml` package in `node_modules`.
 
 ### 🎬 Plex Media world commands
 
@@ -1480,7 +1517,7 @@ unlike `/config`'s first-run bootstrap.
 
 | Command | Who | What it does |
 | ------- | --- | ------------ |
-| `/apmedia yaml <name> [options]` | Anyone; with `for:`, the owner | Builds a list from the library and attaches it as a YAML for the next seed, with its counts, how many titles start open and what the goal needs. See **Building a list** below. |
+| `/apmedia yaml [name] [file] [options]` | Anyone; with `for:`, the owner | Builds a list from the library and attaches it as a YAML for the next seed, with its counts, how many titles start open and what the goal needs. With `file:`, it fills in a YAML made in the Archipelago Options Creator, or one it wrote before, and keeps the file's settings. It needs a name or a file. See **Building a list** and **Filling in a YAML** below. |
 | `/apmedia apworld` | Owner | Attaches `plex_media.apworld`, built in memory, with the install steps, and compares it with `<archipelagoInstallDir>\custom_worlds\plex_media.apworld`, which it only reads. The reply is public. |
 | `/apmedia account [user] [plex] [shared]` | Owner; anyone, for `plex:none` on themselves | No user: the server's Plex accounts. A user alone: who they are linked to. A user and a Plex name (in full) or id: links them, and they get an Accept button. An account already linked to someone else needs `shared:True`. `plex:none` unlinks them, and on its own takes back your own link. |
 | `/apmedia link <slot> [user] [watch]` | The player holding the `!ap claim` on that slot; the owner, for anyone | Ties a Plex Media slot of a watched room (watch 0 unless `watch:` says otherwise) to a Discord user. |
@@ -1499,6 +1536,7 @@ yours.
 
 ```
 !apmedia yaml name=Zack movies=10 titles="Alien; Aliens" unwatched=false
+!apmedia yaml [key=value ...]          (with a YAML attached to the message)
 !apmedia link <slot> [@user] [watch=n]
 !apmedia list [ready|locked|done] [slot]
 !apmedia check <title> [at 1h30m | @1h30m | at=45:00] [slot=x]
@@ -1523,23 +1561,131 @@ a bare number is minutes (`The Matrix at 90`), and a text that is a whole list t
 
 **Building a list: `/apmedia yaml`.** The slot name is 1 to 16 characters, with no `{`, `}` or
 `%`. With nothing else given it picks 15 random movies; `preset:` also takes `tv` (3 shows),
-`music` (10 albums), `books` (3 audiobooks) and `mixed` (6 movies, 1 show, 4 albums and 1 book).
-`movies`, `shows`, `albums` and `books` set totals, hand-picks included. `titles:` takes hand-picks
-split by `;`, each with an optional `movie:`, `show:` (with a season range such as `S1-2`),
-`album:` or `book:` in front. `playlist:` and `collection:` add a Plex playlist or collection in
-its own order, and `genre:` and `years:` (`1990` or `1990-1999`) narrow the random picks.
-`unwatched` (on by default) leaves out what the list's player has watched, read from their own
-linked Plex account; without one, build with `unwatched:false` or have the owner link it. The
-timers are `time-movies`, `time-episodes`, `time-albums` and `time-books`, in minutes, 0 for off.
-`goal-percent`, `tv-unlock`, `episodes-per-unlock` and `max-episodes` (episodes per random show,
-24 by default) are options of their own, and the rarer settings go in `more:` as key=value, the way
+`music` (10 albums), `books` (3 audiobooks), `mixed` (6 movies, 1 show, 4 albums and 1 book) and
+`none`, which takes only what is counted or named. `movies`, `shows`, `albums` and `books` set
+totals, hand-picks included. `titles:` takes hand-picks split by `;`, each with an optional
+`movie:`, `show:` (with a season range such as `S1-2`), `album:` or `book:` in front.
+`playlist:` and `collection:` add a Plex playlist or collection in
+its own order, and `genre:` and `years:` (`1990` or `1990-1999`) narrow the random picks. A name
+that matches only the start of a title takes the nearest one, and the reply says what it took:
+"Nearest matches taken: "Alie" as Alien (1979)." A name that is just `random`, or starts with
+`random-`, takes only a title of that name. A list that comes out empty says so, with the
+warnings that name the filter that emptied it, such as "Movies has no Polka genre.", and the first
+ten titles not found. `unwatched` (on by default) leaves out what the list's player has watched,
+read from their own linked Plex account. A show named without seasons starts at their first
+unwatched episode, and one they have watched to the end is left out, with a warning that says to
+name its seasons or turn `unwatched` off to keep it. Without a linked account, random movies or
+shows, a collection and a video playlist need `unwatched:false` or a link from the owner; named
+titles do not. A link still waiting for their consent gets a reply asking them to accept it in the
+bot's DM, and a list built meanwhile says that nothing they watched is known yet. The timers are
+`time-movies`, `time-episodes`, `time-albums` and `time-books`, in minutes, 0 for off.
+`goal-percent`, `tv-unlock`, `episodes-per-unlock` and `max-episodes` (the most episodes from one
+show: random shows, a collection's shows and shows named without seasons; 24 by default) are
+options of their own, and the rarer settings go in `more:` as key=value, the way
 the prefix form writes them: `label`, `starting_unlocks`, `wild_tickets`, `strict`,
 `locked_watches` and `checkpoint_items`, as in `more:wild_tickets=3 strict=true`. The file is named
 after the slot, accents and other scripts included, and gains a short hash when a character had to
 change: `Zack M.` becomes `Zack_M-cd58afdb.yaml`. A list is refused above 2,000 titles, 2,000
 unlock copies or 10,000 locations, and warned about above 600 copies, 1,500 locations or 50 hours
-to the goal. A person builds one list at a time, and the bot two at once in all; another ask
-meanwhile is told to wait.
+to the goal; a finished YAML over 8 MB, the most the bot sends through Discord, is refused too.
+A person builds one list at a time, an attached file's download included, and the bot two at once
+in all; another ask meanwhile is told to wait. Every file records, after the game options, the
+list settings it was built with (`list_preset`, `list_movies` and the rest). Attached again, it
+gets a fresh pick with them.
+
+**Filling in a YAML: `/apmedia yaml file:`.** The file is a YAML from the Archipelago Options
+Creator, or one the bot wrote. On `!` it is the message's first attachment named `.yaml` or
+`.yml`, else its first `.txt` or other text attachment, such as the `message.txt` Discord makes of
+a long paste; a screenshot or a note beside it is left alone. A YAML pasted into the message text
+is not read, and the reply asks for the file.
+
+- **One player per file.** At the top it may hold only `name`, `description`, `game`, `requires`
+  and `Plex Media`, and `game` has to be `Plex Media`. `triggers` at the top are refused with a
+  pointer to move them under `Plex Media`, and `linked_options` are refused. A weighted `game` or
+  `name` that can roll only one value is that value; one that can roll more is refused. The name
+  passes the same checks as `name:`.
+- **Read the way Archipelago reads it**, with YAML 1.1's rules: an unquoted `off` is false, `010`
+  is 8, `1:30` is 90, `50.0` is a decimal number, and a lone CR ends a line. A key given twice is
+  refused the way Archipelago's loader counts keys (`true` and `1` are one key, two `.nan` are one,
+  an alias used as a key is the key it names), and so is a key beside its `+` twin (`local_items`
+  and `+local_items`, or `"+1.0"` and `1.0`). A `<<` merge, a bare `=`, a bare `!` tag, `!!omap`
+  and `!!pairs`, an anchor named twice, a list or a mapping used as a key, a key left empty
+  without `?`, and a raw control character, NEL, U+2028 or U+2029 are refused, naming the line.
+  A quote or a bracket left open is named at the line it opens. A number or a weight written as
+  text reads as Python's `int()` reads it: with `_` between digits, the spaces `int()` takes around
+  it, and digits of any script (`"５０"` is 50).
+- **The list settings say what to pick.** A count at `preset` takes the preset's number, and a
+  kind the preset leaves out gets 0. A list setting left random is refused, naming each one as the
+  Options Creator shows it: "List: Movies (`list_movies`) is random: set a number, the bot needs
+  it to pick titles." A trigger that sets one is refused too. A text setting is read as written,
+  as Archipelago reads it, so a playlist named Random is that playlist, and one written as a number
+  is that number as Python writes it (`0.00001` is `1e-05`). An empty `list_preset` is `none`, as
+  Archipelago reads it, and an empty text is no text; an empty count, `list_max_episodes` or
+  `list_unwatched` is refused. A file whose settings count nothing and name nothing gets "Your
+  list settings pick nothing: choose a preset, set a count, or name titles, a playlist or a
+  collection."
+- **Weights are read as Archipelago rolls them.** A weighted setting with one choice above 0, as
+  every one in the Launcher's Generate Template Options file, is that choice. Every choice a
+  weighted or listed game option can roll has to be a value Archipelago reads, and a mapping whose
+  weights are all 0 is refused, as Archipelago refuses it. A weight below 0 is refused too.
+- **The game options plan the list.** One that stays random is copied as it is, so Archipelago
+  rolls it at generation; the reply names it with its default, which the summary uses, and so
+  does a comment at the top of the finished file. A timer left random, or set by a trigger in the
+  file, is refused when its lowest value would take the list past 10,000 locations, and the reply
+  names the lowest that fits. A value Archipelago would refuse is refused, by name: an empty one,
+  a number with a decimal point (`50.0`), a toggle's `Random` (it takes only a lowercase
+  `random`, and its words as written, without spaces around them), and a `random-range-…` that
+  reaches past the option's own range.
+- **A setting a trigger checks keeps the file's spelling.** Archipelago compares the value as the
+  file writes it with the trigger's `option_result`, so a game option or list setting that a
+  trigger under `Plex Media` names is written as the file wrote it (`'off'` stays `"off"`). The
+  same option typed with the command replaces it, unless it reads the same (`time_albums=off`
+  beside the file's `'off'`), and then the file's spelling stays. A trigger on a setting the file
+  leaves out is refused.
+- **A trigger is refused, by its number,** when Archipelago would refuse it on every roll (triggers
+  that are not a list of mappings, an `option_category` other than `Plex Media` or `requires`, an
+  `option_name` that cannot roll), when it checks `description` or `requires` at the top, which the
+  bot writes, when it sets a list setting, `entries` or `list_info`, and when a value it sets is one
+  Archipelago refuses: "Trigger 1 in your file: Goal Percent (`goal_percent`) must be a whole
+  number from 1 to 100."
+- **Everything else is copied as it is**, in the file's order: `progression_balancing`,
+  `accessibility`, `local_items`, `triggers` and the rest, up to 32 KB of them in the new file. A
+  setting whose name starts with `+` or `-` is refused outside `triggers`. The file's `entries`
+  and `list_info` are replaced by the new pick, and an `account`
+  or `discord` key is refused: the bot fills in the account from the linked Plex account and the
+  Discord id from the person the list is for. The bot writes `requires` itself and keeps the file's
+  `plando` there (`none`, `items`, `connections`, `texts` or `bosses`); a `requires` that Python
+  reads as false, such as `0`, is no requires. `plando_items` takes this list's items and
+  locations by the names a seed gives them, such as `Watch Alien (1979)`: the numbered names the
+  Options Creator offers find nothing there.
+- **Options typed with the command replace the file's**, the name included, and a typed `preset`
+  sets the counts the file left at preset. A count equal to what its preset gives is saved as
+  `preset`, also when it was given as a number, so it follows a preset given later.
+- **A list the bot wrote for someone else** is refused under the slot name it was built under,
+  which its `list_info` records (a list from before world 0.2.0 names it in its first line,
+  `# … for <name>`): "This list was built for @Ana." The owner adds `for:` to pick it
+  again for them, and anyone may give it a new name, with `name:` or in the file's `name:` line,
+  to make it a list of their own. The owner's own list given to someone with `for:` needs a new
+  name too.
+- **The reply** says the settings came from the file, how many of the file's titles a fresh pick
+  replaced, and which options stay random, by the Creator's name and the file's key. Past
+  Discord's 2,000 characters it counts the warnings and misses it leaves out; the next step and
+  the tracker line stay. Text from the file or the library is escaped or in a code span, and a
+  mention, a channel, a command, a timestamp or a custom emoji in it reads as typed.
+- **A list the bot wrote before world 0.2.0** saved no list settings, and is refused with "This
+  list comes from an older version of the bot, which did not save what to pick: give a preset, a
+  count, or titles, a playlist or a collection with the command." With one of those typed, the
+  typed options decide what to pick, and the list keeps the label its `list_info` held.
+- **The file** has to come from Discord's own file server, be 8 MB at most (the most the bot
+  sends a list in), and 64 KB at most without a list's `entries`, arrive within 15 s and be UTF-8;
+  a byte order mark is fine. The entries of up to 2,000 titles are counted, not read, also
+  indented as another YAML tool writes them, with comments among them, or with settings after them.
+- **A Launcher template** (Generate Template Options) reads as an untouched Creator form once its
+  `Player{number}` has a name of its own, in the file or as `name:`.
+
+The bot reads files with the `yaml` package, 2.9.1, from `package.json`. Without it in
+`node_modules`, an attached file gets "The bot cannot read YAML files yet: the owner has to install
+its yaml package (2.9.1).", and lists built from the command's options still work.
 
 ### 🛠️ Owner / Admin commands
 

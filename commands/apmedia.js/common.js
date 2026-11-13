@@ -45,8 +45,10 @@ function slot(name) {
 	return `\`${String(name ?? '').replace(/`/g, "'")}\``;
 }
 
+// After escapeText, whose escapeMarkdown would double the backslash: a mention, a channel, a command,
+// a timestamp, a custom emoji or @everyone typed into a title or a file then reads as typed.
 function esc(text) {
-	return require('../../helpers/apMediaGame.js').escapeText(text);
+	return require('../../helpers/apMediaGame.js').escapeText(text).replace(/<(?=[@#/]|t:|a?:)/g, '\\<').replace(/@(?=everyone|here)/g, '\\@');
 }
 
 function bold(text) {
@@ -87,6 +89,31 @@ function optUser(ctx, name) {
 	} catch (_) {
 		return null;
 	}
+}
+
+/**
+ * The file a command came with: a slash ATTACHMENT option, or on the prefix path the message's
+ * first attachment. null when there is none.
+ */
+function attachmentOf(ctx, name) {
+	if (isSlash(ctx)) {
+		const options = ctx.interaction.options;
+		try {
+			if (typeof options.getAttachment === 'function') return options.getAttachment(name) || null;
+			const got = options.get(name);
+			return (got && got.attachment) || null;
+		} catch (_) {
+			return null;
+		}
+	}
+	const files = ctx.message && ctx.message.attachments;
+	if (!files || typeof files.values !== 'function') return null;
+	// A message can carry a screenshot or a pasted note beside the command: the file is the first
+	// named .yaml or .yml, else the first that is text.
+	const all = [...files.values()].filter(Boolean);
+	return all.find((file) => /\.ya?ml$/i.test(String(file.name || '')))
+		|| all.find((file) => /\.txt$/i.test(String(file.name || '')) || /^text\/|yaml/i.test(String(file.contentType || '')))
+		|| null;
 }
 
 function normKey(key) {
@@ -390,6 +417,7 @@ module.exports = {
 	isSlash,
 	opt,
 	optUser,
+	attachmentOf,
 	normKey,
 	takeMentions,
 	takeKeys,

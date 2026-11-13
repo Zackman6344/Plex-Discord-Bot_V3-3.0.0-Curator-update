@@ -1,7 +1,7 @@
 // helpers/apMediaContracts.js
 // Names, ids, limits and data shapes shared by the Plex Media Archipelago world's modules.
 //
-// apworld/plex_media/constants.py mirrors the ids, names, limits and option table below, and
+// apworld/plex_media/constants.py mirrors the ids, names, limits, option tables and presets below, and
 // apworld/plex_media/naming.py mirrors sanitizeText character for character. Ids, keys and names
 // are frozen per builder version: a seed keeps crediting for as long as its room lives, so a change
 // to anything an id, a key or a name is derived from ships as a new BUILDER_VERSION, never an edit.
@@ -11,7 +11,7 @@
 
 const GAME = 'Plex Media';
 const APWORLD_NAME = 'plex_media';
-const WORLD_VERSION = '0.1.0';
+const WORLD_VERSION = '0.2.0';
 const MIN_AP_VERSION = '0.6.8';
 const BUILDER_VERSION = 1;
 const SLOT_DATA_SCHEMA = 1;
@@ -87,6 +87,55 @@ const OPTIONS = Object.freeze({
 	timesanity_albums: Object.freeze({ type: 'range', min: 0, max: 240, default: 0 }),
 	timesanity_books: Object.freeze({ type: 'range', min: 0, max: 1440, default: 30 }),
 	wild_tickets: Object.freeze({ type: 'range', min: 0, max: 20, default: 2 }),
+});
+
+// The list settings, written after OPTIONS: what /apmedia yaml picks from the Plex library when it
+// fills in a YAML's titles, so a player can start the YAML in the Archipelago Options Creator.
+// Generation never reads them. A count at its special value preset (-1) takes its number from
+// PRESETS[list_preset], and list_preset none makes those counts 0.
+const LIST_OPTIONS = Object.freeze({
+	list_preset: Object.freeze({ type: 'choice', values: Object.freeze(['movies', 'tv', 'music', 'books', 'mixed', 'none']), default: 'movies' }),
+	list_movies: Object.freeze({ type: 'named_range', min: 0, max: 200, special: Object.freeze({ preset: -1 }), default: 'preset' }),
+	list_shows: Object.freeze({ type: 'named_range', min: 0, max: 50, special: Object.freeze({ preset: -1 }), default: 'preset' }),
+	list_albums: Object.freeze({ type: 'named_range', min: 0, max: 200, special: Object.freeze({ preset: -1 }), default: 'preset' }),
+	list_books: Object.freeze({ type: 'named_range', min: 0, max: 50, special: Object.freeze({ preset: -1 }), default: 'preset' }),
+	list_titles: Object.freeze({ type: 'text', default: '' }),
+	list_playlist: Object.freeze({ type: 'text', default: '' }),
+	list_collection: Object.freeze({ type: 'text', default: '' }),
+	list_genre: Object.freeze({ type: 'text', default: '' }),
+	list_years: Object.freeze({ type: 'text', default: '' }),
+	list_unwatched: Object.freeze({ type: 'toggle', default: true }),
+	list_max_episodes: Object.freeze({ type: 'range', min: 1, max: 500, default: 24 }),
+	list_label: Object.freeze({ type: 'text', default: '' }),
+});
+
+// Each option's display_name in apworld/plex_media/options.py: the name the Options Creator shows.
+const SETTING_NAMES = Object.freeze({
+	starting_unlocks: 'Starting Unlocks',
+	goal_percent: 'Goal Percent',
+	tv_unlock: 'TV Unlock',
+	episodes_per_unlock: 'Episodes per Unlock',
+	locked_watches: 'Locked Watches',
+	checkpoint_items: 'Checkpoint Items',
+	timesanity_strict: 'Timesanity Strict',
+	timesanity_movies: 'Timesanity: Movies',
+	timesanity_episodes: 'Timesanity: Episodes',
+	timesanity_albums: 'Timesanity: Albums',
+	timesanity_books: 'Timesanity: Books',
+	wild_tickets: 'Wild Tickets',
+	list_preset: 'List: Preset',
+	list_movies: 'List: Movies',
+	list_shows: 'List: Shows',
+	list_albums: 'List: Albums',
+	list_books: 'List: Audiobooks',
+	list_titles: 'List: Titles',
+	list_playlist: 'List: Playlist',
+	list_collection: 'List: Collection',
+	list_genre: 'List: Genre',
+	list_years: 'List: Years',
+	list_unwatched: 'List: Unwatched Only',
+	list_max_episodes: 'List: Episodes per Show',
+	list_label: 'List: Name',
 });
 
 const PRESETS = Object.freeze({
@@ -266,6 +315,8 @@ module.exports = {
 	TIMER_KIND,
 	LIMITS,
 	OPTIONS,
+	LIST_OPTIONS,
+	SETTING_NAMES,
 	PRESETS,
 	DEFAULT_PRESET,
 	COUNT_RANGES,

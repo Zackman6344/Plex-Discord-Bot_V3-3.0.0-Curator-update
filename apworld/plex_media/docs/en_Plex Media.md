@@ -58,6 +58,54 @@ such as `1917` gets `(movie)`.
 
 ## Options
 
+The Archipelago Options Creator shows Plex Media's options in three groups of their own, after
+Archipelago's Game Options and before its Item & Location Options. The setup guide walks through
+making a YAML there.
+
+### Your list (the bot picks the titles)
+
+The bot reads these when `/apmedia yaml` fills in a YAML's titles. Generation ignores them: a seed
+comes out the same with or without them.
+
+| Option | In the Options Creator | Default | Values |
+|---|---|---|---|
+| `list_preset` | List: Preset | `movies` | `movies` (15 movies), `tv` (3 shows), `music` (10 albums), `books` (3 audiobooks), `mixed` (6 movies, 1 show, 4 albums and 1 audiobook), `none` |
+| `list_movies` | List: Movies | `preset` | 0–200 |
+| `list_shows` | List: Shows | `preset` | 0–50 |
+| `list_albums` | List: Albums | `preset` | 0–200 |
+| `list_books` | List: Audiobooks | `preset` | 0–50 |
+| `list_titles` | List: Titles | empty | Titles split by `;`, at most 50 |
+| `list_playlist` | List: Playlist | empty | A Plex playlist, by name |
+| `list_collection` | List: Collection | empty | A Plex movie or TV collection, by name |
+| `list_genre` | List: Genre | empty | A genre, such as `Horror` or `Jazz` |
+| `list_years` | List: Years | empty | `1999` or `1990-1999` |
+| `list_unwatched` | List: Unwatched Only | `true` | `true` or `false` |
+| `list_max_episodes` | List: Episodes per Show | 24 | 1–500 |
+| `list_label` | List: Name | empty | The list's name, up to 100 characters |
+
+The four counts are totals for each kind, the titles you name included, and the bot picks the rest
+at random. A count left at `preset` takes its number from `list_preset`, and a kind the preset
+leaves out gets 0. `none` gives 0 of each, so the list holds only what you count or name. A list
+that counts nothing and names nothing is refused.
+
+In `list_titles`, `movie:`, `show:`, `album:` or `book:` in front of a title says what it is, a
+year picks one film (`Halloween (2018)`), and a show takes a range of seasons
+(`show: Lost S1-2`). A playlist goes on the list in its own order, a music playlist in parts of 15
+tracks. `list_genre` and `list_years` narrow only the random picks, and audiobooks ignore
+`list_years`. `list_unwatched` leaves the movies and episodes you have watched and the audiobooks
+you finished out of the random picks, a collection, a video playlist and the shows you name without
+seasons, and starts each show at your first unwatched episode; a show you named and have watched to
+the end is left out. The movies, audiobooks and seasons you name in `list_titles` stay on the list
+whole. Leaving out what you watched needs your Plex account, linked by the server owner with your
+consent; finished audiobooks come from the bot's own bookmarks. `list_max_episodes` is the most
+episodes the bot takes from one show, for random shows, the shows of a collection and shows named
+without seasons. An empty `list_label` names the list "<your name>'s list".
+
+These settings cannot be random, and a trigger cannot set them. A weighted setting with one choice
+above 0, as every one in a file from the Launcher's Generate Template Options, is that choice.
+
+### Unlocks and goal
+
 | Option | Default | Range |
 |---|---|---|
 | `starting_unlocks` | 3 | 1–50 unlock copies to start with; a long list starts with at least one per 50 copies |
@@ -65,16 +113,43 @@ such as `1917` gets `(movie)`.
 | `tv_unlock` | `episodes` | `episodes` or `season` |
 | `episodes_per_unlock` | 3 | 1–12 |
 | `locked_watches` | `bank` | `bank` or `ignore` |
+| `wild_tickets` | 2 | 0–20, fewer when the list is short |
+
+### Timesanity
+
+| Option | Default | Range |
+|---|---|---|
 | `checkpoint_items` | `filler_only` | `filler_only` or `anything` |
 | `timesanity_strict` | `false` | |
 | `timesanity_movies` | 15 | 0–240 minutes, `off` = 0 |
 | `timesanity_episodes` | 10 | 0–240 minutes |
 | `timesanity_albums` | 0 | 0–240 minutes, covers playlists too |
 | `timesanity_books` | 30 | 0–1440 minutes |
-| `wild_tickets` | 2 | 0–20, fewer when the list is short |
+
+### Written by the bot
 
 `entries` and `list_info` hold the list itself. The bot writes them; they are not meant to be edited
-by hand. A list holds at most 2,000 titles, 2,000 unlock copies, 10,000 locations and 16 MiB of
-data, an id runs to at most 1,000 characters, and longer text is cut at 1,000.
+by hand, and the Options Creator does not show them. A YAML exported from the Options Creator has
+none, and generated before the bot has filled it in, it stops with "Plex Media list of <name>: this
+YAML has no titles yet. Attach it to /apmedia yaml in Discord, and the bot picks them from the Plex
+library."
 
-Plex Media ignores `item_links`: generation logs a warning and the link stays empty.
+A list holds at most 2,000 titles, 2,000 unlock copies, 10,000 locations and 16 MiB of data, an id
+runs to at most 1,000 characters, and longer text is cut at 1,000.
+
+### Archipelago's own options
+
+Plex Media ignores `start_inventory` and `item_links`, and generation logs a warning for each:
+`starting_unlocks` opens the first titles, and a link stays empty.
+
+`local_items`, `non_local_items`, `start_hints`, `exclude_locations`, `priority_locations` and
+`start_location_hints` can only name `Unlock 1` to `Unlock 20000`, `Check 1` to `Check 60000`,
+Popcorn, Wild Ticket, Everything and Everywhere, which is all the Options Creator offers for them: a
+title gets its item and its locations only when the seed is generated. Everything and Everywhere
+mean your own list's unlocks and locations. A numbered name means the seed's unlock or location
+with that number, counted across every Plex Media list in the seed: one that is not on your list
+is left out with a warning, and an `Unlock` number past the seed's last unlock stops generation.
+
+`plando_items` reads none of those names: there, a numbered location finds nothing, which stops
+generation when the block has `force: true`, and a numbered unlock is an extra copy. It takes the
+names a seed gives your titles, such as `Watch Alien (1979)` for a movie's location.

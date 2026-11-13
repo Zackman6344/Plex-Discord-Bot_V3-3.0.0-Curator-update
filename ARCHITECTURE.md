@@ -180,7 +180,7 @@ Two signature styles coexist in the codebase:
 | `leaderboard.js`           | One ranked-list renderer. Only the Archipelago leaderboard calls in so far; the four game commands still carry their own copies and disagree on the fourth-place marker. |
 | `archipelagoGoals.js`      | Lifetime count of multiworlds each user has goaled, keyed `<seed>::<slot>` so it outlives the watch that saw it and so a slot changing hands cannot re-credit a finished game. Recording is idempotent, because the goal set is rebuilt on every reconnect. Goals only, never releases. Migrates the original user-keyed file shape on read. |
 | `archipelagoRoles.js`      | Creates and assigns the participant role and the per-count "N Games Goaled" roles, and deletes count roles nobody holds. Records every role id it creates in `data/archipelago_roles.json` and only ever touches those. Degrades to doing nothing rather than throwing. |
-| `apMediaContracts.js`      | The Plex Media world's shared names, ids, limits, YAML option table, settings, store paths and data shapes (`CreditEvent`, slot_data). `apworld/plex_media/constants.py` mirrors it and `naming.py` mirrors its `sanitizeText`. Ids, keys and names are frozen per `BUILDER_VERSION`. See "Plex Media world (Archipelago)". |
+| `apMediaContracts.js`      | The Plex Media world's shared names, ids, limits, YAML option tables (`OPTIONS`, the game options, and `LIST_OPTIONS`, the list settings), presets, settings, store paths and data shapes (`CreditEvent`, slot_data). `apworld/plex_media/constants.py` mirrors it and `naming.py` mirrors its `sanitizeText`. Ids, keys and names are frozen per `BUILDER_VERSION`. See "Plex Media world (Archipelago)". |
 | `apMediaGame.js`           | The Plex Media orchestrator: one game client per bound slot, the one serialized queue every credit and change runs on, refusal, stale and lost-watch notices, the goal, the welcome, batched announcements held across `!restart`, `health()`, and the data API `/apmedia` calls. |
 | `apMediaClient.js`         | `ApMediaClient`, the observer client made a game client through its four hooks: connects as `Plex Media` with items, sends checks and the goal, re-reads its watch before every attempt. |
 | `apMediaCredit.js`         | Pure: the slot index built from slot_data, the hits an event lands on (rating key, part id, work id, `artist\|title`, or a metadata match), the location ids a hit earns, unlocks, Wild Tickets, progress, `parseDuration` and `normTitle`. |
@@ -189,7 +189,7 @@ Two signature styles coexist in the codebase:
 | `apMediaVoice.js`          | The bot's own music in voice as credit, from `app/bot.js`'s `track-heard`: 85% of a track heard, for the people present at both ends; a shorter listen earns the album or playlist checkpoints it played past, and a Hitster clip nothing. Off with `apMediaVoiceCredit`. |
 | `apMediaBooks.js`          | The bot's audiobooks as credit: 10 s spans read from the book engine, and finished bookmarks every 60 s. |
 | `apMediaPlex.js`           | Read-only Plex client for the world: history, sessions, accounts, sections, listings and metadata (a 2,000-item cache). The token travels only in the `X-Plex-Token` header, and its `PmsError` carries a `code` and never the token. |
-| `apMediaYaml.js`           | The YAML builder behind `/apmedia yaml`: hand-picks, a playlist or collection, random picks, the unwatched rule, album curation and twin copies, caps and warnings, and `renderYaml`. |
+| `apMediaYaml.js`           | The YAML builder behind `/apmedia yaml`: hand-picks, a playlist or collection, random picks, the unwatched rule, album curation and twin copies, caps and warnings, and `renderYaml`; and `readPlayerYaml`, which reads a player's own YAML (an Options Creator export, or a list the bot wrote) into build params. |
 | `apMediaPlan.js`           | The JavaScript twin of the world's `plan.py` (units, steps, starting copies, Wild Tickets, checkpoint minutes, the goal count), checked against `test/fixtures/apmedia/plan_cases.json`. |
 | `apMediaButtons.js`        | The `apmedia:page:` page buttons (asker only, 30 minutes) and the stateless `apmedia:consent:` Accept button. |
 | `apworldBuild.js`          | Packs `apworld/plex_media` into a reproducible, store-only `.apworld` zip in memory and checks its manifest; `readApworldManifest` reads an installed copy's manifest without writing anything. |
@@ -477,7 +477,7 @@ A `10062 Unknown interaction` on a *fast* defer means the event reached the bot 
 
 **The adapter contract** (`helpers/interactionAdapter.js`): `message.content` is rebuilt in prefix form (`!name args`) rather than set to the bare argument string, because several commands parse arguments as `content.split(' ').slice(1)` and would otherwise lose the first one. The first call to `message.reply(...)` or `message.channel.send(...)` routes through `interaction.editReply(...)`, which appears in chat as the bot's response to the slash command. Subsequent calls go through the real `interaction.channel.send(...)`. That means commands like `!trivia` (which post a "Loading..." status, then edit it, then post game messages) work unchanged: the initial `channel.send` becomes the slash command's primary response, then the game's follow-up messages are normal channel posts.
 
-**Coverage:** every command in `commands/` declares a `slash` block. The loader picks up 57 command entries (54 files plus the `playlist.js/`, `book.js/` and `apmedia.js/` directories) and logs `Loaded 57 commands (4 aliases)`; the aliases `?`, `plextest`, `archipelago` and `books` are prefix-only, so 57 slash commands register. Subcommand sets include `/playlist`, `/request`, `/hitster`, `/library`, `/list`, `/tags`, `/ap`, `/apmedia`, `/book`, `/voicehealth` and the game commands. `npm run check:slash` validates the whole set against Discord's rules without booting the bot: 57 commands and 35,123 bytes of registration payload, measured 2026-11-12. The largest is `/book` at 2,917 of 4,000 characters with 24 subcommands, then `/apmedia` at 2,794 with 11 and `/ap` at 2,783 with 22. `test/validateSlash.test.js` warns early when `/book` reaches 3,100, well inside Discord's 4,000.
+**Coverage:** every command in `commands/` declares a `slash` block. The loader picks up 57 command entries (54 files plus the `playlist.js/`, `book.js/` and `apmedia.js/` directories) and logs `Loaded 57 commands (4 aliases)`; the aliases `?`, `plextest`, `archipelago` and `books` are prefix-only, so 57 slash commands register. Subcommand sets include `/playlist`, `/request`, `/hitster`, `/library`, `/list`, `/tags`, `/ap`, `/apmedia`, `/book`, `/voicehealth` and the game commands. `npm run check:slash` validates the whole set against Discord's rules without booting the bot: 57 commands and 35,370 bytes of registration payload, measured 2026-11-12 after `/apmedia yaml` gained its `file` option and `max-episodes` named its default. The largest is `/apmedia` at 2,961 of 4,000 characters with 11 subcommands, then `/book` at 2,917 with 24 and `/ap` at 2,783 with 22. `test/validateSlash.test.js` warns early when `/book` reaches 3,100, well inside Discord's 4,000.
 
 `scripts/validate-slash.js` exports `validate(commands)` so its rules are tested (`test/validateSlash.test.js`). Beyond names, descriptions, option counts and required-before-optional, it checks:
 
@@ -1761,25 +1761,29 @@ with the frozen Archipelago 0.6.8, and its scenario G plays one end to end throu
 `apMediaGame` against a real MultiServer 0.6.8 on a loopback port; the Node tests run the bot side
 against a stand-in room server modelled on MultiServer 0.6.8. Plex and Discord are fakes in both.
 **None of it has met a room hosted with `ArchipelagoServer.exe` or archipelago.gg, a live Plex
-session or Discord yet**; Phase 17 of `BUGTESTING.md` is the checklist that does.
+session or Discord yet**; Phase 17 of `BUGTESTING.md` is the checklist that does. World 0.2.0,
+also of 2026-11-12, added the list settings that let a player start a YAML in the Archipelago
+Options Creator and have `/apmedia yaml` fill in the titles ("Lists from the Options Creator"
+below); its tests copy the Creator's rules from the 0.6.8 build, and nobody has opened the
+Creator's window with this world installed yet.
 
 ### Module map
 
 | File | Role |
 | ---- | ---- |
 | `apworld/plex_media/__init__.py` | `PlexMediaWorld`: builds the seed's registry in `stage_generate_early`, puts the real names on the Item and Location objects, keeps the goal counter in `collect` and `remove`, takes `Unlock i` in `create_item`, writes slot_data, and swaps the seed's data package into the multidata in `stage_modify_multidata`. |
-| `apworld/plex_media/options.py` | The twelve YAML options, plus `entries` and `list_info`, which the bot writes and the options page hides. |
+| `apworld/plex_media/options.py` | The twelve game options, the thirteen list settings the bot reads (`list_*`), the three option groups the Options Creator shows, and `entries` and `list_info`, which the bot writes and the options page hides. |
 | `apworld/plex_media/entries.py`, `plan.py` | Each entry validated (an `EntryError` names its index), then one slot's plan: units, steps, starting copies dealt round-robin, the Wild Ticket count, checkpoint minutes, the goal count and the caps. |
 | `apworld/plex_media/registry.py`, `naming.py` | The seed's one table of units and locations across every Plex slot, with ids and unique names; display names and the text sanitiser. |
 | `apworld/plex_media/slotdata.py`, `datapackage.py`, `rules.py`, `constants.py` | slot_data schema 1; the seed's data package and its checksum; access rules; the ids, names and limits that `helpers/apMediaContracts.js` mirrors. |
-| `apworld/tests/` | `run.py` (`npm run test:apworld`), `test_pure.py`, `test_generate.py`, `test_e2e.py` with its Node half `e2e_bot.test.js`, `ap_harness.py`, `ap_child.py`, `purelib.py`, `make_plan_cases.py` and `fixtures/`. See "Testing it" below. |
+| `apworld/tests/` | `run.py` (`npm run test:apworld`), `test_pure.py`, `test_generate.py`, `test_e2e.py` with its Node half `e2e_bot.test.js`, `test_creator.py` with its Node half `fill_creator.js`, `ap_harness.py`, `ap_child.py`, `purelib.py`, `make_plan_cases.py` and `fixtures/`. See "Testing it" below. |
 | `helpers/apMediaGame.js` | The orchestrator: one game client per binding, the queue, notices and announcements, `health()`, and the data API `/apmedia` calls. |
 | `helpers/apMediaClient.js` | `ApMediaClient`, the game client. |
 | `helpers/apMediaCredit.js` | Pure credit logic over a slot's index. |
 | `helpers/apMediaWatch.js`, `apMediaVoice.js`, `apMediaBooks.js` | The automatic credit sources: Plex history and sessions, the bot's music in voice, the bot's audiobooks. |
 | `helpers/apMediaStore.js` | Bindings, account links, history marks and the slot_data cache. |
 | `helpers/apMediaPlex.js` | The read-only Plex client. |
-| `helpers/apMediaYaml.js`, `apMediaPlan.js` | The YAML builder, and the JavaScript twin of `plan.py`. |
+| `helpers/apMediaYaml.js`, `apMediaPlan.js` | The YAML builder and the reader of a player's own YAML (`readPlayerYaml`), and the JavaScript twin of `plan.py`. |
 | `helpers/apMediaButtons.js` | The page buttons and the Accept button. |
 | `helpers/apMediaContracts.js` | Names, ids, limits and data shapes shared by all of the above. |
 | `helpers/apworldBuild.js`, `scripts/build-apworld.js` | The `.apworld` zip, and `npm run build:apworld`. |
@@ -1795,7 +1799,7 @@ stop), `helpers/healthCheck.js` (`checkApMedia`), `helpers/configStore.js` and `
 `commands/archipelago.js` (`!ap next` and `!ap hints` show item and location names through the
 monitor's `escapeText`, now exported), `commands/test.js` (`!diag` pings nobody and is cut to fit
 2,000 characters) and `commands/hitster.js` (the clip is marked `secret`, so it earns no Plex
-Media credit).
+Media credit). World 0.2.0 added the `yaml` package to `package.json` and `package-lock.json`.
 
 ### How a play becomes a check
 
@@ -2125,8 +2129,9 @@ fences kept balanced, and sends later slash replies as private follow-ups, where
 post them in the channel.
 
 `yaml` fills `accountId` from the consented account of the person the list is for, never the
-owner's for someone else, and refuses `accountId` or `discordUserId` typed in. The slash form has 22
-options; a subcommand takes at most 25, so `label`, `starting_unlocks`, `wild_tickets`, `strict`,
+owner's for someone else, and refuses `accountId` or `discordUserId` typed in or written in an
+attached file. The slash form has 23 options, `file` among them (see "Lists from the Options
+Creator"); a subcommand takes at most 25, so `label`, `starting_unlocks`, `wild_tickets`, `strict`,
 `locked_watches` and `checkpoint_items` arrive through one `more` option in the prefix's key=value
 form. Anyone may build, and one build reads every movie, show and album listing and then the
 tracks or episodes of each pick (286 Plex requests for a large list on a library the owner's size),
@@ -2159,6 +2164,384 @@ one background refresh, never awaited.
 | --------- | ---- | --- |
 | `apmedia:page:<token>:<n>` | The pages of a long `list` or `status` reply, rendered when the command ran, in memory for 30 minutes after their last use, at most 50 lists, oldest out first. `!restart` keeps them; a stop and start of the bot drops them. | The asker only; anyone else gets a private refusal. |
 | `apmedia:consent:<discordId>.<linkedAt in base 36>` | Nothing: the click is checked against the account store, so the button works after a restart. It expires 7 days after `linkedAt`, and a re-link restamps `linkedAt`, which makes an older button stale. | The named user only. The click is deferred before `grantConsent`, because the game answers from its queue and Discord gives a click 3 seconds. |
+
+### Lists from the Options Creator
+
+World 0.2.0 lets a player start their YAML in the visual Options Creator that Archipelago 0.6.8
+ships (`ArchipelagoOptionsCreator.exe`, "Options Creator" in the Launcher), attach the exported file
+to `/apmedia yaml`, and get it back with the titles filled in.
+
+**What the Creator does.** Read from the 0.6.8 build (`OptionsCreator.py` in `lib/library.zip`,
+and `data/optionscreator.kv`; `apworld/tests/test_generate.py` gives the line numbers):
+
+- It lists the installed worlds that are not hidden, and shows a world's form only while
+  `web.options_page` is True; a URL there opens a browser instead.
+- It groups a world's options by `web.option_groups`. Options in no group land in "Game Options",
+  which comes first, and Archipelago adds "Item & Location Options" last. It shows only options
+  whose visibility includes `Visibility.simple_ui`.
+- It has a widget for `NamedRange`, `Range`, `Toggle`, `TextChoice`, `Choice` and `FreeText`, asked
+  in that order, and an Edit popup for `OptionSet`, `OptionList` and `OptionCounter`; any other
+  option reads "This option isn't supported by the option creator." A `FreeText` cannot be
+  randomized there, and neither can the Edit-popup kinds, whose classes do not support weighting;
+  every other option has a Random? toggle, which writes `random`. Each option's name carries its
+  docstring as a tooltip.
+- Export Options needs a name of 1 to 16 characters and writes `name`, `description`, `game` and
+  the game's mapping through `Utils.dump`, in panel order, holding only the options that got a
+  widget: a Range as a number, a NamedRange as a number or its special's lowercased name, a
+  Choice by name, a Toggle as a boolean, a FreeText as text. It writes no `requires`, and Python's
+  text mode saves it with CRLF on Windows.
+
+`entries` and `list_info` are `Visibility.none`, and a list runs to 2,000 JSON entries, so a
+Creator file never holds the titles. Generation cannot pick them either: the world has no Plex
+access, and the `!ap next` worker rebuilds a seed from its YAMLs, so the titles have to be in the
+file. The Creator's file therefore carries what to pick, and the bot writes the titles.
+
+**The list settings** (`apworld/plex_media/options.py`) are thirteen options in their own group,
+"Your list (the bot picks the titles)". The twelve game options moved into two groups, "Unlocks
+and goal" and "Timesanity", so the Creator shows five panels: Game Options (`progression_balancing`
+and `accessibility`), the list group, Unlocks and goal, Timesanity, and Item & Location Options.
+
+| Key | Class | Values | Default | Builder param |
+| --- | ----- | ------ | ------- | ------------- |
+| `list_preset` | `Choice` | `movies`, `tv`, `music`, `books`, `mixed`, `none` | `movies` | `preset` |
+| `list_movies` | `NamedRange` | 0–200, special `preset` = -1 | `preset` | `movies` |
+| `list_shows` | `NamedRange` | 0–50, special `preset` = -1 | `preset` | `shows` |
+| `list_albums` | `NamedRange` | 0–200, special `preset` = -1 | `preset` | `albums` |
+| `list_books` | `NamedRange` | 0–50, special `preset` = -1 | `preset` | `books` |
+| `list_titles` | `FreeText` | `Alien; Aliens` | empty | `titles` |
+| `list_playlist` | `FreeText` | a Plex playlist's name | empty | `playlist` |
+| `list_collection` | `FreeText` | a Plex collection's name | empty | `collection` |
+| `list_genre` | `FreeText` | a genre | empty | `genre` |
+| `list_years` | `FreeText` | `1999` or `1990-1999` | empty | `years` |
+| `list_unwatched` | `DefaultOnToggle` | | on | `unwatched` |
+| `list_max_episodes` | `Range` | 1–500 | 24 | `maxEpisodes` |
+| `list_label` | `FreeText` | the list's name | empty, read as `<name>'s list` | `label` |
+
+**Generation reads none of them.** `option_values()` hands the plan `OPTIONS` alone, so ids, names,
+the plan, the data package and slot_data are the same with or without the list settings.
+`test_pure.py` shows it on the plan, the registry, the data package and slot_data even with the
+settings handed to the plan, and scenario H generates one list twice, once with all thirteen
+changed, and requires the same digest, data package, locations, starting items and slot_data.
+
+Each class's docstring is the Creator's tooltip. It opens with "The bot reads this when it fills
+in your titles (/apmedia yaml):", names other options by their display names (List: Titles, TV
+Unlock), since the Creator never shows a key, and keeps each display name on one source line,
+since the Creator's `filter_tooltip` turns every newline into a line break. `list_preset`'s
+tooltip is built from `PRESETS`, so it cannot quote a mix the bot no longer applies.
+
+**A count's preset is -1, below its slider.** Each count is a `NamedRange` from 0 whose special
+`preset` is -1, the class default, so no slider position means preset by accident. That was
+checked against the frozen 0.6.8 before anything relied on it: Archipelago takes -1 outside
+`range_start`..`range_end` as the class default and from `preset`, `Preset`, -1 and "-1", the
+templates write `preset: 50 # equivalent to -1`, and the Creator puts the slider at 0, shows -1
+beside it, labels the button Preset and exports `preset`. Moving the slider to 0 means none of
+that kind; choosing Preset from the button sets -1 again. Under Preset the slider already sits at
+0, and the Creator acts only when the slider's value changes (`create_named_range` binds
+`set_to_custom` to it, `OptionsCreator.py` line 371), so a tap that lands on 0 leaves the count at
+Preset: the slider has to move away and back before it reads 0 and Custom. `Range.from_text` also
+reads `default` and `true` on a count as -1, and `false` and `low` as 0 (A1 pins these), and the
+bot reads them the same way.
+
+**The empty-list message** became the one a Creator file meets when it is generated before the
+bot has filled it in: "Plex Media list of <player>: this YAML has no titles yet. Attach it to
+/apmedia yaml in Discord, and the bot picks them from the Plex library." Every other `EntryError`
+is unchanged.
+
+**The template trap.** The Launcher's Generate Template Options writes `off: 50` for
+`timesanity_albums`, whose default 0 is its special `off`. YAML 1.1 reads that `off` as false, and
+`Range.from_text` takes false as 0 only when the default is not 0, so every unedited Plex Media
+template failed with "Error generating option timesanity_albums in Plex Media". The four timers
+now share `TimesanityTimer`, whose `from_text` reads false as 0, and A1 rolls the whole template.
+The Creator was never affected: it writes `'off'` quoted.
+
+**Not done: moving `progression_balancing` and `accessibility` into a group**, so that the list
+group would open the form. Every group is a collapsed panel, so the list group is already the
+second header, and the move would reorder the Creator's export, which three fixtures pin byte for
+byte. It can still be made, with those fixtures written again by `--update-golden`.
+
+**Two mirrored tables.** `LIST_OPTIONS` in `constants.py` and in `helpers/apMediaContracts.js` hold
+the same JSON per key (`type`, `min`, `max`, `special`, `default`, `values`), in the order the YAML
+writes them after `OPTIONS`; `PRESETS` is mirrored the same way, and the world uses its copy only
+for `list_preset`'s tooltip. Each side tests the other. `test_pure.py`'s `MirrorTest` reads the
+contracts through node, checks the counts against `COUNT_RANGES` and `DEFAULT_PRESET`, and holds
+`archipelago.json`'s `world_version` to `WORLD_VERSION`; `ListSettingsTest` holds the table to the
+design and every special number outside its slider's range. `test/apMediaYaml.test.js` loads
+`constants.py` alone in `py -3.13 -I -B` (it skips only when the `py` launcher is missing) and
+compares both tables, key order included, and reads `options.py` as text to pin each choice's
+`option_*` numbers to the table's order, since the bot turns a choice given by number into its
+name. A0 holds the real classes to the table: types, ranges, defaults, choices, special names,
+visibility and the tooltip's opening.
+
+**Reading a player's file: `readPlayerYaml(text, overrides)`** (`helpers/apMediaYaml.js`) returns
+`{name, label?, params, passthrough, random, entriesCount}`, or throws an Error whose message is
+for the player.
+
+- **Parsing.** The `yaml` package (eemeli/yaml) at exactly 2.9.1. Archipelago reads player files
+  with PyYAML, which follows YAML 1.1, so the parse runs with `version: '1.1'` and PyYAML's own
+  resolvers for booleans, integers, floats and timestamps put in through `customTags`. The
+  package's 1.1 schema alone reads `y` and `n` as booleans, `1e5` as a float, `09` as 9 and
+  `2026-1-5` as a date, where PyYAML keeps all four as text. With PyYAML's rules `on` and `off` are
+  booleans, `010` is 8 and `1:30` is 90, so a value copied into the new file means to Archipelago
+  what it meant in the old one. A float with a whole value (`50.0`, `1.5e+3`) is a `PyFloat`, since
+  JavaScript would make it an int: Archipelago's ranges and choices refuse a float, and a copy
+  writes it back with its decimal point (`floatText`). A file over 8 MB (`FILE_MAX_BYTES`, the most
+  the command sends a finished list in) is refused before parsing.
+- **Characters.** Archipelago's reader (LibYAML under `CSafeLoader`) ends a line at a lone CR
+  too, which the package reads as part of the line, so a lone CR becomes a line break first: an
+  old Mac file, or CR CR LF from a doubled conversion, reads as it does there, and a setting after
+  a CR in a comment stays a setting. LibYAML also breaks lines at a raw NEL, U+2028 and U+2029,
+  and refuses a raw C0 or C1 control, DEL, U+FFFE and U+FFFF; the package reads all of them as
+  characters, so the file is refused, naming the line (`rawCharProblem`, which counts a lone CR as
+  a break). Written as escapes they are the characters they name, on both sides.
+- **Keys, aliases and tags** (`structureProblem`, which walks the parsed document before anything
+  is resolved). More than 20 aliases in the whole file are refused, and so is an alias with no
+  anchor above it. A key given twice is refused the way Archipelago's own loader
+  (`Utils.UniqueKeyLoader`) finds one, in a Python dict (`keyId`): `true` is `1`, `false` is `0`
+  and `0.0`, every null is one key, `1` and `"1"` stay apart, an int past 2**53 is compared by its
+  exact digits, as a float of the same whole value is, and two equal dates are one key. PyYAML
+  makes every `.nan` one shared float, which a dict finds by itself, so a second `.nan` repeats the
+  first. Those keys are told apart by a symbol per text made for the file being read, never by
+  `Symbol.for`, whose registry would keep every big number or date anyone sends for as long as the
+  bot runs. An alias used as a key is the key its anchor holds, and its own line is the one named. The
+  loader also refuses a key beside the same key with a leading `+`, in any mapping (`local_items`
+  and `+local_items`), and so does the bot (`plusTwin`): the loader compares Python's `str()` of
+  each key with the text keys before it, so `1` after `"+1"` clashes and `"+1"` after `1` does not,
+  a null key is `None`, a float `1.0` (`pyFloatText`, Python's repr, so `1e+16` and `1e-05`) and a
+  date `2001-01-31`. PyYAML resolves a plain `<<` to a merge and a plain `=` to a value tag,
+  untagged or tagged with a bare `!` or `!!merge`, which the loader cannot build, so either is
+  refused. Tagged `!!str` they are text to PyYAML; the package still merges at a key `<<` tagged
+  so, which is refused for that. A value tagged with a bare `!` is typed as untagged by LibYAML
+  (`! 1` is 1) and kept as text by the package, and `!!omap` or `!!pairs` is a list of pairs to
+  PyYAML and a mapping or a list of mappings to the package: all three are refused. LibYAML and
+  PyYAML refuse an anchor named twice, a list or a mapping used as a key, and an empty key without
+  a `?` (`{: b}`; `implicitEmptyKey` looks back over any blanks for the `?`), all of which the
+  package reads, so the bot refuses them too, in any part of the file. A parse error is reported
+  with its line and a reason in words. An unclosed quote is named at the line it opens
+  (`openedAt`), since the package notices it only at the end of the file, and so is a bracket left
+  open inside the file's mappings, which the package notices (as `BAD_INDENT`, "Flow sequence in
+  block collection must be sufficiently indented and end with a ]") at the next line not indented
+  past the bracket's key. An explicit tag the package does not resolve (`!!float 16`) is "a !tag
+  the bot does not read".
+  Empty documents (a stray `---`, or `--- ~`) are skipped, as Archipelago skips them; a second
+  real document is refused. A date is never copied: one in a setting the bot would copy is
+  refused, and so is a date or binary data used as a key there.
+- **Writing a copied value back.** A float is written as Python's `str()` writes it, with a
+  decimal point PyYAML needs (`1.0e+16`), and `.nan`, `.inf` and `-.inf` as YAML spells them, so a
+  float stays a float and a float key after `"+1"` stays `1.0`. A key longer than 1,000 characters
+  as written (`KEY_MAX`, quotes and escapes included, an emoji counting as two in the package's
+  units) is refused, since LibYAML reads a key without a `?` of at most 1,024, and the package
+  refuses one longer in its own units when the list comes back.
+- **The top level** may hold only `name`, `description`, `game`, `requires` and `Plex Media`: one
+  player per file. `game` has to be `Plex Media`, and it is checked before the other keys, since
+  another game's file always has that game's own settings at the top too. `triggers` at the top
+  get their own refusal, which says to move them under `Plex Media`, and `linked_options` one that
+  says to take them out. A weighted `game` or `name` is read as `get_choice` rolls it (`oneRoll`):
+  one that can roll only one value is that value, and one that can roll more is refused. The `Plex
+  Media` mapping has to be there, and the name passes `contracts.slotNameProblem` unless the command
+  gives one. The new file writes its own `requires`, but keeps the file's `requires: plando`, text
+  naming members of `PlandoOptions` (`none`, `items`, `connections`, `texts`, `bosses`), each part
+  stripped as `from_option_string` strips it, with `str.strip()`'s spaces (`PY_STRIP`, U+001C to
+  U+001F and U+0085 among them, U+FEFF not; `plandoParam`), so a host whose
+  `plando_options` leave a module out still stops at it. A `requires` that Python reads as false
+  (`0`, `''`, `[]`, `false`, `{}`) is skipped, as `roll_settings` skips it (`pyFalsy`).
+- **Under `Plex Media:`**, `entries` are counted and dropped, `list_info` is dropped (its
+  `discord` is kept as `listFor` while the slot keeps the name it was built under: its `slot`, or
+  in a list from before it recorded one, the name in the file's first line, `# <label>: Plex Media
+  list built <date> for <name>` (`BUILT_FOR`), else the file's name), and `account`,
+  `accountId`, `discord` and `discordUserId`, in any case and with any `_` or `-`, are refused. A
+  setting whose name starts with `+` or `-` is refused before anything else: `Generate.roll_settings`
+  refuses such a key everywhere outside `triggers`, so one in the file, or the bot's copy of it,
+  stops the whole seed (`triggerTagProblem`; `copiedSettings` refuses one too). Errors name a
+  setting as the Options Creator shows it, then its key: "List: Episodes per Show
+  (`list_max_episodes`)" (`settingName`, from `contracts.SETTING_NAMES`, which a test holds to
+  `options.py`'s `display_name`s).
+- **Weights** are read as Archipelago's `Generate.get_choice` rolls them (`rolls`): a mapping rolls
+  the keys whose weight Python's `int()` makes above 0 (`"3"` is 3, `0.5` is 0, `" 2 "` is 2 but
+  `"\ufeff2"` is refused), a list any of its items, and an empty mapping nothing, which reads as an
+  empty value. `int()` of a text is `pyIntOfText`, used for ranges and timers too: the spaces
+  `int()` takes around a number (`PY_INT_SPACE`: U+0085 among them, not U+001C to U+001F, which
+  `str.strip()` takes and `int()` reads as characters, and not U+FEFF), `_` between digits, and
+  decimal digits of any script, which Unicode keeps in runs of ten from 0 to 9 (`digitValue`). A
+  mapping whose weights are all 0, an empty list and a weight `int()` cannot read are
+  refused. A weight below 0 is refused too: `random.choices` rolls past one without a word. A
+  mapping or list that can roll one choice only is that choice, so every block of a Launcher
+  template is its one value.
+- **Empty values** read as Archipelago reads the `None` it makes of them: a game option refuses
+  one (and so does a weighted choice that can roll one), `list_preset` reads it as `none`, a text
+  setting as no text, and a count, `list_max_episodes` or `list_unwatched` refuses it.
+- **List settings** need one value: one that can roll more is refused with its fix ("List: Movies
+  (`list_movies`) is random: set a number, the bot needs it to pick titles."), every such setting
+  named in one reply, and so is `random` or a `random-…` text in any but the six text settings. A
+  text setting is read as written, so a playlist named Random is that playlist: Archipelago never
+  rolls a plain text option, the Options Creator gives one no Random?, and the command reads
+  `playlist:Random` the same way. One written as a number is that number as Python's `str()` writes
+  it (`pyFloatText`: `0.00001` is `1e-05`), and an int past 2^53 is refused for its quotes. Text
+  settings go through the command's own checks.
+- **Game options.** One with a plain value becomes its builder param, read the way its
+  Archipelago class reads it: a Toggle's words in any case but untrimmed, and numbers through
+  `int()` (`0.5` is off), a Choice by name or by number, a Range's `default`, `high`, `low` and
+  booleans, where a timer takes false (an unquoted `off`, `no` or `false`, or the text `false`) as
+  0 whatever its default, as the world's `TimesanityTimer` does. A float is refused by a Range or a
+  Choice. A value Archipelago would refuse is refused, naming the setting, and so is any choice a
+  weighted or listed option can roll that Archipelago would refuse ("Goal Percent
+  (`goal_percent`) can roll `150`: it must be a whole number from 1 to 100."). A random value the
+  bot reads (`random`, `random-low`, `random-middle`, `random-high`, a `random-range-…` inside the
+  option's own range, and for a Toggle only the exact lowercase `random`), or a mapping or list
+  that can roll more than one value, is kept verbatim in `passthrough`, listed in `random`, and
+  planned with the option's default; the finished file's header names it with the value the plan
+  used. Archipelago reads a few more `random-range-` spellings, which the bot refuses as ones it
+  does not read. Every other key (`progression_balancing`, `accessibility`, `local_items`,
+  `start_inventory`, `triggers` and the rest) goes into `passthrough` verbatim, in file order. The
+  copied lines may take 32 KB in the new file (`COPY_MAX_BYTES`), counted while each value is
+  written, so a few aliased lines cannot grow into a reply of megabytes.
+- **Settings a trigger checks** (`triggerChecked`): `Generate.roll_triggers` compares the value a
+  setting has in the file with the trigger's `option_result`, so a game option or list setting
+  that a trigger under `Plex Media` with `option_category: Plex Media` names (any name a weighted
+  `option_name` can roll: `random.choices` never lands on a weight of 0 or below) goes into
+  `asWritten` with the file's own value. The plan and the picks still use the value the bot read,
+  and `renderYaml` writes the file's value in that setting's place, as `copiedLine` writes a copied
+  one, so `'off'` stays `"off"` where the bot would write 0. A trigger on a setting the file leaves
+  out is refused, since Archipelago then reads `None` there. A typed option replaces the file's
+  value, unless it reads the same (`typedReadsAsFile`), and then the file's spelling stays.
+- **Triggers refused** (`triggerChecked`, by the trigger's number): what `roll_triggers` refuses on
+  every roll, which is a `triggers` value it cannot iterate (an empty one passes), an item that is
+  not a mapping, an `option_category` Python reads as true that names no mapping in the finished
+  file (it holds `Plex Media` and `requires`), and an `option_name` that cannot roll (an empty
+  list, a weight `int()` cannot read, or weights summing to 0 or less); a trigger without a
+  category on `description` or `requires`, which the bot writes itself; a trigger whose options set
+  a list setting, `entries` or `list_info` under `Plex Media` (keys stripped of their `+` and `-`
+  as `update_weights` strips them), which the picks would not follow; and a game option a trigger
+  sets plainly to a value `fileOption` refuses. What Archipelago reads only when a trigger fires
+  (`percentage`, `option_result`, a malformed `options`) is left to it.
+- **A timer kept random** could roll as low as 1 minute, and a trigger may set one lower, so the
+  build plans the list again at each random timer's lowest roll above 0 and at the lowest value a
+  trigger's options set under `Plex Media` (`triggerTimers`, whatever the trigger compares and
+  whether or not it fires; a `-` key only takes choices away), with `lowestRoll` over the weighted
+  choices, the list or the range. Past 10,000 locations it is refused, naming the lowest
+  `random-range-…` that fits, or the lowest value the trigger should set (`randomTimerProblem`).
+  Two or more such timers are also tried at their lowest together.
+- **Counts.** A count at `preset` (or -1) takes `PRESETS[list_preset][kind]`: 0 for a kind the
+  preset leaves out, and 0 under `none`. All four are passed as numbers, so the command's no-preset
+  default (15 movies) never applies to a file. A file whose counts are all 0 and that names no
+  titles, playlist or collection is refused: "Your list settings pick nothing: choose a preset, set
+  a count, or name titles, a playlist or a collection."
+- **Overrides.** The command's options replace the file's, the name included. A typed `preset`
+  re-resolves the counts the file left at preset, and a typed game option takes the file's random
+  one out of `passthrough` and out of the warning. The name and pick-something checks run after the
+  overrides, so a typed name rescues a file whose name the bot refuses.
+- **Lists from before 0.2.0.** A file with `entries` or `list_info` and no `list_*` key came from
+  the 0.1.0 bot, which saved no list settings, and the defaults would quietly turn it into 15
+  movies. It is refused ("This list comes from an older version of the bot, which did not save
+  what to pick: …") unless the command gives a preset, a count, titles, a playlist or a collection,
+  and then the typed options decide, as without a file. Its `list_info` label carries over unless
+  it is just `<name>'s list` for the name it was built under, or over 100 characters.
+- **The entries are counted and cut before parsing.** After a two-space `entries:` line (a
+  comment may follow it), the block is every line that is blank, a comment, an item (`- ` at one
+  indent of 2 or more: four in the bot's own layout, two as other YAML tools write a sequence) or
+  indented past the items, as an entry written out over several lines is (`withoutEntries`). The
+  bot counts the items and parses the file without the block. Measured on a 337 KB file of 2,000
+  entries: 300 to 410 ms of main thread, which voice playback shares, parsed whole, and 2.6 ms with
+  the block cut, once the module was warm. A line at a setting's indent after the block is kept,
+  and a reply names a line after the cut by its number in the file (`parsePlayerFile`'s `shift`).
+  Any other layout is parsed whole, and so is a block past 2,000 items (`LIMITS.maxEntries`, more
+  than any list holds) or 32,000 lines. Either way the text that is parsed may run to 64 K UTF-16
+  units (`SETTINGS_MAX`; 64 K of small values holds the main thread for about a quarter of a
+  second), and a longer one is refused before parsing. Before that cap, the whole file gets one
+  regex pass for a refused character and one for the entries line, the lines after it are checked
+  without splitting the file, and lone CRs are turned into line breaks only in what is parsed. An
+  8 MB file of line breaks, which took 0.5 to 1.5 s of main thread when the file was split into
+  lines first, and one of a million entry lines, which took 100 to 150 ms when every line was
+  counted, are refused in about 10 ms, as fast as the fullest list the bot writes is read. The cut
+  also takes a line `  entries:` inside a quoted text that runs over lines, which LibYAML reads on,
+  and the file is then refused; neither the Options Creator nor the bot writes one.
+
+**Writing it back.** `validateParams` records `p.list`, the list settings the titles were picked
+with, and `renderYaml` writes them after the twelve game options in every file the bot builds,
+with a file or without: `list_preset` by name, each count as a number or `preset`, the texts as
+JSON strings, `list_unwatched` as true or false, `list_max_episodes`, and `list_label` empty unless
+a label was given, so a copy under another name gets its own. A count equal to what the active
+preset gives is written as `preset`, also when it was given as a number, so it follows a preset
+given later. Built from options alone, counts, titles, a playlist or a collection given without
+`preset:` record `list_preset: none`. The `passthrough` keys come next, each value as one line of
+JSON flow, with a random game option in that option's own place among the twelve. A key stays
+plain when it is an identifier YAML 1.1 does not read as a boolean or null, and is quoted
+otherwise. A setting in `asWritten` is written as its copied line in its own place, among the
+game options or the list settings. `requires` gains `plando:` after `version:` when the file asked
+for one. Then `list_info`, which also records the `slot` the list was built under, and `entries`,
+as before. A passthrough key may never be `entries`, `list_info` or a `list_*` key, nor one also in
+`asWritten`. `build()` and `apworld/tests/fill_creator.js` hand `renderYaml` the same fields
+through `listDoc`. `flowValue` refuses what it cannot write back exactly (a date, a set, binary
+data, an integer past 2^53, a lone surrogate, nesting past 32 levels, a list or a mapping used as
+a key) and writes DEL, the C1 controls (NEL among them), U+2028, U+2029, U+FEFF, U+FFFE and U+FFFF
+as escapes. **Attaching a file the bot wrote rebuilds a fresh list from its recorded settings**,
+and the reply says how many titles it replaced.
+
+**The command** (`commands/apmedia.js/yaml.js`). The slash form's `file` is an `ATTACHMENT` option
+with `omitFromQuery`, read through `options.getAttachment`; the prefix form takes the message's
+first attachment named `.yaml` or `.yml`, else its first `.txt` or text attachment
+(`common.attachmentOf`), so a screenshot or a pasted note beside it is left alone. A player YAML
+pasted into the message text itself, which Discord keeps as text under 2,000 characters
+(`PASTED_YAML`: a line break and a `name:`, `game:`, `description:`, `requires:` or `Plex Media:`
+line, in a code block or not), gets a reply asking for the file instead of a key=value error that
+echoes it. `name` is no longer required in the slash spec, and the
+command asks for one only when no file comes with it. `readAttachment` fetches only `https` URLs
+on `cdn.discordapp.com` or `media.discordapp.net`, refuses an attachment over 8 MB
+(`FILE_MAX_BYTES`, equal to `REPLY_FILE_MAX`, so any list the bot sent can be attached again) by
+its stated size before fetching and again by `Content-Length` and a streamed cap, aborts after
+15 s, refuses redirects, decodes strictly as UTF-8 and drops a byte order mark. The `for:` owner
+gate runs before the download, and the download runs inside the one-build-per-person limit. The
+account and the Discord id always come from the bot. A file whose `list_info` names another
+Discord id, read under the slot it was built under (`listFor`), is refused before the build: a
+fresh pick would read the caller's Plex history and stamp the caller's id on that person's slot.
+The owner adds `for:` for them; anyone may give the list a new name, typed or in the file's
+`name:` line. The owner's own list given to someone else with `for:` is refused with "This is
+your own list.", and a new name builds it for them. The reply adds "📄 Settings from `<file>`",
+with "the options you typed replace the file's" when any were typed, a ♻️ line with how many of
+the file's titles a fresh pick replaced when it had any, and one ⚠️ line naming each game option
+left random by its Creator name and key, with its default. A list built while the person's
+account link waits for consent says that nothing they watched is known yet. Warnings and misses
+go between the summary and the two closing lines, and `fitLines` keeps the whole reply within
+Discord's 2,000 characters by leaving out a line too long to fit and counting the lines it leaves
+out ("… and 6 more lines not shown."), so the next step and the line about the public tracker are
+never clipped. The "Nearest matches taken" warning names pairs up to 10 and about 900 characters
+(`LOOSE_CHARS`). A list the filters leave empty is refused with the warnings that say which
+filter emptied it and the first ten titles not found (`MISSES_SHOWN`), and the account fix says
+when a link waits for the player's consent, with the `unwatched` option spelled as the path takes
+it. Text from a file or the library reaches a warning through `common.esc`, which escapes Markdown
+and masked links and turns `@everyone`/`@here` and the `<` of a mention, a channel (`<#`), a
+command (`</`), a timestamp (`<t:`) or a custom emoji (`<:`, `<a:`) into text. A refusal goes out
+as written, so the library's playlist and collection names it lists are code spans. A finished YAML over 8 MB
+(`REPLY_FILE_MAX`), with a file or without, is refused instead of sent.
+
+**The `yaml` dependency.** `package.json` pins `"yaml": "2.9.1"`, which has no dependencies and no
+install scripts. `npm install --package-lock-only` re-resolved the stale `package-lock.json`, 617
+lines added and 500 removed by `git diff --numstat` against the committed lock, so only yaml's own
+three entries (20 lines) went into it. The package is loaded on first use, so the bot starts
+without it; a file build then answers "The bot cannot read YAML files yet: the owner has to
+install its yaml package (2.9.1).", and builds from the command's options keep working. The
+message names no install command, since a full `npm install` re-resolves the stale lock
+(BUGTESTING's "Environment landmines").
+
+**The version bump.** `world_version` went from 0.1.0 to 0.2.0 in `archipelago.json`,
+`constants.WORLD_VERSION` and `contracts.WORLD_VERSION`; `test/apworldBuild.test.js` holds the
+built file's manifest to the contract. `BUILDER_VERSION` and the slot_data schema stay 1, since
+nothing an id or a name is derived from changed, and the two goldens changed only their
+`world_version` line. Every YAML the bot writes carries `Plex Media: 0.2.0` under
+`requires: game:`, which a 0.1.0 install refuses, so the generating PC and the `!ap next` worker
+need 0.2.0. A seed generated under 0.1.0 rebuilds under 0.2.0 with the same ids and names; its
+rebuilt slot_data says 0.2.0, which no code compares.
+
+**Known limits.** The Creator's Item & Location Options pickers offer the class tables' names,
+`Unlock 1` to `Unlock 20000`, `Check 1` to `Check 60000`, Popcorn, Wild Ticket, Everything and
+Everywhere, because the real names exist only per seed ("Ids, names and the data package").
+Everything and Everywhere translate to the slot's own units and locations, and a numbered name
+stands for the seed's unit or location with that number. Another slot's unlock is dropped with a
+warning, and so is a `Check j` that is not one of the slot's own locations; an `Unlock i` past the
+seed's unlock count stops generation with an `OptionError` naming the player, the option and the
+name (`_real_items` in `__init__.py`; scenario C pins all three). A Launcher template weights every
+option with one choice above 0, which the bot reads as that choice, and its `Player{number}` name
+is refused unless the file or the command gives another. The tests copy the Creator's rules from
+its 0.6.8 build, so a later Archipelago could change them unnoticed until they are copied again.
 
 ### Lifecycle and health
 
@@ -2219,16 +2602,26 @@ build and the `!ap next` worker run with: `-O` because the install was compiled 
 `-s -S` so nothing installed into that Python shadows what `library.zip` ships, `-B` so nothing is
 compiled into `apworld/plex_media`. `test_pure.py` always runs: entries, the plan, the registry,
 naming, slot_data, the data package and the rules, with no Archipelago imports, plus checks that
-`constants.py` still mirrors `apMediaContracts.js` and that `plan_cases.json` has not drifted. When
+`constants.py` still mirrors `apMediaContracts.js` (list settings and presets included), that the
+list settings move no id, name or slot_data, that `plan_cases.json` has not drifted, and that
+`run.py` loads and runs every test file that holds scenarios. When
 `C:\ProgramData\Archipelago` exists, `run.py` builds `dist/plex_media.apworld` with node and
 `test_generate.py` generates real seeds with it, one at a time, through `ap_harness.py`, which
 bootstraps the frozen install the way the worker does into a temp root (its own `host.yaml`,
 `user_path` and `AP_TEST_WORLDS`) that `run.py` removes afterwards, since outputs embed
-`host.yaml`'s server options; `test_e2e.py` runs after it in the same root. Nothing is written into
-the install. The scenarios, picked with `--only` by class-name prefix across both files:
+`host.yaml`'s server options; `test_e2e.py` and `test_creator.py` run after it in the same root.
+Nothing is written into the install. The scenarios, picked with `--only` by the part of the class
+name before its first underscore across the three files (`--only A` runs the two `A_` classes, and
+neither `A0` nor `A1`):
 
-- `A0`: Archipelago loaded the built file, which passes the Launcher's Install APWorld check, and
-  its options match the table.
+- `A0`: Archipelago loaded the built file, which passes the Launcher's Install APWorld check; its
+  game options and list settings match the tables, each timer reads an unquoted `off` as off, and
+  no tooltip names an option by its YAML key.
+- `A1`: the Options Creator's rules, copied from `OptionsCreator.py` and `optionscreator.kv` of
+  the 0.6.8 build: the groups and a widget for every game option and list setting, with `entries`
+  and `list_info` hidden; what an untouched form exports; the counts taken by name and by number;
+  and a Creator export and the Launcher's own template, rolled through `Generate.roll_settings`,
+  stopping at the "no titles yet" message and rolling once entries are added.
 - `A`: two solo lists, the committed builder-1 fixture YAML and a list `helpers/apMediaYaml.js`'s
   `renderYaml` wrote, through `node -e`.
 - `B`: every kind with every timer; its slot_data is the JavaScript side's golden file.
@@ -2249,13 +2642,35 @@ the install. The scenarios, picked with `--only` by class-name prefix across bot
   room, the locked title's checks must stay banked until its unlock arrives through the multiworld,
   the room must record the goal, the relay must never post the game client's own join or leave,
   and nothing may land in `data/`.
+- `H`, the list settings and the Options Creator. `H_ListSettingsIgnored` (`test_generate.py`)
+  generates one list twice, once with all thirteen list settings changed, and requires the same
+  seed. `H_CreatorFiles` (`test_creator.py`) makes three files with Archipelago's own
+  `Utils.dump`, the way the Creator would export them: an untouched form, one with eight changes,
+  and one whose texts are long enough for `Utils.dump` to wrap in each of its quoting styles. They
+  must equal `apworld/tests/fixtures/options_creator_*.yaml` byte for byte on LF. Unfilled, the
+  first two stop generation at the "no titles yet" message. `apworld/tests/fill_creator.js` fills them
+  through the real `readPlayerYaml`, `validateParams` and `renderYaml`, with
+  `builder1_mixed.yaml`'s titles where the Plex picks go, and the filled pair generates together:
+  each slot_data holds those titles, every Creator setting reads in Archipelago as it did in the
+  Creator's file (the random one rolled by Archipelago), the seed passes the checks below,
+  regenerates identically under another `PYTHONHASHSEED`, and the `!ap next` worker rebuilds and
+  verifies it. `apworld/tests/fixtures/launcher_template.yaml` is the Launcher's template as
+  `Options.generate_yaml_templates` writes it, held byte for byte the same way; renamed and saved
+  with a byte order mark and CRLF, it fills into a file `Generate.roll_settings` reads with every
+  option at its default. Four hand edits the bot keeps (a float key after its `+` twin, a `+` key
+  inside `triggers`, one weighted choice, CR CR LF line ends) fill into files Archipelago's loader
+  reads the way it reads the edits. A trigger on the albums timer's `'off'` fires in the filled
+  file as in the player's own under `Generate.roll_settings`, and a file whose `requires` asks for
+  `plando: items` stops both files on a host without item plando and rolls the same
+  `plando_items` in both with it.
 
 Every seed of A to F must ship a data package of real names that passes the copy of
 archipelago.gg's upload check, let MultiServer resolve a title by name, keep every slot_data id
 among its own slot's locations or starting items, show titles in its spoiler, keep the excluded
 checkpoints to filler, give each location its own unit's rule, and keep the goal counter in step
-through `collect` and `remove`. `--pure` stops after `test_pure.py`, and `--update-golden` rewrites
-the two golden files instead of comparing them. `make_plan_cases.py` regenerates
+through `collect` and `remove`, and so must H's seeds. `--pure` stops after `test_pure.py`, and
+`--update-golden` rewrites the golden files instead of comparing them: `builder1_mixed.expect.json`,
+scenario B's slot_data and the three Options Creator exports. `make_plan_cases.py` regenerates
 `test/fixtures/apmedia/plan_cases.json`, which `test/apMediaPlan.test.js` checks the JavaScript plan
 against.
 
@@ -2268,14 +2683,27 @@ monitor and fake Discord, and timers fired by hand. `test/fixtures/apmediaPlex/`
 library in Plex's JSON shapes, string rating keys and late history rows included, served through a
 fake fetch. Every store env var points at a temp path, as in every other test.
 
+A player's own file has three test files. `test/apMediaYaml.test.js` reads files shaped like the
+Creator's export (`test/fixtures/apmedia/creatorYaml.js`, held to the keys and order of the
+fixture Archipelago wrote) and like the bot's own, through every refusal, PyYAML's scalars, the
+spellings Archipelago reads, the command's overrides, the lists from before 0.2.0 and the copied
+settings written back, beside the mirror tests above. `test/apMediaCreatorFile.test.js` pins
+`readPlayerYaml`'s exact result for the three Creator fixtures, read from LF, from CRLF and with a
+byte order mark, checks that `fill_creator.js` writes the header, setting lines and `list_info`
+that `build()` writes for the same file, and reads each filled file back to the settings it came
+from. `test/apMediaCommand.test.js` covers the attachment: the slash and prefix forms, the owner
+gate and the one-build-per-person limit around the download, and the download's limits on mock
+timers. These, and scenario H, need the `yaml` package in `node_modules`.
+
 **Known gaps**, each accepted or waiting on Phase 17: a `!seek` splits a voice listen and each part
 is judged against the 85% alone for the track (the checkpoints each part played past count either
 way); the seconds between a session's last poll and its stop, and before its first sight, cannot be
 read back from `/status/sessions`; in strict mode, completing a one-part book still earns its
 checkpoints, since the part's span covers them; a stopped music player whose late Idle comes after a
 newer run started reports nothing; the session field shapes and an archipelago.gg upload are
-unverified; and DMs with buttons, `editReply` with an attachment and an ephemeral page turn have only
-met fakes.
+unverified; the Options Creator's window has not been driven, only its rules copied from the 0.6.8
+build; and DMs with buttons, `editReply` with an attachment, an attachment downloaded from
+Discord's file server and an ephemeral page turn have only met fakes.
 
 ---
 
@@ -4671,7 +5099,7 @@ The read-along tests add `PLEXBOT_BOOK_TEXT_DIR` and its three `PLEXBOT_BOOK_TEX
 
 The read-along pictures tests add `PLEXBOT_BOOK_PICTURES_FILE`. `test/helpers/fakePdfTools.js` stands in for Calibre's poppler tools and ffmpeg (`node fakePdfTools.js <pdftotext|pdftoppm|ffmpeg|xpdf> ...`): the "PDF" is a JSON spec written by `writeFakePdf(file, { mode, pages })`, with modes `ok`, `damaged`, `encrypted` (exit 1, as Calibre's poppler gives for a password, with an `/Encrypt` trailer entry in the file), `no-text`, `hang` and `hang-tree` and per-page `failPages` and `hangPages`; `fakeTools()` gives the `{ exe, args }` tools a job takes, and ffmpeg reads its spec from `--fake-spec`. `test/bookPicturesWorker.test.js` forks real children, one of them through the real scan and alignment on a 7-page fake PDF; its stretched time cap runs on a fake fork under `node:test` mock timers (`setTimeout` and `Date`), so 55 minutes pass in milliseconds. The scan and alignment tests typeset a generated book in two columns (`test/fixtures/bookPictures/synth.js`), so no real book text is used.
 
-The Plex Media tests add `PLEXBOT_APMEDIA_SLOTS_FILE`, `PLEXBOT_APMEDIA_ACCOUNTS_FILE`, `PLEXBOT_APMEDIA_MARKS_FILE` and `PLEXBOT_APMEDIA_CACHE_DIR` where a test needs the store on disk; without them it is memory-only. The game client runs against `test/helpers/apMediaServer.js`, a stand-in room for game clients beside `apServer.js`'s observer one, and Plex is `test/fixtures/apmediaPlex/`'s invented library behind a fake fetch. The world itself is tested in Python by `npm run test:apworld`, which `npm test` does not run: it needs `py -3.13`, and its frozen-Archipelago half needs the install at `C:\ProgramData\Archipelago`. Its scenario G also runs `apworld/tests/e2e_bot.test.js`, the bot's side against a real MultiServer, which sits outside `test/` and so outside `npm test`. See "Testing it" under "Plex Media world (Archipelago)".
+The Plex Media tests add `PLEXBOT_APMEDIA_SLOTS_FILE`, `PLEXBOT_APMEDIA_ACCOUNTS_FILE`, `PLEXBOT_APMEDIA_MARKS_FILE` and `PLEXBOT_APMEDIA_CACHE_DIR` where a test needs the store on disk; without them it is memory-only. The game client runs against `test/helpers/apMediaServer.js`, a stand-in room for game clients beside `apServer.js`'s observer one, and Plex is `test/fixtures/apmediaPlex/`'s invented library behind a fake fetch. The world itself is tested in Python by `npm run test:apworld`, which `npm test` does not run: it needs `py -3.13`, and its frozen-Archipelago half needs the install at `C:\ProgramData\Archipelago`. Its scenario G also runs `apworld/tests/e2e_bot.test.js`, the bot's side against a real MultiServer, and its scenario H runs `apworld/tests/fill_creator.js`; both sit outside `test/` and so outside `npm test`. The tests that read a player's own YAML, in `npm test` and in scenario H, need the `yaml` package in `node_modules`. See "Testing it" under "Plex Media world (Archipelago)".
 
 ---
 
@@ -4889,4 +5317,4 @@ them as a transcript, with `--errors`, `--command=`, `--user=`, `--since=`, `--n
 | Plex Media world (the apworld)   | `apworld/plex_media/`, `npm run build:apworld`, `/apmedia apworld` | `helpers/apworldBuild.js`; `apworld/tests/` (`npm run test:apworld`) |
 | Plex Media world (in the bot)    | `commands/apmedia.js/`, the `apmedia:*` buttons, `apMediaGame.start()` in `app/music.js` | `helpers/apMediaGame.js` (orchestrator), `apMediaClient.js`, `apMediaCredit.js`, `apMediaStore.js`, `apMediaButtons.js`; `apMediaContracts.js` |
 | Plex Media credit sources        | Plex history and sessions, `track-heard` in `app/bot.js`, the book engine | `helpers/apMediaWatch.js` (with `apMediaPlex.js`), `apMediaVoice.js`, `apMediaBooks.js` |
-| Plex Media lists                 | `/apmedia yaml` (`commands/apmedia.js/yaml.js`) | `helpers/apMediaYaml.js`, `apMediaPlan.js`, `apMediaPlex.js` |
+| Plex Media lists                 | `/apmedia yaml` (`commands/apmedia.js/yaml.js`), with or without an Options Creator file | `helpers/apMediaYaml.js` (`readPlayerYaml` for a file, through the `yaml` package), `apMediaPlan.js`, `apMediaPlex.js` |

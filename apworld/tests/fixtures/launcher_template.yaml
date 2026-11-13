@@ -1,0 +1,370 @@
+# Q. What is this file?
+# A. This file contains options which allow you to configure your multiworld experience while allowing
+#    others to play how they want as well.
+#
+# Q. How do I use it?
+# A. The options in this file are weighted. This means the higher number you assign to a value, the
+#    more chances you have for that option to be chosen. For example, an option like this:
+#
+#    map_shuffle:
+#      on: 5
+#      off: 15
+#
+#    Means you have 5 chances for map shuffle to occur, and 15 chances for map shuffle to be turned
+#    off.
+#
+# Q. I've never seen a file like this before. What characters am I allowed to use?
+# A. This is a .yaml file. You are allowed to use most characters.
+#    To test if your yaml is valid or not, you can use this website:
+#        http://www.yamllint.com/
+#    You can also verify that your Archipelago options are valid at this site:
+#        https://archipelago.gg/check
+
+# Your name in-game, limited to 16 characters.
+#     {player} will be replaced with the player's slot number.
+#     {PLAYER} will be replaced with the player's slot number, if that slot number is greater than 1.
+#     {number} will be replaced with the counter value of the name.
+#     {NUMBER} will be replaced with the counter value of the name, if the counter value is greater than 1.
+name: Player{number}
+
+# Used to describe your yaml. Useful if you have multiple files.
+description: Default Plex Media Template
+
+game: Plex Media
+requires:
+  version: 0.6.8 # Version of Archipelago required for this yaml to work as expected.
+  game:
+    Plex Media: 0.2.0 # Version of the world required for this yaml to work as expected.
+
+Plex Media:
+  ################
+  # Game Options #
+  ################
+  progression_balancing:
+    # A system that can move progression earlier, to try and prevent the player from getting stuck and bored early.
+    # 
+    # A lower setting means more getting stuck. A higher setting means less getting stuck.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 99
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-99: 0 # random value between 0 and 99
+    disabled: 0 # equivalent to 0
+    normal: 50 # equivalent to 50
+    extreme: 0 # equivalent to 99
+
+  accessibility:
+    # Set rules for reachability of your items/locations.
+    # 
+    # **Full:** ensure everything can be reached and acquired.
+    # 
+    # **Minimal:** ensure what is needed to reach your goal can be acquired.
+    # 
+    # **Items:** ensure all logically relevant items can be acquired. Some items, such as keys, may be self-locking, and
+    # some locations may be inaccessible.
+    full: 0
+    minimal: 0
+    items: 50
+
+  ########################################
+  # Your list (the bot picks the titles) #
+  ########################################
+  list_preset:
+    # The bot reads this when it fills in your titles (/apmedia yaml): List: Movies, List: Shows, List: Albums and List: Audiobooks take their numbers from here while they are left at Preset, and a kind the preset leaves out gets 0.
+    # movies: 15 movies
+    # tv: 3 shows
+    # music: 10 albums
+    # books: 3 audiobooks
+    # mixed: 6 movies, 1 show, 4 albums and 1 audiobook
+    # none: 0 of each, so the list holds only the counts you set and the titles, playlist or collection you name
+    movies: 50
+    tv: 0
+    music: 0
+    books: 0
+    mixed: 0
+    none: 0
+
+  list_movies:
+    # The bot reads this when it fills in your titles (/apmedia yaml): how many movies the list holds in
+    # all. Movies you name in List: Titles, List: Playlist or List: Collection count toward it, and the bot
+    # picks the rest at random. Left at Preset, the number comes from List: Preset.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 200
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-200: 0 # random value between 0 and 200
+    preset: 50 # equivalent to -1
+
+  list_shows:
+    # The bot reads this when it fills in your titles (/apmedia yaml): how many TV shows the list holds in
+    # all. Shows you name count toward it, and the bot picks the rest at random, taking up to
+    # List: Episodes per Show episodes from each. Left at Preset, the number comes from List: Preset.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-50: 0 # random value between 0 and 50
+    preset: 50 # equivalent to -1
+
+  list_albums:
+    # The bot reads this when it fills in your titles (/apmedia yaml): how many music albums the list
+    # holds in all. Albums you name count toward it, and the bot picks the rest at random. Left at Preset,
+    # the number comes from List: Preset.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 200
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-200: 0 # random value between 0 and 200
+    preset: 50 # equivalent to -1
+
+  list_books:
+    # The bot reads this when it fills in your titles (/apmedia yaml): how many audiobooks the list holds
+    # in all. Audiobooks you name count toward it, and the bot picks the rest at random. Left at Preset, the
+    # number comes from List: Preset.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-50: 0 # random value between 0 and 50
+    preset: 50 # equivalent to -1
+
+  list_titles:
+    # The bot reads this when it fills in your titles (/apmedia yaml): titles to put on the list, split
+    # by semicolons, as in Alien; Aliens. Start one with movie:, show:, album: or book: to say what it is,
+    # add a year to pick one film, as in Halloween (2018), and give a show's seasons as show: Lost S1-2.
+    # At most 50 titles.
+    '': 50
+
+  list_playlist:
+    # The bot reads this when it fills in your titles (/apmedia yaml): a Plex playlist, by name, whose
+    # titles go on the list in the playlist's order. A music playlist goes on in parts of 15 tracks.
+    '': 50
+
+  list_collection:
+    # The bot reads this when it fills in your titles (/apmedia yaml): a Plex movie or TV collection, by
+    # name, whose titles go on the list.
+    '': 50
+
+  list_genre:
+    # The bot reads this when it fills in your titles (/apmedia yaml): random picks come only from this
+    # genre, such as Horror or Jazz. Titles you name go on the list whatever their genre.
+    '': 50
+
+  list_years:
+    # The bot reads this when it fills in your titles (/apmedia yaml): random picks come only from these
+    # years, written as 1999 or 1990-1999. Audiobooks ignore it.
+    '': 50
+
+  list_unwatched:
+    # The bot reads this when it fills in your titles (/apmedia yaml): leave out the movies and episodes
+    # you have watched and the audiobooks you finished from the random picks, a collection, a video
+    # playlist and the shows you name without seasons, and start each show at your first unwatched
+    # episode. Movies, audiobooks and seasons you name in List: Titles stay on the list whole. Leaving out
+    # what you watched needs your Plex account, linked by the server owner with /apmedia account; finished
+    # audiobooks come from the bot's bookmarks.
+    'false': 0
+    'true': 50
+
+  list_max_episodes:
+    # The bot reads this when it fills in your titles (/apmedia yaml): the most episodes it takes from
+    # one show, in order. With List: Unwatched Only on, it starts at your first unwatched episode and
+    # skips the ones you watched. It applies to random shows, the shows of a collection, and shows you
+    # name without seasons.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 1
+    # Maximum value is 500
+    24: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-1-500: 0 # random value between 1 and 500
+
+  list_label:
+    # The bot reads this when it fills in your titles (/apmedia yaml): the list's name, which the bot
+    # shows in its messages. Left empty, the list is called "<your name>'s list".
+    '': 50
+
+  ####################
+  # Unlocks and goal #
+  ####################
+  starting_unlocks:
+    # Unlocks you start with. A long list starts with at least one per 50 unlocks, and at least one
+    # unlock is always left for the multiworld to send.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 1
+    # Maximum value is 50
+    3: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-1-50: 0 # random value between 1 and 50
+
+  goal_percent:
+    # Percent of the list to finish for your goal (rounded down, at least one title).
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 1
+    # Maximum value is 100
+    80: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-1-100: 0 # random value between 1 and 100
+
+  tv_unlock:
+    # What one show unlock opens: the next few episodes, or the next season.
+    episodes: 50
+    season: 0
+
+  episodes_per_unlock:
+    # Episodes one show unlock opens, when TV Unlock is episodes.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 1
+    # Maximum value is 12
+    3: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-1-12: 0 # random value between 1 and 12
+
+  locked_watches:
+    # What happens to a title you finish before it is unlocked. bank: its checks wait and are sent when the
+    # unlock arrives. ignore: nothing is sent, so watch it again later.
+    bank: 50
+    ignore: 0
+
+  wild_tickets:
+    # Wild Tickets in the pool. Each one unlocks any locked title of your choice (one step of a show).
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 20
+    2: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-20: 0 # random value between 0 and 20
+
+  ##############
+  # Timesanity #
+  ##############
+  checkpoint_items:
+    # What timesanity checkpoints may hold. filler_only keeps every unlock and useful item off them, so
+    # nobody waits on someone else reaching the middle of a film.
+    filler_only: 50
+    anything: 0
+
+  timesanity_strict:
+    # When off, finishing a title also earns every checkpoint inside it, so a watch the bot could not
+    # follow live still pays out. When on, a checkpoint is earned only by playing past it.
+    'false': 50
+    'true': 0
+
+  timesanity_movies:
+    # Minutes between checkpoints inside each movie (off: none). None fall in the last 10% of a title.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 240
+    15: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-240: 0 # random value between 0 and 240
+    off: 0 # equivalent to 0
+
+  timesanity_episodes:
+    # Minutes between checkpoints inside each episode (off: none).
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 240
+    10: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-240: 0 # random value between 0 and 240
+    off: 0 # equivalent to 0
+
+  timesanity_albums:
+    # Minutes between checkpoints inside each album or playlist (off: none). Every track of 30 s or more
+    # already has a check of its own.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 240
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-240: 0 # random value between 0 and 240
+    off: 50 # equivalent to 0
+
+  timesanity_books:
+    # Minutes between checkpoints inside each audiobook (off: none).
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 1440
+    30: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-1440: 0 # random value between 0 and 1440
+    off: 0 # equivalent to 0
+
+  ###########################
+  # Item & Location Options #
+  ###########################
+  local_items:
+    # Forces these items to be in their native world.
+    []
+
+  non_local_items:
+    # Forces these items to be outside their native world.
+    []
+
+  start_inventory:
+    # Start with the specified amount of these items. Example: {Bomb: 1, Arrow: 3}
+    {}
+
+  start_hints:
+    # Start with these item's locations prefilled into the ``!hint`` command.
+    []
+
+  start_location_hints:
+    # Start with these locations and their item prefilled into the ``!hint`` command.
+    []
+
+  exclude_locations:
+    # Prevent these locations from having an important item.
+    []
+
+  priority_locations:
+    # Prevent these locations from having an unimportant item.
+    []
+
+  item_links:
+    # Share part of your item pool with other players.
+    []
+
+  plando_items:
+    # Generic items plando.
+    []

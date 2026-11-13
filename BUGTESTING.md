@@ -13,8 +13,8 @@ read-along's MOBI and AZW3 conversion and of `audiobookControls`, who may use a 
 is the first live pass of chapter markers inside single-file books, Phase 15 of the read-along's
 pictures from a scanned PDF, Phase 16 of `!ap next` loading when its room connects, from the
 bot's own copy of the seed, with pages and ⭐ hints, and Phase 17 of the Plex Media world: an
-Archipelago game made from the Plex library, with its accounts and consent, every way a play is
-counted, and an upload to archipelago.gg.
+Archipelago game made from the Plex library, with its accounts and consent, lists made in the
+Archipelago Options Creator, every way a play is counted, and an upload to archipelago.gg.
 
 The bot now persists its own logs to `data/logs/`, so a failure you didn't happen to be watching
 is still there afterwards:
@@ -114,8 +114,9 @@ without an argument but declares no option to supply one, the bug that shipped t
 audiobook suite it also checks that every choice value matches its option's type (a number on a
 STRING option takes down the whole registration), choice names of 1–100 characters, choices and
 autocomplete only on STRING, INTEGER or NUMBER, and Discord's 4,000-character budget per command.
-All 57 specs passed on 2026-11-12, 35,123 bytes of registration payload: the largest is `/book`
-at 2,917 characters (24 subcommands), then `/apmedia` at 2,794 (11) and `/ap` at 2,783 (22).
+All 57 specs passed on 2026-11-12, 35,367 bytes of registration payload: the largest is
+`/apmedia` at 2,958 characters (11 subcommands), then `/book` at 2,917 (24) and `/ap` at 2,783
+(22).
 
 - [ ] New/edited `slash:` block → re-run the validator.
 - [ ] Renamed or deleted a command → confirm the stale one disappeared from the picker (the `set()`
@@ -1166,13 +1167,21 @@ unverified, and no seed has been uploaded to archipelago.gg. Watch the bot log
 (`data/logs/bot-<date>.log`; Plex Bot Status shows its tail) for `Plex Media` lines, and
 `npm run logs -- --raw` for `apmedia-*` events.
 
+World 0.2.0 (2026-11-12) added the list settings that let a player start a YAML in the Archipelago
+Options Creator and attach it to `/apmedia yaml`. Its tests copy the Creator's rules from the
+0.6.8 build (`OptionsCreator.py` and `data/optionscreator.kv`), make the files it would export with
+Archipelago's own code, fill them in through the bot's real reader, and generate them with the
+frozen Archipelago. Nobody has opened the Creator's window with this world installed, or attached
+a file to the bot in Discord, yet.
+
 You need `ownerId` set, a second Discord account (Friend) with a Plex account of its own on this
-server (a shared or a managed user), and a third (Other) with none. The steps build three test
-seeds on this PC from folders of their own, so the real `Players` folder stays as it is, and host
-them one at a time on port 38281 with `ArchipelagoServer.exe` from `C:\ProgramData\Archipelago`,
-whose window takes server commands (`/send`, `/option`). They run on a watch of their own,
-added with `!ap watch` (its id is N below), so the room `/config` names keeps relaying your real
-game.
+server (a shared or a managed user), and a third (Other) with none. The Options Creator steps need
+Archipelago 0.6.8's Options Creator on this PC and the `yaml` package in the bot's `node_modules`.
+The steps build three test seeds on this PC from folders of their own, so the real `Players`
+folder stays as it is, and host them one at a time on port 38281 with `ArchipelagoServer.exe`
+from `C:\ProgramData\Archipelago`, whose window takes server commands (`/send`, `/option`). They
+run on a watch of their own, added with `!ap watch` (its id is N below), so the room `/config`
+names keeps relaying your real game.
 
 **Turning it on, and the apworld**
 
@@ -1188,16 +1197,21 @@ game.
       `!diag` shows `⚠ ApMedia: needs the Archipelago monitor (archipelagoEnabled is off): …`. Turn
       it back on: `!diag` is ✓ again.
 - [ ] Other runs `/apmedia apworld`: "⛔ Only the bot owner can hand out the apworld.", in public,
-      as every `apworld` reply is. You run it with nothing installed yet: `plex_media.apworld`
-      attached, "for Archipelago 0.6.8 or later", the install steps, and "This PC has no
-      plex_media.apworld installed yet (Archipelago's custom_worlds folder)."
+      as every `apworld` reply is. You run it: `plex_media.apworld` attached, "the Plex Media world
+      0.2.0 (N KB), for Archipelago 0.6.8 or later.", the install steps, and "This PC has no
+      plex_media.apworld installed yet (Archipelago's custom_worlds folder)." Where an earlier
+      pass installed world 0.1.0, the last line is "⚠️ This PC has world 0.1.0 installed, and
+      this file is 0.2.0: install it to bring the PC up to date." instead.
 - [ ] Install it (Archipelago Launcher → **Install APWorld**, then restart the Launcher).
-      `/apmedia apworld` again: "This PC already has world 0.1.0 installed."
-- [ ] Another version: close every Archipelago program, then from the bot's folder run
-      `node -e "require('./helpers/apworldBuild.js').writeApworld('C:/ProgramData/Archipelago/custom_worlds/plex_media.apworld', { worldVersion: '0.0.9' })"`.
-      `/apmedia apworld`: "⚠️ This PC has world 0.0.9 installed, and this file is 0.1.0: install
-      it to bring the PC up to date." Install the attached file over it; the next `/apmedia
-      apworld` says 0.1.0 again.
+      `/apmedia apworld` again: "This PC already has world 0.2.0 installed."
+- [ ] An older version: close every Archipelago program, then from the bot's folder run
+      `node -e "require('./helpers/apworldBuild.js').writeApworld('C:/ProgramData/Archipelago/custom_worlds/plex_media.apworld', { worldVersion: '0.1.0' })"`.
+      `/apmedia apworld`: "⚠️ This PC has world 0.1.0 installed, and this file is 0.2.0: install
+      it to bring the PC up to date." `/apmedia yaml name:VersionCheck`, and generate a folder
+      holding only `VersionCheck.yaml`. Generation stops, and its error holds
+      `Settings reports required version of world "Plex Media" is at least 0.2.0`. Install the
+      attached apworld over it: the next `/apmedia apworld` says 0.2.0 again, and the same folder
+      generates.
 
 **Accounts and consent**
 
@@ -1230,6 +1244,131 @@ game.
       you "(as the server owner)". With `shared:True`, Other is linked, waiting, and their
       DM says the account is also linked to <@Friend>. `/apmedia account user:@Other plex:none`.
 
+**Lists from the Options Creator**
+
+- [ ] In the bot's folder, `node -p "require('yaml/package.json').version"` prints `2.9.1`.
+      Without the package, every attached file gets "❌ The bot cannot read YAML files yet: the
+      owner has to install its yaml package (2.9.1).", and lists built from the command's options
+      still work.
+- [ ] `/apmedia yaml` with no option at all: "Give the list a slot name: `!apmedia yaml name=You
+      movies=10`, or attach a YAML from the Archipelago Options Creator. Options: …"
+- [ ] Archipelago Launcher → **Options Creator**. Plex Media is in its game list. Pick it: the
+      label above Export Options reads "Game: Plex Media", and the form has five groups, in this
+      order: Game Options, Your list (the bot picks the titles), Unlocks and goal, Timesanity, and
+      Item & Location Options.
+- [ ] Open the three Plex Media groups. Every option in them has a control, and none reads "This
+      option isn't supported by the option creator." Your list holds List: Preset, List: Movies,
+      List: Shows, List: Albums, List: Audiobooks, List: Titles, List: Playlist, List: Collection,
+      List: Genre, List: Years, List: Unwatched Only, List: Episodes per Show and List: Name, in
+      that order, and Entries and List Info are in no group. Each list setting's tooltip starts
+      "The bot reads this when it fills in your titles (/apmedia yaml):", and List: Preset's gives
+      each of the six presets a line of its own.
+- [ ] The four counts each show -1 beside a slider at its left end, and a button reading Preset.
+      Drag List: Movies' slider right: the number follows it and the button reads Custom. Drag it
+      back to the left end: 0 and Custom. Choose Preset from the button: -1 and Preset again.
+- [ ] Item & Location Options → Local Items → Edit: searching finds `Unlock 1`, `Wild Ticket` and
+      `Everything`, and never a title.
+- [ ] Player Name `CreatorFan`, nothing else touched: **Export Options**, saved as
+      `CreatorFan.yaml`, gives "File saved successfully." The file has no `requires` and no
+      `entries`, and line endings aside it equals
+      `apworld/tests/fixtures/options_creator_default.yaml` apart from its `name:` line.
+- [ ] Put `CreatorFan.yaml` alone in a folder of its own and generate it
+      (`ArchipelagoGenerate.exe --player_files_path <folder>`). Generation stops, and its error
+      holds "Plex Media list of CreatorFan: this YAML has no titles yet. Attach it to /apmedia yaml
+      in Discord, and the bot picks them from the Plex library."
+- [ ] `/apmedia yaml file:CreatorFan.yaml`: a private reply, "📝 `CreatorFan`: your list, attached
+      as `CreatorFan.yaml`.", 15 movies, "📄 Settings from `CreatorFan.yaml`.", and no line about a
+      random option. In the returned file, `requires` names `Plex Media: 0.2.0`, the 13 list
+      settings follow the 12 game options (`list_preset: movies`, each count `preset`), then come
+      `progression_balancing: "normal"`, `accessibility: "items"` and the empty item and location
+      options, then `list_info` and 15 entries. Generated alone in a folder of its own, it gives no
+      Plex Media error.
+- [ ] In a channel, `!apmedia yaml` with `CreatorFan.yaml` attached to the message: a public reply
+      with a list built the same way.
+- [ ] A custom file. In the Creator: Player Name `CreatorMix`, List: Preset `mixed`, List: Movies
+      4, two movie titles from the library in List: Titles split by `;`, List: Unwatched Only off,
+      List: Name `Movie night`, Random? on for Goal Percent, Timesanity: Movies set to Off from its
+      button, and Progression Balancing at 30. Export `CreatorMix.yaml` and attach it to
+      `/apmedia yaml`. The reply counts 4 movies, both named ones among them, 4 albums and 1 book
+      beside one show's episodes, and has "⚠️ Left random in your file for Archipelago to roll: Goal
+      Percent (`goal_percent`), default 80. The numbers above use the default." The returned file has
+      `goal_percent: "random"`, `timesanity_movies: 0`, `list_preset: mixed`, `list_movies: 4`,
+      `list_shows: preset`, `list_unwatched: false`, `list_label: "Movie night"`, and after the list
+      settings `progression_balancing: 30`. Its first line starts
+      `# Movie night: Plex Media list built`, and its third reads "# goal_percent stays random until
+      Archipelago rolls it: the line above plans it at 80".
+- [ ] `/apmedia yaml file:CreatorMix.yaml name:CreatorTwo movies:2 goal-percent:50`: "📄 Settings
+      from `CreatorMix.yaml`; the options you typed replace the file's.", attached as
+      `CreatorTwo.yaml`, whose only movies are the two named ones, with no line about a random
+      option and `goal_percent: 50` in the file.
+- [ ] Attach the returned `CreatorMix.yaml`, the bot's file, to `/apmedia yaml`: "♻️ The file's N
+      titles were replaced by a fresh pick from Plex.", N being its entry count, and every line from
+      `Plex Media:` down to `list_info` equals the attached file's.
+- [ ] Refusals, each file attached to `/apmedia yaml`. A Creator file with Random? on for List:
+      Movies: "❌ List: Movies (`list_movies`) is random: set a number, the bot needs it to pick
+      titles." One with Random? on for List: Movies and List: Shows names both in one reply. One
+      with List: Preset `none`, every count at Preset and nothing named: "❌ Your list settings pick
+      nothing: choose a preset, set a count, or name titles, a playlist or a collection." A
+      ChecksFinder YAML from the Creator, with its `ChecksFinder:` settings: "❌ The file's game is
+      `ChecksFinder`, and the bot fills in Plex Media lists only."
+- [ ] A Creator file with Random? on for Timesanity: Episodes, and List: Titles naming a show with
+      all its seasons (`show: <name> S1-<last>`) whose episodes run 190 hours or more in all, such
+      as 520 episodes of 22 minutes: "❌ Timesanity: Episodes (`timesanity_episodes`) is random in
+      your file, and a roll of 1 would make N locations (at most 10000): set a number, or use
+      random-range-K-240." The same file with `time-episodes:10` typed is accepted. Named without
+      its seasons, the show stops at List: Episodes per Show (24) and the file is accepted as it is.
+- [ ] A Creator file with List: Playlist set to `Random`, on a server with no playlist called
+      exactly Random: "❌ No playlist called `Random`." and the server's playlists, even when one
+      is called Random Hits.
+- [ ] A Creator file naming the start of a title in List: Titles, such as `Alie` for Alien: the
+      list has the film, and the reply says "Nearest matches taken: "Alie" as Alien (1979)."
+- [ ] Launcher → **Generate Template Options**, then attach `Plex Media.yaml` from
+      `Players\Templates`, the folder it opens: "❌ The name cannot contain {, } or %. That is the
+      name in the file: give the slot another with the name option." With `name:TemplateFan`
+      typed: 15 movies, as from an untouched Creator form, with no line about a random option, and
+      the returned file has `goal_percent: 80` and `list_preset: movies` as plain values.
+- [ ] Owner: attach a list the bot built for a friend (their returned file) with nothing typed:
+      "❌ This list was built for @Friend. To pick it again for them, add `for:@them`. To make it
+      a list of your own, give it a new name with `name:Name`." With `for:@Friend` it builds for
+      them. The friend attaching it themselves gets a fresh pick. Another player who changes the
+      file's `name:` line to their own name and attaches it gets their own list.
+- [ ] Owner: attach your own returned list with `for:@Friend`: "❌ This is your own list. To build
+      a new list for @Friend from it, give it a new name with `name:Name`."
+- [ ] A friend whose Plex account link waits for their consent: `/apmedia yaml name:Friend`
+      replies "❌ Leaving out what you have already watched needs your Plex account, and its link
+      waits for you to accept it in the bot's DM (or ask the owner to link it again). Or build the
+      list with `unwatched:false`." `/apmedia yaml name:Friend titles:<a show>` builds, with "⚠️
+      Your Plex account link waits for you to accept it in the bot's DM: until you do, the bot
+      knows nothing you watched." and "⚠️ <show> starts at its first episode: the bot knows nothing
+      you have watched."
+- [ ] `!apmedia yaml name=Shot movies=2` with a screenshot attached: a list of 2 movies, the
+      screenshot left alone. `!apmedia yaml` with a short note pasted as `message.txt` and a
+      Creator file attached after it: the reply says "Settings from" the Creator file.
+- [ ] Paste a Creator file's text into a `!apmedia yaml` message instead of attaching it: "❌ The
+      bot reads a YAML only as a file: drag the file into Discord with `!apmedia yaml` as its
+      message, or use `/apmedia yaml file:`."
+- [ ] `/apmedia yaml name:Seen titles:show: <a show you have watched to the end>`: "❌ Nothing on
+      the list: nothing in the library fits these settings." and "⚠️ <show>: every episode has been
+      watched, so it was left out. To keep it, name its seasons (show: <show> S1-<last>) or turn
+      unwatched off."
+- [ ] Triggers, each in a Creator file under `Plex Media:` and attached to `/apmedia yaml`. One that
+      sets `timesanity_episodes: 1` beside a List: Titles of a show that runs 190 hours or more
+      (`show: <name> S1-<last>`): "❌ A trigger in your file sets Timesanity: Episodes
+      (`timesanity_episodes`), and at 1 the list makes N locations (at most 10000): have the
+      trigger set it to K or more." One that sets `list_preset: tv`: "❌ Trigger 1 in your file sets
+      List: Preset (`list_preset`), which the bot does not follow: set it in the file itself." One
+      with `option_category: plex media`: "❌ Trigger 1 in your file has the option_category `plex
+      media`, which Archipelago cannot find in the file: use Plex Media."
+- [ ] A list over 64 KB the bot wrote (a show of 400 episodes named with its seasons), with
+      `  item_links: []` added as its last line: attached again, it gets a fresh pick and keeps
+      `item_links`.
+- [ ] With a YAML the bot wrote before this update at hand (from an earlier pass of this phase),
+      attach it: "❌ This list comes from an older version of the bot, which did not save what to
+      pick: give a preset, a count, or titles, a playlist or a collection with the command." With
+      `preset:movies` added: 15 movies, under the old file's own label when it had one. Another
+      player who changes that file's `name:` line to their own name and attaches it with
+      `preset:movies` gets a list of their own, under their own name's label.
+
 **Lists, and the three seeds**
 
 - [ ] `/apmedia yaml name:ZackPlex preset:mixed time-books:5 time-albums:5`: a private reply with
@@ -1243,7 +1382,7 @@ game.
       the file to the bot owner.
 - [ ] Other: `/apmedia yaml name:OtherPlex`: "Leaving out what you have already watched needs your
       Plex account: ask the owner: `/apmedia account @you <plex name>`. Or build the list with
-      unwatched=false." Then `/apmedia yaml name:Zoë unwatched:False`: attached as `Zoë.yaml`.
+      `unwatched:false`." Then `/apmedia yaml name:Zoë unwatched:False`: attached as `Zoë.yaml`.
       Download it and note the name Discord kept: a rewritten `ë` would let two players' files meet
       in one folder. With `unwatched:False` again, `name:Zack M.` gives `Zack_M-cd58afdb.yaml`, and
       `name:Bad{1}` answers "The name cannot contain {, } or %."
@@ -1469,6 +1608,16 @@ listen, and each part has to reach 85% alone for the track itself.
 - **`xml2js` installed is 0.4.16 while `package.json` says `^0.6.2`.** The Plex code depends on the
   0.4.x callback API, so regenerating the lockfile will bump it and can break Plex parsing. Pin
   `"xml2js": "0.4.16"` in `package.json` before regenerating, and re-test `/diag` after.
+- **`yaml` 2.9.1 went into `package-lock.json` on its own.** `npm install --package-lock-only
+  --save-exact yaml@2.9.1` re-resolved the stale lockfile (`git diff --numstat` against the
+  committed lock: 617 lines added, 500 removed), so only yaml's own three entries (20 lines) were
+  kept and the rest of the lock is as stale as before: a full `npm install` in this checkout still
+  re-resolves the whole tree, xml2js included. yaml has no dependencies, so it can go into
+  `node_modules` alone: `npm pack yaml@2.9.1`, then `mkdir node_modules/yaml` and
+  `tar -xzf yaml-2.9.1.tgz -C node_modules/yaml --strip-components=1`.
+  Until it is there, an attached YAML gets "The bot cannot read YAML files yet: the owner has to
+  install its yaml package (2.9.1).", and the tests that read a player's file fail, scenario H of
+  `npm run test:apworld` among them; the rest of the bot runs without it.
 - ~~Logs are console-only.~~ Fixed: `data/logs/` now holds both a console mirror and a structured
   command log, kept indefinitely. Read it with `npm run logs`.
 - **2 of 122 unit tests fail on your machine** (`test/plexHome.test.js`) — they assert on a missing
