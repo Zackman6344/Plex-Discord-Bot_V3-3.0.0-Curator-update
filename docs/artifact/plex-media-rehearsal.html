@@ -1,0 +1,1156 @@
+<title>Plex Media Rehearsal</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+
+<!--
+  HOUSE TEST PROTOCOL TEMPLATE
+  ============================
+  Canonical source for the interactive test log, extracted from the
+  "Captain Assignment Test Protocol" artifact built for Bannerlord auto-assign-captain.
+
+  WHAT IT IS
+    A checklist you hand to whoever is doing the manual testing. Every check records PASS / FAIL /
+    N/A plus a free-text note, everything persists in that browser, and "Copy report" emits a plain
+    text summary to paste back into the conversation.
+
+  HOW TO USE
+    1. Copy to <project>/docs/artifact/test-protocol.html
+    2. Edit CONFIG and PHASES near the bottom. That is the only part that changes per project.
+    3. Update the masthead, the "Config in play" panel and the "Watch these first" callout.
+    4. Publish with the Artifact tool. Keep the file path stable so the URL is stable.
+
+  MARKING A REVISION
+    Set rev: true on a phase or on a test to mark it as changed in the current revision, or put
+    class="rev" inline inside steps and expect. Same blue as the roadmap template. Clear every
+    mark when the next revision lands. The masthead legend explains the blue to the reader.
+
+  FILLING GAPS FROM THE LOG
+    A test can carry a verdict read out of the log rather than off the tester's screen:
+
+      fromLog: { status: "pass", note: "merge logged at 00:04:11, tier 1 -> 2" }
+
+    It renders as that test's current result behind a "from log" badge and counts in its own
+    tally chip. A tester click always wins, and clearing their click falls back to this verdict.
+    Use it to close out checks the tester never reached, so a half-finished pass still reads as
+    evidence instead of as a blank.
+
+  WHY IT IS BUILT THIS WAY
+    The log file on disk is the real evidence. This page captures the half a log cannot: what the
+    tester saw on screen, at what resolution, in what order. The two together are what makes a
+    remote diagnosis possible.
+
+  PUBLISHING NOTES
+    - No <!doctype>, <html>, <head> or <body> tags. The artifact runtime wraps this file.
+    - Google Fonts is the only external host the CSP allows. This template uses it for the three
+      faces below, each with a real fallback stack.
+    - localStorage is per-artifact-origin and per-browser. Results never reach the author. Every
+      read and write is wrapped in try/catch, because some contexts throw on access.
+    - Bump CONFIG.storageKey when the test set changes enough that old results would mislead.
+-->
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bitter:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+  /* ---------- tokens: complete light palette on bare :root ---------- */
+  :root {
+    --ground:        #E4E7E2;
+    --surface:       #F6F7F4;
+    --surface-sunk:  #DCE0DA;
+    --rule:          #C3C9BF;
+    --rule-strong:   #9DA69B;
+    --ink:           #191C18;
+    --ink-soft:      #4B524A;
+    --ink-faint:     #6E766C;
+
+    --accent:        #35566E;
+    --accent-ink:    #FFFFFF;
+    --accent-soft:   #D7E0E7;
+
+    --pass:          #2E6B4C;
+    --pass-soft:     #D3E5DA;
+    --fail:          #A6342B;
+    --fail-soft:     #F0D8D4;
+    --skip:          #7A6A3E;
+    --skip-soft:     #E7E0CB;
+
+    --rev:           #1A6089;
+    --rev-wash:      #E1EEF7;
+
+    --shadow:        0 1px 0 rgba(25,28,24,.05);
+
+    --f-display: "Bitter", Georgia, "Times New Roman", serif;
+    --f-body:    "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    --f-mono:    "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+
+    --gutter: 4.25rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:       #15181A;
+      --surface:      #1D2124;
+      --surface-sunk: #101314;
+      --rule:         #2F353A;
+      --rule-strong:  #48515a;
+      --ink:          #E6E9E6;
+      --ink-soft:     #AFB7B6;
+      --ink-faint:    #838C8C;
+
+      --accent:       #7FA8C4;
+      --accent-ink:   #10161B;
+      --accent-soft:  #24333E;
+
+      --pass:         #6FBF95;
+      --pass-soft:    #1B2E25;
+      --fail:         #E2867B;
+      --fail-soft:    #331E1B;
+      --skip:         #C9B276;
+      --skip-soft:    #2C2718;
+
+      --rev:          #74B4DC;
+      --rev-wash:     #16242E;
+
+      --shadow:       0 1px 0 rgba(0,0,0,.3);
+      color-scheme: dark;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:       #15181A;
+    --surface:      #1D2124;
+    --surface-sunk: #101314;
+    --rule:         #2F353A;
+    --rule-strong:  #48515a;
+    --ink:          #E6E9E6;
+    --ink-soft:     #AFB7B6;
+    --ink-faint:    #838C8C;
+
+    --accent:       #7FA8C4;
+    --accent-ink:   #10161B;
+    --accent-soft:  #24333E;
+
+    --pass:         #6FBF95;
+    --pass-soft:    #1B2E25;
+    --fail:         #E2867B;
+    --fail-soft:    #331E1B;
+    --skip:         #C9B276;
+    --skip-soft:    #2C2718;
+
+    --rev:          #74B4DC;
+    --rev-wash:     #16242E;
+
+    --shadow:       0 1px 0 rgba(0,0,0,.3);
+    color-scheme: dark;
+  }
+
+  /* ---------- base ---------- */
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--f-body);
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 60rem;
+    margin: 0 auto;
+    padding-block: 2.5rem 5rem;
+    padding-left: max(1.5rem, env(safe-area-inset-left, 0px));
+    padding-right: max(1.5rem, env(safe-area-inset-right, 0px));
+  }
+
+  /* The band above the sticky tally on a phone, painted so nothing scrolls under the system bar. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0 0 auto;
+    height: env(safe-area-inset-top, 0px);
+    z-index: 30;
+    background: var(--ground);
+  }
+
+  h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; }
+
+  a { color: var(--accent); }
+
+  code, .mono { font-family: var(--f-mono); font-variant-ligatures: none; }
+
+  /* ---------- masthead ---------- */
+  .masthead { border-top: 3px solid var(--ink); padding-top: 1.25rem; }
+
+  .eyebrow {
+    font-family: var(--f-mono);
+    font-size: .7rem;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem 1.25rem;
+  }
+
+  h1 { font-size: clamp(1.9rem, 4.6vw, 2.9rem); font-weight: 700; letter-spacing: -.015em; margin: .55rem 0 .5rem; }
+
+  .standfirst {
+    font-size: 1.06rem;
+    color: var(--ink-soft);
+    max-width: 40rem;
+    margin: 0 0 1.75rem;
+  }
+
+  /* ---------- panels ---------- */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    box-shadow: var(--shadow);
+    padding: 1.1rem 1.25rem;
+  }
+
+  .panel-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .panel h3 {
+    font-size: .74rem;
+    font-family: var(--f-mono);
+    font-weight: 600;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin-bottom: .7rem;
+  }
+
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: .3rem .9rem; font-size: .86rem; }
+  .kv dt { font-family: var(--f-mono); color: var(--ink-faint); font-size: .8rem; }
+  .kv dd { margin: 0; font-family: var(--f-mono); font-size: .8rem; }
+  .kv dd.on  { color: var(--pass); font-weight: 600; }
+  .kv dd.off { color: var(--ink-soft); }
+
+  .panel .hint { margin: 0; font-size: .84rem; color: var(--ink-soft); }
+
+  .pathbox {
+    display: flex; gap: .5rem; align-items: stretch; margin-top: .3rem;
+  }
+  .pathbox code {
+    flex: 1 1 auto;
+    background: var(--surface-sunk);
+    border: 1px solid var(--rule);
+    padding: .5rem .6rem;
+    font-size: .74rem;
+    overflow-x: auto;
+    white-space: nowrap;
+    display: block;
+  }
+
+  button {
+    font-family: var(--f-body);
+    font-size: .82rem;
+    cursor: pointer;
+    border: 1px solid var(--rule-strong);
+    background: var(--surface);
+    color: var(--ink);
+    padding: .45rem .8rem;
+    border-radius: 2px;
+    transition: background .12s ease, border-color .12s ease, color .12s ease;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ---------- risk callout ---------- */
+  .risks {
+    border: 1px solid var(--rule);
+    border-left: 4px solid var(--fail);
+    background: var(--surface);
+    padding: 1.1rem 1.25rem;
+    margin-bottom: 2.25rem;
+  }
+  .risks h3 { color: var(--fail); }
+  .risks ol { margin: 0; padding-left: 1.15rem; font-size: .92rem; color: var(--ink-soft); }
+  .risks li { margin-bottom: .45rem; }
+  .risks li:last-child { margin-bottom: 0; }
+  .risks strong { color: var(--ink); font-weight: 600; }
+
+  /* ---------- progress ---------- */
+  .tally {
+    position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20;
+    background: var(--ground);
+    border-bottom: 1px solid var(--rule);
+    padding: .7rem 0;
+    margin-bottom: 1.5rem;
+    display: flex; flex-wrap: wrap; align-items: center; gap: .55rem 1.1rem;
+    font-family: var(--f-mono); font-size: .78rem;
+  }
+  .tally .count { color: var(--ink-faint); }
+  .tally .count b { color: var(--ink); font-weight: 600; }
+  .bar { flex: 1 1 8rem; height: 6px; background: var(--surface-sunk); border: 1px solid var(--rule); min-width: 6rem; }
+  .bar span { display: block; height: 100%; background: var(--accent); width: 0; transition: width .2s ease; }
+  .chip-pass { color: var(--pass); }
+  .chip-fail { color: var(--fail); }
+  .chip-skip { color: var(--skip); }
+  .chip-auto { color: var(--accent); }
+
+  /* ---------- phases ---------- */
+  .phase { margin-bottom: 2.75rem; }
+
+  .phase-head {
+    display: grid;
+    grid-template-columns: var(--gutter) 1fr;
+    gap: 1rem;
+    align-items: baseline;
+    border-bottom: 2px solid var(--ink);
+    padding-bottom: .5rem;
+    margin-bottom: .25rem;
+  }
+  .phase-letter {
+    font-family: var(--f-mono);
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--accent);
+    line-height: 1;
+  }
+  .phase-head h2 { font-size: 1.22rem; font-weight: 600; letter-spacing: -.01em; }
+  .phase-head p { margin: .2rem 0 0; font-size: .87rem; color: var(--ink-faint); }
+
+  /* ---------- test rows ---------- */
+  .test {
+    display: grid;
+    grid-template-columns: var(--gutter) 1fr;
+    gap: 1rem;
+    padding: 1.15rem 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .test.done-pass { background: linear-gradient(to right, var(--pass-soft) 0 3px, transparent 3px); }
+  .test.done-fail { background: linear-gradient(to right, var(--fail-soft) 0 3px, transparent 3px); }
+  .test.done-skip { background: linear-gradient(to right, var(--skip-soft) 0 3px, transparent 3px); }
+
+  .test-id {
+    font-family: var(--f-mono);
+    font-size: .82rem;
+    font-weight: 600;
+    color: var(--ink-faint);
+    letter-spacing: .04em;
+    padding-top: .12rem;
+  }
+  .test h3 { font-size: 1.01rem; font-weight: 600; margin-bottom: .35rem; }
+
+  .steps { margin: 0 0 .6rem; padding-left: 1.1rem; font-size: .93rem; color: var(--ink-soft); }
+  .steps li { margin-bottom: .22rem; }
+
+  .expect {
+    font-size: .9rem;
+    color: var(--ink-soft);
+    margin: 0 0 .55rem;
+  }
+  .expect b {
+    font-family: var(--f-mono);
+    font-size: .7rem;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 600;
+    display: block;
+    margin-bottom: .12rem;
+  }
+
+  .logline {
+    background: var(--surface-sunk);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+    font-family: var(--f-mono);
+    font-size: .74rem;
+    line-height: 1.5;
+    padding: .5rem .65rem;
+    margin: 0 0 .7rem;
+    overflow-x: auto;
+    white-space: pre;
+    color: var(--ink-soft);
+  }
+
+  .record { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+
+  .seg { display: inline-flex; border: 1px solid var(--rule-strong); border-radius: 2px; overflow: hidden; }
+  .seg button {
+    border: 0;
+    border-right: 1px solid var(--rule-strong);
+    border-radius: 0;
+    padding: .3rem .7rem;
+    font-size: .76rem;
+    font-family: var(--f-mono);
+    letter-spacing: .05em;
+    background: var(--surface);
+    color: var(--ink-faint);
+  }
+  .seg button:last-child { border-right: 0; }
+  .seg button:hover { color: var(--ink); background: var(--surface-sunk); }
+  .seg button[aria-pressed="true"] { color: var(--accent-ink); font-weight: 600; }
+  .seg button[data-v="pass"][aria-pressed="true"] { background: var(--pass); border-color: var(--pass); }
+  .seg button[data-v="fail"][aria-pressed="true"] { background: var(--fail); border-color: var(--fail); }
+  .seg button[data-v="skip"][aria-pressed="true"] { background: var(--skip); border-color: var(--skip); }
+
+  textarea {
+    flex: 1 1 14rem;
+    min-width: 12rem;
+    font-family: var(--f-body);
+    font-size: .84rem;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    padding: .35rem .5rem;
+    resize: vertical;
+    min-height: 2.1rem;
+    line-height: 1.4;
+  }
+  textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  textarea::placeholder { color: var(--ink-faint); }
+
+  /* ---------- footer ---------- */
+  .handoff {
+    border-top: 3px solid var(--ink);
+    padding-top: 1.25rem;
+    margin-top: 2rem;
+  }
+  .handoff h2 { font-size: 1.15rem; margin-bottom: .5rem; }
+  .handoff p { font-size: .93rem; color: var(--ink-soft); max-width: 42rem; }
+  .actions { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: 1rem; align-items: center; }
+  .actions .note { font-size: .78rem; color: var(--ink-faint); font-family: var(--f-mono); }
+  .primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  .primary:hover { background: var(--ink); border-color: var(--ink); color: var(--ground); }
+
+  @media (max-width: 34rem) {
+    :root { --gutter: 2.9rem; }
+    .wrap {
+      padding-block: 1.75rem 4rem;
+      padding-left: max(16px, env(safe-area-inset-left, 0px));
+      padding-right: max(16px, env(safe-area-inset-right, 0px));
+    }
+    .test, .phase-head { gap: .7rem; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+
+  /* ---- revision marks ----
+     Add rev:true to a phase or a test, or class="rev" inline inside steps and expect.
+     Carries the latest revision only, cleared when the next one lands. */
+  .rev {
+    background: var(--rev-wash);
+    box-shadow: inset 0 -1px 0 var(--rev);
+    padding: 0.06em 0.2em;
+    border-radius: 2px;
+  }
+  li.rev { padding: 6px 10px; margin-left: -10px; box-shadow: inset 2px 0 0 var(--rev); }
+  .test.rev .test-id { background: var(--rev-wash); box-shadow: inset 0 -2px 0 var(--rev); border-radius: 2px; }
+  .test.rev h3 { display: inline-block; background: var(--rev-wash); box-shadow: inset 0 -1px 0 var(--rev); padding: 0.06em 0.25em; border-radius: 2px; }
+  .phase-head.rev h2 { display: inline-block; background: var(--rev-wash); box-shadow: inset 0 -1px 0 var(--rev); padding: 0.06em 0.25em; border-radius: 2px; }
+  pre .rev { box-shadow: none; }
+
+  .legend {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 8px;
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    color: var(--ink-faint);
+    margin-top: 0.6rem;
+  }
+  .legend + .legend { margin-left: 1.25rem; }
+  .legend .swatch {
+    display: inline-block;
+    width: 26px; height: 11px;
+    border-radius: 2px;
+    background: var(--rev-wash);
+    box-shadow: inset 0 -1px 0 var(--rev);
+    transform: translateY(1px);
+  }
+  .legend .swatch.log { background: var(--accent-soft); box-shadow: inset 0 -1px 0 var(--accent); }
+
+  /* ---- results filled in from the log ----
+     A check with a fromLog verdict shows that verdict until the tester records their own,
+     so a run that only half happened still reads as evidence rather than as a blank. */
+  .badge-log {
+    font-family: var(--f-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border: 1px solid var(--accent);
+    border-radius: 2px;
+    padding: 2px 6px;
+    white-space: nowrap;
+  }
+  .logfill { display: none; align-items: center; gap: 0.5rem; flex-wrap: wrap; flex-basis: 100%; }
+  .test.src-log .logfill { display: flex; }
+  .logfill .why { font-size: 13px; color: var(--ink-soft); }
+  .test.src-log .seg button[aria-pressed="true"] { opacity: 0.68; }
+</style>
+
+<div class="wrap">
+
+  <!-- ===== EDIT: masthead ===== -->
+  <header class="masthead">
+    <div class="eyebrow">
+      <span>Plex Discord Bot</span>
+      <span>Plex Media world 0.2.0</span>
+      <span>BUGTESTING Phase 17A</span>
+      <span id="check-count">0 checks</span>
+    </div>
+    <h1>Plex Media first-seed rehearsal</h1>
+    <p class="standfirst">
+      A throwaway seed on this PC, run in one evening with one friend and their Plex account. Every
+      check here is the world's first contact with something real: a Plex session, a friend's
+      account, an Archipelago server the tests did not start. A FAIL is the useful result. Write
+      what you saw; the bot log usually says why. Owner and friend can run phases E and F at the
+      same time.
+    </p>
+    <span class="legend"><span class="swatch"></span> changed in this revision</span>
+    <span class="legend"><span class="swatch log"></span> filled in from the log, override it if you saw otherwise</span>
+  </header>
+
+  <!-- ===== EDIT: the two context panels ===== -->
+  <div class="panel-grid">
+    <div class="panel">
+      <h3>Settings in play</h3>
+      <dl class="kv">
+        <dt>apMediaEnabled</dt><dd class="on">true</dd>
+        <dt>apMediaAnnounce</dt><dd class="off">completions; A4 sets all</dd>
+        <dt>apMediaVoiceCredit</dt><dd class="on">true</dd>
+        <dt>apMediaChannelId</dt><dd class="off">blank: the watch's channel</dd>
+        <dt>apMediaHistorySeconds</dt><dd class="off">120</dd>
+        <dt>apMediaSessionSeconds</dt><dd class="off">15</dd>
+      </dl>
+    </div>
+    <div class="panel">
+      <h3>Bot log</h3>
+      <p class="hint">The newest <code>bot-*.log</code> in this folder, named by the UTC date.
+        <code>scripts\status-bot.ps1</code> shows its tail, and Claude can read it too.</p>
+      <div class="pathbox">
+        <code id="logpath">C:\Users\zackm\Desktop\Plex-Discord-Bot_V2-2.5.3\data\logs</code>
+        <button type="button" id="copy-path">Copy</button>
+      </div>
+      <p class="hint" style="margin-top:.7rem">Rehearsal folder, with <code>Players\Finder.yaml</code> ready:</p>
+      <div class="pathbox">
+        <code>C:\Users\zackm\Desktop\PlexRehearsal</code>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== EDIT: the two or three checks most likely to fail ===== -->
+  <div class="risks">
+    <h3>Watch these first</h3>
+    <ol>
+      <li><strong>Installing the world reaches every Archipelago program on this PC.</strong> A world
+        that fails to load stops the Launcher, generation and the bot's <code>!ap next</code> worker
+        for the live 35-slot room. Install with nothing else open, and confirm 35/35 straight after:
+        <span class="mono">A2</span>, <span class="mono">A3</span>.</li>
+      <li><strong>A friend's Plex session has never been matched.</strong> The bot finds the account
+        by <code>User.id</code>, then by <code>User.title</code>, and has only met fake servers. If it
+        misses, nothing a friend watches in Plex counts live: <span class="mono">F1</span>.</li>
+      <li><strong>Credit from before the link.</strong> A track Friend plays after generation but
+        before linking has to count once, from the seed's start: <span class="mono">D1</span>,
+        <span class="mono">D4</span>.</li>
+    </ol>
+  </div>
+
+  <div class="tally">
+    <span class="count"><b id="t-done">0</b>/<b id="t-total">0</b> recorded</span>
+    <span class="bar"><span id="t-bar"></span></span>
+    <span class="chip-pass mono"><b id="t-pass">0</b> pass</span>
+    <span class="chip-fail mono"><b id="t-fail">0</b> fail</span>
+    <span class="chip-skip mono"><b id="t-skip">0</b> n/a</span>
+    <span class="chip-auto mono"><b id="t-auto">0</b> from log</span>
+  </div>
+
+  <main id="protocol"></main>
+
+  <footer class="handoff">
+    <h2>Sending it back</h2>
+    <p>
+      Say in the chat when you stop, even halfway. Claude reads the bot log for the same minutes,
+      and <strong>Copy report</strong> brings your notes across. The two together give what you saw
+      and what the bot did at that moment, and a check you never reached can be filled in from the
+      log.
+    </p>
+    <div class="actions">
+      <button type="button" class="primary" id="copy-report">Copy report</button>
+      <button type="button" id="reset">Clear all</button>
+      <span class="note" id="save-note">Saved in this browser only</span>
+    </div>
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* =======================================================================
+     EDIT EVERYTHING IN THIS BLOCK. The engine below it is project-agnostic.
+     ======================================================================= */
+
+  var CONFIG = {
+    // Report heading pasted back into the conversation.
+    reportTitle: "Plex Media first-seed rehearsal (BUGTESTING Phase 17A) - results",
+    // Bump the version suffix when the test set changes enough that stale
+    // results from a previous run would mislead.
+    storageKey: "plex-media-rehearsal-v1"
+  };
+
+  var DISCORD = "(no log line: read it in Discord)";
+
+  var PHASES = [
+    {
+      letter: "A",
+      title: "Install the world",
+      blurb: "You alone, about 15 minutes. Nothing else of the evening starts until A3 passes.",
+      tests: [
+        {
+          id: "A1",
+          title: "The bot hands out world 0.2.0",
+          steps: [
+            "In a channel, run <code>/apmedia apworld</code>. The reply is public, as every apworld reply is.",
+            "Save the attached <code>plex_media.apworld</code>."
+          ],
+          expect: "The file comes with “the Plex Media world 0.2.0 (<i>N</i> KB), for Archipelago 0.6.8 or later.”, the install steps, and “This PC has no plex_media.apworld installed yet (Archipelago's custom_worlds folder).”",
+          log: DISCORD
+        },
+        {
+          id: "A2",
+          title: "It installs with nothing else open",
+          steps: [
+            "Close every Archipelago program: the Launcher, text clients and server windows.",
+            "Launcher → <b>Install APWorld</b>, pick the saved file, then close and reopen the Launcher.",
+            "Run <code>/apmedia apworld</code> again."
+          ],
+          expect: "The Launcher opens as it always does, and the reply's last line is “This PC already has world 0.2.0 installed.”",
+          log: DISCORD
+        },
+        {
+          id: "A3",
+          title: "The live room's !ap next still verifies every slot",
+          steps: [
+            "Close the bot with the <b>Stop Plex Bot</b> shortcut on the Desktop, start it with <b>Start Plex Bot</b>, and wait about a minute. <code>!restart</code> is not enough here: it keeps the old <code>!ap next</code> worker, which never loaded the new world.",
+            "Ask <code>!ap next</code> about one of your slots in the live room (<code>!ap next 0 </code><i>slot</i> if it asks which watch)."
+          ],
+          expect: "The bot log has the two lines below, the second with 35/35, and <code>!ap next</code> answers as before. A lower count, or a log line naming plex_media, means stop here: delete <code>C:\\ProgramData\\Archipelago\\custom_worlds\\plex_media.apworld</code>, stop and start the bot again with the shortcuts, and tell Claude.",
+          log: "[AP:Configured room] starting the logic worker for seed N\n[AP:Configured room] logic worker ready in N s: 35/35 slots verified against the multidata"
+        },
+        {
+          id: "A4",
+          title: "Every check is announced for the evening",
+          steps: ["<code>/config</code> → AP Media → Announcements → <b>Every check</b>."],
+          expect: "It saves with no restart. H1 sets it back to Completions and unlocks.",
+          log: "(no log line: the /config panel)"
+        }
+      ]
+    },
+    {
+      letter: "B",
+      title: "Two lists",
+      blurb: "You and Friend, about 20 minutes. B4's list needs a movie from B3's.",
+      tests: [
+        {
+          id: "B1",
+          title: "Friend's Plex account is linked, with their consent",
+          steps: [
+            "Run <code>/apmedia account user:@Friend plex:</code><i>their Plex name</i>.",
+            "Friend presses <b>Accept</b> in the DM the bot sends them."
+          ],
+          expect: "“@Friend: Linked to Plex account <code><i>name</i></code> (account <i>N</i>), waiting for their consent: nothing is read until they accept.” and “📨 They have a DM with an Accept button.” After Accept the DM gains “✅ Accepted: the Plex history of <code><i>name</i></code> (account <i>N</i>) counts for your Plex Media slots.” Note <i>N</i>, Friend's account id: F1 looks for it. If Friend accepted a link to this account before, the reply says its history counts already and no DM comes, which is a pass too.",
+          log: DISCORD
+        },
+        {
+          id: "B2",
+          title: "Your list starts in the Options Creator",
+          steps: [
+            "Launcher → <b>Options Creator</b> → Plex Media.",
+            "Player Name <code>ZackPlex</code>. In <b>Your list (the bot picks the titles)</b>, set List: Preset to <b>Mixed</b>.",
+            "In <b>Timesanity</b>, drag Timesanity: Albums to 5, and Timesanity: Books to 5 if its slider stops there (it runs to 1440). If it skips 5, export anyway and change <code>timesanity_books</code> to 5 in the saved file with Notepad: E3 and E4 count on 5-minute checkpoints.",
+            "<b>Export Options</b>, saved as <code>ZackPlex.yaml</code> on the Desktop. Keep it out of <code>PlexRehearsal\\Players</code>: B3's file of the same name goes there."
+          ],
+          expect: "The form has five groups: Game Options; Your list (the bot picks the titles); Unlocks and goal; Timesanity; Item &amp; Location Options. No option reads “This option isn't supported by the option creator.”, and the export says “File saved successfully.”",
+          log: "(no log line: the Options Creator window)"
+        },
+        {
+          id: "B3",
+          title: "The bot fills it in",
+          steps: [
+            "Run <code>/apmedia yaml file:</code> and attach <code>ZackPlex.yaml</code>.",
+            "Save the attached file in <code>C:\\Users\\zackm\\Desktop\\PlexRehearsal\\Players</code>, never in Archipelago's own Players folder.",
+            "Note one movie on the list for B4: its title is in the file."
+          ],
+          expect: "A private reply: “📝 <code>ZackPlex</code>: your list, attached as <code>ZackPlex.yaml</code>.”, “<i>N</i> entries (6 movies, <i>N</i> episodes, 4 albums, 1 book), <i>N</i> locations, about <i>N</i> h.”, the start and goal line, “📄 Settings from <code>ZackPlex.yaml</code>.”, and “Next: put the file in Archipelago's Players folder before you generate. …”. Ignore that Next line tonight: the rehearsal's folder is <code>PlexRehearsal\\Players</code>.",
+          log: DISCORD
+        },
+        {
+          id: "B4",
+          title: "Friend's list shares one movie with yours",
+          steps: [
+            "Friend runs <code>/apmedia yaml name:FriendPlex preset:movies albums:1 titles:</code><i>B3's movie, with its year: Title (1999)</i>.",
+            "Friend sends you the file. Save it in <code>PlexRehearsal\\Players</code> beside B3's <code>ZackPlex.yaml</code>."
+          ],
+          expect: "“📝 <code>FriendPlex</code>: your list, attached as <code>FriendPlex.yaml</code>.”, “16 entries (15 movies, 1 album), …”, and “Next: send this file to the bot owner. …” B3's movie is on the list, its title in the file, even if Friend has watched it.",
+          log: DISCORD
+        }
+      ]
+    },
+    {
+      letter: "C",
+      title: "The seed",
+      blurb: "You, about 10 minutes, in PowerShell (Windows Terminal's default). The real Players folder is never touched.",
+      tests: [
+        {
+          id: "C1",
+          title: "It generates beside a ChecksFinder slot",
+          steps: [
+            "Close the Launcher. <code>PlexRehearsal\\Players</code> holds <code>Finder.yaml</code> (a ChecksFinder file named Finder), <code>ZackPlex.yaml</code> and <code>FriendPlex.yaml</code>, and nothing else.",
+            "Run <code>&amp; \"C:\\ProgramData\\Archipelago\\ArchipelagoGenerate.exe\" --player_files_path \"C:\\Users\\zackm\\Desktop\\PlexRehearsal\\Players\" --outputpath \"C:\\Users\\zackm\\Desktop\\PlexRehearsal\\output\"</code>. In Command Prompt, leave out the <code>&amp;</code>."
+          ],
+          expect: "It ends with “Done. Enjoy. Total Time: …” and no Plex Media error, and <code>PlexRehearsal\\output</code> holds one <code>AP_<i>seed</i>.zip</code>. Note the total time.",
+          log: "(Archipelago's own log: C:\\ProgramData\\Archipelago\\logs\\Generate_&lt;seed&gt;_&lt;time&gt;.txt)"
+        },
+        {
+          id: "C2",
+          title: "It hosts on this PC",
+          steps: [
+            "Run <code>&amp; \"C:\\ProgramData\\Archipelago\\ArchipelagoServer.exe\" --port 38281 \"C:\\Users\\zackm\\Desktop\\PlexRehearsal\\output\\AP_</code><i>seed</i><code>.zip\"</code>.",
+            "Leave the window open: E uses its <code>/send</code>."
+          ],
+          expect: "The window prints “Hosting game at <i>address</i>:38281 (No password)”. The address is the PC's own public address, which is expected: the bot connects through localhost.",
+          log: "(the server window)"
+        },
+        {
+          id: "C3",
+          title: "The bot watches it",
+          steps: ["In a test channel: <code>!ap watch localhost:38281 Finder</code>."],
+          expect: "The reply first says it is connecting, then changes to name <b>Watch #<i>N</i></b> as connected. <i>N</i> is used below, and the evening's lines post in this channel.",
+          log: DISCORD
+        }
+      ]
+    },
+    {
+      letter: "D",
+      title: "Linking",
+      blurb: "You and Friend, about 15 minutes. D1 happens after C1 and before D2.",
+      tests: [
+        {
+          id: "D1",
+          title: "Friend plays a track before linking",
+          steps: ["Friend plays one track of FriendPlex's album to its end in Plexamp or another Plex app, on their own account."],
+          expect: "Nothing posts yet. D4 checks that it is counted once the slot is linked.",
+          log: "(nothing yet)"
+        },
+        {
+          id: "D2",
+          title: "Friend claims and links FriendPlex",
+          steps: [
+            "Friend: <code>!ap claim </code><i>N</i><code> FriendPlex</code>.",
+            "Friend: <code>/apmedia link slot:FriendPlex watch:</code><i>N</i>."
+          ],
+          expect: "“🔗 Linked <code>FriendPlex</code> on watch #<i>N</i>.”, with no warning.",
+          log: DISCORD
+        },
+        {
+          id: "D3",
+          title: "You link ZackPlex",
+          steps: ["<code>/apmedia link slot:ZackPlex watch:</code><i>N</i>. The owner needs no claim."],
+          expect: "“🔗 Linked <code>ZackPlex</code> on watch #<i>N</i>.”",
+          log: DISCORD
+        },
+        {
+          id: "D4",
+          title: "Both slots are welcomed, and D1's track counts once",
+          steps: ["Watch the test channel for about two minutes. Each welcome posts seconds after its link, so they may already be there."],
+          expect: "“🎬 <code>ZackPlex</code> is in the game with <i>N</i> of <i>M</i> titles open: <i>titles with runtimes</i>. Goal: finish <i>K</i>.”, then “Plex account: the server owner (account 1).”, then a line naming <code>/apmedia list</code> and the <code>!ap claim</code> and <code>!ap hintpings</code> commands. FriendPlex's welcome says “Plex account: linked.” and names no account. No join or leave line names PlexMediaBot. Within about 2 minutes, one line for D1's track: “⏱️ <code>FriendPlex</code> <b><i>Artist - Album</i></b>: 1 check sent”, or “🔒 <code>FriendPlex</code> <b><i>Artist - Album</i></b>: 1 check waiting for its unlock” while the album is locked. It posts once, and never for ZackPlex.",
+          log: DISCORD
+        },
+        {
+          id: "D5",
+          title: "!diag sees both slots",
+          steps: ["<code>!diag</code>, once the first history read is in."],
+          expect: "In the diagnostic block: “✓ ApMedia: 2 slots, 2 connected, Plex history read <i>N</i>m ago”. Until the first read covers both accounts it says “Plex history not read yet”: wait two minutes and ask again.",
+          log: "(no log line: the !diag reply)"
+        }
+      ]
+    },
+    {
+      letter: "E",
+      title: "Your credit",
+      blurb: "You, about 45 minutes. E2 can play while you do E3 to E5. A title still locked gives 🔒 lines instead of ⏱️ ones, which is a pass too.",
+      tests: [
+        {
+          id: "E1",
+          title: "Your Plex session counts, and only for you",
+          steps: [
+            "Play B3's movie, the one on both lists, in a Plex app on your account.",
+            "Let it pass 15:00."
+          ],
+          expect: "Within about 15 s of play the bot log has the line below; note which way it matched. It is written once per bot run, so if you played anything in Plex since A3's restart it is there already. At 15:00, usually within 20 s and at most about 30 s: “⏱️ <code>ZackPlex</code> <b><i>Title (Year)</i></b>: 1 check sent”, the server window logs “ZackPlex sent <i>item</i> to <i>player</i> (<i>Title (Year)</i> @ 15m)”, and nothing posts for FriendPlex. <code>/apmedia status</code> quotes “Last Plex session: <b><i>Title (Year)</i></b>, reached <i>N</i>%: Plex counts a watch at 90%.”",
+          log: "Plex Media: Plex sessions of account 1 are matched by User.id.\n(or: Plex Media: Plex sessions of account 1 are matched by User.title.)"
+        },
+        {
+          id: "E2",
+          title: "A finished episode counts through history",
+          steps: ["Play an episode of the show on ZackPlex's list to its end."],
+          expect: "“⏱️ <code>ZackPlex</code> <b><i>Show S01E0n</i></b>: 1 check sent” at each 10-minute mark before 90% of the episode (a 22-minute episode has only 10:00). Then, within 2 minutes of Plex marking it watched (at 90%), “✅ <code>ZackPlex</code> watched <b><i>Show S01E0n</i></b>, 1 check sent”: the checkpoints went live already, so only the watch is left.",
+          log: "(npm run logs -- --raw: an apmedia-credit event with source history)"
+        },
+        {
+          id: "E3",
+          title: "Music heard in voice counts",
+          steps: [
+            "If <code>/apmedia list show:locked</code> lists ZackPlex's album, run <code>/send ZackPlex </code><i>its unlock, as that list names it</i> in the server window first.",
+            "In a voice channel: <code>!album </code><i>the album</i>, and hear its first track to the end.",
+            "Run <code>!stop</code>: E4 needs the voice channel free, and the album would keep playing."
+          ],
+          expect: "“⏱️ <code>ZackPlex</code> <b><i>Artist - Album</i></b>: 1 check sent” for a first track under 5:00, or “… 2 checks sent” for one of 5:00 or more: the track, and the 5-minute checkpoint inside it.",
+          log: DISCORD
+        },
+        {
+          id: "E4",
+          title: "An audiobook counts",
+          steps: [
+            "Open ZackPlex's book the same way if it is locked: its unlock is named <i>Title by Author</i>.",
+            "<code>/book play title:</code><i>the book</i><code> from-start:True</code>, and listen past 5:00. Without from-start it resumes your bookmark, and the first line comes at the next 5-minute mark after it.",
+            "Run <code>/book stop</code> when the line is in: F3 needs the voice channel free."
+          ],
+          expect: "Within about 15 s of 5:00: “⏱️ <code>ZackPlex</code> <b><i>Title by Author</i></b>: 1 check sent”. If music is still playing, the bot first answers “Music is playing here. Stop it with !stop, then /book play.”",
+          log: DISCORD
+        },
+        {
+          id: "E5",
+          title: "A locked title banks its checks, then pays them on its unlock",
+          steps: [
+            "<code>/apmedia check title:</code><i>a movie from /apmedia list show:locked</i>.",
+            "In the server window: <code>/send ZackPlex </code><i>its unlock</i>."
+          ],
+          expect: "The command's own private reply first: “🔒 <b><i>Title (Year)</i></b> is locked: <i>N</i> checks waiting for its unlock.” Then in the channel, within about 5 s, “🔒 <code>ZackPlex</code> watched <b><i>Title (Year)</i></b>, <i>N</i> checks waiting for its unlock”, and within seconds of the /send, “🔓 <code>ZackPlex</code> <b><i>Title (Year)</i></b> unlocked, <i>N</i> checks sent”. <i>N</i> is the watch plus one per 15 minutes, so 2 or more for a feature film.",
+          log: DISCORD
+        }
+      ]
+    },
+    {
+      letter: "F",
+      title: "Friend's credit",
+      blurb: "Friend, about 30 minutes, alongside E. A title still locked gives 🔒 lines, which is a pass too.",
+      tests: [
+        {
+          id: "F1",
+          title: "Friend's own Plex session is matched",
+          steps: ["Friend plays a movie from their <code>/apmedia list</code>, not the shared one, in their own Plex app, past 15:00."],
+          expect: "Within about 15 s of play the bot log has the line below with Friend's account id from B1. At 15:00: “⏱️ <code>FriendPlex</code> <b><i>Title (Year)</i></b>: 1 check sent”, and nothing for ZackPlex. If no match line comes within a minute, write down Friend's Plex app and whether their account is a managed or a shared user: that FAIL is the one worth having.",
+          log: "Plex Media: Plex sessions of account N are matched by User.id.\n(or: Plex Media: Plex sessions of account N are matched by User.title.)"
+        },
+        {
+          id: "F2",
+          title: "The shared movie counts for Friend separately",
+          steps: ["Friend plays B4's shared movie past 15:00 on their account."],
+          expect: "“⏱️ <code>FriendPlex</code> <b><i>Title (Year)</i></b>: 1 check sent”, and nothing new for ZackPlex.",
+          log: DISCORD
+        },
+        {
+          id: "F3",
+          title: "Friend's listening in voice counts for Friend alone",
+          steps: [
+            "Check E4's book is stopped (<code>/book stop</code>): a book left paused holds the voice channel for 10 minutes, and Friend's music would queue behind it.",
+            "You leave the voice channel.",
+            "Friend joins it and runs <code>!album </code><i>FriendPlex's album</i>. If the first track is D1's, Friend runs <code>!skip</code>: D1's track is counted already. Friend hears the next one to its end."
+          ],
+          expect: "“⏱️ <code>FriendPlex</code> <b><i>Artist - Album</i></b>: 1 check sent”, and nothing for ZackPlex.",
+          log: DISCORD
+        }
+      ]
+    },
+    {
+      letter: "G",
+      title: "archipelago.gg",
+      blurb: "Optional, and public: the room shows both lists' titles to anyone with its link. Skip it unless you are happy with that.",
+      tests: [
+        {
+          id: "G1",
+          title: "The upload is accepted",
+          steps: ["Upload the <code>AP_*.zip</code> at archipelago.gg and open a room."],
+          expect: "No data package or checksum error. The room page lists ZackPlex and FriendPlex playing Plex Media, and its tracker names ZackPlex's locations by title.",
+          log: "(archipelago.gg)"
+        },
+        {
+          id: "G2",
+          title: "The room carries no Discord ids or Plex account ids",
+          steps: ["Open <code>https://archipelago.gg/api/slot_data_tracker/</code><i>tracker id</i>, the id at the end of the room page's tracker link."],
+          expect: "Each Plex Media slot's entry holds its titles and options, with no <code>account</code> or <code>discord</code> key, and neither your Discord id nor Friend's appears anywhere on the page. The titles' Plex rating keys and guids are there by design: the bot finds titles by them.",
+          log: "(archipelago.gg)"
+        }
+      ]
+    },
+    {
+      letter: "H",
+      title: "Putting it back",
+      blurb: "You, 5 minutes.",
+      tests: [
+        {
+          id: "H1",
+          title: "The evening is undone",
+          steps: [
+            "<code>/apmedia unlink slot:ZackPlex</code>; Friend runs <code>/apmedia unlink slot:FriendPlex</code>.",
+            "<code>!ap unwatch </code><i>N</i>, then close the server window.",
+            "<code>/config</code> → AP Media → Announcements → <b>Completions and unlocks</b>.",
+            "Delete <code>C:\\Users\\zackm\\Desktop\\PlexRehearsal\\output</code>: its zip carries host.yaml's server options."
+          ],
+          expect: "“Unlinked <code>ZackPlex</code>.” and, in Friend's own private reply, “Unlinked <code>FriendPlex</code>.” A slot that still held checks for a locked title adds “Its <i>N</i> unsent checks went with it.” <code>!ap unwatch</code> answers “🗑️ Stopped watching <b>localhost</b> (#<i>N</i>).” The world stays installed, and Friend's account link stays for the real seed.",
+          log: DISCORD
+        }
+      ]
+    }
+  ];
+
+  /* =======================================================================
+     ENGINE. No per-project edits below this line.
+     ======================================================================= */
+
+  var KEY = CONFIG.storageKey;
+  var state = {};
+
+  try {
+    var raw = window.localStorage.getItem(KEY);
+    if (raw) state = JSON.parse(raw) || {};
+  } catch (e) { state = {}; }
+
+  function persist() {
+    try { window.localStorage.setItem(KEY, JSON.stringify(state)); }
+    catch (e) { /* private window, blocked site data: results just do not survive reload */ }
+  }
+
+  var root = document.getElementById("protocol");
+  var total = 0;
+  var painters = [];
+
+  // A test carries at most one log-derived verdict. It stands until the tester records
+  // their own, and comes back if the tester clears theirs.
+  function logVerdict(t) {
+    return t.fromLog && t.fromLog.status ? t.fromLog : null;
+  }
+  function testerStatus(t) {
+    return (state[t.id] || {}).status || "";
+  }
+  function effectiveStatus(t) {
+    var own = testerStatus(t);
+    if (own) return own;
+    var lv = logVerdict(t);
+    return lv ? lv.status : "";
+  }
+  function statusSource(t) {
+    if (testerStatus(t)) return "tester";
+    return logVerdict(t) ? "log" : "";
+  }
+
+  PHASES.forEach(function (phase) {
+    var section = document.createElement("section");
+    section.className = "phase";
+
+    var head = document.createElement("div");
+    head.className = "phase-head" + (phase.rev ? " rev" : "");
+    head.innerHTML =
+      '<div class="phase-letter">' + phase.letter + '</div>' +
+      '<div><h2>' + phase.title + '</h2><p>' + phase.blurb + '</p></div>';
+    section.appendChild(head);
+
+    phase.tests.forEach(function (t) {
+      total++;
+      var row = document.createElement("article");
+      row.className = "test" + (t.rev ? " rev" : "");
+      row.id = "test-" + t.id;
+
+      var steps = t.steps.map(function (s) { return "<li>" + s + "</li>"; }).join("");
+
+      row.innerHTML =
+        '<div class="test-id">' + t.id + '</div>' +
+        '<div>' +
+          '<h3>' + t.title + '</h3>' +
+          '<ol class="steps">' + steps + '</ol>' +
+          '<p class="expect"><b>Expect</b>' + t.expect + '</p>' +
+          '<pre class="logline">' + t.log + '</pre>' +
+          '<div class="record">' +
+            '<span class="seg" role="group" aria-label="Result for ' + t.id + '">' +
+              '<button type="button" data-v="pass" aria-pressed="false">PASS</button>' +
+              '<button type="button" data-v="fail" aria-pressed="false">FAIL</button>' +
+              '<button type="button" data-v="skip" aria-pressed="false">N/A</button>' +
+            '</span>' +
+            '<textarea rows="1" placeholder="What you saw - resolution, timings, anything odd"></textarea>' +
+            '<div class="logfill">' +
+              '<span class="badge-log">from log</span>' +
+              '<span class="why">' + (t.fromLog && t.fromLog.note ? t.fromLog.note : "") + '</span>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+
+      var saved = state[t.id] || {};
+      var seg = row.querySelector(".seg");
+      var note = row.querySelector("textarea");
+
+      function paint() {
+        var v = effectiveStatus(t);
+        row.classList.remove("done-pass", "done-fail", "done-skip", "src-log");
+        if (v) row.classList.add("done-" + v);
+        if (statusSource(t) === "log") row.classList.add("src-log");
+        Array.prototype.forEach.call(seg.querySelectorAll("button"), function (b) {
+          b.setAttribute("aria-pressed", b.dataset.v === v ? "true" : "false");
+        });
+      }
+      painters.push(paint);
+
+      seg.addEventListener("click", function (ev) {
+        var btn = ev.target.closest("button");
+        if (!btn) return;
+        var entry = state[t.id] || (state[t.id] = {});
+        // Clicking the active choice clears it, so a misclick is undoable. Clearing a check
+        // that has a log-derived verdict falls back to that verdict rather than to blank.
+        entry.status = testerStatus(t) === btn.dataset.v ? "" : btn.dataset.v;
+        paint();
+        persist();
+        tally();
+      });
+
+      note.value = saved.note || "";
+      note.addEventListener("input", function () {
+        var entry = state[t.id] || (state[t.id] = {});
+        entry.note = note.value;
+        persist();
+      });
+
+      paint();
+      section.appendChild(row);
+    });
+
+    root.appendChild(section);
+  });
+
+  var elDone  = document.getElementById("t-done");
+  var elPass  = document.getElementById("t-pass");
+  var elFail  = document.getElementById("t-fail");
+  var elSkip  = document.getElementById("t-skip");
+  var elAuto  = document.getElementById("t-auto");
+  var elBar   = document.getElementById("t-bar");
+  var elTotal = document.getElementById("t-total");
+  var elCount = document.getElementById("check-count");
+
+  elTotal.textContent = total;
+  elCount.textContent = total + " checks";
+
+  function tally() {
+    var p = 0, f = 0, s = 0, a = 0;
+    PHASES.forEach(function (phase) {
+      phase.tests.forEach(function (t) {
+        var v = effectiveStatus(t);
+        if (v === "pass") p++;
+        else if (v === "fail") f++;
+        else if (v === "skip") s++;
+        if (v && statusSource(t) === "log") a++;
+      });
+    });
+    var done = p + f + s;
+    elPass.textContent = p;
+    elFail.textContent = f;
+    elSkip.textContent = s;
+    elAuto.textContent = a;
+    elDone.textContent = done;
+    elBar.style.width = (total ? (done / total) * 100 : 0) + "%";
+  }
+  tally();
+
+  function copyText(text, btn, okLabel) {
+    var original = btn.textContent;
+    function done(ok) {
+      btn.textContent = ok ? okLabel : "Press Ctrl+C";
+      setTimeout(function () { btn.textContent = original; }, 1600);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { done(true); }, function () { fallback(); });
+    } else {
+      fallback();
+    }
+    function fallback() {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = false;
+      try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+      document.body.removeChild(ta);
+      done(ok);
+    }
+  }
+
+  document.getElementById("copy-path").addEventListener("click", function () {
+    copyText(document.getElementById("logpath").textContent, this, "Copied");
+  });
+
+  document.getElementById("copy-report").addEventListener("click", function () {
+    var lines = [CONFIG.reportTitle, ""];
+    var any = false;
+
+    PHASES.forEach(function (phase) {
+      var rows = [];
+      phase.tests.forEach(function (t) {
+        var e = state[t.id] || {};
+        var v = effectiveStatus(t);
+        if (!v && !e.note) return;
+        any = true;
+        var mark = v === "pass" ? "PASS"
+                 : v === "fail" ? "FAIL"
+                 : v === "skip" ? "N/A "
+                 : "----";
+        var line = "  [" + mark + "] " + t.id + "  " + t.title;
+        if (statusSource(t) === "log") {
+          line += "  (from log)";
+          var lv = logVerdict(t);
+          if (lv && lv.note) line += "\n           log:  " + lv.note.replace(/\s+/g, " ").trim();
+        }
+        if (e.note) line += "\n           note: " + e.note.replace(/\s+/g, " ").trim();
+        rows.push(line);
+      });
+      if (rows.length) {
+        lines.push(phase.letter + " - " + phase.title);
+        lines.push(rows.join("\n"));
+        lines.push("");
+      }
+    });
+
+    if (!any) lines.push("(nothing recorded yet)");
+    copyText(lines.join("\n"), this, "Copied");
+  });
+
+  // The artifact viewer answers confirm() with false at once, so a second click within a few
+  // seconds is the confirmation.
+  var resetArmed = null;
+  document.getElementById("reset").addEventListener("click", function () {
+    var btn = this;
+    if (!resetArmed) {
+      btn.textContent = "Click again to clear everything";
+      resetArmed = setTimeout(function () { resetArmed = null; btn.textContent = "Clear all"; }, 4000);
+      return;
+    }
+    clearTimeout(resetArmed);
+    resetArmed = null;
+    btn.textContent = "Clear all";
+    state = {};
+    persist();
+    document.querySelectorAll(".test textarea").forEach(function (ta) { ta.value = ""; });
+    // Repaint rather than blanking, so log-derived verdicts come back.
+    painters.forEach(function (paint) { paint(); });
+    tally();
+  });
+})();
+</script>

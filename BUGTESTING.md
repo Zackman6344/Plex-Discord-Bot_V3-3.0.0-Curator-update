@@ -1151,6 +1151,24 @@ then, so a starred name has only been seen in the unit tests. Leave the five `Za
 
 ## Phase 17: Plex Media world (live)
 
+**Phase 17A, the first-seed rehearsal, comes first.** It is the interactive checklist in
+`docs/artifact/plex-media-rehearsal.html`, published from that file as a private artifact, where
+each check records PASS, FAIL or N/A with a note. Its 27 checks take one evening with one friend,
+in risk order:
+- installing the world, then a stop and start of the bot to confirm the live room's `!ap next`
+  still verifies every slot (`!restart` keeps the old worker, which never loaded the world);
+- a list from the Options Creator, and a friend's list that shares one movie with it;
+- a throwaway seed generated and hosted on this PC from `C:\Users\zackm\Desktop\PlexRehearsal`;
+- linking, with a track the friend played after generation but before linking counted once;
+- the owner's Plex session, an episode through history, music in voice, an audiobook and a banked
+  unlock;
+- the friend's own Plex session, the shared movie credited to each slot apart, and the friend alone
+  in voice;
+- archipelago.gg (optional, since its room is public) and cleanup.
+
+The friend checks are new: the steps below cover only the owner's own Plex session. The rest of
+this phase is the full regression list.
+
 Built on 2026-11-11 and 2026-11-12 and tested offline only. `npm run test:apworld` generated real
 seeds with the frozen Archipelago 0.6.8 (solo lists, every kind with every timer, two Plex lists
 sharing titles beside ChecksFinder, season mode, 600 unlock copies, an item link): each passed a
