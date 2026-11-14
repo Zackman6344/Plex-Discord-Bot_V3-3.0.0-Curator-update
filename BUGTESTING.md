@@ -14,7 +14,10 @@ is the first live pass of chapter markers inside single-file books, Phase 15 of 
 pictures from a scanned PDF, Phase 16 of `!ap next` loading when its room connects, from the
 bot's own copy of the seed, with pages and ⭐ hints, and Phase 17 of the Plex Media world: an
 Archipelago game made from the Plex library, with its accounts and consent, lists made in the
-Archipelago Options Creator, every way a play is counted, and an upload to archipelago.gg.
+Archipelago Options Creator, every way a play is counted, and an upload to archipelago.gg. Phase
+18 is the first live pass of that world's items and traps (world 0.3.0): snacks and the Snack
+Bar, Fast Forward, Remote Control, the holds, and the traps that act on the bot's music and
+audiobooks.
 
 The bot now persists its own logs to `data/logs/`, so a failure you didn't happen to be watching
 is still there afterwards:
@@ -1169,6 +1172,51 @@ in risk order:
 The friend checks are new: the steps below cover only the owner's own Plex session. The rest of
 this phase is the full regression list.
 
+**First run, 2026-11-13 (owner and one friend, hosted on archipelago.gg): 21 pass, 1 fail, 5 not
+run.** Marked FAIL: A2, with no note. Not run: C2 (hosted on archipelago.gg instead), F1, F2, F3 and
+H1. The bot log, the command log and Archipelago's own logs agree with every pass they can see but
+E5's, which they show never ran; the page's revision 2 carries each of those as a "from log"
+verdict.
+- **A2 is open.** Its expected lines all came: the file installed at 12:21 local, the reopened
+  Launcher loaded every world but fridaynightfunkin (which failed the same way on 11-11) with no
+  Plex Media error, and `/apmedia apworld` answered "This PC already has world 0.2.0 installed."
+  three times. Its condition did not hold: the file was dragged onto a Launcher open since 11-11
+  while the TWW3 client was still connected, and both closed at 12:23. What failed was not written
+  down.
+- **Found and fixed (not deployed yet):** `/apmedia link` without `watch:` meant watch 0, so the
+  friend's claim on watch #1 met "Claim the slot first". It now takes the room of the claim
+  (`commands/apmedia.js/link.js`), and asks instead when another read room has a slot of the same
+  name. A command it suggests to the owner keeps the user it was for, and the owner too hears that
+  the monitor is off. "More than one room is being watched" named no ids, and the
+  friend guessed 2 for #1; it now lists every watch with the slot it watches as
+  (`commands/archipelago.js`). `/apmedia account plex:` refused a Plex name typed without its spaces;
+  names now match on their letters and digits (`commands/apmedia.js/account.js`). The friend's
+  `/apmedia yaml` reply said "about 27 h" and their file "about 26 h": the reply rounded the list's
+  26.4996 h to a tenth and then again to a whole hour. Both lines now come from one `sizeText`
+  with the unrounded hours (`helpers/apMediaYaml.js`).
+- **Tripped the steps, fixed in the page:** the Options Creator's unfilled `ZackPlex.yaml` went into
+  Players, and two generates stopped on the world's own "this YAML has no titles yet" before the
+  bot's file replaced it. The server was started with `AP_seed.zip` typed as written; C2 now finds
+  the zip itself.
+- **Decided after the run, built, not deployed:** under `timesanity_strict`, E4's book checkpoint
+  came after 16 skip-forward presses from about 21:29 to 29:54 and 10 s heard across 30:00. The
+  owner wants all of it heard: a strict checkpoint now needs everything from the title's start to it
+  played where the bot saw it (`strictLocations` in `helpers/apMediaCredit.js`, kept per binding as
+  `heard`, written with the next credit or within a minute). Gaps under 30 s are forgiven, and Plex
+  session seams up to about 50 s, and a checkpoint already earned counts as everything before it
+  heard. A Plex session's step bound (2.5 times the wall time plus 20 s, `helpers/apMediaWatch.js`)
+  can still hide a skip inside one 15 s poll.
+- **Not exercised yet:** banking (E5, marked PASS, but the log has no `/apmedia check` and no 🔓
+  line, and the file had `locked_watches: ignore`), the friend's own checkpoints by movie and in
+  voice (F1, F2, F3), and cleanup (H1). The friend's sessions were matched by `User.id`
+  (21:12:37Z), and their album counted through Plex history for their slot alone.
+- **Before a second run, undo the first one as H1 would.** Its watch #1, both links on it and the
+  friend's claim are still live, and a second set beside them makes every slot-less `/apmedia`
+  reply "Several slots match". `/apmedia unlink slot:ZackPlex`, the friend unlinks their own slot,
+  then `!ap unwatch 1`: "🗑️ Stopped watching **archipelago.gg** (#1). 1 slot claim(s) dropped with
+  it." Then delete `PlexRehearsal\output` and every file in `PlexRehearsal\Players` but
+  `Finder.yaml`.
+
 Built on 2026-11-11 and 2026-11-12 and tested offline only. `npm run test:apworld` generated real
 seeds with the frozen Archipelago 0.6.8 (solo lists, every kind with every timer, two Plex lists
 sharing titles beside ChecksFinder, season mode, 600 unlock copies, an item link): each passed a
@@ -1178,10 +1226,10 @@ MultiServer hosted one more seed on a loopback port, and the bot's real game, ga
 monitor played it: a Plex history row sent its title's checks, a locked title's checks waited in
 the bank until its unlock arrived through the multiworld, the room recorded the goal, and the relay
 never posted the game client's own join or leave. The other bot-side tests ran against a stand-in
-room server modelled on MultiServer 0.6.8. Plex and Discord were fakes throughout. Nothing below
-has met a room hosted with `ArchipelagoServer.exe` or archipelago.gg, a live Plex session or
-Discord yet: `/status/sessions` had no session playing when it was probed, so its field shapes are
-unverified, and no seed has been uploaded to archipelago.gg. Watch the bot log
+room server modelled on MultiServer 0.6.8. Plex and Discord were fakes throughout. The 2026-11-13
+rehearsal above was the first contact with real ones: a seed hosted on archipelago.gg, live Plex
+sessions of two accounts (both matched by `User.id`), Plex history, voice and an audiobook, all
+through Discord. The steps below have not been run against those yet. Watch the bot log
 (`data/logs/bot-<date>.log`; Plex Bot Status shows its tail) for `Plex Media` lines, and
 `npm run logs -- --raw` for `apmedia-*` events.
 
@@ -1189,8 +1237,8 @@ World 0.2.0 (2026-11-12) added the list settings that let a player start a YAML 
 Options Creator and attach it to `/apmedia yaml`. Its tests copy the Creator's rules from the
 0.6.8 build (`OptionsCreator.py` and `data/optionscreator.kv`), make the files it would export with
 Archipelago's own code, fill them in through the bot's real reader, and generate them with the
-frozen Archipelago. Nobody has opened the Creator's window with this world installed, or attached
-a file to the bot in Discord, yet.
+frozen Archipelago. The 2026-11-13 rehearsal opened the Creator's window with world 0.2.0
+installed and attached its file to the bot in Discord (the rehearsal page's B2 and B3).
 
 You need `ownerId` set, a second Discord account (Friend) with a Plex account of its own on this
 server (a shared or a managed user), and a third (Other) with none. The Options Creator steps need
@@ -1206,7 +1254,7 @@ names keeps relaying your real game.
 - [ ] Before enabling: `/apmedia status` answers "🎬 Plex Media is turned off. The bot owner can
       turn it on with `!config`, under AP Media (`apMediaEnabled`).", `!help` has no `!apmedia ?`
       line, and `!diag` shows `− ApMedia: apMediaEnabled is false in config/config.js`.
-- [ ] `/config` → AP Media lists six settings. Turn on "Plex Media world (/apmedia)": no restart,
+- [ ] `/config` → AP Media lists nine settings. Turn on "Plex Media world (/apmedia)": no restart,
       the bot log has `Plex Media started.`, `!diag` shows `✓ ApMedia: 0 slots, 0 connected, no
       linked accounts`, `!help`'s 🧩 ARCHIPELAGO section ends with the `!apmedia ?` line ("Plex
       Media: your to-watch list as an Archipelago game."), and `!apmedia ?` shows the sub-help.
@@ -1216,19 +1264,20 @@ names keeps relaying your real game.
       it back on: `!diag` is ✓ again.
 - [ ] Other runs `/apmedia apworld`: "⛔ Only the bot owner can hand out the apworld.", in public,
       as every `apworld` reply is. You run it: `plex_media.apworld` attached, "the Plex Media world
-      0.2.0 (N KB), for Archipelago 0.6.8 or later.", the install steps, and "This PC has no
+      0.3.0 (N KB), for Archipelago 0.6.8 or later.", the install steps, and "This PC has no
       plex_media.apworld installed yet (Archipelago's custom_worlds folder)." Where an earlier
-      pass installed world 0.1.0, the last line is "⚠️ This PC has world 0.1.0 installed, and
-      this file is 0.2.0: install it to bring the PC up to date." instead.
+      pass installed world 0.2.0 (the 2026-11-13 rehearsal did), the last line is "⚠️ This PC has
+      world 0.2.0 installed, and this file is 0.3.0: install it to bring the PC up to date."
+      instead.
 - [ ] Install it (Archipelago Launcher → **Install APWorld**, then restart the Launcher).
-      `/apmedia apworld` again: "This PC already has world 0.2.0 installed."
+      `/apmedia apworld` again: "This PC already has world 0.3.0 installed."
 - [ ] An older version: close every Archipelago program, then from the bot's folder run
-      `node -e "require('./helpers/apworldBuild.js').writeApworld('C:/ProgramData/Archipelago/custom_worlds/plex_media.apworld', { worldVersion: '0.1.0' })"`.
-      `/apmedia apworld`: "⚠️ This PC has world 0.1.0 installed, and this file is 0.2.0: install
+      `node -e "require('./helpers/apworldBuild.js').writeApworld('C:/ProgramData/Archipelago/custom_worlds/plex_media.apworld', { worldVersion: '0.2.0' })"`.
+      `/apmedia apworld`: "⚠️ This PC has world 0.2.0 installed, and this file is 0.3.0: install
       it to bring the PC up to date." `/apmedia yaml name:VersionCheck`, and generate a folder
       holding only `VersionCheck.yaml`. Generation stops, and its error holds
-      `Settings reports required version of world "Plex Media" is at least 0.2.0`. Install the
-      attached apworld over it: the next `/apmedia apworld` says 0.2.0 again, and the same folder
+      `Settings reports required version of world "Plex Media" is at least 0.3.0`. Install the
+      attached apworld over it: the next `/apmedia apworld` says 0.3.0 again, and the same folder
       generates.
 
 **Accounts and consent**
@@ -1241,6 +1290,9 @@ names keeps relaying your real game.
       account is called `<abc>`. Did you mean `<name>` (id N)? Give its full name or its id.", and
       nothing is linked. `!apmedia account @Friend <abc>` in a channel answers "📬 Sent you the Plex
       accounts that match by DM.", and the question is in your DMs, not the channel.
+- [ ] If their Plex name has a space in it, type it without the spaces and in capitals:
+      `/apmedia account user:@Friend plex:<NAMEWITHOUTSPACES>` links the same account as the next
+      step does. (Found 2026-11-13: a name typed without its spaces used to be refused.)
 - [ ] `/apmedia account user:@Friend plex:<their Plex name>`: "<@Friend>: Linked to Plex account
       `<name>` (account N), waiting for their consent: nothing is read until they accept." and
       "📨 They have a DM with an Accept button." Friend's DM says what would be read, that
@@ -1271,10 +1323,10 @@ names keeps relaying your real game.
 - [ ] `/apmedia yaml` with no option at all: "Give the list a slot name: `!apmedia yaml name=You
       movies=10`, or attach a YAML from the Archipelago Options Creator. Options: …"
 - [ ] Archipelago Launcher → **Options Creator**. Plex Media is in its game list. Pick it: the
-      label above Export Options reads "Game: Plex Media", and the form has five groups, in this
-      order: Game Options, Your list (the bot picks the titles), Unlocks and goal, Timesanity, and
-      Item & Location Options.
-- [ ] Open the three Plex Media groups. Every option in them has a control, and none reads "This
+      label above Export Options reads "Game: Plex Media", and the form has six groups, in this
+      order: Game Options, Your list (the bot picks the titles), Unlocks and goal, Timesanity,
+      Items and traps, and Item & Location Options.
+- [ ] Open the four Plex Media groups. Every option in them has a control, and none reads "This
       option isn't supported by the option creator." Your list holds List: Preset, List: Movies,
       List: Shows, List: Albums, List: Audiobooks, List: Titles, List: Playlist, List: Collection,
       List: Genre, List: Years, List: Unwatched Only, List: Episodes per Show and List: Name, in
@@ -1296,11 +1348,13 @@ names keeps relaying your real game.
       in Discord, and the bot picks them from the Plex library."
 - [ ] `/apmedia yaml file:CreatorFan.yaml`: a private reply, "📝 `CreatorFan`: your list, attached
       as `CreatorFan.yaml`.", 15 movies, "📄 Settings from `CreatorFan.yaml`.", and no line about a
-      random option. In the returned file, `requires` names `Plex Media: 0.2.0`, the 13 list
-      settings follow the 12 game options (`list_preset: movies`, each count `preset`), then come
+      random option. In the returned file, `requires` names `Plex Media: 0.3.0`, the 13 list
+      settings follow the 25 game options (`list_preset: movies`, each count `preset`), then come
       `progression_balancing: "normal"`, `accessibility: "items"` and the empty item and location
       options, then `list_info` and 15 entries. Generated alone in a folder of its own, it gives no
-      Plex Media error.
+      Plex Media error. The reply's "N entries (…), N locations, about N h" is word for word the
+      file's second line. (Found 2026-11-13: a 26.4996 h list read 27 h in the reply and 26 h in
+      the file.)
 - [ ] In a channel, `!apmedia yaml` with `CreatorFan.yaml` attached to the message: a public reply
       with a list built the same way.
 - [ ] A custom file. In the Creator: Player Name `CreatorMix`, List: Preset `mixed`, List: Movies
@@ -1391,10 +1445,11 @@ names keeps relaying your real game.
 
 - [ ] `/apmedia yaml name:ZackPlex preset:mixed time-books:5 time-albums:5`: a private reply with
       `ZackPlex.yaml` attached, a line of counts (entries by kind, locations, hours), "Starts with N
-      open; goal: finish K of M", "Next: put the file in Archipelago's Players folder before you
-      generate. …", and "Every title on the list is visible to the whole room and on the public
-      tracker." Ask for it again before the first answer comes: "⏳ Your last list is still being
-      built: wait for it, then ask again."
+      open; goal: finish K of M", "Items: 2 Fast Forwards, 1 Remote Control, N snacks.", "Next:
+      put the file in Archipelago's Players folder before you generate. …", and "Every title on
+      the list is visible to the whole room and on the public tracker." Ask for it again before
+      the first answer comes: "⏳ Your last list is still being built: wait for it, then ask
+      again."
 - [ ] Friend: `/apmedia yaml name:FriendPlex preset:movies`. Check two of its titles against
       Friend's Plex history: neither has been watched on Friend's account. The reply says to send
       the file to the bot owner.
@@ -1430,11 +1485,23 @@ names keeps relaying your real game.
 - [ ] Within seconds the test channel has one welcome per slot: "🎬 `ZackPlex` is in the game with
       N of M titles open: <up to 8 titles, each with its runtime>. Goal: finish K.", then "Plex
       account: the server owner (account 1).", then the `!ap claim N ZackPlex` and `!ap hintpings
-      N ZackPlex dm` commands. FriendPlex's says "Plex account: linked." and names no account. No
-      join or leave line naming `PlexMediaBot` posts.
+      N ZackPlex dm` commands, then "In its pool: 2 Wild Tickets, 2 Fast Forwards, 1 Remote
+      Control, N snacks and no traps. The Snack Bar trades 10 snacks for a Fast Forward or a Remote
+      Control, 3 times (`/apmedia snackbar`)." FriendPlex's says "Plex account: linked." and names
+      no account, and its pool line has 1 Fast Forward and no Remote Control: 15 movies leave room
+      for 3 useful items. No join or leave line naming `PlexMediaBot` posts.
 - [ ] `!diag`: `✓ ApMedia: 2 slots, 2 connected, Plex history read Nm ago` once the first read is
       in. Your `/apmedia status` shows both slots, FriendPlex's block naming Friend; Friend's shows
       only FriendPlex. Other's: "No Plex Media slot is linked." and how to claim and link one.
+- [ ] With the configured room and watch N both watched, Friend runs `!ap claims` with no id: "More
+      than one room is being watched, so I need the ID: #0 … (as `<its slot>`), #N … (as
+      `Finder`). It goes right after `claims`: `!ap claims <id> …`." (Found 2026-11-13: the reply
+      named no ids, and a friend guessed one that did not exist.)
+- [ ] After `/apmedia unlink slot:FriendPlex`, Friend links again with no watch:
+      `/apmedia link slot:FriendPlex`. It links on watch #N, the room of their claim, and a second
+      FriendPlex welcome posts, as for any new link. You run `/apmedia link slot:Nobody`: "More than
+      one room is being watched, so say which: `/apmedia link slot:Nobody watch:<id>`. Watched:
+      #0 …, #N …". (Found 2026-11-13: a link without watch: always meant watch 0.)
 - [ ] `!restart`: no join or leave line naming `PlexMediaBot`, before or after, and no refusal in
       the bot log. Connect Archipelago's Text Client to `FriendPlex` and close it again: both its
       join and its leave lines post.
@@ -1462,6 +1529,13 @@ names keeps relaying your real game.
       sent yet, and `npm run logs -- --raw` has an `apmedia-credit` event with `source` `history`.
 - [ ] An episode of the show on the list, the same way: a checkpoint every 10 minutes, and the
       episode's watch at its end.
+- [ ] On a slot whose YAML has `timesanity_strict: true` (decided 2026-11-13): play an open movie
+      from 0:00 to 10:00, seek to 14:50 and play past 15:00. Nothing posts. Seek back to 10:00 and
+      play to 14:50: within about 20 s "⏱️ … 1 check sent" for 15:00. Then finish the movie with a
+      skip in the middle: the watch is sent, and no checkpoint after the skip. A pause costs
+      nothing. A bot restart while the film plays leaves the restart's length unseen: up to about
+      50 s it is forgiven, as a seam between two Plex sessions, and a longer one has to be played
+      again. A Plexamp album listened through earns its checkpoints despite the seam at each track.
 
 **Locked titles, unlocks and Wild Tickets**
 
@@ -1613,6 +1687,450 @@ listen, and each part has to reach 85% alone for the track itself.
       ZackPlex has too few hint points, "You can't afford the hint. You have N points and need at
       least M." Either reply shows the room knew the title by name; "Didn't find something that
       closely matches" would mean it did not. `!ap unwatch` the room when done.
+
+---
+
+## Phase 18: Plex Media items and traps (live)
+
+World 0.3.0 (2026-11-13) gives each list snacks and a Snack Bar, Fast Forwards, Remote Controls
+and seven traps. It is tested offline only. `test/apMediaGame.test.js` plays every item and trap
+through the real game, game client and store against the stand-in room, in the 46 tests of its
+traps section: 39 with a recording stand-in for the trap runner and 7 with the real runner on a
+fake bot and book engine. `test/apMediaTraps.test.js` (44 tests) runs the real runner on the real
+`app/bot.js` over a FakePlayer that pauses as the real AudioPlayer does, and on a fake and a real
+book director. `npm run test:apworld` generates seeds holding traps, Fast Forwards, Remote Controls
+and snacks with the frozen Archipelago 0.6.8. **Nothing below has met a live room, Discord voice, a
+Plex clip playlist or a book session yet.**
+
+**Phase 18 is written for a room hosted on this PC**, whose `ArchipelagoServer.exe` window takes
+the server commands (`/send`, `/send_multiple`, `/release` and `/collect`) and shows the room's
+log. On archipelago.gg the room's creator types server commands in the room page's command box
+instead. There `/send` worked once, on 2026-11-13: the rehearsal sent E4's book with it
+("Cheat console: sending …" in the relay at 21:47:16Z). `/send_multiple`, `/release` and
+`/collect` were not tried there.
+
+Accepted, and no bug when seen: a book started during Slow Motion's 10 minutes starts at 0.75x and
+stays there; a trap waiting for a listen tries again 3 s after a track's `will play`, and at the
+next minute's check when the track was still loading then; a pause someone makes during a trap's
+pause is seen when the trap's time is up (60 s at most), so until then status still has the trap,
+and a Remote Control sent meanwhile blocks a trap still waiting, or else goes back on hand with
+"<Trap> was over already, so it blocks the next trap"; a book whose session was still starting
+when Plex Media was turned off keeps Slow Motion's 0.75x until Plex Media is on again and the
+trap's 10 minutes are over, and then goes back with "🐢 `<slot>`: Slow Motion is over."; a YAML
+whose random Trap Weights could all roll 0 together is taken, and so is one whose only Trap Weight
+above 0 comes from a trigger that may not fire.
+
+**Sending an item.** `ArchipelagoServer.exe`'s window takes `/send <slot> <item>` and
+`/send_multiple <count> <slot> <item>` (MultiServer 0.6.8's server commands, read from the frozen
+build). The item comes from the server itself, player 0, so the bot names its sender
+`Archipelago`, and one `/send_multiple` arrives as one batch. `/release <slot>` checks every
+location left in that slot's world and sends everything there to its owners in one batch, and
+`/collect <slot>` sends that slot everything of its own still out, one batch per world it lies in.
+The watch's relay posts the room's own lines for each send; the lines below are the Plex Media
+ones.
+
+Run Phase 17 first, to its end: world 0.3.0 installed on this PC (`/apmedia apworld`: "This PC
+already has world 0.3.0 installed."), and none of its links and no watch N left. You need Friend
+(the second Discord account, with no Plex account linked after Phase 17's last step), a voice
+channel, `audiobooksEnabled` on with an audiobook in the catalog, and for the clip steps a Plex
+playlist of your own. Steps marked **Friend** need the second account, and **Book** an audiobook
+playing through the bot. "Announcements" stays at "Completions and unlocks" unless a step says
+otherwise. A check you earn sends the item at its location, and a Remote Control from one of your
+own tracks or watches would block the next trap a step expects to hit: `/apmedia status` lists
+the Remote Controls on hand. In the trap steps "…" stands for the start of the bot's line, as in
+"🎬 `TrapPlex` got Intermission from `Archipelago`" or, before "Intermission is over",
+"🎬 `TrapPlex`".
+
+**The lists and the seed**
+
+- [ ] `/apmedia yaml name:TrapPlex preset:mixed time-books:5 time-albums:5 more:fast_forwards=3 remote_controls=2 snack_bar_price=5`.
+      The reply's third line is "Items: 3 Fast Forwards, 2 Remote Controls, N snacks.", with no
+      trap, since `trap_percentage` is 0 unless asked. In the file the game options end
+      `snack_variety: true`, `fast_forwards: 3`, `remote_controls: 2`, `snack_bar_trades: 3`,
+      `snack_bar_price: 5`, `trap_percentage: 0` and the seven `*_weight` options at 2, 2, 1, 1,
+      1, 1 and 1, before the 13 list settings.
+- [ ] **Friend.** `/apmedia yaml name:FriendTraps preset:movies unwatched:False more:strict=true trap_percentage=50 commercial_break_weight=4 slow_motion_weight=0`.
+      Its third line is "Items: 1 Fast Forward, N traps (…), N snacks.": 15 movies leave room for
+      3 useful items, two Wild Tickets and one Fast Forward. The traps in brackets give Commercial
+      Break the most, and name no Slow Motion.
+- [ ] `/apmedia yaml name:RC preset:movies unwatched:False`: a second list of your own, whose slot
+      is named like a Snack Bar item, for one Snack Bar step below.
+- [ ] `/apmedia yaml name:NoTraps preset:movies more:trap_percentage=50 buffering_weight=0 rights_expired_weight=0 commercial_break_weight=0 shuffle_mode_weight=0 rewind_weight=0 intermission_weight=0 slow_motion_weight=0`:
+      "❌ trap_percentage 50 makes N of the list's F filler items traps, but every trap weight is
+      0 (a trap weight above 0, or trap_percentage 0, would help)", and no file.
+- [ ] Options Creator, Plex Media: the Items and traps group holds Snack Variety, Fast Forwards,
+      Remote Controls, Snack Bar Trades, Snack Bar Price, Trap Percentage, then Trap Weight:
+      Buffering, Rights Expired, Commercial Break, Shuffle Mode, Rewind, Intermission and Slow
+      Motion, in that order, each with a control and a tooltip. Item & Location Options → Local
+      Items → Edit: searching finds `Fast Forward`, `Rewind` and `Traps`.
+- [ ] In the Creator, Player Name `TrapCheck`, Random? on for Trap Percentage and all seven Trap
+      Weights at 0. Export it and attach it to `/apmedia yaml`: "❌ Trap Percentage
+      (`trap_percentage`) is random in your file while every Trap Weight is 0: a roll of K or more
+      makes a trap due among the list's F filler items with no trap to pick, and that stops the
+      whole multiworld from generating. Set a Trap Weight above 0, or Trap Percentage to 0." With
+      Trap Weight: Rewind at 1 instead, the file is taken, with "⚠️ Left random in your file for
+      Archipelago to roll: Trap Percentage (`trap_percentage`), default 0. The numbers above use
+      the default." and no trap in its Items line.
+- [ ] Put `TrapPlex.yaml`, `FriendTraps.yaml`, `RC.yaml` and a ChecksFinder YAML named `Finder` in
+      a folder of their own and generate it
+      (`ArchipelagoGenerate.exe --player_files_path <folder>`): no Plex Media error. In the
+      spoiler log (`AP_*_Spoiler.txt` in the output zip), no Wild Ticket, Fast Forward or Remote
+      Control sits on a checkpoint (a location named `<title> @ <time>`). Host it:
+      `ArchipelagoServer.exe --port 38281 <its AP_*.zip>`. A room on archipelago.gg may be used
+      instead, watched by its own address, with its room page in place of the server window
+      wherever a step names that window.
+
+**Linking, and the item cursor**
+
+- [ ] `!ap watch localhost:38281 Finder`, or `!ap watch <the room's URL> Finder` for a room on
+      archipelago.gg; its id is T below. `!ap claim T TrapPlex`, then
+      `/apmedia link slot:TrapPlex`: "🔗 Linked `TrapPlex` on watch #T." The welcome's last line
+      reads "In its pool: 2 Wild Tickets, 3 Fast Forwards, 2 Remote Controls, N snacks and no
+      traps. The Snack Bar trades 5 snacks for a Fast Forward or a Remote Control, 3 times
+      (`/apmedia snackbar`)."
+- [ ] **Friend.** Before Friend links, type `/send FriendTraps Rewind` and
+      `/send FriendTraps Remote Control` in the server window. Friend runs
+      `!ap claim T FriendTraps` and `/apmedia link slot:FriendTraps`: the welcome posts, its pool
+      line naming its traps by kind, and nothing about the Rewind or the Remote Control, since
+      the first items a slot reports are only counted. Friend's `/apmedia status` has "Remote
+      Controls: 1 on hand, each one blocking the next trap or ending the one on you." and no
+      waiting trap.
+- [ ] `!restart`: no item or trap line posts again, though each game client reconnects and is sent
+      every item again.
+- [ ] Stop the bot, `/send TrapPlex Remote Control` in the server window, and start the bot. Once
+      TrapPlex has reconnected: "📺 `TrapPlex` got a Remote Control from `Archipelago`: it blocks
+      the next trap.", once.
+
+**The Snack Bar**
+
+- [ ] `/apmedia snackbar`: "🍿 `TrapPlex` has 0 snacks. The Snack Bar: 5 snacks a trade, 3 trades
+      left; one trade buys a Fast Forward or a Remote Control." With `buy:Fast Forward`: "A trade
+      costs 5 snacks, and `TrapPlex` has 0 snacks."
+- [ ] `/send_multiple 12 TrapPlex Popcorn` (snacks post no line), then `/apmedia snackbar` with
+      `buy:Fast Forward`: "🍿 `TrapPlex` bought a Fast Forward for 5 snacks: 7 snacks and 2 trades
+      left. `/apmedia ff <title>` spends it." `/apmedia status` has "Fast Forwards: 1 to spend with
+      `/apmedia ff`." and "Snacks: 7. The Snack Bar takes 5 snacks a trade, 2 trades left
+      (`/apmedia snackbar`)."
+- [ ] `/send_multiple 3 TrapPlex Nachos`, then in a channel `!apmedia snackbar Fast Forward`, the
+      item's two words with no `buy`, answered in public: "🍿 `TrapPlex` bought a Fast Forward for
+      5 snacks: 5 snacks and 1 trade left. `/apmedia ff <title>` spends it."
+      `!apmedia snackbar buy popcorn`: "`popcorn` is not on the menu. The Snack Bar sells
+      `fast-forward` and `remote-control`: `!apmedia snackbar buy fast-forward`."
+- [ ] A slot named like an item: `!ap claim T RC`, then `/apmedia link slot:RC`, and RC's welcome
+      posts. In a channel, `!apmedia snackbar rc` shows that slot's bar and buys nothing: "🍿 `RC`
+      has 0 snacks. The Snack Bar: 10 snacks a trade, 3 trades left; one trade buys a Fast
+      Forward or a Remote Control." With `slot=` the word is the item again:
+      `!apmedia snackbar rc slot=RC` answers "A trade costs 10 snacks, and `RC` has 0 snacks."
+      Then `/apmedia unlink slot:RC`: "Unlinked `RC`."
+- [ ] `/apmedia snackbar slot:FriendTraps`: "No linked Plex Media slot is called `FriendTraps`.":
+      only a slot's own player trades, and the owner is no exception. The last trade comes under
+      Buffering.
+
+**Remote Controls, and two traps a batch**
+
+- [ ] Out of voice and with no book playing, `/send TrapPlex Rewind`: "📺 `TrapPlex`: Remote
+      Control blocked Rewind from `Archipelago`." `/apmedia status` has no Remote Controls line
+      now, and `npm run logs -- --raw` has an `apmedia-trap` event with `outcome` `blocked`.
+- [ ] `/send TrapPlex Rewind` again: "🎬 `TrapPlex` got Rewind from `Archipelago`: it hits during
+      their next listen through the bot, within 12 hours." Status: "🎬 Waiting for a listen
+      through the bot: Rewind from `Archipelago`.", and the event's `outcome` is `armed`.
+- [ ] `/send TrapPlex Remote Control`: "📺 `TrapPlex`: Remote Control blocked Rewind from
+      `Archipelago`.", and the waiting line leaves the status.
+- [ ] `/send TrapPlex Remote Control` with nothing on: "📺 `TrapPlex` got a Remote Control from
+      `Archipelago`: it blocks the next trap."
+- [ ] `/send_multiple 3 TrapPlex Buffering`, one batch: "📺 `TrapPlex`: Remote Control blocked
+      Buffering from `Archipelago`.", "⏳ `TrapPlex` got Buffering from `Archipelago`: the checks
+      of its next credit wait 15 minutes." and "🍀 `TrapPlex` dodged Buffering from
+      `Archipelago`: at most 2 traps hit at once." Status: "⏳ Buffering starts with the slot's
+      next check and holds its checks for 15 minutes."
+- [ ] `/send TrapPlex Remote Control`: "📺 `TrapPlex`: Remote Control ended Buffering.", with no
+      check to send, and the status line goes.
+
+**Buffering and Rights Expired**
+
+- [ ] `/send TrapPlex Buffering`, then `/apmedia check title:<an open movie> at:15m`: "⏳
+      **<Title (Year)>**: 1 check held by a trap until HH:MM.", 15 minutes on, and the server
+      window logs nothing. Status: "⏳ Buffering: 1 check held until HH:MM." `/apmedia list` has
+      the same line under its counts, on every page.
+- [ ] `/apmedia check title:<another open movie> at:15m`: held too, until the same time. Then
+      `/send TrapPlex Buffering`: "⏳ `TrapPlex` got Buffering from `Archipelago`: its checks
+      wait until HH:MM.", 15 minutes later than before.
+- [ ] `!restart`: status shows the same end time. At it: "⏳ `TrapPlex`: Buffering is over, 2
+      checks sent.", and the server window logs both checkpoints found.
+- [ ] `/send TrapPlex Buffering`, hold one check the same way, then in a channel, with `slot=`
+      first and the item's two words, `!apmedia snackbar slot=TrapPlex buy remote control`:
+      "🍿 `TrapPlex` bought a Remote Control for 5 snacks: N snacks and 0 trades left. It went
+      straight to the trap on this slot.", and in the channel "📺 `TrapPlex`: Remote Control
+      ended Buffering, 1 check sent." `/apmedia snackbar` with `buy:Fast Forward` now:
+      "`TrapPlex`'s Snack Bar has no trades left (3 trades in all)."
+- [ ] Optional, about 20 minutes: `/send TrapPlex Buffering`, hold one check, stop the bot, and
+      start it after the end time status showed. Right after the start: "⏳ `TrapPlex`: Buffering
+      is over, 1 check sent.", and the window logs the check once TrapPlex has reconnected.
+- [ ] With nothing of yours playing anywhere, `/send TrapPlex Rights Expired`: "⛔ `TrapPlex` got
+      Rights Expired from `Archipelago`: the checks of **<an open title>** wait until HH:MM.", 45
+      minutes on. `/apmedia list` ends that title's row with "⛔ Rights expired until HH:MM", and
+      status has "⛔ Rights expired until HH:MM: **<Title>**."
+- [ ] `/apmedia check` that title up to its first checkpoint not sent yet (`at:15m` on a movie,
+      `at:30m` on one the Buffering steps sent at 15m, `10m` on an episode, `5m` on an album or the
+      book): "⏳ **<Title>**: 1 check held by a trap until HH:MM." Another title the same way:
+      "✅ **<Other>**: 1 check sent." Status: "⛔ Rights expired until HH:MM: **<Title>**, 1 check
+      held."
+- [ ] `/send TrapPlex Remote Control`: "📺 `TrapPlex`: Remote Control ended Rights Expired on
+      **<Title>**, 1 check sent."
+- [ ] Play an open movie of TrapPlex's list in a Plex app, and while it plays send another Rights
+      Expired: it names that movie. Stop it and wait a minute (a session counts as playing for two
+      session reads after its last), then `!album <an open album of the list>` in voice, and send
+      one more: it names the album. `!stop` once the line has posted, before a track can count.
+      **Book.** `/book play <the list's audiobook>`, and send one more: it names the book.
+- [ ] `!restart` while they run: status keeps all three. At each one's time: "⛔ `TrapPlex`: the
+      rights to **<Title>** are back.", with ", N checks sent" before the full stop when it held
+      any. Status has no ⛔ line once the last one is back.
+
+**Fast Forward**
+
+Without `timesanity_strict` a Fast Forward earns the title's first checkpoint not earned yet,
+however far in it lies.
+
+- [ ] `/apmedia ff title:<an open movie>`: "⏩ `TrapPlex` spent a Fast Forward on
+      **<Title (Year)>**: 1 check sent. 1 Fast Forward left." The window logs its first
+      checkpoint not sent yet (15 minutes in, on a movie no step above has checked), and status
+      has "Fast Forwards: 1 to spend with `/apmedia ff`."
+- [ ] `/apmedia ff title:<an open episode of the list's show>`: "⏩ `TrapPlex` spent a Fast Forward
+      on **<Show SxxEyy>**: 1 check sent. 0 Fast Forwards left." The window logs its 10-minute
+      checkpoint, the episode stays ready in `/apmedia list`, and `npm run logs -- --raw` has an
+      `apmedia-fastforward` event and an `apmedia-credit` with `source` `fastforward`. The same
+      episode again: "`TrapPlex` has no Fast Forward to spend (0 received, 2 bought, 2 used)."
+- [ ] `/send_multiple 2 TrapPlex Fast Forward`: two lines "⏩ `TrapPlex` got a Fast Forward from
+      `Archipelago`: `/apmedia ff` earns a title's next checkpoint." `/apmedia check` the episode
+      above with `at:2h`, which earns the rest of its checkpoints and not its watch, then
+      `/apmedia ff` on it: "**<Show SxxEyy>** has no checkpoint left to skip to.", and status
+      still has "Fast Forwards: 2 to spend with `/apmedia ff`."
+- [ ] In a channel, with `slot=` first: `!apmedia ff slot=TrapPlex <an open album>` (5-minute
+      timer): "⏩ `TrapPlex` spent a Fast Forward on **<Artist - Album>**: 1 check sent. 1 Fast
+      Forward left.", its 5-minute checkpoint and no track. On a locked episode
+      (`/apmedia list show:locked`): "⏩ `TrapPlex` spent a Fast Forward on **<Show SxxEyy>**: 1
+      check banked until it unlocks. 0 Fast Forwards left.", and status counts it banked.
+- [ ] `/apmedia ff title:<any open title>`: "`TrapPlex` has no Fast Forward to spend (2 received,
+      2 bought, 4 used)." `!apmedia ff` alone: "Which title? `!apmedia ff <title>` earns its next
+      checkpoint (with Timesanity Strict on, 10 minutes of it count as heard)."
+      `!apmedia ff <part of a title>`: "Did you mean **<Title>**? Type its title in full, or give
+      its code: `<code>`.", and nothing spent.
+- [ ] **Friend.** `/send_multiple 2 FriendTraps Fast Forward`: FriendTraps is `timesanity_strict`,
+      and its two lines read "⏩ `FriendTraps` got a Fast Forward from `Archipelago`: `/apmedia ff`
+      counts 10 minutes of a title as heard." Friend's `/apmedia ff title:<an open movie>`:
+      "⏩ `FriendTraps` spent a Fast Forward on **<Title (Year)>**: The first 10m count as heard.
+      That reaches no checkpoint yet. 1 Fast Forward left." Again: "⏩ `FriendTraps` spent a Fast
+      Forward on **<Title (Year)>**: From 10m to 20m counts as heard. 1 check sent. 0 Fast
+      Forwards left.", and the window logs the 15-minute checkpoint. When the item there is one
+      of FriendTraps's own traps, the Remote Control Friend got before linking blocks it:
+      "📺 `FriendTraps`: Remote Control blocked <trap> from `FriendTraps`."
+
+**`slot=` in prefix commands**
+
+- [ ] In a channel, with `slot=` first:
+      `!apmedia check slot=TrapPlex <the movie of the first Fast Forward step> at 2h`:
+      "✅ **<Title (Year)>**: N checks sent." `/send TrapPlex Wild Ticket`, then
+      `!apmedia redeem slot=TrapPlex <a locked movie>`: "🎟️ Spent a Wild Ticket on
+      **<Title (Year)>**. 0 tickets left."
+- [ ] An unquoted `slot=` after the rest of the command, with a second word after it, is refused,
+      and status shows nothing new. `!apmedia snackbar buy rc slot=TrapPlex 2`,
+      `!apmedia ff <an open title> slot=TrapPlex 2` and
+      `!apmedia redeem <a locked title> slot=TrapPlex 2` each answer "Is the slot `TrapPlex 2`?
+      Then put it in quotes: `slot="TrapPlex 2"`. If it is `TrapPlex`, put `slot=TrapPlex` last.
+      Nothing was spent." `!apmedia check <an open title> slot=TrapPlex 2` answers the same,
+      ending "Nothing was counted." Each of the four with `slot='TrapPlex 2'`, in single quotes,
+      gets the same answer, and so does each with `slot=‘TrapPlex 2’`, in the curly quotes a phone
+      types. So does each with `slot='TrapPlex 2'` placed first, as in
+      `!apmedia ff slot='TrapPlex 2' <an open title>`.
+
+**Traps on the bot's music**
+
+Join a voice channel and `!album <an album on neither list>`, so no check comes in between, with
+three or more tracks after the current one. You are listening, so each `/send` hits within seconds.
+
+- [ ] "Trap clips playlist" blank: `/send TrapPlex Commercial Break`: "🎬 `TrapPlex` got
+      Commercial Break from `Archipelago`: 📺 Commercial break, the music pauses for 30 seconds".
+      The music pauses, and status has "🎬 Commercial Break until HH:MM." 30 s on it plays again:
+      "🎬 `TrapPlex`: Commercial Break is over, the music plays again."
+- [ ] Read `!viewqueue`, then `/send TrapPlex Shuffle Mode`: "…: the queue is shuffled". The
+      current track plays on, `!viewqueue` lists the same tracks after it in another order, and
+      no line says it is over. With fewer than two tracks after the current one: "…: too few
+      tracks to shuffle, so this track starts over".
+- [ ] `/send TrapPlex Rewind`: "…: this track starts over". The track plays again from 0:00, with
+      no second now-playing message.
+- [ ] `/send TrapPlex Intermission`: "…: the music pauses for 60 seconds, or until someone resumes
+      it", and 60 s on "…: Intermission is over, the music plays again." Again, with `!resume`
+      after 10 s: "…: Intermission is over, someone resumed the music early." Again, with `!skip`
+      during the pause: "…: Intermission is over, the paused track was stopped.", and the next
+      track plays.
+- [ ] `/send TrapPlex Intermission`, then `!pause` during the pause. Status keeps
+      "🎬 Intermission until HH:MM.", and at that time "…: Intermission is over, someone paused the
+      music, so it stays paused." The music stays paused until `!resume`, which plays it. Again,
+      with `!seek 1:30` during the pause: "⏩ Seeking to **1:30**...", then "…: Intermission is
+      over, someone resumed the music early.", and the track plays on from 1:30.
+- [ ] `/send TrapPlex Slow Motion`: "…: music never slows down, so it pauses for 30 seconds",
+      then "…: Slow Motion is over, the music plays again." The track's speed never changes.
+- [ ] `/send TrapPlex Intermission`, then `/send TrapPlex Remote Control` while it holds: the
+      music plays at once, "📺 `TrapPlex`: Remote Control ended Intermission.", and no "is over"
+      line follows.
+- [ ] `/send TrapPlex Intermission`, then `/send TrapPlex Rewind` during the pause: the Rewind
+      waits ("…: it hits during their next listen through the bot, within 12 hours."), status has
+      "🎬 Waiting for a listen through the bot: Rewind from `Archipelago`.", and it hits at the
+      first minute's check after the music plays again.
+- [ ] **Friend.** With Friend in the channel too, `/send TrapPlex Intermission`: the music pauses
+      for both of you, and Friend's `!resume` ends the trap: "…: Intermission is over, someone
+      resumed the music early."
+- [ ] Deafen yourself, then `/send TrapPlex Rewind`: "…: it hits during their next listen through
+      the bot, within 12 hours." Undeafen: at the next minute's check, "…: this track starts over".
+- [ ] Optional: during a `!hitster` round, `/send TrapPlex Rewind` waits until music plays for you
+      again.
+
+**Commercial Break with clips**
+
+- [ ] In Plex, make an audio playlist `Trap Clips` of two or three tracks of 3 minutes or less and
+      one song longer than that. `/config` → AP Media → "Trap clips playlist": `Trap Clips`.
+- [ ] Music playing with a track after the current one: `/send TrapPlex Commercial Break`: "…: a
+      commercial plays after this track". `!viewqueue` has "Commercial Break" right after the
+      current track, never the long song, and status "🎬 Commercial Break until its commercial
+      has played." The current track plays to its end, then the clip, with a now-playing message
+      whose card reads Title "Commercial Break", Artist "Plex Media" and no Album, then the next
+      track. No ⏱️ line and no `apmedia-credit` event for the clip. Within about 15 s of the
+      clip's end, plus the batch window: "🎬 `TrapPlex`: Commercial Break is over."
+- [ ] Another Commercial Break, then `/send TrapPlex Remote Control` before the clip starts:
+      "📺 `TrapPlex`: Remote Control ended Commercial Break.", and `!viewqueue` no longer lists it.
+      Again, with the Remote Control sent while the clip plays: the clip stops, as with `!skip`,
+      and the next track plays.
+- [ ] While a clip plays, `/send TrapPlex Rewind`: "…: it hits as soon as the bot can, within 12
+      hours.", and status has "🎬 Waiting to hit as soon as the bot can: Rewind from `Archipelago`."
+      It starts the track after the clip over once that plays.
+- [ ] The playlist's ratingKey (the number in its Plex Web address) in the setting instead of its
+      name: the same. A name no playlist has (`No Such Clips`): the 30-second pause line, and the
+      bot log has, once, `Plex Media: no Plex playlist is named "No Such Clips" (apMediaTrapClips), so Commercial Break pauses the music instead.`
+      A playlist of long songs only: the pause, and once
+      `Plex Media: the trap clip playlist <ratingKey> has no audio tracks of 3 minutes or less, so Commercial Break pauses the music instead.`
+      Set the setting blank again.
+
+**Traps on your audiobook** (**Book**: `/book play <a book on neither list>`, played past 6:00)
+
+- [ ] `/send TrapPlex Commercial Break`: "…: the book pauses for 30 seconds", the book card shows
+      it paused, and 30 s on it plays again: "…: Commercial Break is over, the book plays again."
+- [ ] `/send TrapPlex Shuffle Mode`: "…: a book has nothing to shuffle, so it goes back 5
+      minutes", and the card's place is 5:00 earlier. `/send TrapPlex Rewind`: "…: back 5
+      minutes". Inside the book's first 5 minutes (`/book goto time:2:00`): "…: back to the
+      start".
+- [ ] `/send TrapPlex Intermission`: "…: the book pauses for 60 seconds", then "…: Intermission is
+      over, the book plays again." Again with `/book resume` after 10 s: "…: Intermission is over,
+      the book was resumed early." Again, leaving the voice channel during the pause: "…:
+      Intermission is over, the book stays paused until its listener is back in voice.", and it
+      stays paused. Again with `/book stop` during the pause: "…: Intermission is over, the book
+      was stopped."
+- [ ] `/book play`, `/send TrapPlex Intermission`, then `/book pause` during the pause:
+      "Already paused." 60 s on: "…: Intermission is over, someone paused the book, so it stays
+      paused.", and the book stays paused until `/book resume`.
+- [ ] Note the book's speed, then `/send TrapPlex Slow Motion`: "…: 0.75x for 10 minutes", the
+      card shows 0.75x, and status "🐢 Slow Motion until HH:MM." At that time: "🐢 `TrapPlex`:
+      Slow Motion is over.", and the book is back at its speed. Again, with `/book speed rate:1.25`
+      inside the 10 minutes: the same line at the same time, and the book stays at 1.25x. Again at
+      0.75x already (`/book speed rate:0.75` first): "…: already at 0.75x, so the book pauses for
+      30 seconds", then "…: Slow Motion is over, the book plays again."
+- [ ] Slow Motion, then `!restart` 4 minutes in: status still has "🐢 Slow Motion until HH:MM",
+      at that time "🐢 `TrapPlex`: Slow Motion is over.", and `/book play` resumes at the old
+      speed. (Accepted: another book started inside the 10 minutes starts at 0.75x and stays
+      there.)
+- [ ] Intermission, then `/send TrapPlex Remote Control`: the book plays at once, "📺 `TrapPlex`:
+      Remote Control ended Intermission.", and no "is over" line follows. Slow Motion, then a
+      Remote Control: "📺 `TrapPlex`: Remote Control ended Slow Motion.", and the old speed is
+      back at once.
+- [ ] Slow Motion, then turn "Plex Media world (/apmedia)" off inside its 10 minutes: the card
+      shows the book's old speed at once, and no line posts. Turn it on again: no Slow Motion line
+      then or when the 10 minutes would have ended, and status has no 🐢 line.
+
+**Waiting for a listen**
+
+- [ ] Out of voice, no book playing: `/send TrapPlex Intermission`: "🎬 `TrapPlex` got
+      Intermission from `Archipelago`: it hits during their next listen through the bot, within
+      12 hours." Status: "🎬 Waiting for a listen through the bot: Intermission from
+      `Archipelago`." `npm run logs -- --raw`: `apmedia-trap`, `outcome` `armed`.
+- [ ] Join voice and `!album <…>`: about 3 s after the first track starts, or at the next minute's
+      check when it was still loading: "…: the music pauses for 60 seconds, or until someone
+      resumes it", and `outcome` `hit`.
+- [ ] **Book.** One more armed the same way, then `/book play`: it hits the book within seconds
+      ("…: the book pauses for 60 seconds").
+- [ ] One more armed, then `!restart`, then a listen: it hits at the first listen after the
+      restart.
+- [ ] Optional: out of voice and with no book playing, `/send TrapPlex Rewind` 21 times, one
+      `/send` at a time. Twenty wait, each with its "…: it hits during their next listen through
+      the bot, within 12 hours.", and the 21st fizzles: "🎬 `TrapPlex`: Rewind from `Archipelago`
+      fizzled: 20 traps already wait to hit.", `outcome` `fizzled`. Turn "Traps" off and on again
+      to clear them: "🎬 `TrapPlex`: Rewind from `Archipelago`, Rewind from `Archipelago`, Rewind
+      from `Archipelago`, Rewind from `Archipelago`, Rewind from `Archipelago` and 15 more
+      fizzled: traps are off on this server."
+- [ ] Optional, 12 hours: leave one armed overnight with no listen through the bot. At the first
+      minute's check after its 12 hours: "🎬 `TrapPlex`: Intermission from `Archipelago`
+      fizzled: no listen through the bot in 12 hours.", `outcome` `fizzled`. The line is pinned
+      by `test/apMediaGame.test.js`, so the wait can be skipped.
+
+**The three switches**
+
+- [ ] `/config` → AP Media: the last three settings are "Traps", "Voice and book traps" and "Trap
+      clips playlist". Saving "Voice and book traps" answers "✅ **Voice and book traps**
+      updated." and "⚠️ They pause, rewind or shuffle what everyone in the bot's voice channel
+      hears."
+- [ ] Out of voice and with no book playing, `/send TrapPlex Rewind` (it waits), then turn "Voice
+      and book traps" off: at once "🎬 `TrapPlex`: Rewind from `Archipelago` fizzled: voice traps
+      are off on this server." `/send TrapPlex Remote Control` ("📺 `TrapPlex` got a Remote
+      Control from `Archipelago`: it blocks the next trap."), then
+      `/send_multiple 3 TrapPlex Intermission`, one batch: one line, "🎬 `TrapPlex`: Intermission
+      from `Archipelago`, Intermission from `Archipelago` and Intermission from `Archipelago`
+      fizzled: voice traps are off on this server.", no 🍀 line, and status still has "Remote
+      Controls: 1 on hand, each one blocking the next trap or ending the one on you." The hold
+      traps still act: `/send TrapPlex Buffering` meets that Remote Control ("📺 `TrapPlex`:
+      Remote Control blocked Buffering from `Archipelago`."), and the next
+      `/send TrapPlex Buffering` holds: "⏳ `TrapPlex` got Buffering from `Archipelago`: the
+      checks of its next credit wait 15 minutes."
+- [ ] **Book.** Turn "Voice and book traps" on, `/book play`, `/send TrapPlex Slow Motion`, and
+      turn it off: "🐢 `TrapPlex`: Slow Motion ended: voice traps are off on this server.", and
+      the speed is back. Turn it on again.
+- [ ] `/book stop`. `/apmedia check title:<an open movie not checked yet> at:15m` (the one the
+      Wild Ticket opened will do; that Buffering holds it) and, out of voice,
+      `/send TrapPlex Rewind` (it waits). Turn "Traps" off:
+      "⏳ `TrapPlex`: traps are off on this server, so its holds ended, 1 check sent." and
+      "🎬 `TrapPlex`: Rewind from `Archipelago` fizzled: traps are off on this server."
+      `/send TrapPlex Buffering`:
+      "🎬 `TrapPlex`: Buffering from `Archipelago` fizzled: traps are off on this server.", and
+      the next `/apmedia check` is sent at once. `/send TrapPlex Remote Control`: "📺 `TrapPlex`
+      got a Remote Control from `Archipelago`: it blocks the next trap." Turn "Traps" on, and
+      `/send TrapPlex Rewind`: "📺 `TrapPlex`: Remote Control blocked Rewind from `Archipelago`."
+- [ ] **Book.** `/book play`, `/send TrapPlex Slow Motion`, and turn "Traps" off: "🐢 `TrapPlex`:
+      Slow Motion ended: traps are off on this server.", and the speed is back. Turn it on again,
+      and `/book stop`.
+
+**A release and a collect** (**Friend**; last, since they bring FriendTraps all its items)
+
+- [ ] In the spoiler log, count FriendTraps's traps placed in Finder's world. In the server window
+      `/release Finder`: everything left in Finder's world goes out in one batch. With three or
+      more FriendTraps traps among it, two act (a Remote Control still on hand blocks the first;
+      a voice trap waits while Friend is not listening) and the rest are in one line,
+      "🍀 `FriendTraps` dodged <trap> from `Finder`, …: at most 2 traps hit at once."
+- [ ] `/collect FriendTraps`: the rest of its items come, one batch per world they lie in. From
+      each batch at most two traps act, the rest in a 🍀 line naming five and then "and N more",
+      and `npm run logs -- --raw` has an `apmedia-trap` event with `outcome` `dodged` for each.
+- [ ] `/release FriendTraps`: the room checks every location left on its list, so none of its
+      titles is open any more. Turn "Traps" off and on again: any hold or waiting trap still on
+      FriendTraps ends with its "traps are off on this server" line. Then
+      `/send FriendTraps Remote Control`: "📺 `FriendTraps` got a Remote Control from
+      `Archipelago`: it blocks the next trap." `/send_multiple 3 FriendTraps Rights Expired`:
+      three lines "⛔ `FriendTraps` got Rights Expired from `Archipelago`, but none of its titles
+      is open to lose.", no 🍀 line, an `apmedia-trap` event with `outcome` `fizzled` for each,
+      and `/apmedia status slot:FriendTraps` still has "Remote Controls: 1 on hand, each one
+      blocking the next trap or ending the one on you."
+
+**Cleanup**
+
+- [ ] `/apmedia unlink slot:TrapPlex`: "Unlinked `TrapPlex`.", plus "Its N unsent checks went with
+      it." when any were held or waiting. Friend unlinks FriendTraps. `!ap unwatch T`. In
+      `/config` → AP Media, "Trap clips playlist" blank and "Traps" and "Voice and book traps" on.
+      Close the server window and delete the seed's folder.
 
 ---
 

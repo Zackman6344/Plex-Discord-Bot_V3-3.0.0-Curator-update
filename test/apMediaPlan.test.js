@@ -1,5 +1,6 @@
 // helpers/apMediaPlan.js: the JS twin of apworld/plex_media/plan.py. Units, steps and prefix
-// tables, starting copies, locations, checkpoint minutes, Wild Tickets and goal_count (spec 4.5).
+// tables, starting copies, locations, checkpoint minutes, goal_count, and the pool's Wild Tickets,
+// Fast Forwards, Remote Controls, traps and snacks (spec 4.5).
 //
 // The YAML builder shows players these numbers before any seed exists. A rule that drifts from the
 // Python side tells a player their list opens with titles it does not, so each rule is pinned here
@@ -240,6 +241,21 @@ test('the summary numbers: counts, locations, hours, start and the goal estimate
 	assert.deepStrictEqual(plan.byKind.book, { entries: 1, main: 1, checkpoints: 3, ms: 4 * 3600000 });
 });
 
+test('the pool: useful items take the room the unlocks leave, trap_percentage of the filler is traps by weight, the rest snacks in turn', () => {
+	const films = Array.from({ length: 6 }, (_, i) => movie(`m${i}`));
+	const plan = planSlot(films, { trap_percentage: 40 });
+	assert.deepStrictEqual([plan.W, plan.FF, plan.RC, plan.F, plan.T], [2, 1, 0, 30, 12], '6 watches, 3 unlocks in the pool: a room of 3');
+	assert.deepStrictEqual(Object.values(plan.traps), [3, 3, 2, 1, 1, 1, 1]);
+	assert.deepStrictEqual(Object.values(plan.snacks), [3, 3, 3, 3, 2, 2, 2]);
+	const off = planSlot(films, { trap_percentage: 40, snack_variety: false });
+	assert.deepStrictEqual(Object.values(off.snacks), [18, 0, 0, 0, 0, 0, 0]);
+	assert.strictEqual(planSlot(films).T, 0, 'no traps by default');
+	const zero = Object.fromEntries(Object.keys(contracts.TRAPS).map((key) => [`${key}_weight`, 0]));
+	assert.throws(() => planSlot(films, { trap_percentage: 40, ...zero }),
+		/^Error: trap_percentage 40 makes 12 of the list's 30 filler items traps, but every trap weight is 0 \(a trap weight above 0, or trap_percentage 0, would help\)$/);
+	assert.strictEqual(planSlot(films, { trap_percentage: 3, ...zero }).T, 0, 'no trap due: the weights do not matter');
+});
+
 test('an empty list plans to nothing without throwing, and hands out no copies', () => {
 	const plan = planSlot([]);
 	assert.strictEqual(plan.C, 0);
@@ -256,7 +272,12 @@ test('every case plan.py wrote to plan_cases.json plans the same here', { skip: 
 	assert.ok(Array.isArray(cases) && cases.length > 0);
 	for (const c of cases) {
 		const plan = planSlot(c.entries, c.options);
-		const got = { C: plan.C, S: plan.S, W: plan.W, N_main: plan.N_main, N_checkpoints: plan.N_checkpoints, goal_count: plan.goal_count, units: plan.units, entries: plan.entries };
+		const got = {
+			C: plan.C, S: plan.S, W: plan.W, N_main: plan.N_main, N_checkpoints: plan.N_checkpoints, goal_count: plan.goal_count,
+			FF: plan.FF, RC: plan.RC, F: plan.F, T: plan.T, traps: plan.traps, snacks: plan.snacks, units: plan.units, entries: plan.entries,
+		};
 		assert.deepStrictEqual(got, c.expect, c.name);
+		assert.deepStrictEqual(Object.keys(plan.traps), Object.keys(contracts.TRAPS), `${c.name}: traps in table order`);
+		assert.deepStrictEqual(Object.keys(plan.snacks), Object.keys(contracts.SNACKS), `${c.name}: snacks in table order`);
 	}
 });

@@ -18,7 +18,25 @@ runs it.
 | A title's unlock, named after the title (`The Matrix (1999)`, `Daft Punk - Discovery`, `Pride and Prejudice by Jane Austen`) | Unlocks that movie, album, playlist part or book |
 | `<Show>: Next 3 Episodes` (or `Next Episode`, `Next Season`) | Unlocks the next episodes of a show, in season and episode order; a show has as many copies as it has steps |
 | Wild Ticket | Unlocks any locked title of your choice (one step of a show) through `/apmedia redeem` |
-| Popcorn | Filler |
+| Fast Forward | `/apmedia ff` spends one on a title: it earns the title's next checkpoint without playing it (with `timesanity_strict` on, the 10 minutes after where you got to count as heard instead, and the checkpoints they complete are earned). Never a watch, track or finish, so the goal still needs playing. On a locked title it banks, as a watch does, or is refused under `locked_watches: ignore` |
+| Remote Control | Ends the trap at work on your list when it arrives; otherwise it is kept and blocks the next trap |
+| Popcorn, Nachos, Large Soda, Candy Bar, Hot Dog, Soft Pretzel, Ice Cream Sandwich | Filler: the snacks. The Snack Bar trades them for a Fast Forward or a Remote Control |
+| Buffering | Trap: from your next check, the checks you earn for 15 minutes are held, then sent together. Another one adds 15 minutes, up to an hour |
+| Rights Expired | Trap: for 45 minutes, what the title you are playing earns (or else the first title on your list you can play) is held, then sent |
+| Commercial Break | Trap: the bot's music plays a commercial after the current track, or pauses for 30 seconds; an audiobook pauses for 30 seconds |
+| Shuffle Mode | Trap: the bot's music queue is shuffled after the current track; in an audiobook it is a Rewind |
+| Rewind | Trap: the bot's music starts the current track over; an audiobook jumps back 5 minutes |
+| Intermission | Trap: the bot's music or your audiobook pauses for 60 seconds, then plays on |
+| Slow Motion | Trap: your audiobook plays at 0.75x for 10 minutes; the bot's music pauses for 30 seconds instead |
+
+No trap takes away an item or a check: what Buffering and Rights Expired hold is sent when they end.
+Commercial Break, Shuffle Mode, Rewind, Intermission and Slow Motion need you listening through the
+bot, in its voice channel while it plays music or in an audiobook of your own; until you are, the
+trap waits, for up to 12 hours. The bot's owner can turn traps off, and a trap then only says so.
+
+The Snack Bar (`/apmedia snackbar`) trades `snack_bar_price` snacks you have received for a Fast
+Forward or a Remote Control, `snack_bar_trades` times a slot. Every snack counts the same, Popcorn
+included.
 
 ## Locations
 
@@ -31,8 +49,10 @@ runs it.
 
 Checkpoints stop before the last 10% of a title. By default, finishing a title also sends all of
 its checkpoints, so a watch the bot could not follow live still pays out; `timesanity_strict: true`
-turns that off. By default checkpoints hold only filler (`checkpoint_items: filler_only`), so no one
-waits on another player reaching the middle of a film for a key item.
+turns that off. Under it, a checkpoint needs everything before it heard: gaps under 30 seconds are
+forgiven, and in Plex, which the bot checks every 15 seconds by default, gaps up to about 50
+seconds. By default checkpoints hold only filler or traps (`checkpoint_items: filler_only`), so no
+one waits on another player reaching the middle of a film for a key item.
 
 A title watched before its unlock arrives keeps its checks banked, and they are sent when the unlock
 comes (`locked_watches: bank`). With `ignore`, the watch counts for nothing.
@@ -56,9 +76,15 @@ unlock uses the show's rating key. A playlist part uses its playlist's rating ke
 (`[2500:2]`). An audiobook uses the bot's catalog id (`[jane-austen/emma]`). An all-number title
 such as `1917` gets `(movie)`.
 
+World 0.3.0 added the snacks, Fast Forward, Remote Control, the traps and the item groups Snacks,
+Useful and Traps to the fixed names. Of a list's names only a movie without a year can be spelled
+like one, so in a seed made with 0.3.0 or later a yearless movie called Rewind is
+`Rewind [<rating key>]`. Only its name changes, never its ids, and a seed made before keeps the
+names it had.
+
 ## Options
 
-The Archipelago Options Creator shows Plex Media's options in three groups of their own, after
+The Archipelago Options Creator shows Plex Media's options in four groups of their own, after
 Archipelago's Game Options and before its Item & Location Options. The setup guide walks through
 making a YAML there.
 
@@ -126,6 +152,40 @@ above 0, as every one in a file from the Launcher's Generate Template Options, i
 | `timesanity_albums` | 0 | 0–240 minutes, covers playlists too |
 | `timesanity_books` | 30 | 0–1440 minutes |
 
+### Items and traps
+
+| Option | Default | Range |
+|---|---|---|
+| `snack_variety` | `true` | `true`: filler comes as the seven snacks in turn; `false`: Popcorn only |
+| `fast_forwards` | 2 | 0–10, fewer when the list is short |
+| `remote_controls` | 1 | 0–10, fewer when the list is short |
+| `snack_bar_trades` | 3 | 0–10 trades at the Snack Bar |
+| `snack_bar_price` | 10 | 5–50 snacks a trade |
+| `trap_percentage` | 0 | 0–100 percent of the filler |
+| `buffering_weight` | 2 | 0–10 |
+| `rights_expired_weight` | 2 | 0–10 |
+| `commercial_break_weight` | 1 | 0–10 |
+| `shuffle_mode_weight` | 1 | 0–10 |
+| `rewind_weight` | 1 | 0–10 |
+| `intermission_weight` | 1 | 0–10 |
+| `slow_motion_weight` | 1 | 0–10 |
+
+The pool holds one item for each of the list's locations, and nothing in it is left to chance.
+Unlocks and useful items fit in the titles' own locations (the watches, tracks and finishes), so
+every checkpoint keeps a snack or a trap: Wild Tickets take that room first, then Fast Forwards,
+then Remote Controls, and a short list gets fewer than it asks for. Excluding a title's watch,
+finish or track gives up useful items first: an excluded location holds only a snack or a trap, so
+each of your own that `exclude_locations` names takes a place from that room, and the useful items
+that no longer fit go, Remote Controls first, then Fast Forwards, then Wild Tickets. The rest is
+filler. `trap_percentage` of it, rounded down, becomes traps, shared among the seven by their
+weights (by largest remainder, a tie going to the trap listed first), and the other slots are
+snacks, dealt in turn in the order of the Items table. A list due a trap while every weight is 0
+stops generation, naming the player. These options move no id, name or location.
+
+A YAML without these options, such as one written for world 0.2.0, gets their defaults: 2 Fast
+Forwards and 1 Remote Control where the list has room for them, in places that held Popcorn before,
+the other filler as the seven snacks, and no traps.
+
 ### Written by the bot
 
 `entries` and `list_info` hold the list itself. The bot writes them; they are not meant to be edited
@@ -143,12 +203,14 @@ Plex Media ignores `start_inventory` and `item_links`, and generation logs a war
 `starting_unlocks` opens the first titles, and a link stays empty.
 
 `local_items`, `non_local_items`, `start_hints`, `exclude_locations`, `priority_locations` and
-`start_location_hints` can only name `Unlock 1` to `Unlock 20000`, `Check 1` to `Check 60000`,
-Popcorn, Wild Ticket, Everything and Everywhere, which is all the Options Creator offers for them: a
-title gets its item and its locations only when the seed is generated. Everything and Everywhere
-mean your own list's unlocks and locations. A numbered name means the seed's unlock or location
-with that number, counted across every Plex Media list in the seed: one that is not on your list
-is left out with a warning, and an `Unlock` number past the seed's last unlock stops generation.
+`start_location_hints` can only name `Unlock 1` to `Unlock 20000`, `Check 1` to `Check 60000`, the
+other items in the Items table, the groups Snacks, Useful, Traps and Everything, and Everywhere,
+which is all the Options Creator offers for them: a title gets its item and its locations only when
+the seed is generated. Everything and Everywhere mean your own list's unlocks and locations. A
+numbered name means the seed's unlock or location with that number, counted across every Plex
+Media list in the seed: one that is not on your list is left out with a warning, and an `Unlock`
+number past the seed's last unlock stops generation. Excluding a watch, finish or track of your own
+list gives up useful items first, as Items and traps says.
 
 `plando_items` reads none of those names: there, a numbered location finds nothing, which stops
 generation when the block has `force: true`, and a numbered unlock is an extra copy. It takes the

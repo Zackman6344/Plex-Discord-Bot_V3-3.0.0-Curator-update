@@ -132,7 +132,7 @@ function blank(userId, work, now) {
  * place survives a folder rename.
  * @param {string} userId
  * @param {object|string} work a catalog work, or a bare work id (no alias lookup)
- * @returns {object|null} a copy; change it through record() or markFinished()
+ * @returns {object|null} a copy; change it through record(), setSpeed() or markFinished()
  */
 function get(userId, work) {
 	const id = idOf(work);
@@ -228,6 +228,29 @@ function record(userId, work, fields, { force = false } = {}) {
 
 	// A failed write is retried on the very next save, not only once a second has moved.
 	if (!force && store.healthy() && !movedEnough(k, mark)) return result(false);
+	return result(write());
+}
+
+/**
+ * Change only the speed of a saved bookmark, written at once. The place, its hint and updatedAt
+ * stay, so the work keeps its turn in lastInProgress and lastSpeed: helpers/apMediaTraps.js puts
+ * back a speed it changed on a book nobody is playing, which is no listen.
+ * @param {string} userId
+ * @param {object|string} work a catalog work, or a bare work id (no alias lookup)
+ * @param {number} speed one of bookModel.SPEEDS
+ * @returns {{persisted: boolean, healthy: boolean}} persisted is false when there is no bookmark,
+ *   for a speed the books do not play at, and for a failed write
+ */
+function setSpeed(userId, work, speed) {
+	const id = idOf(work);
+	const x = Number(speed);
+	if (!userId || !id || !bookModel.SPEEDS.includes(x)) return result(false);
+	get(userId, work);
+	const all = store.load();
+	const k = keyOf(userId, id);
+	if (!has(all, k)) return result(false);
+	all[k].speed = x;
+	dirtyKeys.add(k);
 	return result(write());
 }
 
@@ -441,6 +464,7 @@ function reset() {
 module.exports = {
 	get,
 	record,
+	setSpeed,
 	flush,
 	markFinished,
 	forget,

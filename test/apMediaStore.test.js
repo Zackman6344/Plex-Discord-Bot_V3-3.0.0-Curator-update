@@ -107,7 +107,9 @@ test('a new binding gets every default and is keyed by watch and lower-cased slo
 	assert.deepStrictEqual(b, {
 		key: '2::zack', watchId: 2, slot: 'Zack', userId: ZACK, boundAt: c.t, boundBy: OWNER, seedName: null,
 		state: 'active', stateDetail: null, pending: [], banked: [], redeemed: [], wildUsed: 0,
-		goalSent: false, announce: true, welcomed: false, lastCredit: null, lastTarget: null,
+		goalSent: false, announce: true, welcomed: false, lastCredit: null, lastTarget: null, heard: {},
+		itemsSeen: null, held: [], holdUntil: null, holdMs: 0, expired: {}, armed: [], speedRestore: null,
+		ffUsed: 0, rcUsed: 0, snackSpent: 0, bought: { fastForward: 0, remoteControl: 0 }, trades: 0,
 	});
 	assert.strictEqual(apStore.bindingKey(2, 'ZACK'), '2::zack');
 	assert.deepStrictEqual(store.bindings.find(2, 'zack'), b);
@@ -141,6 +143,43 @@ test('id lists are deduped numbers and redeemed keys deduped strings, whatever t
 	assert.deepStrictEqual(b.banked, [1347000007]);
 	assert.deepStrictEqual(b.redeemed, ['movie|rk:1', 'album|plex://album/2']);
 	assert.strictEqual(b.wildUsed, 2);
+});
+
+test('the trap and item fields keep what the game wrote and repair what a hand edit broke', () => {
+	const { store } = make();
+	const b = store.bindings.put(binding({
+		itemsSeen: '12',
+		held: [1347000048, '1347000049', 1347000048, 'x'],
+		holdUntil: 1794400000000,
+		holdMs: '900000',
+		expired: { 'movie|rk:1': 1794400000000, 'movie|rk:2': 'soon', '': 5, [`movie|${'x'.repeat(1101)}`]: 7 },
+		armed: [
+			{ kind: 'rewind', at: 1794400000000, from: 'Bob', told: true },
+			{ kind: 'buffering', at: '1794400000001', from: 7 },
+			{ kind: 'sneeze', at: 1, from: 'Ann' },
+			{ kind: 'rewind', at: -1, from: 'Ann' },
+			{ kind: 'intermission', at: 2, from: 'x'.repeat(150) },
+		],
+		speedRestore: { workId: 'jane-austen/pride-and-prejudice', previous: '1.25', until: 1794400600000, userId: ZACK },
+		ffUsed: 2, rcUsed: '1', snackSpent: -5, bought: { fastForward: '1', remoteControl: 'many', extra: 3 }, trades: 1.5,
+	}));
+	assert.strictEqual(b.itemsSeen, 12);
+	assert.deepStrictEqual(b.held, [1347000048, 1347000049]);
+	assert.deepStrictEqual([b.holdUntil, b.holdMs], [1794400000000, 900000]);
+	assert.deepStrictEqual(b.expired, { 'movie|rk:1': 1794400000000 });
+	assert.deepStrictEqual(b.armed, [
+		{ kind: 'rewind', at: 1794400000000, from: 'Bob', told: true },
+		{ kind: 'buffering', at: 1794400000001, from: '7', told: false },
+		{ kind: 'intermission', at: 2, from: 'x'.repeat(100), told: false },
+	]);
+	assert.deepStrictEqual(b.speedRestore, { kind: 'speed', workId: 'jane-austen/pride-and-prejudice', previous: 1.25, until: 1794400600000 });
+	assert.deepStrictEqual([b.ffUsed, b.rcUsed, b.snackSpent, b.trades], [2, 1, 0, 0]);
+	assert.deepStrictEqual(b.bought, { fastForward: 1, remoteControl: 0 });
+	const back = store.bindings.patch(b.key, { itemsSeen: null, speedRestore: { workId: '', previous: 1, until: 5 }, armed: Array.from({ length: 30 }, (_, i) => ({ kind: 'rewind', at: i, from: 'Bob' })) });
+	assert.deepStrictEqual([back.itemsSeen, back.speedRestore, back.armed.length], [null, null, 20], 'null is "not known yet", and at most 20 armed');
+	for (const field of ['itemsSeen', 'held', 'holdUntil', 'holdMs', 'expired', 'armed', 'speedRestore', 'ffUsed', 'rcUsed', 'snackSpent', 'bought', 'trades']) {
+		assert.ok(!/password|token|secret/i.test(field), `${field} would be dropped by the secret filter`);
+	}
 });
 
 test('a record handed out is a copy: editing it changes nothing until it is written back', () => {
@@ -548,4 +587,31 @@ test('health reports each part, and a cache write that fails says so', (t) => {
 	assert.strictEqual(store.health().cache, false);
 	assert.ok(lines.some((l) => l.includes('could not cache slot_data')), lines.join('\n'));
 	assert.strictEqual(store.cache.read('BROKEN', 'Zack'), SLOT_DATA, 'the copy in memory still serves this run');
+});
+test('heard keeps a session range\'s pad, takes keys as long as an entry id allows, and caps titles and ranges', () => {
+	const credit = require('../helpers/apMediaCredit.js');
+	const { store } = make();
+	const long = `movie|${'x'.repeat(1094)}`;
+	const tooLong = `movie|${'x'.repeat(1095)}`;
+	const b = store.bindings.put(binding({
+		heard: {
+			'movie|a': [[30, 40], [0, 10, 25000], [5, 1], ['x', 2], [50, 60, -3], [70, 80, 999999]],
+			[long]: [[0, 1]],
+			[tooLong]: [[0, 1]],
+			'movie|b': [],
+			'movie|c': 'nope',
+		},
+	}));
+	assert.deepStrictEqual(b.heard['movie|a'], [[0, 10, 25000], [30, 40], [50, 60], [70, 80, 90000]]);
+	assert.strictEqual(long.length, 1100);
+	assert.deepStrictEqual(Object.keys(b.heard), ['movie|a', long], 'over 1,100 characters, empty or not a list: dropped');
+
+	const many = {};
+	for (let t = 0; t < 70; t++) many[`movie|${t}`] = Array.from({ length: 70 }, (_, i) => [i * 10, i * 10 + 5]);
+	const capped = store.bindings.put(binding({ slot: 'Many', heard: many })).heard;
+	assert.strictEqual(capped['movie|0'].length, 64, 'at most 64 ranges a title');
+	const total = Object.values(capped).reduce((n, ranges) => n + ranges.length, 0);
+	assert.strictEqual(total, 4096, 'and 4,096 a binding, the titles after that dropped');
+	assert.strictEqual(total, credit.HEARD_TOTAL_MAX, 'the game stops starting titles at the same number');
+	assert.strictEqual(Object.keys(capped).length, 64);
 });

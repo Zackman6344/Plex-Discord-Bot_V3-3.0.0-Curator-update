@@ -17,7 +17,7 @@
 3. Restart the Launcher and any other Archipelago program that was open.
 
 Every YAML the bot writes requires the world version it ships with (`requires:` names Plex Media
-0.2.0), and Archipelago refuses the file while an older version is installed. Install the file
+0.3.0), and Archipelago refuses the file while an older version is installed. Install the file
 again whenever `/apmedia apworld` says the PC has another version.
 
 **Keep the world installed for as long as a Plex Media seed's room is in use.** The bot's `!ap next`
@@ -47,7 +47,8 @@ not. `/apmedia account plex:none` takes your consent back at any time.
 6. Choose **Export Options** and save the file.
 7. In Discord, run `/apmedia yaml` with the file in `file:`, or attach it to a `!apmedia yaml`
    message. The bot picks the titles from the Plex library and replies with the finished YAML and a
-   summary: titles, locations, how many titles start open and how many the goal needs.
+   summary: titles, locations, how many titles start open and how many the goal needs, and the
+   snacks, traps, Fast Forwards and Remote Controls in the pool.
 8. Send the bot's file to whoever generates the seed.
 
 The Creator's own file holds no titles. Generated as it is, it stops with "Plex Media list of
@@ -81,9 +82,12 @@ finished file asks for it too.
 
 The Item & Location Options group offers only the world's fixed names, such as `Unlock 12` and
 `Check 40`. Leave those options empty, or use Everything and Everywhere, which mean your own list's
-unlocks and locations.
-`plando_items` takes none of these: name your list's items and locations there as a seed names them,
-such as `Watch Alien (1979)`.
+unlocks and locations. The fixed items and the groups Snacks, Useful and Traps mean what they say:
+`non_local_items: [Traps]` keeps your traps off your own list. With `trap_percentage` above 0 that
+needs the other games in the seed to bring enough filler for your checkpoints, which by default hold
+only snacks and traps, or the seed may not generate; in a seed of your list alone Archipelago
+ignores it. `plando_items` takes none of these: name your list's items and locations there as a seed
+names them, such as `Watch Alien (1979)`.
 
 A file from the Launcher's **Generate Template Options** gives every option weights. Generated as
 it is, it stops at the same message as the Creator's own file. Its `Player{number}` needs a name
@@ -108,14 +112,16 @@ so attach the file again after you shorten one. The game page lists every option
    For a room added with `!ap watch`, give its id to both: `!ap claim <id> <slot>` and
    `/apmedia link slot:<slot> watch:<id>`.
 2. `/apmedia list` shows what is open, locked or done; `/apmedia status` shows progress, banked
-   checks and Wild Tickets.
+   checks, Wild Tickets, snacks, Fast Forwards and Remote Controls, and any trap at work.
 3. Watch in Plex, or play music and audiobooks through the bot. Checks are sent as you go. Only
    playback after the seed was generated counts.
-4. `/apmedia redeem` spends a Wild Ticket on a locked title.
+4. `/apmedia redeem` spends a Wild Ticket on a locked title, and `/apmedia ff` a Fast Forward on a
+   title. `/apmedia snackbar` trades snacks for a Fast Forward or a Remote Control.
 5. `!ap hintpings <slot> dm` sends you hints for your titles in a direct message.
 
 Hints work from any Archipelago text client: `!hint <title>` for one title, `!hint Movies` (or
-`Shows`, `Albums`, `Playlists`, `Books`) for a group.
+`Shows`, `Albums`, `Playlists`, `Books`) for a group, and `!hint Useful` for your Wild Tickets, Fast
+Forwards and Remote Controls.
 
 Universal Tracker cannot follow this game: it regenerates one slot on its own, and a Plex Media
 slot's ids depend on every Plex Media list in the seed. Use `/apmedia status` and `/apmedia list`

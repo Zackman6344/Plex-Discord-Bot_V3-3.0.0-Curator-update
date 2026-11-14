@@ -47,6 +47,8 @@ const UNTOUCHED_COMMON = Object.freeze([['progression_balancing', 'normal'], ['a
 const GAME_DEFAULTS = Object.freeze({
 	startingUnlocks: 3, goalPercent: 80, tvUnlock: 'episodes', episodesPerUnlock: 3, lockedWatches: 'bank', wildTickets: 2,
 	checkpointItems: 'filler_only', strict: false, timeMovies: 15, timeEpisodes: 10, timeAlbums: 0, timeBooks: 30,
+	snackVariety: true, fastForwards: 2, remoteControls: 1, snackBarTrades: 3, snackBarPrice: 10, trapPercentage: 0, bufferingWeight: 2,
+	rightsExpiredWeight: 2, commercialBreakWeight: 1, shuffleModeWeight: 1, rewindWeight: 1, intermissionWeight: 1, slowMotionWeight: 1,
 });
 
 /** A fixture as git keeps it, with LF: a checkout under core.autocrlf has CRLF. */

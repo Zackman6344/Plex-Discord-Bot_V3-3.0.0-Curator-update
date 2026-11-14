@@ -353,8 +353,9 @@ test('apMediaVoice credits the last track of a queue to the people who heard all
 
 	assert.strictEqual(ctx.bot.voiceChannel, null);
 	assert.deepStrictEqual(events, [{
-		type: 'complete', source: 'voice', userIds: ['u1'], ratingKey: 901, partId: 5901, artist: 'M83', title: 'Midnight City', at: 1234
-	}], 'A is on no list, and u2 left before the end');
+		type: 'complete', source: 'voice', userIds: ['u1'], ratingKey: 901, partId: 5901, artist: 'M83', title: 'Midnight City',
+		fromMs: 0, toMs: 240000, at: 1234
+	}], 'A is on no list, and u2 left before the end; the stretch that went out rides along for timesanity_strict');
 });
 
 test('trackToMusic puts the ratingKey as a number and the duration in ms on the queue entry', () => {

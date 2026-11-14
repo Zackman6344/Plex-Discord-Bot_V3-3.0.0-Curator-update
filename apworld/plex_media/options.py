@@ -127,7 +127,8 @@ class CheckpointItems(Choice):
 
 class TimesanityStrict(Toggle):
 	"""When off, finishing a title also earns every checkpoint inside it, so a watch the bot could not
-	follow live still pays out. When on, a checkpoint is earned only by playing past it."""
+	follow live still pays out. When on, a checkpoint needs everything before it heard: gaps under 30 s
+	are forgiven, and in Plex, which the bot checks every 15 s by default, gaps up to about 50 s."""
 	display_name = "Timesanity Strict"
 	default = 0
 
@@ -174,6 +175,103 @@ class WildTickets(Range):
 	"""Wild Tickets in the pool. Each one unlocks any locked title of your choice (one step of a show)."""
 	display_name = "Wild Tickets"
 	range_start, range_end, default = _span("wild_tickets")
+
+
+class SnackVariety(DefaultOnToggle):
+	"""The filler items that are not traps come as seven snacks, dealt in turn: Popcorn, Nachos, Large Soda,
+	Candy Bar, Hot Dog, Soft Pretzel and Ice Cream Sandwich. Off: they are all Popcorn. Every snack counts
+	the same at the Snack Bar."""
+	display_name = "Snack Variety"
+
+
+class FastForwards(Range):
+	"""Fast Forwards in the pool. Spent on a title with /apmedia ff, one earns the title's next checkpoint
+	without playing it (with Timesanity Strict on, the 10 minutes after where you got to count as heard
+	instead, and the checkpoints they complete are earned). Its watch, track or finish check still needs
+	playing. A short list gets fewer: useful items go only where the unlocks leave room,
+	Wild Tickets first."""
+	display_name = "Fast Forwards"
+	range_start, range_end, default = _span("fast_forwards")
+
+
+class RemoteControls(Range):
+	"""Remote Controls in the pool. One that arrives while a trap is running on your list ends it; else it
+	is kept and blocks the next trap. A short list gets fewer: useful items go only where the unlocks leave
+	room, after Wild Tickets and Fast Forwards."""
+	display_name = "Remote Controls"
+	range_start, range_end, default = _span("remote_controls")
+
+
+class SnackBarTrades(Range):
+	"""Trades the Snack Bar allows you (/apmedia snackbar): each buys a Fast Forward or a Remote Control
+	with snacks you have received. 0: no trades."""
+	display_name = "Snack Bar Trades"
+	range_start, range_end, default = _span("snack_bar_trades")
+
+
+class SnackBarPrice(Range):
+	"""Snacks one Snack Bar trade costs."""
+	display_name = "Snack Bar Price"
+	range_start, range_end, default = _span("snack_bar_price")
+
+
+class TrapPercentage(Range):
+	"""Percent of the filler items that become traps, rounded down and shared among the traps by
+	the Trap Weight options. 0: no traps. A list given a trap while every Trap Weight is 0 stops
+	generation. Commercial Break, Shuffle Mode, Rewind, Intermission and Slow Motion act on the
+	music or the audiobook the bot plays for you, and wait up to 12 hours for you to listen."""
+	display_name = "Trap Percentage"
+	range_start, range_end, default = _span("trap_percentage")
+
+
+class BufferingWeight(Range):
+	"""How often Buffering is picked among the traps (0: never). For 15 minutes from your next check, the
+	checks you earn are held, then sent together; another Buffering adds 15 minutes, up to an hour."""
+	display_name = "Trap Weight: Buffering"
+	range_start, range_end, default = _span("buffering_weight")
+
+
+class RightsExpiredWeight(Range):
+	"""How often Rights Expired is picked among the traps (0: never). For 45 minutes, the checks of the
+	title you are playing, or else of the first title on your list you can play, are held, then sent
+	when the rights come back."""
+	display_name = "Trap Weight: Rights Expired"
+	range_start, range_end, default = _span("rights_expired_weight")
+
+
+class CommercialBreakWeight(Range):
+	"""How often Commercial Break is picked among the traps (0: never). The bot's music plays a commercial
+	after the current track, or pauses for 30 s; an audiobook pauses for 30 s."""
+	display_name = "Trap Weight: Commercial Break"
+	range_start, range_end, default = _span("commercial_break_weight")
+
+
+class ShuffleModeWeight(Range):
+	"""How often Shuffle Mode is picked among the traps (0: never). The bot's music queue is shuffled after
+	the current track; in an audiobook it is a Rewind."""
+	display_name = "Trap Weight: Shuffle Mode"
+	range_start, range_end, default = _span("shuffle_mode_weight")
+
+
+class RewindWeight(Range):
+	"""How often Rewind is picked among the traps (0: never). The bot's music starts the current track over;
+	an audiobook jumps back 5 minutes."""
+	display_name = "Trap Weight: Rewind"
+	range_start, range_end, default = _span("rewind_weight")
+
+
+class IntermissionWeight(Range):
+	"""How often Intermission is picked among the traps (0: never). The bot's music or your audiobook
+	pauses for 60 s, then plays on."""
+	display_name = "Trap Weight: Intermission"
+	range_start, range_end, default = _span("intermission_weight")
+
+
+class SlowMotionWeight(Range):
+	"""How often Slow Motion is picked among the traps (0: never). Your audiobook plays at 0.75x for
+	10 minutes; the bot's music pauses for 30 s instead."""
+	display_name = "Trap Weight: Slow Motion"
+	range_start, range_end, default = _span("slow_motion_weight")
 
 
 class ListPreset(Choice):
@@ -301,6 +399,19 @@ class PlexMediaOptions(PerGameCommonOptions):
 	timesanity_albums: TimesanityAlbums
 	timesanity_books: TimesanityBooks
 	wild_tickets: WildTickets
+	snack_variety: SnackVariety
+	fast_forwards: FastForwards
+	remote_controls: RemoteControls
+	snack_bar_trades: SnackBarTrades
+	snack_bar_price: SnackBarPrice
+	trap_percentage: TrapPercentage
+	buffering_weight: BufferingWeight
+	rights_expired_weight: RightsExpiredWeight
+	commercial_break_weight: CommercialBreakWeight
+	shuffle_mode_weight: ShuffleModeWeight
+	rewind_weight: RewindWeight
+	intermission_weight: IntermissionWeight
+	slow_motion_weight: SlowMotionWeight
 	list_preset: ListPreset
 	list_movies: ListMovies
 	list_shows: ListShows
@@ -333,11 +444,16 @@ option_groups = [
 	OptionGroup("Timesanity", [
 		CheckpointItems, TimesanityStrict, TimesanityMovies, TimesanityEpisodes, TimesanityAlbums, TimesanityBooks,
 	]),
+	OptionGroup("Items and traps", [
+		SnackVariety, FastForwards, RemoteControls, SnackBarTrades, SnackBarPrice, TrapPercentage, BufferingWeight,
+		RightsExpiredWeight, CommercialBreakWeight, ShuffleModeWeight, RewindWeight, IntermissionWeight,
+		SlowMotionWeight,
+	]),
 ]
 
 
 def option_values(options):
-	"""The game options (OPTIONS) as YAML names to YAML values (choices by name, the toggle as a bool).
+	"""The game options (OPTIONS) as YAML names to YAML values (choices by name, toggles as bools).
 
 	The list settings stay out: they tell the bot what to pick, and a seed must come out the same
 	with or without them."""

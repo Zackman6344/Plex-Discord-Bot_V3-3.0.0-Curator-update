@@ -54,7 +54,7 @@ from test_generate import (NO_TITLES, Seed, SeedChecks, check_worker, creator_pa
                            creator_widget, launcher_template, plain, run_child)
 
 GAME = "Plex Media"
-WORLD_VERSION = "0.2.0"
+WORLD_VERSION = "0.3.0"
 FILL = os.path.join(HERE, "fill_creator.js")
 DEFAULT_YAML = os.path.join(HERE, "fixtures", "options_creator_default.yaml")
 CUSTOM_YAML = os.path.join(HERE, "fixtures", "options_creator_custom.yaml")

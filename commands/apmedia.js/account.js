@@ -13,7 +13,9 @@
 // shut, this channel only asks them to open them, since the Plex account names are not for it.
 //
 // A name counts only in full (or the account's id): the link reads that account's whole history,
-// so part of a name is answered with a question.
+// so part of a name is answered with a question. In full means every letter and digit in order:
+// case, spaces and punctuation are left out of the comparison, since a Plex name like
+// "movie night crew" gets typed as movienightcrew.
 
 const logger = require('../../helpers/logger.js');
 const common = require('./common.js');
@@ -104,6 +106,14 @@ function showLink(ctx, user) {
 	return ctx.say(`<@${user.id}> is linked to Plex account ${name}(id ${a.accountId}), ${a.consent === 'granted' ? 'accepted' : 'waiting for their consent'}.`);
 }
 
+// Marks stay: a Devanagari or Thai vowel sign is part of the name, and without it two names share
+// their consonants. A key with no letter or digit at all is no key, or one emoji's variation
+// selector would match another's.
+function letters(name) {
+	const key = String(name ?? '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{M}\p{N}]+/gu, '');
+	return /[\p{L}\p{N}]/u.test(key) ? key : '';
+}
+
 /** @returns {{account: object}|{error: string, names?: boolean}} names: the error names accounts */
 function pickAccount(accounts, text) {
 	const want = text.toLowerCase();
@@ -115,8 +125,12 @@ function pickAccount(accounts, text) {
 	}
 	if (exact.length === 1) return { account: exact[0] };
 	if (exact.length > 1) return { error: `Several Plex accounts are called ${common.slot(text)}: give the id (${exact.map((a) => a.id).join(', ')}).` };
-	const starts = accounts.filter((a) => String(a.name).toLowerCase().startsWith(want));
-	const near = starts.length ? starts : accounts.filter((a) => String(a.name).toLowerCase().includes(want));
+	const key = letters(text);
+	const same = key ? accounts.filter((a) => letters(a.name) === key) : [];
+	if (same.length === 1) return { account: same[0] };
+	if (same.length > 1) return { error: `Several Plex accounts match ${common.slot(text)}: give the id (${same.map((a) => a.id).join(', ')}).` };
+	const starts = accounts.filter((a) => String(a.name).toLowerCase().startsWith(want) || (key && letters(a.name).startsWith(key)));
+	const near = starts.length ? starts : accounts.filter((a) => String(a.name).toLowerCase().includes(want) || (key && letters(a.name).includes(key)));
 	if (near.length === 1) {
 		return { error: `No Plex account is called ${common.slot(text)}. Did you mean ${common.slot(near[0].name)} (id ${near[0].id})? Give its full name or its id.`, names: true };
 	}

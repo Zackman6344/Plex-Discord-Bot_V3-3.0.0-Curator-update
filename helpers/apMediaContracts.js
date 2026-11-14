@@ -11,7 +11,7 @@
 
 const GAME = 'Plex Media';
 const APWORLD_NAME = 'plex_media';
-const WORLD_VERSION = '0.2.0';
+const WORLD_VERSION = '0.3.0';
 const MIN_AP_VERSION = '0.6.8';
 const BUILDER_VERSION = 1;
 const SLOT_DATA_SCHEMA = 1;
@@ -24,6 +24,8 @@ const MAX_CHECKS = 60000;
 const IDS = Object.freeze({
 	popcorn: BASE_ID + 1,
 	wildTicket: BASE_ID + 2,
+	fastForward: BASE_ID + 100,
+	remoteControl: BASE_ID + 101,
 });
 
 function unlockId(i) { return BASE_ID + UNLOCK_OFFSET + i; }
@@ -34,12 +36,35 @@ function checkName(j) { return `Check ${j}`; }
 const NAMES = Object.freeze({
 	popcorn: 'Popcorn',
 	wildTicket: 'Wild Ticket',
+	fastForward: 'Fast Forward',
+	remoteControl: 'Remote Control',
 	victory: 'Victory',
 	goalLocation: 'Plex Media Goal',
 	// A state counter for the goal rule, never an item in the pool.
 	counter: 'Plex Media Unlocked Entries',
 });
-const ITEM_GROUPS = Object.freeze(['Movies', 'Shows', 'Albums', 'Playlists', 'Books', 'Everything']);
+// The filler in the order the pool deals it out (Popcorn alone while snack_variety is off), name to id.
+const SNACKS = Object.freeze({
+	Popcorn: BASE_ID + 1,
+	Nachos: BASE_ID + 3,
+	'Large Soda': BASE_ID + 4,
+	'Candy Bar': BASE_ID + 5,
+	'Hot Dog': BASE_ID + 6,
+	'Soft Pretzel': BASE_ID + 7,
+	'Ice Cream Sandwich': BASE_ID + 8,
+});
+// Keyed as slot_data's items.traps. A trap's weight is the option <key>_weight, and a tie in the trap
+// split goes to the trap listed first.
+const TRAPS = Object.freeze({
+	buffering: Object.freeze({ name: 'Buffering', id: BASE_ID + 200 }),
+	rights_expired: Object.freeze({ name: 'Rights Expired', id: BASE_ID + 201 }),
+	commercial_break: Object.freeze({ name: 'Commercial Break', id: BASE_ID + 202 }),
+	shuffle_mode: Object.freeze({ name: 'Shuffle Mode', id: BASE_ID + 203 }),
+	rewind: Object.freeze({ name: 'Rewind', id: BASE_ID + 204 }),
+	intermission: Object.freeze({ name: 'Intermission', id: BASE_ID + 205 }),
+	slow_motion: Object.freeze({ name: 'Slow Motion', id: BASE_ID + 206 }),
+});
+const ITEM_GROUPS = Object.freeze(['Movies', 'Shows', 'Albums', 'Playlists', 'Books', 'Snacks', 'Useful', 'Traps', 'Everything']);
 const LOCATION_GROUPS = Object.freeze(['Movies', 'Episodes', 'Albums', 'Playlists', 'Books', 'Checkpoints', 'Everywhere']);
 
 // The server refuses checks and the goal from Tracker, TextOnly and HintGame clients, so the game
@@ -87,6 +112,19 @@ const OPTIONS = Object.freeze({
 	timesanity_albums: Object.freeze({ type: 'range', min: 0, max: 240, default: 0 }),
 	timesanity_books: Object.freeze({ type: 'range', min: 0, max: 1440, default: 30 }),
 	wild_tickets: Object.freeze({ type: 'range', min: 0, max: 20, default: 2 }),
+	snack_variety: Object.freeze({ type: 'toggle', default: true }),
+	fast_forwards: Object.freeze({ type: 'range', min: 0, max: 10, default: 2 }),
+	remote_controls: Object.freeze({ type: 'range', min: 0, max: 10, default: 1 }),
+	snack_bar_trades: Object.freeze({ type: 'range', min: 0, max: 10, default: 3 }),
+	snack_bar_price: Object.freeze({ type: 'range', min: 5, max: 50, default: 10 }),
+	trap_percentage: Object.freeze({ type: 'range', min: 0, max: 100, default: 0 }),
+	buffering_weight: Object.freeze({ type: 'range', min: 0, max: 10, default: 2 }),
+	rights_expired_weight: Object.freeze({ type: 'range', min: 0, max: 10, default: 2 }),
+	commercial_break_weight: Object.freeze({ type: 'range', min: 0, max: 10, default: 1 }),
+	shuffle_mode_weight: Object.freeze({ type: 'range', min: 0, max: 10, default: 1 }),
+	rewind_weight: Object.freeze({ type: 'range', min: 0, max: 10, default: 1 }),
+	intermission_weight: Object.freeze({ type: 'range', min: 0, max: 10, default: 1 }),
+	slow_motion_weight: Object.freeze({ type: 'range', min: 0, max: 10, default: 1 }),
 });
 
 // The list settings, written after OPTIONS: what /apmedia yaml picks from the Plex library when it
@@ -123,6 +161,19 @@ const SETTING_NAMES = Object.freeze({
 	timesanity_albums: 'Timesanity: Albums',
 	timesanity_books: 'Timesanity: Books',
 	wild_tickets: 'Wild Tickets',
+	snack_variety: 'Snack Variety',
+	fast_forwards: 'Fast Forwards',
+	remote_controls: 'Remote Controls',
+	snack_bar_trades: 'Snack Bar Trades',
+	snack_bar_price: 'Snack Bar Price',
+	trap_percentage: 'Trap Percentage',
+	buffering_weight: 'Trap Weight: Buffering',
+	rights_expired_weight: 'Trap Weight: Rights Expired',
+	commercial_break_weight: 'Trap Weight: Commercial Break',
+	shuffle_mode_weight: 'Trap Weight: Shuffle Mode',
+	rewind_weight: 'Trap Weight: Rewind',
+	intermission_weight: 'Trap Weight: Intermission',
+	slow_motion_weight: 'Trap Weight: Slow Motion',
 	list_preset: 'List: Preset',
 	list_movies: 'List: Movies',
 	list_shows: 'List: Shows',
@@ -162,6 +213,9 @@ const SETTINGS = Object.freeze({
 	apMediaSessionSeconds: Object.freeze({ default: 15, min: 5 }),
 	apMediaVoiceCredit: Object.freeze({ default: true }),
 	apMediaAnnounce: Object.freeze({ default: 'completions', values: Object.freeze(['completions', 'all', 'off']) }),
+	apMediaTraps: Object.freeze({ default: true }),
+	apMediaVoiceTraps: Object.freeze({ default: true }),
+	apMediaTrapClips: Object.freeze({ default: '' }),
 });
 
 const STORES = Object.freeze({
@@ -258,7 +312,13 @@ function slotNameProblem(name) {
  * @property {'bank'|'ignore'} locked_watches @property {'filler_only'|'anything'} checkpoint_items
  * @property {boolean} timesanity_strict
  * @property {{movie: number, episode: number, album: number, book: number}} timesanity  minutes, 0 = off
- * @property {{popcorn: number, wild_ticket: number}} items
+ * @property {{popcorn: number, wild_ticket: number, snacks?: Object<string, number>,
+ *   useful?: {fast_forward: number, remote_control: number}, traps?: Object<string, number>}} items
+ *   ids; snacks by name (Popcorn included), traps by TRAPS key. World 0.3.0 added snacks, useful,
+ *   traps, snack_bar and pool: a seed without them is a 0.2.0 seed, which has none of these items
+ * @property {{trades: number, price: number}} [snack_bar]
+ * @property {{snacks: number, traps: Object<string, number>, fast_forwards: number, remote_controls: number,
+ *   wild_tickets: number}} [pool]  what the slot's pool holds, after exclude_locations took its share
  * @property {Array<{id: number, name: string, kind: 'movie'|'show'|'album'|'mix'|'book', steps: number, start: number}>} units
  * @property {Entry[]} entries  in YAML order; album tr tuples carry the track's location id at
  *                              index 5 and mix tr tuples at index 6 (null for a track under 30 s)
@@ -305,6 +365,8 @@ module.exports = {
 	MAX_CHECKS,
 	IDS,
 	NAMES,
+	SNACKS,
+	TRAPS,
 	ITEM_GROUPS,
 	LOCATION_GROUPS,
 	BOT_GAME_TAG,

@@ -15,7 +15,7 @@ This is a Discord bot that wraps a Plex Media Server, ties in optional integrati
 | `commands/`     | One file per Discord command. Auto-loaded by `commands/index.js`.            |
 | `commands/playlist.js/` | Sub-commands of `!playlist` (it's a directory named `*.js` — see Quirks). |
 | `commands/book.js/` | `/book` and `!book`: `index.js` holds the slash spec, autocomplete and dispatch, and requires `play.js`, `controls.js`, `library.js`, `admin.js`, `text.js` (the read-along's `text` and `link`), `marks.js` (its `marks` and `unmark`), `edit.js` and `calibre.js` by name. Same directory trick as `playlist.js/`. |
-| `commands/apmedia.js/` | `/apmedia` and `!apmedia`, the Plex Media world: `index.js` holds the slash spec, autocomplete, sub-help and dispatch, and requires `common.js` and the eleven subcommand files (`yaml.js`, `apworld.js`, `account.js`, `link.js`, `unlink.js`, `retry.js`, `status.js`, `list.js`, `check.js`, `redeem.js`, `announce.js`) by name. Same directory trick. |
+| `commands/apmedia.js/` | `/apmedia` and `!apmedia`, the Plex Media world: `index.js` holds the slash spec, autocomplete, sub-help and dispatch, and requires `common.js` and the thirteen subcommand files (`yaml.js`, `apworld.js`, `account.js`, `link.js`, `unlink.js`, `retry.js`, `status.js`, `list.js`, `check.js`, `redeem.js`, `ff.js`, `snackbar.js`, `announce.js`) by name. Same directory trick. |
 | `helpers/`      | Shared utilities: API clients, Gemini wrapper, logger, health check, etc.    |
 | `config/`       | Config files (`config.js`, `keys.js`, `plex.js`) + `.example.js` templates.  |
 | `lang/`         | Localized message strings + the `String.prototype.format` polyfill.          |
@@ -76,11 +76,11 @@ INFO  Health monitor scheduled — re-checking every 15 minutes
 
 A single `Bot` instance is created at startup. It extends `EventEmitter` and owns:
 
-- **Plex client** — `this.plex`, a `PlexAPI` instance. Used for queries against the Plex server (`this.plex.query(path)`).
-- **Audio state** — `this.songQueue`, `this.isPlaying`, `this.isPaused`, `this.dispatcher` (the `@discordjs/voice` AudioPlayer), `this.voiceChannel`, `this.conn`.
-- **Pagination state** — `this.plexQuery`, `this.plexOffset`, `this.plexPageSize`, `this.tracks` (last search results).
-- **Library cache** — `this.cache_library` keyed by Plex section key.
-- **Concurrency control** — `this.workingTask` semaphore + `this.waitForStart` flag, used to serialize song additions while audio is being prepared.
+- **Plex client.** `this.plex`, a `PlexAPI` instance. Used for queries against the Plex server (`this.plex.query(path)`).
+- **Audio state.** `this.songQueue`, `this.isPlaying`, `this.isPaused`, `this.pauseCount` (one more for each pause `commands/pause.js` makes, the card's toggle included; unset until the first, and read by the Plex Media trap runner, see "Items and traps"), `this.dispatcher` (the `@discordjs/voice` AudioPlayer), `this.voiceChannel`, `this.conn`.
+- **Pagination state.** `this.plexQuery`, `this.plexOffset`, `this.plexPageSize`, `this.tracks` (last search results).
+- **Library cache.** `this.cache_library` keyed by Plex section key.
+- **Concurrency control.** `this.workingTask` semaphore + `this.waitForStart` flag, used to serialize song additions while audio is being prepared.
 - **The audiobook seam.** `this.books` is the book director, assigned by `app/music.js`. `this.loadingRuns` counts `playSong` calls in flight. `musicBusy()` says whether music owns, or is about to own, the bot's voice: `loadingRuns`, `waitForStart`, `workingTask`, a connection that is not destroyed, or `isPlaying`. `openConnection(channel)` takes the channel to join, so the book engine can join with it. The engine reads nothing else on the Bot apart from `songQueue.length`. See "Audiobooks and podcasts".
 
 Commands receive `bot` as their first arg and call methods on it (`bot.findSong(...)`, `bot.songQueue.push(...)`, `bot.playSong(message)`, etc.).
@@ -181,16 +181,17 @@ Two signature styles coexist in the codebase:
 | `archipelagoGoals.js`      | Lifetime count of multiworlds each user has goaled, keyed `<seed>::<slot>` so it outlives the watch that saw it and so a slot changing hands cannot re-credit a finished game. Recording is idempotent, because the goal set is rebuilt on every reconnect. Goals only, never releases. Migrates the original user-keyed file shape on read. |
 | `archipelagoRoles.js`      | Creates and assigns the participant role and the per-count "N Games Goaled" roles, and deletes count roles nobody holds. Records every role id it creates in `data/archipelago_roles.json` and only ever touches those. Degrades to doing nothing rather than throwing. |
 | `apMediaContracts.js`      | The Plex Media world's shared names, ids, limits, YAML option tables (`OPTIONS`, the game options, and `LIST_OPTIONS`, the list settings), presets, settings, store paths and data shapes (`CreditEvent`, slot_data). `apworld/plex_media/constants.py` mirrors it and `naming.py` mirrors its `sanitizeText`. Ids, keys and names are frozen per `BUILDER_VERSION`. See "Plex Media world (Archipelago)". |
-| `apMediaGame.js`           | The Plex Media orchestrator: one game client per bound slot, the one serialized queue every credit and change runs on, refusal, stale and lost-watch notices, the goal, the welcome, batched announcements held across `!restart`, `health()`, and the data API `/apmedia` calls. |
+| `apMediaGame.js`           | The Plex Media orchestrator: one game client per bound slot, the one serialized queue every credit and change runs on, refusal, stale and lost-watch notices, the goal, the welcome, what the useful items and traps of a world 0.3.0 seed do (holds, armed traps, Remote Controls, Fast Forwards, the Snack Bar), batched announcements held across `!restart`, `health()`, and the data API `/apmedia` calls. |
 | `apMediaClient.js`         | `ApMediaClient`, the observer client made a game client through its four hooks: connects as `Plex Media` with items, sends checks and the goal, re-reads its watch before every attempt. |
-| `apMediaCredit.js`         | Pure: the slot index built from slot_data, the hits an event lands on (rating key, part id, work id, `artist\|title`, or a metadata match), the location ids a hit earns, unlocks, Wild Tickets, progress, `parseDuration` and `normTitle`. |
+| `apMediaCredit.js`         | Pure: the slot index built from slot_data, the hits an event lands on (rating key, part id, work id, `artist\|title`, or a metadata match), the location ids a hit earns, unlocks, the item counts (units, Wild Tickets, snacks, Fast Forwards, Remote Controls, traps), progress, `parseDuration` and `normTitle`. |
 | `apMediaStore.js`          | Bindings and account links (both durable jsonStore stores), Plex history marks, and the slot_data cache under `data/archipelago/apmedia/`. Never keeps a field named like a password, token or secret. |
 | `apMediaWatch.js`          | Plex history (a 7-day window read every poll, a seen-set, the credit floor) and live sessions (timesanity spans) of the consented accounts, as credit events; `backfill` for a slot joining an account already read. |
 | `apMediaVoice.js`          | The bot's own music in voice as credit, from `app/bot.js`'s `track-heard`: 85% of a track heard, for the people present at both ends; a shorter listen earns the album or playlist checkpoints it played past, and a Hitster clip nothing. Off with `apMediaVoiceCredit`. |
 | `apMediaBooks.js`          | The bot's audiobooks as credit: 10 s spans read from the book engine, and finished bookmarks every 60 s. |
+| `apMediaTraps.js`          | The trap runner: Commercial Break, Shuffle Mode, Rewind, Intermission and Slow Motion on the bot's music in voice or on the listener's own audiobook, one effect per guild, and the undoing of each (a pause lifted unless someone paused under it, a clip taken off, a book speed put back). Never reads or writes the game's store. |
 | `apMediaPlex.js`           | Read-only Plex client for the world: history, sessions, accounts, sections, listings and metadata (a 2,000-item cache). The token travels only in the `X-Plex-Token` header, and its `PmsError` carries a `code` and never the token. |
 | `apMediaYaml.js`           | The YAML builder behind `/apmedia yaml`: hand-picks, a playlist or collection, random picks, the unwatched rule, album curation and twin copies, caps and warnings, and `renderYaml`; and `readPlayerYaml`, which reads a player's own YAML (an Options Creator export, or a list the bot wrote) into build params. |
-| `apMediaPlan.js`           | The JavaScript twin of the world's `plan.py` (units, steps, starting copies, Wild Tickets, checkpoint minutes, the goal count), checked against `test/fixtures/apmedia/plan_cases.json`. |
+| `apMediaPlan.js`           | The JavaScript twin of the world's `plan.py` (units, steps, starting copies, checkpoint minutes, the goal count, and the pool's Wild Tickets, Fast Forwards, Remote Controls, traps and snacks), checked against `test/fixtures/apmedia/plan_cases.json`. |
 | `apMediaButtons.js`        | The `apmedia:page:` page buttons (asker only, 30 minutes) and the stateless `apmedia:consent:` Accept button. |
 | `apworldBuild.js`          | Packs `apworld/plex_media` into a reproducible, store-only `.apworld` zip in memory and checks its manifest; `readApworldManifest` reads an installed copy's manifest without writing anything. |
 | `aiGameRecommender.js`     | "Pick a game" AI helper. Uses centralized `getModel()`. Powers `!pickgame`.                                                            |
@@ -212,7 +213,7 @@ Two signature styles coexist in the codebase:
 | `bookLookup.js`            | The opt-in online lookup: Audible's catalog search, one request a second, title and author only, cached in `data/book_lookup.json`. Matches an edition by runtime or a book by series agreement, and only proposes: `compare()` labels each field and `bookMetadata` decides. Off unless `audiobookOnlineLookup`. |
 | `bookChapterLabel.js`      | The card's chapter words ("Book 4 · Chapter 7", "Episode 3 of 8", "Part 13 of 31 · Section 1 of 6") from the track or embedded chapter title, through the read-along's own parsers. Pure; the slot numbers `/book chapter` jumps by are unchanged. |
 | `longForm.js`              | Keeps catalogued books and podcasts out of music. `enabled()`, `isLongFormTrack/Album/Artist/Entry`, `partition(list)` into `{ music, books }`, the Plex-side exclusion fragment (`plexExclusion()`, `withExclusion(url)`), and the "📚 Also in your books" redirect lines. |
-| `bookmarks.js`             | Each listener's place in each work, in `data/book_bookmarks.json` (durable store, hourly `.bak`), and the stats and leaderboard derived from it. `record()` writes only when the place or the listening time moved by a second or more; a failed write keeps memory, flips `healthy()` and records `book-save-failed` once per failure streak. |
+| `bookmarks.js`             | Each listener's place in each work, in `data/book_bookmarks.json` (durable store, hourly `.bak`), and the stats and leaderboard derived from it. `record()` writes only when the place or the listening time moved by a second or more; a failed write keeps memory, flips `healthy()` and records `book-save-failed` once per failure streak. `setSpeed()` changes a saved bookmark's speed alone, written at once: its place, hint and `updatedAt` stay, so the work keeps its turn in `lastInProgress` and `lastSpeed`. The Plex Media trap runner puts a Slow Motion speed back through it on a book nobody is playing. |
 | `bookAudio.js`             | The ffmpeg arguments for a book part (input `-ss` before `-i`, reconnect flags, `atempo` off 1x, Ogg Opus out) and the environment with every proxy variable removed. Pure. |
 | `partProxy.js`             | Loopback HTTP proxy between ffmpeg and Plex, so the Plex token never appears on a command line. `127.0.0.1`, random port, a 128-bit path secret per boot, GET and HEAD of `/library/parts/...` only, Host header checked. `probe(partKey)` checks a key with a one-byte range request. Started lazily on the first book play. |
 | `bookResource.js`          | One part as an `AudioResource`: spawns ffmpeg-static with the cleaned environment, wraps its stdout as `StreamType.OggOpus`, and SIGKILLs it when voice closes the stream. A spawn failure logs, records `book-stream-error`, and ends the stream. |
@@ -247,7 +248,7 @@ Three files in `config/`. The two with secrets are **gitignored**; templates are
 
 | File                   | Tracked? | What it holds                                                              |
 | ---------------------- | -------- | -------------------------------------------------------------------------- |
-| `config/config.js`     | yes      | Feature flags + display strings: `commandPrefix`, `listenChannel`, `playlistsDir`, `serverName`, `ownerId`, `launchRoleId`, `playniteEnabled`, `tautulliEnabled` + `tautulliApiKey` + `tautulliUrl`, `language`, `youtube_quality`, the broadcast block (`broadcastChannelId`, `eventServerEnabled`, `eventServerPort`, `eventServerToken`, `broadcastKometa`, `broadcastGameLaunch`), `archipelagoEnabled` + `archipelagoBatchSeconds`, `archipelagoInstallDir` + `archipelagoPython` for `!ap next`, the audiobook settings (online lookup and `audiobookCalibreSort` included), the nine read-along settings (five of them for Calibre), the two voice settings and the six Plex Media settings (tables below). |
+| `config/config.js`     | yes      | Feature flags + display strings: `commandPrefix`, `listenChannel`, `playlistsDir`, `serverName`, `ownerId`, `launchRoleId`, `playniteEnabled`, `tautulliEnabled` + `tautulliApiKey` + `tautulliUrl`, `language`, `youtube_quality`, the broadcast block (`broadcastChannelId`, `eventServerEnabled`, `eventServerPort`, `eventServerToken`, `broadcastKometa`, `broadcastGameLaunch`), `archipelagoEnabled` + `archipelagoBatchSeconds`, `archipelagoInstallDir` + `archipelagoPython` for `!ap next`, the audiobook settings (online lookup and `audiobookCalibreSort` included), the nine read-along settings (five of them for Calibre), the two voice settings and the nine Plex Media settings (tables below). |
 | `config/keys.js`       | **no**   | `botToken` (Discord) + `geminiApiKey` (Gemini). Copy from `keys.example.js`. |
 | `config/plex.js`       | **no**   | Plex `hostname`, `port`, `https`, `token` (the bot's default user), `homeOwnerToken` (optional, only for cross-account playlist features), `managedUser`, `options`. Copy from `plex.example.js`. |
 
@@ -311,24 +312,32 @@ the 30 s transient memo, the 10-minute background re-check, the 120 s parse time
 300 MB EPUB limit.
 
 **Plex Media settings** (`/config` → AP Media). All apply live: `apMediaGame` subscribes to
-`configStore.onChange`, so `apMediaEnabled` starts or halts the world and the two intervals re-arm
-the watcher, and the other three are read each time they are used. None is named `archipelago*`:
-the monitor re-applies its whole configuration on every save of one of those.
+`configStore.onChange`, so `apMediaEnabled` starts or halts the world (off puts each Slow Motion
+speed still pending back first), the two intervals re-arm the watcher, `apMediaTraps` and
+`apMediaVoiceTraps` run the trap sweep at once, and the other four are read each time they are
+used. None is named `archipelago*`: the monitor re-applies its whole configuration on every save
+of one of those.
 
 | Key | Type | Default | What it does |
 | --- | ---- | ------- | ------------ |
-| `apMediaEnabled` | bool | `false` | Turns `/apmedia` and the world on. Needs `archipelagoEnabled` too, since every slot connects through a watched room; while that is off the health line says so. |
+| `apMediaEnabled` | bool | `false` | Turns `/apmedia` and the world on. Needs `archipelagoEnabled` too, since every slot connects through a watched room; while that is off the health line says so. Turned off, it puts every Slow Motion speed still pending back at once, with no line, before the world halts (`speedsBackForOff`). A `!restart` leaves them, and its start hands them back to the runner. |
 | `apMediaChannelId` | snowflake or blank | `''` | Where credit lines, the welcome and notices post. Blank posts in each watch's own channel. |
 | `apMediaHistorySeconds` | int 30–86400 | `120` | Seconds between reads of the consented accounts' Plex history. |
 | `apMediaSessionSeconds` | int 5–86400 | `15` | Seconds between reads of live Plex sessions, which earn checkpoints while a title plays. |
 | `apMediaVoiceCredit` | bool | `true` | Credit music the bot plays in voice (`apMediaVoice`). The bot's audiobooks are credited either way: `apMediaBooks` does not read it. |
 | `apMediaAnnounce` | choice `completions` `all` `off` | `'completions'` | `completions` posts a title finished, banked or unlocked; `all` adds a line for credit that finishes nothing; `off` posts no credit line and no welcome. Notices post in every mode. |
+| `apMediaTraps` | bool | `true` | The traps a world 0.3.0 seed sends. Off: each one that arrives fizzles with a line naming the switch, and the sweep ends every hold (its checks sent), fizzles the traps waiting for a listen (the one the runner has in hand waits for its answer) and puts a Slow Motion speed back. |
+| `apMediaVoiceTraps` | bool | `true` | The five voice and book traps, which everyone in the bot's voice channel hears. Off: the same for those five alone; Buffering and Rights Expired still hold. |
+| `apMediaTrapClips` | string, at most 200 characters | `''` | The Plex playlist, by title or ratingKey, whose audio tracks of 3 minutes or less Commercial Break splices after the current track. Blank: a 30 s pause instead. |
 
 The watcher clamps both intervals to a day too (`MAX_POLL_S`), because Node runs a timer set past
 about 24.8 days after 1 ms. The constants are code: the 7-day history window, 10 tries before a
 failing history row is given up, the 2.5x-plus-20 s session bound, the 85% voice line, the 10 s
 book span poll and the 60 s finish poll, the 5-minute hold of unposted lines, and the 7-day expiry
-of an Accept button.
+of an Accept button. So are the traps': Buffering's 15 minutes a time, up to 60, Rights Expired's
+45 minutes, the 12 hours a trap waits for a listen (20 waiting at most), two traps a batch, the
+10 minutes a strict Fast Forward counts as heard, the 30 s and 60 s pauses, 0.75x for 10 minutes,
+the 3-minute clip cap with 200 playlist rows read, the 15 s clip check, and the minute tick.
 
 ---
 
@@ -361,7 +370,7 @@ All persistent runtime state lives under `data/`. The directory is created if mi
 | `data/archipelago_roles.json`     | `helpers/archipelagoRoles.js`       |
 | `data/archipelago_catchup.json`   | `helpers/archipelagoCatchup.js`     |
 | `data/archipelago/datapackage/*.json` | `helpers/archipelagoData.js`    |
-| `data/apmedia_slots.json`         | `helpers/apMediaStore.js` (Plex Media slot bindings with their unsent and banked checks; durable, with an hourly `.bak`) |
+| `data/apmedia_slots.json`         | `helpers/apMediaStore.js` (Plex Media slot bindings with their unsent, banked and held checks and their item and trap state; durable, with an hourly `.bak`) |
 | `data/apmedia_accounts.json`      | `helpers/apMediaStore.js` (Discord user to Plex account links and their consent; durable, with an hourly `.bak`) |
 | `data/apmedia_marks.json`         | `helpers/apMediaStore.js` (per Plex account, the history rows already read) |
 | `data/archipelago/apmedia/<seed>/<slot>.json` | `helpers/apMediaStore.js` (each bound slot's slot_data, written once) |
@@ -477,7 +486,7 @@ A `10062 Unknown interaction` on a *fast* defer means the event reached the bot 
 
 **The adapter contract** (`helpers/interactionAdapter.js`): `message.content` is rebuilt in prefix form (`!name args`) rather than set to the bare argument string, because several commands parse arguments as `content.split(' ').slice(1)` and would otherwise lose the first one. The first call to `message.reply(...)` or `message.channel.send(...)` routes through `interaction.editReply(...)`, which appears in chat as the bot's response to the slash command. Subsequent calls go through the real `interaction.channel.send(...)`. That means commands like `!trivia` (which post a "Loading..." status, then edit it, then post game messages) work unchanged: the initial `channel.send` becomes the slash command's primary response, then the game's follow-up messages are normal channel posts.
 
-**Coverage:** every command in `commands/` declares a `slash` block. The loader picks up 57 command entries (54 files plus the `playlist.js/`, `book.js/` and `apmedia.js/` directories) and logs `Loaded 57 commands (4 aliases)`; the aliases `?`, `plextest`, `archipelago` and `books` are prefix-only, so 57 slash commands register. Subcommand sets include `/playlist`, `/request`, `/hitster`, `/library`, `/list`, `/tags`, `/ap`, `/apmedia`, `/book`, `/voicehealth` and the game commands. `npm run check:slash` validates the whole set against Discord's rules without booting the bot: 57 commands and 35,370 bytes of registration payload, measured 2026-11-12 after `/apmedia yaml` gained its `file` option and `max-episodes` named its default. The largest is `/apmedia` at 2,961 of 4,000 characters with 11 subcommands, then `/book` at 2,917 with 24 and `/ap` at 2,783 with 22. `test/validateSlash.test.js` warns early when `/book` reaches 3,100, well inside Discord's 4,000.
+**Coverage:** every command in `commands/` declares a `slash` block. The loader picks up 57 command entries (54 files plus the `playlist.js/`, `book.js/` and `apmedia.js/` directories) and logs `Loaded 57 commands (4 aliases)`; the aliases `?`, `plextest`, `archipelago` and `books` are prefix-only, so 57 slash commands register. Subcommand sets include `/playlist`, `/request`, `/hitster`, `/library`, `/list`, `/tags`, `/ap`, `/apmedia`, `/book`, `/voicehealth` and the game commands. `npm run check:slash` validates the whole set against Discord's rules without booting the bot: 57 commands and 36,213 bytes of registration payload, measured 2026-11-14 after `/apmedia` gained `ff` and `snackbar`. The largest is `/apmedia` at 3,367 of 4,000 characters with 13 subcommands, then `/book` at 2,917 with 24 and `/ap` at 2,783 with 22. `test/validateSlash.test.js` warns early when `/book` reaches 3,100, well inside Discord's 4,000.
 
 `scripts/validate-slash.js` exports `validate(commands)` so its rules are tested (`test/validateSlash.test.js`). Beyond names, descriptions, option counts and required-before-optional, it checks:
 
@@ -588,15 +597,18 @@ no file editing or restart needed for most settings.
   its longest rendering (Archipelago measures 1,337 characters unsplit, 991 + 345 split), runs
   the fields through discord.js's own `EmbedBuilder`, and checks that every setting stays
   reachable. `test/apMediaConfig.test.js` checks Discord's 6,000-character total per embed, which
-  discord.js leaves to the API: with the AP Media group the worst case measures 5,839
-  (2026-11-12).
+  discord.js leaves to the API: with the AP Media group's nine settings the worst case measures
+  5,986 (2026-11-13), 14 under the limit. The three trap settings of that day added 147 to the
+  5,839 of 2026-11-12, all of it in the AP Media field (454 characters to 601).
 - **Change hook.** `configStore.onChange(fn)` fires after a save is written and applied to the
   live config object. The Archipelago monitor subscribes so a new room, channel or filter takes
   effect on the next batch instead of the next boot. `processPriority.js` and `voiceHealth.js`
   subscribe so a change to either Voice setting applies at once. The audiobook settings need no
   subscription: the engine reads them each time it uses them. `apMediaGame.js` subscribes once per
-  process: `apMediaEnabled` starts or halts the Plex Media world, the two Plex poll intervals
-  re-arm its watcher, and any `archipelago*` key re-checks every Plex Media slot against its watch.
+  process: `apMediaEnabled` starts or halts the Plex Media world (off puts the Slow Motion speeds
+  still pending back first), the two Plex poll intervals re-arm its watcher, `apMediaTraps` and
+  `apMediaVoiceTraps` run its trap sweep, and any `archipelago*` key re-checks every Plex Media
+  slot against its watch.
 - **Groups.** General, Access, Integrations, Broadcasts, Archipelago, AP Media, Audiobooks and
   Voice, in that order. AP Media is a group of its own: the Archipelago group already holds 25
   settings, and every save of an `archipelago*` key re-applies the monitor.
@@ -945,7 +957,7 @@ Covered by 13 checks across `test/archipelagoClaims.test.js` (storage, casing, p
 
 Every id-taking sub-command accepts the id optionally and falls back to the only watch there is. With a single room the number carries no information, and requiring it made `/ap claim` read like it wanted something the user did not have.
 
-That makes the first word ambiguous in the prefix form: `!ap claim 0 ZackWord` gives an id and `!ap claim ZackWord` does not. `argBase` is where the arguments after the id start, and the rest of the parsing indexes off it rather than off fixed positions. With two or more watches the id is required again and the reply says which case it is: no rooms at all reads differently from too many to guess between.
+That makes the first word ambiguous in the prefix form: `!ap claim 0 ZackWord` gives an id and `!ap claim ZackWord` does not. `argBase` is where the arguments after the id start, and the rest of the parsing indexes off it rather than off fixed positions. With two or more watches the id is required again and the reply says which case it is: no rooms at all reads differently from too many to guess between. The too-many reply names every watch by id, label and the slot it watches as, and says where the id goes, so a player who never ran `!ap list` can choose.
 
 **A leading integer is always the id, including one no watch holds.** Deciding that on whether the id exists reads as friendlier and is the more dangerous half of the trade: a stale id then falls through to the next argument position, which silently retargets the only watch. All three of these were reproduced against the real command layer before the fix. `!ap unwatch 999` deleted the one live room and dropped its claims; `!ap password 7 hunter2` stored the password `"7 hunter2"` after the source message had already been deleted, locking the room out with the real password unrecoverable; and `!ap progression 0 on` read the `0` through `falsy()` and turned the setting **off** while replying that it had. Answering "no watch with ID 7" is recoverable and none of those were. The cost is that a slot literally named `12345` needs `!ap claim <id> 12345`, and `test/archipelagoCommand.test.js` pins both halves.
 
@@ -1760,24 +1772,46 @@ Built and tested offline on 2026-11-11 and 2026-11-12: `npm run test:apworld` ge
 with the frozen Archipelago 0.6.8, and its scenario G plays one end to end through the real
 `apMediaGame` against a real MultiServer 0.6.8 on a loopback port; the Node tests run the bot side
 against a stand-in room server modelled on MultiServer 0.6.8. Plex and Discord are fakes in both.
-**None of it has met a room hosted with `ArchipelagoServer.exe` or archipelago.gg, a live Plex
-session or Discord yet**; Phase 17 of `BUGTESTING.md` is the checklist that does. World 0.2.0,
-also of 2026-11-12, added the list settings that let a player start a YAML in the Archipelago
-Options Creator and have `/apmedia yaml` fill in the titles ("Lists from the Options Creator"
-below); its tests copy the Creator's rules from the 0.6.8 build, and nobody has opened the
-Creator's window with this world installed yet.
+World 0.2.0, also of 2026-11-12, added the list settings that let a player start a YAML in the
+Archipelago Options Creator and have `/apmedia yaml` fill in the titles ("Lists from the Options
+Creator" below); its tests copy the Creator's rules from the 0.6.8 build.
+
+**The first contact with a real room, Plex and Discord was the first-seed rehearsal of 2026-11-13
+(Phase 17A of `BUGTESTING.md`: the owner and one friend, world 0.2.0): 21 checks were marked
+passed, A2 (the install) was marked failed with no note, and 5 were not run.** The owner's list
+was made in the Options Creator's window, attached to `/apmedia yaml` and sent back filled in; the
+friend accepted their Plex link from its DM button; the seed generated beside a ChecksFinder slot,
+archipelago.gg accepted its upload and hosted it, and its slot_data tracker showed no Discord id or
+Plex account id; both slots were linked through a watch of that room and welcomed, and a track the
+friend played before linking counted once; the owner's live Plex session (matched by `User.id`, as
+the friend's were), an episode through Plex history, music in voice and an audiobook each sent
+their checks. Not exercised yet: a room hosted with `ArchipelagoServer.exe` (C2; the seed went to
+archipelago.gg instead), banking (E5, marked passed, though the logs show it never ran), the
+friend's own checkpoints by movie and in voice and the shared movie counted for each slot apart
+(F1 to F3), and the cleanup (H1).
+
+World 0.3.0, of 2026-11-13, added snacks, Fast Forward, Remote Control, the Snack Bar and seven
+traps ("Items and traps" below), tested offline in the same way, with the trap runner over the real
+`app/bot.js` and a FakePlayer. **None of it has met a live room, voice channel, Plex playlist or
+book session yet.** Phase 18 of `BUGTESTING.md` is its checklist, written for a room hosted on
+this PC, whose `ArchipelagoServer.exe` window takes the server commands that send the items
+(`/send`, `/send_multiple`, `/release` and `/collect`) and shows the room's log. On archipelago.gg
+the room's creator types server commands in the room page's command box instead. There `/send`
+worked once, when the 2026-11-13 rehearsal sent E4's book with it; `/send_multiple`, `/release`
+and `/collect` were not tried there.
 
 ### Module map
 
 | File | Role |
 | ---- | ---- |
 | `apworld/plex_media/__init__.py` | `PlexMediaWorld`: builds the seed's registry in `stage_generate_early`, puts the real names on the Item and Location objects, keeps the goal counter in `collect` and `remove`, takes `Unlock i` in `create_item`, writes slot_data, and swaps the seed's data package into the multidata in `stage_modify_multidata`. |
-| `apworld/plex_media/options.py` | The twelve game options, the thirteen list settings the bot reads (`list_*`), the three option groups the Options Creator shows, and `entries` and `list_info`, which the bot writes and the options page hides. |
-| `apworld/plex_media/entries.py`, `plan.py` | Each entry validated (an `EntryError` names its index), then one slot's plan: units, steps, starting copies dealt round-robin, the Wild Ticket count, checkpoint minutes, the goal count and the caps. |
+| `apworld/plex_media/options.py` | The 25 game options (twelve, and the thirteen of world 0.3.0's items and traps), the thirteen list settings the bot reads (`list_*`), the four option groups the Options Creator shows, and `entries` and `list_info`, which the bot writes and the options page hides. |
+| `apworld/plex_media/entries.py`, `plan.py` | Each entry validated (an `EntryError` names its index), then one slot's plan: units, steps, starting copies dealt round-robin, checkpoint minutes, the goal count, the caps, and the pool (`_pool`: Wild Tickets, Fast Forwards, Remote Controls, traps and snacks; `exclude_main` deals it again for excluded main locations). |
 | `apworld/plex_media/registry.py`, `naming.py` | The seed's one table of units and locations across every Plex slot, with ids and unique names; display names and the text sanitiser. |
 | `apworld/plex_media/slotdata.py`, `datapackage.py`, `rules.py`, `constants.py` | slot_data schema 1; the seed's data package and its checksum; access rules; the ids, names and limits that `helpers/apMediaContracts.js` mirrors. |
 | `apworld/tests/` | `run.py` (`npm run test:apworld`), `test_pure.py`, `test_generate.py`, `test_e2e.py` with its Node half `e2e_bot.test.js`, `test_creator.py` with its Node half `fill_creator.js`, `ap_harness.py`, `ap_child.py`, `purelib.py`, `make_plan_cases.py` and `fixtures/`. See "Testing it" below. |
-| `helpers/apMediaGame.js` | The orchestrator: one game client per binding, the queue, notices and announcements, `health()`, and the data API `/apmedia` calls. |
+| `helpers/apMediaGame.js` | The orchestrator: one game client per binding, the queue, notices and announcements, what the items and traps do, `health()`, and the data API `/apmedia` calls. |
+| `helpers/apMediaTraps.js` | The trap runner (`createTrapRunner`): the five voice and book traps on the bot's music or the listener's own audiobook, and their undoing. The game reaches what the bot plays only through it. |
 | `helpers/apMediaClient.js` | `ApMediaClient`, the game client. |
 | `helpers/apMediaCredit.js` | Pure credit logic over a slot's index. |
 | `helpers/apMediaWatch.js`, `apMediaVoice.js`, `apMediaBooks.js` | The automatic credit sources: Plex history and sessions, the bot's music in voice, the bot's audiobooks. |
@@ -1788,6 +1822,7 @@ Creator's window with this world installed yet.
 | `helpers/apMediaContracts.js` | Names, ids, limits and data shapes shared by all of the above. |
 | `helpers/apworldBuild.js`, `scripts/build-apworld.js` | The `.apworld` zip, and `npm run build:apworld`. |
 | `commands/apmedia.js/` | `/apmedia`. Every permission check is made here: `apMediaGame` trusts its caller. |
+| `commands/apmedia.js/ff.js`, `snackbar.js` | `/apmedia ff` (a title named in full or by its code, through `common.findTitle`) and `/apmedia snackbar` (`buy:` `fast-forward` or `remote-control`; on `!` also `fast forward`, `remote control`, `ff`, `rc` and `remote`, in any case), each on the caller's own slot only. How their prefix forms read the item and `slot=` is under "`/apmedia` and its buttons". |
 
 Changed for it: `helpers/archipelagoClient.js` (four hooks and the self-presence rule),
 `helpers/archipelagoMonitor.js` (`describeSlot`, `onWatchChange`, two `listHints` fields,
@@ -1800,6 +1835,11 @@ stop), `helpers/healthCheck.js` (`checkApMedia`), `helpers/configStore.js` and `
 monitor's `escapeText`, now exported), `commands/test.js` (`!diag` pings nobody and is cut to fit
 2,000 characters) and `commands/hitster.js` (the clip is marked `secret`, so it earns no Plex
 Media credit). World 0.2.0 added the `yaml` package to `package.json` and `package-lock.json`.
+World 0.3.0 changed `commands/pause.js` (each pause it makes adds one to `bot.pauseCount`),
+`helpers/bookEngine.js` (`handlers.pause` adds one to the session's `pauseCount` for every pause
+request, the already-paused no-op included, with no notify) and `helpers/bookmarks.js` (`setSpeed`)
+for the trap runner, and `helpers/configStore.js` and `config/config.js` for the three trap
+settings.
 
 ### How a play becomes a check
 
@@ -1836,7 +1876,26 @@ the location ids: a completed title earns its watch, finish or track locations p
 checkpoint unless `timesanity_strict`; a completed track earns its own location and the checkpoints
 inside its span; a completed book part earns the checkpoints inside its span, and the last part
 also earns the finish, with every checkpoint of the book unless `timesanity_strict`; a span earns
-the checkpoints it passed.
+the checkpoints it passed. Under `timesanity_strict`, `applyEvent` calls `strictLocations` instead:
+the main locations as `locationsFor` gives them, and a checkpoint only once the binding's heard
+ranges for that entry reach it (`heardThrough`). The reach starts at the mark of the entry's
+furthest checkpoint already checked, pending or banked, so a seed running before this rule, ranges
+lost in a crash, and a time credited by hand all carry on from there. A gap is forgiven below the
+larger of `HEARD_GAP_MS` (30 s) and the pads of the ranges on its two sides. `apMediaWatch` gives
+each session step a `padMs` of one poll at the step's own rate plus 10 s (25 s at the default 15 s
+poll, at most 90 s), because a session's first and last poll of play are never seen; bot-played
+books, voice and manual credit carry no pad, so the book's 30 s skip button stays unforgiven. A
+span adds its stretch, and a voice completion the stretch that went out; a Plex history row or a
+finished bookmark adds nothing. The ranges live on the binding as `heard`: entry key to `[lo, hi]`
+or `[lo, hi, pad]` on the entry's own timeline, at most 64 a title and 4,096 a binding (once the
+binding is full, a title not started yet is judged on each stretch alone and keeps nothing). After
+each event what is reached collapses to
+one range, and the entry is dropped once its last checkpoint is reached. The ranges are held in the
+runtime and written with the next credit's patch, else by one 60 s timer, and at stop: a durable
+write on every 10 to 15 s step would be synchronous disk work beside voice playback. A new seed, on
+connect and in a stale slot's retry, starts with none. Under `locked_watches: ignore` a title adds a
+range only while the inventory is known and the title open, so a stretch heard while locked does not
+count after the unlock.
 
 **The queue.** Everything that changes a binding runs on one promise chain in `apMediaGame.js`:
 every credit source, each slot's connection, inventory and checks, and every `/apmedia` change.
@@ -1878,8 +1937,9 @@ also releases the banked ids whose titles are open now.
   baseline still resets at every poll that is not playing. A session's user
   is the local account whose id is `User.id`, or else whose name is `User.title` (the owner's
   `User.id` may be their plex.tv id), and the bot log says once which matched. It also keeps how far
-  each account got in each title, for `/apmedia status`. **The session fields are unverified on this
-  server**: no session was playing when `/status/sessions` was probed.
+  each account got in each title, for `/apmedia status`. The session fields were first read live in
+  the 2026-11-13 rehearsal: the owner's and the friend's sessions matched by `User.id`, and a movie's
+  and an episode's checkpoints came from sessions.
 - **Voice** (`apMediaVoice.js`). `app/bot.js` emits `track-heard` from every music player's Idle,
   with the queue entry, `heardMs` (the resource's `playbackDuration`, the audio that actually went
   out), `startMs` (where in the track the resource began: 0, or a `!seek`'s offset), whether the
@@ -1906,24 +1966,40 @@ also releases the banked ids whose titles are open now.
 AP 0.6.8 fixes item and location names and ids at import and has no per-seed data package. The
 world's class tables therefore hold placeholders on ids every seed shares: `Popcorn` (filler) is
 item 1,347,000,001, `Wild Ticket` (useful) 1,347,000,002, `Unlock i` is 1,347,001,000 + i (i up to
-20,000), and location `Check j` is 1,347,000,000 + j (j up to 60,000). Item and location ids are
+20,000), and location `Check j` is 1,347,000,000 + j (j up to 60,000). World 0.3.0 appended the
+other fixed items in the free band below the first unlock (`constants.fixed_items`, never
+renumbered): Nachos, Large Soda, Candy Bar, Hot Dog, Soft Pretzel and Ice Cream Sandwich (filler)
+1,347,000,003 to 1,347,000,008, Fast Forward and Remote Control (useful) 1,347,000,100 and
+1,347,000,101, and Buffering, Rights Expired, Commercial Break, Shuffle Mode, Rewind, Intermission
+and Slow Motion (trap) 1,347,000,200 to 1,347,000,206. Every older id is unchanged
+(`test_fixed_ids_are_appended_and_every_old_id_is_unchanged`). Item and location ids are
 separate namespaces, so Popcorn and `Check 1` share an id. In `stage_generate_early` the world
 builds one registry from every Plex slot's list. Units and locations are unioned by key, so two
 lists holding the same movie share its unlock and its locations; ids come from sorted keys only;
 the first player to list a key names it. A name that clashes, ignoring case, with another or with a
-reserved name (Popcorn, Wild Ticket, Victory, the goal counter, Plex Media Goal, every group name,
+reserved name (every fixed item, Victory, the goal counter, Plex Media Goal, every group name,
 and the placeholder spellings) gains a tag in brackets: the rating key, the show's rating key for a
 show's unlock, `<playlist>:<part>` for a playlist part, or the catalog id for a book. A name that
 would be all digits (a movie with no year, such as 1917) gains its kind: `1917 (movie)`. The real
-names go on the Item and Location objects, so the fill, the rules and the spoiler see titles.
+names go on the Item and Location objects, so the fill, the rules and the spoiler see titles. Of a
+list's names only a movie without a year can spell one of world 0.3.0's fixed names, so from 0.3.0
+a yearless movie called Rewind is `Rewind [<rating key>]`. That rename is display only and ships
+under builder 1: it moves no id or key, the bot reads every id from slot_data, and a seed already
+generated keeps the data package it shipped with.
 
 **`stage_modify_multidata` swaps a per-seed data package into the multidata**
 (`multidata["datapackage"]["Plex Media"]`): a new dict with the real names on the placeholder ids,
 its four keys in alphabetical order, its groups as sorted lists, and `checksum` computed on exactly
 that dict. MultiServer, archipelago.gg and every client name items and locations by it.
 archipelago.gg's upload re-sorts the keys and recomputes the checksum, and refuses a seed whose
-checksum differs; a copy of that check passes in scenarios A to F of `test:apworld`, and a real
-upload is still to be done (Phase 17). `worlds.network_data_package` is never touched.
+checksum differs; a copy of that check passes in scenarios A to F of `test:apworld`, and
+archipelago.gg accepted the 2026-11-13 rehearsal's world 0.2.0 seed (Phase 17A's G1); no 0.3.0 seed
+has been uploaded yet. `worlds.network_data_package` is never touched. The
+package's item groups are Movies, Shows, Albums, Playlists and Books (the seed's unlocks by kind),
+Snacks, Useful (Wild Ticket, Fast Forward and Remote Control) and Traps, and Everything (every
+fixed item and unlock). The class's `item_name_groups` holds Snacks, Useful and Traps, whose
+members every seed shares, so a YAML can name them (`non_local_items: [Traps]`): AP expands a
+group before the world reads the option, and `_real_items` passes a fixed item's name through.
 
 **Nothing in the world may depend on a clock, a random draw or set order.** The `!ap next` worker
 rebuilds the seed in another process, under another hash seed, and replays generation's placements
@@ -1935,10 +2011,12 @@ for its room's whole life**; without it the worker answers every slot from spher
 
 Ids, keys and names are frozen per `BUILDER_VERSION` (1, in both `apMediaContracts.js` and
 `constants.py`). A change to anything an id or a name is derived from ships as a new builder
-version, and `entries.py` keeps rolling every YAML an earlier builder wrote. `test:apworld` compares
-two golden files, `apworld/tests/fixtures/builder1_mixed.expect.json` (builder 1's ids and names)
-and `test/fixtures/apmedia/slot_data_mixed.json`, which only `--update-golden` rewrites, and
-`test/fixtures/apmedia/plan_cases.json`, which only `make_plan_cases.py` rewrites.
+version, and `entries.py` keeps rolling every YAML an earlier builder wrote. An item id appended
+in the free band changes no existing one, so world 0.3.0's stayed under builder 1.
+`test:apworld` compares two golden files, `apworld/tests/fixtures/builder1_mixed.expect.json`
+(builder 1's ids and names) and `test/fixtures/apmedia/slot_data_mixed.json`, which only
+`--update-golden` rewrites, and `test/fixtures/apmedia/plan_cases.json`, which only
+`make_plan_cases.py` rewrites.
 
 Generation also translates the name-keyed common options to the slot's own real names
 (`local_items`, `non_local_items` and `start_hints` by unit; `exclude_locations`,
@@ -1959,6 +2037,16 @@ ids), `units` (`{id, name, kind, steps, start}`, `start` being the copies given 
 (the copies of that unit it needs), its main location ids (`w` for a movie or an episode, `f` for a
 book, and a last element on each album or playlist track, `null` under 30 s) and `cp`, its
 checkpoints as `[minute, location id]`.
+
+World 0.3.0 added keys without a new schema: `items.snacks` (name to id, Popcorn included),
+`items.useful` (`{fast_forward, remote_control}`), `items.traps` (keyed as `contracts.TRAPS`:
+`buffering`, `rights_expired`, `commercial_break`, `shuffle_mode`, `rewind`, `intermission`,
+`slow_motion`), `snack_bar` (`{trades, price}`) and `pool`
+(`{snacks, traps, fast_forwards, remote_controls, wild_tickets}`: what the slot's pool holds
+after `exclude_locations` took its share, which only generation knows). **A seed without them
+gets none of the new behaviour**: `apMediaCredit.itemIds` reads a snack, useful or trap id only
+when slot_data names it, and `snackBarOf` and `poolOf` give null, so a 0.2.0 seed counts as it
+did, has no Snack Bar, and its welcome has no pool line.
 
 **slot_data names no person.** The room hands it to any client joined as the slot, and
 archipelago.gg's tracker API (`/api/slot_data_tracker/<tracker>`) serves it to anyone, so the
@@ -2030,15 +2118,17 @@ watch to one Discord user: `watchId`, `slot`, `userId`, `boundAt`, `boundBy`, `s
 `stateDetail`, `pending`, `banked`, `redeemed`, `wildUsed`, `goalSent`, `announce`, `welcomed`,
 `lastCredit` and `lastTarget`, plus two fields the game adds: `backfillSeed` (the seed whose history
 backfill has run) and `watchChannelId` (the watch's channel, kept for a notice after the watch is
-gone). The slot is stored in the room's spelling, from `describeSlot`, and put right again before
-every connect, so a name linked before the watch had read the room needs no `InvalidSlot` round
-trip.
+gone). `heard` holds a strict slot's heard ranges, and world 0.3.0's items and traps added
+`itemsSeen`, `held`, `holdUntil`, `holdMs`, `expired`, `armed`, `speedRestore`, `ffUsed`,
+`rcUsed`, `snackSpent`, `bought` and `trades` ("Items and traps" below). The slot is stored in
+the room's spelling, from `describeSlot`, and put right again before every connect, so a name
+linked before the watch had read the room needs no `InvalidSlot` round trip.
 
 | State | Earns | Means | Way out |
 | ----- | ----- | ----- | ------- |
 | `active` | yes | connected, or trying to | |
 | `refused` | yes | the room refused the client (`InvalidSlot`, `InvalidGame`, `InvalidPassword`, `IncompatibleVersion`), its slot_data cannot be read (`slot_data`), or another binding holds this seed's slot already (`duplicate`) | `/apmedia retry`, a change of its watch, or any `start()`; the next `Connected` makes it `active` |
-| `stale` | no | the watched room moved to another seed | `/apmedia retry` takes the new seed on and clears `pending`, `banked`, `redeemed`, `wildUsed`, `goalSent`, `welcomed`, `lastCredit` and `backfillSeed` |
+| `stale` | no | the watched room moved to another seed | `/apmedia retry` takes the new seed on and clears `pending`, `banked`, `redeemed`, `wildUsed`, `goalSent`, `welcomed`, `lastCredit`, `backfillSeed`, `heard` and every item and trap field, after putting a Slow Motion speed back |
 | `orphaned` | no | the watch was removed | `/apmedia retry` once a watch with the same id exists again; an `added` watch never revives one, since watch ids are reused |
 
 A refused slot keeps earning: a changed room password refuses the client, and a retry with the new
@@ -2090,7 +2180,8 @@ start again, which the dedupe makes free.
 | 🔓 `ZackPlex` **Alien (1979)** unlocked, 9 checks sent | banked checks go out |
 | ⏱️ `ZackPlex` **The Matrix (1999)**: 1 check sent | `all` only: sent credit that finishes nothing |
 | 🔒 `ZackPlex` **Alien (1979)**: 1 check waiting for its unlock | `all` only: banked credit that finishes nothing |
-| 🎬 `ZackPlex` is in the game with 5 of 35 titles open: The Matrix (1999) (2h16m), … Goal: finish 28. | the welcome, once per binding, at its first `items` (open titles need the inventory), with its Plex account (`Plex account: linked.` for a friend, whose account name stays out of the channel; the owner's as account 1) and the `!ap claim` and `!ap hintpings … dm` commands |
+| ⏳ `ZackPlex` watched **The Matrix (1999)**, 9 checks held until HH:MM | a completion a trap holds back (Buffering, or the title's Rights Expired), a banked one included once the slot's items come, with when the last of them goes out, written as a Discord `<t:…:t>` stamp; `all` adds "⏳ `ZackPlex` **…**: 1 check held until HH:MM" for held credit that finishes nothing |
+| 🎬 `ZackPlex` is in the game with 5 of 35 titles open: The Matrix (1999) (2h16m), … Goal: finish 28. | the welcome, once per binding, at its first `items` (open titles need the inventory), with its Plex account (`Plex account: linked.` for a friend, whose account name stays out of the channel; the owner's as account 1), the `!ap claim` and `!ap hintpings … dm` commands, and for a world 0.3.0 seed its pool from slot_data: "In its pool: 2 Wild Tickets, 2 Fast Forwards, 1 Remote Control, 69 snacks and no traps. The Snack Bar trades 10 snacks for a Fast Forward or a Remote Control, 3 times (`/apmedia snackbar`)." |
 | 🔴 `ZackPlex`: the room refused its Plex Media client (`InvalidPassword`). *fix* | a refusal; posted in every mode |
 | 🟡 `ZackPlex`: the room is on another seed now, … | a new seed; posted in every mode |
 | ⚠️ `ZackPlex`: watch #0 is gone, … | the watch was removed; posted in every mode |
@@ -2110,10 +2201,332 @@ option escapes only the first of several in one string. Every line of a batch is
 held while no Discord client can post them are capped, at 200 per channel, with a warning that
 counts the dropped ones. The channel is `apMediaChannelId`, else the watch's channel, else the
 binding's `watchChannelId`. `apMediaAnnounce` `off` and a binding's own `announce: false` silence
-the credit lines and the welcome, never a notice. Credit made while the inventory was unknown is
-announced at the next `items`, against what the room reported, so a title done before is not
-announced again. Those notes live in module memory, which `!restart` keeps; after a stop and start
-of the bot in between, the credit is announced with a 🔓 line instead.
+the credit lines and the welcome, never a notice. The item and trap lines ("Items and traps"
+below) go through the same `announce()`: those two silence them, and `completions` and `all` both
+post them. Credit made while the inventory was unknown is announced at the next `items`, against
+what the room reported, so a title done before is not announced again. Those notes live in module
+memory, which `!restart` keeps; after a stop and start of the bot in between, the credit is
+announced with a 🔓 line instead, or with the ⏳ held line when its title's rights are out.
+
+### Items and traps (world 0.3.0)
+
+The world deals the pool; everything an item does happens in the bot: the "traps and useful
+items" section of `apMediaGame.js` (`trapsOn` to `watchListens`, with `fastForward` and
+`snackBar`) and the trap runner, `apMediaTraps.js`. **No effect consumes, hides or re-locks a
+received item, or drops earned credit**: a trap only holds credit back, persisted, until it lets
+it go.
+
+**The pool** (`plan.py` `_pool`, and its twin `apMediaPlan.js` `poolOf`). Nothing in it is random,
+so the `!ap next` worker and the bot deal the same pool. The room for useful items is the main
+locations (watches, tracks and finishes) less the unlock copies in the pool and less the slot's
+own main locations that `exclude_locations` names. Wild Tickets take it first, then Fast Forwards,
+then Remote Controls, each clamped to what is left, so unlocks and useful items never outnumber
+the main locations, and every checkpoint (`EXCLUDED` under `filler_only`) and every excluded main
+location keeps a filler item or a trap, the only items AP puts on an `EXCLUDED` location. The rest
+is filler, `F` places: `T = F * trap_percentage // 100` of them are traps, split over the seven
+`<key>_weight` options by largest remainder (`split_by_weight`: a tie goes to the trap listed
+first in `TRAPS`, and a weight of 0 never gains one), and the other `F - T` are snacks dealt
+round-robin in `SNACKS` order, or all Popcorn with `snack_variety` off. A trap due while every
+weight is 0 is a `PlanError`, which generation turns into an `OptionError` naming the player.
+`create_items` adds the counts in that order and raises when the pool and the placed locations
+differ in number. The exclusions are known only at generation, once the registry names the
+locations: `make_room_for_exclusions` calls `exclude_main`, and the useful items that no longer
+fit go Remote Controls first, then Fast Forwards, then Wild Tickets. `plan_cases.json`, the JS
+twin and the `/apmedia yaml` reply's "Items: …" line count the pool without them; slot_data's
+`pool` carries what generation dealt, and the welcome reads that.
+
+**Counting** (`apMediaCredit.js`). `itemIds` reads the ids from slot_data's `items`, Popcorn and
+Wild Ticket falling back to the contracts' ids, and `unitCounts` counts Wild Tickets, snacks
+(Popcorn among them), Fast Forwards, Remote Controls and each trap apart from the units; an id the
+seed does not name falls through to the units. Fast Forwards and Remote Controls available are
+received plus bought less used (`usefulOf`), and snacks held are received less `snackSpent`.
+
+**The item cursor** (`takeItems`, after every `items`). `itemsSeen` counts how much of the room's
+item list the binding has acted on, since every reconnect sends the whole list again. The first
+inventory a binding sees, and a list shorter than the cursor, only set it, silently: a late link,
+or a binding from before the cursor, fires no backlog. Each Remote Control, Fast Forward and trap
+past the cursor acts once, in the room's order.
+
+**At most two traps a batch** (`BURST`). MultiServer sends one `ReceivedItems` per
+`register_location_checks` call, so a release is one batch and a collect one per world it collects
+from. A trap that can do nothing fizzles first, before the cap and before a Remote Control on hand:
+every trap while `apMediaTraps` is off, a voice or book trap while `apMediaVoiceTraps` is off or
+while 20 traps already wait on the slot, and a Rights Expired with no open title. It takes no
+burst place, never uses up a kept Remote Control, and is recorded as `fizzled`. A Rights Expired
+with nothing to take says so on a line of its own; the others fizzled for one switch, or for the
+20, share one:
+"🎬 `ZackPlex`: Rewind from `Watcher` and Intermission from `Watcher` fizzled: voice traps are off on this server."
+or "🎬 `ZackPlex`: Rewind from `Watcher` fizzled: 20 traps already wait to hit." Of the live traps
+left, the first two of a batch act, a Remote Control's block counting as one; the rest are
+announced together as dodged, with the burst cap's own line ("…: at most 2 traps hit at once."),
+and recorded as `dodged`.
+
+**Remote Control** (`remoteOn`, `finishRemotes`, `endEffect`). One that arrives, or one bought
+while `apMediaTraps` is on, goes to the first of: Buffering, running or waiting for its first
+check; the Rights Expired that ends last; the effect in force for the slot's player (a pause, a
+commercial clip, a book's Slow Motion speed); the oldest armed trap not in flight (`blockable`). A
+hold it ends is released at once with its checks. With none of those it is kept, and blocks the
+next live trap to arrive; a trap that fizzles never uses it up. An effect is ended outside the
+queue through the runner's `end(userId)`; when the runner finds nothing of it in force (its end
+notice still on the way, or a pause someone made under it), the Remote Control blocks the oldest
+armed trap not in flight instead, or goes back on hand (`rcUsed` less one), with a line either way.
+
+**Buffering and Rights Expired** (`trapHits`, `creditIds`, `holdsFor`, `settleBank`,
+`releaseHolds`, `holdsDue`, `armHolds`). Buffering adds 15 minutes to `holdMs`, at most 60, and
+the slot's next credit that would go out turns that into `holdUntil`, so it always holds
+something; one arriving while a window runs moves `holdUntil` 15 minutes on, at most 60 from now.
+Rights Expired puts one title in `expired`, ending 45 minutes on (a second on the same title
+starts the 45 again): the title the slot's player has playing now (`playingNow`: a Plex session
+of their consented account seen within two session polls plus 5 s, a book session of theirs, or
+the list track at the head of the bot's queue while they listen in voice), else the first ready
+title in list order not under a hold already. Only a ready title has credit to hold; with none,
+the trap fizzles with its line.
+While a hold runs, the checks of open titles that would go out join `held` instead of `pending`
+(`holdsFor`, which `creditIds` and `settleBank` share): a title whose rights are out holds every
+check of its own, and Buffering holds new credit only. Credit banked only because the slot's
+items were not known yet (every boot before the first items, a room out of reach, a refused slot)
+is new credit when they come: `settleBank` tells it apart by the notes `creditIds` keeps in
+`rt.notes`, holds it under either trap, starts a Buffering that was waiting for its next credit on
+it, and `resolveNotes` announces it as held:
+"⏳ `ZackPlex` watched **The Matrix (1999)**, 9 checks held until HH:MM". Checks that waited in the
+bank for a real unlock or a Wild Ticket go straight out, with
+"🔓 `ZackPlex` **Alien (1979)** unlocked, 9 checks sent", or, when their title's rights are out,
+are held, and `settleBank` posts the same ⏳ line for them. `rt.notes` lives in memory, so after a
+restart credit banked before it is held only by its title's Rights Expired, with that ⏳ line when
+the slot's items come, and a running Buffering lets it out with the 🔓 line. Dropped credit is
+unaffected, and the strict heard ranges keep growing. Held ids count as earned for dedupe and as
+a strict floor (`earnedIds`), leave `held` when the room checks them (`onConnected`,
+`onChecked`), and die only with an unlink, as `pending` does. A hold ends by its timer
+(`armHolds`, one per binding, for the next end still to come); when overdue, at every
+`Connected`, minute check and start; at once by a Remote Control; and all at once when
+`apMediaTraps` goes off (`holdsDue({all: true})`). A stale slot, or one without its index, keeps
+an overdue hold until one of those can end it.
+
+**The voice and book traps wait for a listen** (`armed`, `tryArmed`, `takeArmed`, `afterApply`).
+Commercial Break, Shuffle Mode, Rewind, Intermission and Slow Motion act only while the slot's
+person hears the bot: their own audiobook session playing, or in the bot's voice channel, not
+deafened, while it plays music unpaused (`runner.listening`; a trap's own pause counts as no
+listen). Each arrival joins `armed` (at most 20; one more fizzles on arrival, above) and is tried
+at once, outside the queue, one pass per binding at a time. A pass takes the oldest armed trap
+while its person is listening and marks it in flight (`flying`, binding key to that trap, in
+memory only), with no write: the trap stays in `armed` until the runner answers. A hit or an `off`
+takes it off the binding; a `busy` or `absent` answer leaves it there and writes only to mark its
+waiting line said, once per trap. A trap whose person is not listening waits with
+"…: it hits during their next listen through the bot, within 12 hours."; one the runner calls busy
+while its person listens (another trap at work in the server, Hitster, a looping or seeking track
+or a clip at the head of the queue, a book control refused, an error) waits with
+"…: it hits as soon as the bot can, within 12 hours." A waiting trap is tried again on four
+signals: the minute tick (`sweepTraps`), a track starting in voice, a book session change
+(`books.onChange`, run through `trapDefer` once the engine's own call has returned), and a voice
+or book credit event naming the person (`handleEvent`). `app/bot.js` has no track-start event, so
+`will play`, which comes before the player is Playing, stands in, 3 s later (`TRACK_START_MS`); a
+track still downloading by then is caught by the next minute tick. The start sweep tries the armed
+traps too. One 12 hours old, or with `apMediaVoiceTraps` or `apMediaTraps` off, fizzles with a
+line (`fizzleArmed`); the one in flight is left to the runner's answer, which plays it, calls it
+off or leaves it for the next pass. A trap in flight that plays after an unlink, or after a new
+seed's reset took it off, is still announced.
+
+**The runner** (`createTrapRunner`), made on first use with `getBot`, `getBooks`, the PMS reader,
+the live config, the logger, `trapTimers`, `now` and `onEnd: effectEnded`. While the module cannot
+load, the voice and book traps stay armed until they fizzle. It never reads or writes the store,
+and the game changes what the bot plays only through it:
+- `listening(userId)`: `{where: 'music' | 'book', guildId, channelId}` or null; a playing book
+  session counts first, and paused music or a paused book counts as nobody listening.
+- `apply(kind, {userId, slot})`: `{applied: true, line, until?, id?, restore?}`, or
+  `{applied: false, reason}` with `off` (either switch off), `absent` (not listening) or `busy`:
+  another effect holds the guild (one at a time per guild), a voice claim holds it (Hitster; for
+  a book, any claim but the audiobook's), or the music's head loops, waits on a seek or is itself
+  a clip, or its player is not Playing. A throw counts as `busy`. `id` comes with a pause or a
+  commercial clip, the effects in force until an end notice says otherwise: one module-level
+  counter gives them out, so no two runners of the process share one. The game fizzles a trap
+  the runner calls `off` as it acts with the line of the switch that is off,
+  "🎬 `ZackPlex`: Intermission from `Watcher` fizzled: traps are off on this server." or
+  "…: voice traps are off on this server.", and leaves a `busy` or `absent` one armed.
+- `end(userId)`: a Remote Control. It lifts the trap's pause, takes a clip that has not played off
+  the queue or skips one playing (`Bot.stop()`, the `!skip` path), and puts a Slow Motion speed
+  back; true when something was still in force. A pause someone made under the trap's stays, and
+  counts as nothing in force.
+- `restore(record)`: a persisted Slow Motion, armed again after a start, or put back at once when
+  overdue.
+- `stop()`: lifts the trap pauses still in force, never a pause someone made under one, takes
+  queued clips off and drops every timer, quietly. A Slow Motion speed is left for `restore()`.
+- `onEnd({id, userId, slot, kind, where, line, how, speed})`, `how` being `done`, `early`,
+  `paused`, `gone`, `away` or `overdue`: an effect ended by itself, with the `id` `apply()` gave
+  it. A Slow Motion speed put back says `speed: true` and carries no id. Never for `end()` or
+  `stop()`, whose caller knows.
+
+| Trap | Music in voice | The listener's own book |
+| ---- | -------------- | ----------------------- |
+| Commercial Break | the clip after the current track, with `apMediaTrapClips` set and a clip found; otherwise a 30 s pause | a 30 s pause |
+| Shuffle Mode | everything after the head shuffled in place, never into the same order; with fewer than 3 entries, a Rewind | back 5 minutes, or to the start inside the first 5 |
+| Rewind | the head played again from 0 (`isSeeking` with `seekOffset` 0 and a forced stop, as `!seek` does); a 30 s pause for an entry with no Plex key, such as a YouTube one | back 5 minutes, or to the start inside the first 5 |
+| Intermission | a 60 s pause | a 60 s pause |
+| Slow Motion | a 30 s pause: voice credit compares the audio sent with the track's length, so a slowed track would never count whole, and it would stretch the strict heard ranges | 0.75x for 10 minutes; a 30 s pause at 0.75x already |
+
+The runner's words for each outcome are `LINE` and `END_LINE` in `apMediaTraps.js`.
+
+**Pauses** hold the guild until they end. A music pause is `player.pause(true)` with
+`Bot.isPaused` set, which the now-playing toggle reads; its timer unpauses only the player it
+paused, and only while that is still Paused. A resume by anyone ends the trap there (`early`,
+"someone resumed the music early"), so a pause made after it is theirs. A stop under it that moves
+the queue on (`!skip` or `!stop`, told apart through `Bot.stopGeneration`, or the stream failing)
+ends it as `gone` ("the paused track was stopped"). A `!seek`, or a loop replaying the same entry,
+ends it as `early`: the effect keeps the head entry it paused, and the Idle finds that entry still
+at the head with `isSeeking` or `replay` set. A pause someone makes under the trap's stays: the
+effect keeps `Bot.pauseCount` as it was when it paused, and once `commands/pause.js` has moved it,
+the timer, `end()` and `stop()` lift nothing (`paused`,
+"someone paused the music, so it stays paused"). A book pause goes through the director's
+`controlSession` as the session's own listener (`actorOf`), and is told apart from a pause the
+listener makes by `pausedAt`; its timer resumes only that pause, leaves the book paused (`away`)
+while the listener is out of the session's voice channel, and the engine's change notices end it
+early or as stopped. A `/book pause` under it leaves `pausedAt` alone, so the effect keeps the
+session's `pauseCount`, which the engine moves on every pause request, the already-paused no-op
+included: once it moved, the book stays paused (`paused`,
+"someone paused the book, so it stays paused"). Either kind is noticed when the trap's timer
+fires, up to 60 s after the pause.
+
+**The clip** (`findClip`, `commercialBreak`). `apMediaTrapClips` is a ratingKey when it is all
+digits, and otherwise a playlist title matched trimmed and without case, an audio playlist first.
+The first 200 rows are read and a track of 3 minutes or less with a part key is picked at random.
+It goes in at queue index 1 as
+`{title: 'Commercial Break', artist: 'Plex Media', key, secret: true}`: at index 0 it would
+replace the playing player, and `runPlayback` would restart the interrupted track from 0. While
+Plex answers, the guild is held (`pending`); then the switches, the listener and the head are
+checked again, and the clip goes after whatever plays by then. A Commercial Break whose playlist
+is still being read when a trap switch goes off is answered `off`: it fizzles with that switch's
+line, and no clip is queued. `secret` keeps the clip out of voice credit and out of Rights
+Expired's pick, and the now-playing card shows only Title "Commercial Break" and Artist "Plex
+Media". The effect looks every 15 s and ends `done` once the entry has left the queue, played or
+removed. A setting that names no playlist, or a playlist with no short audio track, is warned once
+and gives the 30 s pause; a failed Plex read is warned each time and gives it too.
+
+**Slow Motion on a book** returns
+`restore: {kind: 'speed', userId, slot, workId, previous, until}`. The game keeps it as the
+binding's `speedRestore` (`{kind, workId, previous, until}`, the user and slot being the
+binding's) and times it itself (`armSpeed`, `putSpeedBack`); the runner keeps a timer of its own,
+keyed by user and work. A speed goes back only while it is still 0.75, so a speed the listener
+chose stays; with no live session of that work it is put back in the bookmark instead, unless the
+bookmark's speed changed, through `bookmarks.setSpeed`, which changes the speed alone: the place,
+the hint and `updatedAt` stay, and a bare `/book play` still resumes the book heard last. A session
+still joining is tried every 5 s, six times. The binding keeps one speed record, so a Slow Motion
+on a second book within the first book's 10 minutes puts the first book's speed back at once, with
+no line (`afterApply`, through `speedBackNow`). At a start the sweep puts an overdue speed back at
+once, or hands a running one to `restore()` and arms the game's timer again. An unlink and a stale
+retry put the speed back first (`speedBackNow`), and either trap switch going off puts it back
+early with a line naming that switch, for `apMediaTraps`
+"🐢 `ZackPlex`: Slow Motion ended: traps are off on this server." and for `apMediaVoiceTraps`
+"🐢 `ZackPlex`: Slow Motion ended: voice traps are off on this server." `apMediaEnabled` off puts
+every pending speed back at once, with no line, before `halt()` (`speedsBackForOff`): the runner
+does the work inside `restore()`, and the binding's `speedRestore` clears when the runner's
+`speed: true` notice comes back (`offSpeedBack`, matched by user and slot). A restore the runner
+has to put off, the book's new session still starting, sends no notice before `halt()` stops the
+runner, so its record stays for the next start, whose sweep puts the speed back as at any start,
+with "🐢 `ZackPlex`: Slow Motion is over." A `!restart` hands the record to `restore()` again, as
+before. **Accepted gap:** a book started during the 10 minutes starts at 0.75x, since a new book
+takes `bookmarks.lastSpeed`, the newest bookmark's speed, and the restore puts back only the work
+the trap slowed.
+
+**What the game keeps of an effect** (`startEffect`, `effectEnded`). A hit is announced with the
+runner's words, escaped. A timed effect is `rt.effect = {kind, until, id}` until the runner's
+`onEnd` says it ended; a Commercial Break on music with no `until` is a clip,
+`{kind, until: null, clip: true, id}`, in force until it has played; Rewind and Shuffle Mode are
+over when they hit; a book's Slow Motion is kept as the binding's `speedRestore` alone.
+`effectEnded` ends the effect it holds for that user, slot and kind, and only on the same id when
+both the effect and the notice carry one; a `speed: true` notice goes to `offSpeedBack` and never
+ends an effect, a Slow Motion pause included. It posts its line ("Intermission is over, the music
+plays again.") only for an effect it still holds, so one a Remote Control ended gets no second
+line, and a clip's line carries no runner words ("Commercial Break is over."). A speed's end is
+`putSpeedBack`'s own "Slow Motion is over." `rt.effect` lives in the runtime alone: a stop or
+`!restart` drops it, and the runner's `stop()` lifts the pause.
+
+**Fast Forward** (`fastForward`) needs the slot's inventory known and one available. Without
+`timesanity_strict` it earns the title's first unearned checkpoint in time order, at any distance,
+a movie's and an audiobook's included. Under `timesanity_strict` it adds the 10 minutes after
+`heardThrough` (from the earned-checkpoint floor) as a heard span with source `fastforward`
+(`strictIds`), writes the heard ranges in the same patch, and credits what that reaches; one that
+reaches no checkpoint yet is spent. It never earns a main location. A locked title banks under
+`bank` and is refused under `ignore`. A refusal spends nothing. A title with no checkpoint left is
+refused with "**The Matrix (1999)** has no checkpoint left to skip to.", and a seed from before
+0.3.0 with "`ZackPlex`'s seed has no Fast Forwards: it was made with a Plex Media world before 0.3.0."
+Its ids go through `creditIds`, so a hold holds them. The reply names the slot:
+"⏩ `ZackPlex` spent a Fast Forward on **The Matrix (1999)**: 1 check sent. 1 Fast Forward left."
+
+**The Snack Bar** (`snackBar`). A seed without `snack_bar` has none. A trade needs one left
+(`snack_bar_trades` less `trades`) and the price in snacks held; it adds the price to
+`snackSpent`, one to `trades` and one to `bought.fastForward` or `bought.remoteControl`, and the
+reply names the slot:
+"🍿 `ZackPlex` bought a Remote Control for 10 snacks: 5 snacks and 2 trades left." A Remote
+Control bought while `apMediaTraps` is on goes to a trap on the slot at once, as one received
+would, and the reply adds "It went straight to the trap on this slot.", or for an effect in force
+"It went straight to the trap playing now."
+
+**Switches** (`trapsOn`, `voiceTrapsOn`). A change of either runs the trap sweep at once. With
+`apMediaTraps` off every trap that arrives fizzles with a line, and the sweep ends every hold with
+its checks sent, fizzles the armed traps and puts a Slow Motion speed back early.
+`apMediaVoiceTraps` off does the same to the five voice and book traps alone: they fizzle on
+arrival and while armed, a speed goes back, and the holds stay. Each of those lines names the
+switch that went off ("traps are off on this server." or "voice traps are off on this server.").
+The armed trap in flight waits for the runner's answer, and the runner's `apply` answers `off`
+while either is off. `apMediaTrapClips` is read at each Commercial Break. The minute tick
+(`armTick`) runs the same sweep with the switches as they are.
+
+**Status and list** (`statusRow`, `holdsOf`; `status.js` `itemLines`, `list.js` `rowLine`). A
+status row adds `fastForwards` and `remoteControls` (received, bought, used, available), `snacks`
+(received, spent, held), `snackBar` (price, trades, trades left), `holds` (Buffering's end and the
+checks it holds, its length while it waits for a credit, and each title's Rights Expired with its
+own), `armed` (each with when it would fizzle), `armedListening` (whether the slot's player
+listens through the bot now, by `takeArmed`'s own check), `effect` (the trap in force and its end,
+`until` null for a clip) and `slowMotion`; `itemLines` prints only what applies, and no Snacks line
+for a seed made with `snack_bar_trades` 0 (one whose trades are used up keeps it). The armed traps
+read "Waiting to hit as soon as the bot can: Rewind from `Watcher`" while their player listens
+through the bot, and "Waiting for a listen through the bot: Rewind from `Watcher`" otherwise, a
+trap's own pause counting as no listen. `list` marks a row whose rights are out (`expiredUntil`)
+and puts the Buffering line under the counts of every page, an empty view's included.
+
+**Persistence.** Each field is in `apMediaStore.js` `BINDING_FIELDS` and shaped by
+`shapeBinding`; none is named like a token, secret or password, which the store drops.
+
+| Field | Holds |
+| ----- | ----- |
+| `itemsSeen` | the item cursor; null until the first inventory |
+| `held` | location ids a hold keeps back |
+| `holdUntil` | when the running Buffering window ends (ms), or null |
+| `holdMs` | Buffering's length waiting for the slot's next credit, at most 60 minutes |
+| `expired` | entry key to when its Rights Expired ends (ms) |
+| `armed` | `[{kind, at, from, told}]`: traps waiting for a listen, oldest first, at most 20; the one in flight stays here until the runner answers |
+| `speedRestore` | `{kind: 'speed', workId, previous, until}`: a book speed to put back, or null |
+| `ffUsed`, `rcUsed` | Fast Forwards and Remote Controls used |
+| `snackSpent`, `trades` | snacks spent and trades made at the Snack Bar |
+| `bought` | `{fastForward, remoteControl}` bought there |
+
+A stale slot's retry clears every one of them with the seed, and an unlink drops `held` with
+`pending` and `banked` (its reply counts all three) after putting a speed back. The rest go with
+the unlinked binding, so a new link of the same slot on the same seed starts them over (see the
+known gaps under "Testing it").
+
+| Line | When |
+| ---- | ---- |
+| ⏩ `ZackPlex` got a Fast Forward from `Watcher`: `/apmedia ff` earns a title's next checkpoint. | a Fast Forward arrives; under `timesanity_strict` it ends "`/apmedia ff` counts 10 minutes of a title as heard."; `Archipelago` is the sender of a start item or a server `/send` (player 0) |
+| 📺 `ZackPlex` got a Remote Control from `Watcher`: it blocks the next trap. | a Remote Control arrives with no trap on |
+| 📺 `ZackPlex`: Remote Control blocked Rewind from `Watcher`. | one on hand meets a live trap, or one arrives with a trap waiting for a listen (the oldest not in flight) |
+| 📺 `ZackPlex`: Remote Control ended Buffering, 9 checks sent. | it ends a hold ("… ended Rights Expired on **Halloween (2018)**, 7 checks sent."), or an effect ("… ended Intermission.", "… ended Slow Motion.") |
+| 📺 `ZackPlex` got a Remote Control from `Watcher`: Commercial Break was over already, so it blocks the next trap. | the effect ended as it came, or someone paused under its pause, and no armed trap is left to block; a bought one reads "📺 `ZackPlex`: Commercial Break was over already, so the Remote Control blocks the next trap." |
+| ⏳ `ZackPlex` got Buffering from `Watcher`: the checks of its next credit wait 15 minutes. | Buffering with no window running (30, 45, 60 for each more) |
+| ⏳ `ZackPlex` got Buffering from `Watcher`: its checks wait until HH:MM. | Buffering during a window |
+| ⛔ `ZackPlex` got Rights Expired from `Watcher`: the checks of **Halloween (2018)** wait until HH:MM. | Rights Expired; with no ready title it fizzles before the burst cap: "⛔ `ZackPlex` got Rights Expired from `Watcher`, but none of its titles is open to lose." |
+| ⏳ `ZackPlex`: Buffering is over, 10 checks sent. | the window ends |
+| ⛔ `ZackPlex`: the rights to **Halloween (2018)** are back, 7 checks sent. | a Rights Expired ends |
+| ⏳ `ZackPlex`: traps are off on this server, so its holds ended, 9 checks sent. | `apMediaTraps` turned off |
+| 🎬 `ZackPlex` got Rewind from `Watcher`: it hits during their next listen through the bot, within 12 hours. | a voice or book trap waits while its player is not listening through the bot (a trap's own pause counts as no listen) |
+| 🎬 `ZackPlex` got Rewind from `Watcher`: it hits as soon as the bot can, within 12 hours. | the runner called it busy while its player listens: another trap at work in the server, Hitster, a looping or seeking track or a clip at the head of the queue, a book control refused, or an error |
+| 🎬 `ZackPlex` got Rewind from `Watcher`: back 5 minutes | it hits, with the runner's words |
+| 🎬 `ZackPlex`: Intermission is over, the music plays again. | a pause ends by itself, with the runner's words for how: "…, someone resumed the music early." (a resume, a `!seek` or a loop), "…, someone paused the music, so it stays paused.", "…, the paused track was stopped.", and on a book "…, someone paused the book, so it stays paused." among the rest; a clip's reads "🎬 `ZackPlex`: Commercial Break is over." |
+| 🐢 `ZackPlex`: Slow Motion is over. | a book's speed went back at its time, or at the next start when `apMediaEnabled` off had put it off past that time; a switch off reads "🐢 `ZackPlex`: Slow Motion ended: traps are off on this server." for `apMediaTraps` and "🐢 `ZackPlex`: Slow Motion ended: voice traps are off on this server." for `apMediaVoiceTraps`; `apMediaEnabled` off posts none |
+| 🎬 `ZackPlex`: Rewind from `Watcher` fizzled: no listen through the bot in 12 hours. | an armed trap's 12 hours ran out; a switch off, on arrival, while armed or as the runner acts, reads "…fizzled: traps are off on this server." or "…fizzled: voice traps are off on this server.", several in one line ("Rewind from `Watcher` and Intermission from `Watcher` fizzled: …") |
+| 🎬 `ZackPlex`: Rewind from `Watcher` fizzled: 20 traps already wait to hit. | a voice or book trap arrives while 20 wait on the slot: no burst place, no Remote Control, several in one line |
+| 🍀 `ZackPlex` dodged Rewind from `Watcher`, Intermission from `Watcher` and Shuffle Mode from `Watcher`: at most 2 traps hit at once. | the burst cap's line alone: live traps past the first two of a batch, naming five and then "and N more" |
+| ⏩ `ZackPlex` spent a Fast Forward on **The Matrix (1999)**: 1 check sent. 1 Fast Forward left. | the reply to `/apmedia ff`; under `timesanity_strict` the span comes first ("…: From 45m to 55m counts as heard. 1 check sent. …") |
+| 🍿 `ZackPlex` bought a Fast Forward for 10 snacks: 5 snacks and 2 trades left. `/apmedia ff <title>` spends it. | the reply to a Snack Bar trade; "🍿 `ZackPlex` bought a Remote Control for 10 snacks: …" for the other item |
 
 ### `/apmedia` and its buttons
 
@@ -2123,7 +2536,24 @@ gates are strict, since they read Plex accounts, hand out the world file or act 
 with `ownerId` blank nobody passes. A self-link needs the caller's `!ap claim` on that slot
 (`archipelagoMonitor.listClaims`); claiming never takes a slot somebody else holds, and without the
 check anybody could link a friend's slot to themselves and fill the friend's list with their own
-watching. `slash.ephemeral` is a function that keeps every reply private except `apworld`'s. One
+watching. Without `watch:` the link takes the one watch where that person holds a claim on the
+slot, unless another room read so far has a slot of that name too, or else the only watch there is.
+Anything else is asked back, under the same no-guess rule as `!ap`:
+- one claim and another read room with the slot: the reply names those rooms; a player gets the
+  link for the claimed room and, for the other, its `!ap claim` first;
+- several claims: the claimed watches;
+- no claim: the one room that has the slot when every room is read (`describeSlot`), otherwise
+  every watch's id (`listWatches`).
+
+A slot of that name that plays another game counts as no room for it, as `game.link` refuses it. A
+command the reply suggests keeps the user it was for. A rehearsal room and the live room can both
+hold a slot of one name.
+
+The owner may name anybody's slot for `unlink`, `retry`, `status`, `list` and `check` (`OTHERS`
+in `index.js`), never for `redeem`, `ff`, `snackbar` or `announce`, which spend or change a
+player's own items and lines.
+
+`slash.ephemeral` is a function that keeps every reply private except `apworld`'s. One
 `say()` sends every reply: it never rejects, clips at 2,000 characters by code point with code
 fences kept balanced, and sends later slash replies as private follow-ups, where the adapter would
 post them in the channel.
@@ -2132,17 +2562,22 @@ post them in the channel.
 owner's for someone else, and refuses `accountId` or `discordUserId` typed in or written in an
 attached file. The slash form has 23 options, `file` among them (see "Lists from the Options
 Creator"); a subcommand takes at most 25, so `label`, `starting_unlocks`, `wild_tickets`, `strict`,
-`locked_watches` and `checkpoint_items` arrive through one `more` option in the prefix's key=value
-form. Anyone may build, and one build reads every movie, show and album listing and then the
-tracks or episodes of each pick (286 Plex requests for a large list on a library the owner's size),
-so `yaml` runs one build per caller and two at once in all, kept in module memory, and answers the
-rest with a wait; the builder gives the event loop a turn before each hand-pick and builds each
-query's bigrams once. `check` and `redeem` take a title only when it is named in full or by its
-code: the game's `findEntry` also matches any part of a title, and "Alien" is a part of "Aliens
-(1986)". A miss gets up to three suggestions from an edit distance against every title on the list,
+`locked_watches`, `checkpoint_items` and world 0.3.0's thirteen (`snack_variety`, `fast_forwards`,
+`remote_controls`, `snack_bar_trades`, `snack_bar_price`, `trap_percentage`, `buffering_weight`,
+`rights_expired_weight`, `commercial_break_weight`, `shuffle_mode_weight`, `rewind_weight`,
+`intermission_weight`, `slow_motion_weight`) arrive through one `more` option in the prefix's
+key=value form, read without case, dashes or underscores (`yaml.js` `KEYS`). Anyone may build,
+and one build reads every movie, show and album listing and then the tracks or episodes of each
+pick (286 Plex requests for a large list on a library the owner's size), so `yaml` runs one build
+per caller and two at once in all, kept in module memory, and answers the rest with a wait; the
+builder gives the event loop a turn before each hand-pick and builds each query's bigrams once.
+`check`, `redeem` and `ff` take a title only when it is named in full or by its code: the game's
+`findEntry` also matches any part of a title, and "Alien" is a part of "Aliens (1986)". A miss
+gets up to three suggestions from an edit distance against every title on the list,
 on the main thread, so a text over 200 characters once normalised gets none, and a pair whose lengths
 differ by more than the closeness allows is never scored. `check`'s prefix text is tried whole as a
-title before it is split at its last `at` or `@`. `account` takes a Plex name in full or an id: a
+title before it is split at its last `at` or `@`. `account` takes a Plex name in full (its letters
+and digits in order, so case, spaces and punctuation do not count) or an id: a
 link reads that account's whole history, so part of a name gets "Did you mean", sent by DM on the
 prefix path, where it would name accounts in the channel. With the friend's DMs closed it posts
 neither the button nor the account's name in the channel: it asks them there to open their DMs.
@@ -2154,6 +2589,27 @@ another `world_version`, no manifest, or not a zip, which stops every Archipelag
 from starting while it sits there. A Plex failure shows only its `PmsError` code (`UNREACHABLE`,
 `TIMEOUT`, `HTTP_401` and the rest); the message, which names the Plex host and port, goes to the
 bot log.
+
+**`slot=` and the Snack Bar's words on `!`** (`common.slotTail`, `snackbar.js`). `takeKeys` ends
+an unquoted value at the first space, so in `slot=Zack 2` the `2` would join the title or the
+item. `ff`, `snackbar`, `redeem` and `check` refuse an unquoted `slot=` with other words after it,
+before anything is spent or counted, when anything but the command's other key pairs stands
+before it, when `slot=` is typed twice, or when the words after it are more than the command reads
+(`snackbar` reads only a leading `buy` and the item's name):
+"Is the slot `Zack 2`? Then put it in quotes: `slot="Zack 2"`. If it is `Zack`, put `slot=Zack` last. Nothing was spent."
+(`check`'s ends "Nothing was counted."). A single-quoted `slot='Zack 2'` gets the same hint
+without the `'` marks, and `slot=‘Zack 2’`, in the curly quotes a phone types, gets it without
+the `‘` and `’`. A single-quoted `slot=` placed first gets it too when a later word closes the
+quote: `!apmedia ff slot='Zack 2' The Matrix`. A value that already names a slot the command
+would take opens nothing: `!apmedia ff slot='Tis Singin' in the Rain` spends on a slot called
+`'Tis`. A quoted `slot=` works anywhere, an unquoted one
+last, and an unquoted one first with the rest after it: `!apmedia ff slot=Zack The Matrix`,
+`!apmedia snackbar slot=Zack buy rc`, `!apmedia redeem slot=Zack Toy Story` and
+`!apmedia check slot=Zack Toy Story at 1h30m`. `snackbar` reads `remote control` and
+`fast forward`, in any case and with or without `buy`, before a one-word name. Without `buy`, a
+first word that names an item is the item only when `slot=` is given or the text names none of
+the caller's own slots, so a slot called RC, FF or Remote shows its Snack Bar. With slots
+`Control Freak` and `Freak`, `snackbar buy remote Control Freak` buys for `Control Freak`.
 
 Autocomplete answers from memory: slots from the bindings, titles from the slot indexes (`redeem`
 offers locked titles only), and playlists from the game's YAML builder (`apMediaGame.builder()`, one
@@ -2198,8 +2654,10 @@ file. The Creator's file therefore carries what to pick, and the bot writes the 
 
 **The list settings** (`apworld/plex_media/options.py`) are thirteen options in their own group,
 "Your list (the bot picks the titles)". The twelve game options moved into two groups, "Unlocks
-and goal" and "Timesanity", so the Creator shows five panels: Game Options (`progression_balancing`
-and `accessibility`), the list group, Unlocks and goal, Timesanity, and Item & Location Options.
+and goal" and "Timesanity", and world 0.3.0's thirteen item and trap options are a group of their
+own, "Items and traps", so the Creator shows six panels: Game Options (`progression_balancing`
+and `accessibility`), the list group, Unlocks and goal, Timesanity, Items and traps, and Item &
+Location Options.
 
 | Key | Class | Values | Default | Builder param |
 | --- | ----- | ------ | ------- | ------------- |
@@ -2420,6 +2878,30 @@ for the player.
   choices, the list or the range. Past 10,000 locations it is refused, naming the lowest
   `random-range-…` that fits, or the lowest value the trigger should set (`randomTimerProblem`).
   Two or more such timers are also tried at their lowest together.
+- **A Trap Percentage kept random, or set by a trigger,** is planned at its default (0), and a
+  trigger's value not at all, while Archipelago rolls it, and with no weight able to pick a trap
+  the world's `OptionError` stops the whole multiworld. So `randomTrapProblem` refuses the file
+  when no Trap Weight can roll above 0 (its plain value, its `highestRoll` when kept random, and
+  any value a trigger sets) and a possible roll of `trap_percentage` makes a trap due among the
+  list's `F` filler places (`floor(F * pct / 100) >= 1`): "Trap Percentage (`trap_percentage`) is
+  random in your file while every Trap Weight is 0: a roll of 15 or more makes a trap due among
+  the list's 7 filler items with no trap to pick, and that stops the whole multiworld from
+  generating. Set a Trap Weight above 0, or Trap Percentage to 0.", or "A trigger in your file
+  sets Trap Percentage (`trap_percentage`) while every Trap Weight is 0: at 20 a trap is due …".
+  While every Trap Weight in the file is 0, `plannedOptions` plans each weight a trigger may set
+  above 0 at the highest it can set, for the build, the file's header (`renderYaml`) and
+  `randomTimerProblem`'s trial plans: the reply's "Items: …" line and the header count those
+  traps, while the file keeps its own weights and the trigger. A fixed Trap Percentage is then
+  judged by `randomTrapProblem`, as a random one is. A plain value above 0 with every weight 0 and
+  no trigger that may set one above 0 is the plan's own error ("trap_percentage 50 makes 34 of the
+  list's 69 filler items traps, but every trap weight is 0 (a trap weight above 0, or
+  trap_percentage 0, would help)"). **Accepted gaps:** one weight that can roll above 0 passes the
+  check, so a file whose random Trap Weights could all roll 0 together is taken, and so is a fixed
+  `trap_percentage` above 0 with every weight random; such a seed stops generating only on a roll
+  of 0 for every weight while a trap is due. A weight a trigger may set above 0 counts as one that
+  can roll above 0 even when the trigger may not fire (its condition can roll otherwise), for a
+  fixed Trap Percentage as for a random one: such a file is taken, and its seed stops the whole
+  multiworld from generating only when the trigger does not fire while a trap is due.
 - **Counts.** A count at `preset` (or -1) takes `PRESETS[list_preset][kind]`: 0 for a kind the
   preset leaves out, and 0 under `none`. All four are passed as numbers, so the command's no-preset
   default (15 movies) never applies to a file. A file whose counts are all 0 and that names no
@@ -2456,14 +2938,14 @@ for the player.
   and the file is then refused; neither the Options Creator nor the bot writes one.
 
 **Writing it back.** `validateParams` records `p.list`, the list settings the titles were picked
-with, and `renderYaml` writes them after the twelve game options in every file the bot builds,
+with, and `renderYaml` writes them after the 25 game options in every file the bot builds,
 with a file or without: `list_preset` by name, each count as a number or `preset`, the texts as
 JSON strings, `list_unwatched` as true or false, `list_max_episodes`, and `list_label` empty unless
 a label was given, so a copy under another name gets its own. A count equal to what the active
 preset gives is written as `preset`, also when it was given as a number, so it follows a preset
 given later. Built from options alone, counts, titles, a playlist or a collection given without
 `preset:` record `list_preset: none`. The `passthrough` keys come next, each value as one line of
-JSON flow, with a random game option in that option's own place among the twelve. A key stays
+JSON flow, with a random game option in that option's own place among the 25. A key stays
 plain when it is an identifier YAML 1.1 does not read as a boolean or null, and is quoted
 otherwise. A setting in `asWritten` is written as its copied line in its own place, among the
 game options or the list settings. `requires` gains `plando:` after `version:` when the file asked
@@ -2497,9 +2979,12 @@ The owner adds `for:` for them; anyone may give the list a new name, typed or in
 `name:` line. The owner's own list given to someone else with `for:` is refused with "This is
 your own list.", and a new name builds it for them. The reply adds "📄 Settings from `<file>`",
 with "the options you typed replace the file's" when any were typed, a ♻️ line with how many of
-the file's titles a fresh pick replaced when it had any, and one ⚠️ line naming each game option
-left random by its Creator name and key, with its default. A list built while the person's
-account link waits for consent says that nothing they watched is known yet. Warnings and misses
+the file's titles a fresh pick replaced when it had any, and one ⚠️ line naming the game options
+left random by their Creator names and keys, with their defaults: the first six (`RANDOM_SHOWN`),
+then "; and N more", since a file can leave all 25 random. The summary's three lines are the
+counts, the start and the goal, and "Items: …", the Fast Forwards, Remote Controls, traps (by
+name) and snacks the plan deals (`itemsText`). A list built while the person's account link waits
+for consent says that nothing they watched is known yet. The ⚠️ random line, warnings and misses
 go between the summary and the two closing lines, and `fitLines` keeps the whole reply within
 Discord's 2,000 characters by leaving out a line too long to fit and counting the lines it leaves
 out ("… and 6 more lines not shown."), so the next step and the line about the public tracker are
@@ -2526,14 +3011,27 @@ message names no install command, since a full `npm install` re-resolves the sta
 `constants.WORLD_VERSION` and `contracts.WORLD_VERSION`; `test/apworldBuild.test.js` holds the
 built file's manifest to the contract. `BUILDER_VERSION` and the slot_data schema stay 1, since
 nothing an id or a name is derived from changed, and the two goldens changed only their
-`world_version` line. Every YAML the bot writes carries `Plex Media: 0.2.0` under
-`requires: game:`, which a 0.1.0 install refuses, so the generating PC and the `!ap next` worker
-need 0.2.0. A seed generated under 0.1.0 rebuilds under 0.2.0 with the same ids and names; its
-rebuilt slot_data says 0.2.0, which no code compares.
+`world_version` line. From then every YAML the bot wrote carried `Plex Media: 0.2.0` under
+`requires: game:`, which a 0.1.0 install refuses. A seed generated under 0.1.0 rebuilds under
+0.2.0 with the same ids and names; its rebuilt slot_data says 0.2.0, which no code compares.
+
+World 0.3.0 (2026-11-13) went the same way: `world_version` 0.3.0 in `archipelago.json`,
+`constants.WORLD_VERSION`, `contracts.WORLD_VERSION` and `test_generate.py`'s `WORLD_VERSION`,
+with the bot's written `requires` pinned in `test/apMediaYaml.test.js`. Item ids were only
+appended, so `BUILDER_VERSION` and the slot_data schema stay 1 and the slot_data keys are
+additive. A YAML written for 0.2.0 has none of the thirteen new options and gets their defaults:
+2 Fast Forwards and 1 Remote Control where the room allows, snacks for the other filler, no
+traps. A seed generated under 0.2.0 rebuilds the same under 0.3.0, since the item options move no
+id, name or location (`test_the_item_options_move_no_id_name_or_location`). **Every YAML the bot
+writes now carries `Plex Media: 0.3.0`**, so the generating PC and the `!ap next` worker need
+0.3.0.
 
 **Known limits.** The Creator's Item & Location Options pickers offer the class tables' names,
-`Unlock 1` to `Unlock 20000`, `Check 1` to `Check 60000`, Popcorn, Wild Ticket, Everything and
-Everywhere, because the real names exist only per seed ("Ids, names and the data package").
+`Unlock 1` to `Unlock 20000`, `Check 1` to `Check 60000`, the seventeen fixed items (Popcorn,
+Nachos, Large Soda, Candy Bar, Hot Dog, Soft Pretzel, Ice Cream Sandwich, Wild Ticket, Fast
+Forward, Remote Control, Buffering, Rights Expired, Commercial Break, Shuffle Mode, Rewind,
+Intermission and Slow Motion), the groups Snacks, Useful, Traps and Everything, and Everywhere,
+because the real names exist only per seed ("Ids, names and the data package").
 Everything and Everywhere translate to the slot's own units and locations, and a numbered name
 stands for the seed's unit or location with that number. Another slot's unlock is dropped with a
 warning, and so is a `Check j` that is not one of the slot's own locations; an `Unlock i` past the
@@ -2549,19 +3047,27 @@ its 0.6.8 build, so a later Archipelago could change them unnoticed until they a
 try/catch, `app/music.js` calls `apMediaGame.start({ discord: client, bot })`. It keeps the client
 and the bot even while `apMediaEnabled` is off, and binds `configStore.onChange` once per process
 (see "Plex Media settings"). Running, it subscribes to `onWatchChange`, starts the watcher,
-attaches voice and books, builds a client for every `active` or `refused` binding, releases held
-lines, warms the playlist cache, and logs `Plex Media started.`.
+attaches voice, books and the trap listeners (`will play` and the book engine's changes), builds a
+client for every `active` or `refused` binding, runs the start sweep (holds that ran out while it
+was down end with their checks, a Slow Motion speed goes back or is handed to the runner again,
+and the armed traps are tried), starts the minute tick, releases held lines, warms the playlist
+cache, and logs `Plex Media started.`.
 
 **Stop and `!restart`.** `app/utils.js` `stop()` calls `apMediaGame.stop()` after the monitor's
 detach and before `restartHandoff.endAll`: the watcher, the voice and book listeners and every game
-client stop, and lines not yet posted are held. `bot.books.shutdown()` runs first in `stop()`, and
-`apMediaBooks`' detach delivers the steps the engine closed during it, so on a `!restart`, which
-keeps the process, listening up to the shutdown is still credited: banked provisionally, since the
-game clients are gone by the time it lands, and announced at the slot's first `items` after the
-restart. `!restart` then runs `start()` again in the same process. Bindings live in the store, and
-the slot indexes, the watcher and the announcement buffers in module memory, so all of that
-survives; each game client reconnects, its join and leave lines hidden by the tag. Held lines go out through the next Discord client if it
-comes within 5 minutes (`HOLD_MS`), at most 200 per channel; older ones are dropped with a warning.
+client stop, the trap timers go, the trap runner's `stop()` lifts its pauses (never one someone
+made under them) and takes its queued clips off without a line, and lines not yet posted are held.
+Holds, armed traps and a Slow Motion speed live on the binding and come back with the next start.
+Turning `apMediaEnabled` off halts the same way, after `speedsBackForOff` has put the Slow Motion
+speeds still pending back. `bot.books.shutdown()` runs first in `stop()`, and `apMediaBooks`'
+detach delivers the steps the engine closed during it, so on a `!restart`, which keeps the
+process, listening up to the shutdown is still credited: banked provisionally, since the game
+clients are gone by the time it lands, and announced at the slot's first `items` after the
+restart. `!restart` then runs `start()` again in the same process.
+Bindings live in the store, and the slot indexes, the watcher and the announcement buffers in
+module memory, so all of that survives; each game client reconnects, its join and leave lines
+hidden by the tag. Held lines go out through the next Discord client if it comes within 5 minutes
+(`HOLD_MS`), at most 200 per channel; older ones are dropped with a warning.
 
 **Health** (`helpers/healthCheck.js` `checkApMedia()` → `apMediaGame.health()`, shown as
 `ApMedia:` by `!diag` and the 15-minute check):
@@ -2573,16 +3079,20 @@ comes within 5 minutes (`HOLD_MS`), at most 200 per channel; older ones are drop
 | `error` | one or more of `failed to start: …`, `2 slots refused (ZackPlex: InvalidGame, FriendPlex: InvalidSlot)`, `1 slot lost its watch (FriendPlex)` (`2 slots lost their watch (…)`) and `the Plex history read failed 3 times in a row (…)`, joined by `; `. At most 5 slots are named, then `and N more`, and each name and reason is cut to 60 characters with any backtick made a quote: slot names are the players' and reasons the room's, and `!diag` shows the detail to anyone inside one code block. |
 | `ok` | `2 slots, 2 connected, Plex history read 4m ago`. The last part reads `no linked accounts` while the poll has no consented account to read, and earlier failures are then not counted, or `Plex history not read yet`; before the first start the detail is `2 slots, waiting to start` |
 
-**Command log.** `apmedia-credit` (`{slot, source, title, sent, banked}`) for each credit that sent
-or banked something, `apmedia-refused` (`{slot, watchId, reason}`), `apmedia-stale` and
-`apmedia-orphaned` (`{slot, watchId}`), and `apmedia-goal` (`{slot, done, goal}`) the first time a
-slot's goal goes out. Its bot-log lines start with `Plex Media`.
+**Command log.** `apmedia-credit` (`{slot, source, title, sent, held, banked}`, `source` also
+`fastforward`) for each credit that sent, held or banked something, `apmedia-refused`
+(`{slot, watchId, reason}`), `apmedia-stale` and `apmedia-orphaned` (`{slot, watchId}`),
+`apmedia-goal` (`{slot, done, goal}`) the first time a slot's goal goes out, `apmedia-trap`
+(`{slot, trap, from, outcome}`, `outcome` being `hit`, `armed`, `blocked`, `dodged` or
+`fizzled`; a trap that waited is logged `armed`, then again as `hit`, `blocked` or `fizzled`),
+`apmedia-fastforward` (`{slot, title, sent, held, banked}`) and `apmedia-snackbar`
+(`{slot, buy, price}`). Its bot-log lines start with `Plex Media`.
 
 ### Files and stores
 
 | File | Role |
 | ---- | ---- |
-| `data/apmedia_slots.json` | Bindings, with their `pending` and `banked` checks. Durable (fsync before the rename, an hourly `.bak`), since those checks exist nowhere else once their history row is marked seen. Compact JSON. Overridable with `PLEXBOT_APMEDIA_SLOTS_FILE`. |
+| `data/apmedia_slots.json` | Bindings, with their `pending`, `banked` and `held` checks, a strict slot's `heard` ranges, and the item cursor, holds, armed traps, Slow Motion restore and items spent and bought ("Items and traps"). Durable (fsync before the rename, an hourly `.bak`), since those checks exist nowhere else once their history row is marked seen. Compact JSON. Overridable with `PLEXBOT_APMEDIA_SLOTS_FILE`. |
 | `data/apmedia_accounts.json` | Plex account links and consent, by Discord user id. Durable, with a `.bak`. Overridable with `PLEXBOT_APMEDIA_ACCOUNTS_FILE`. |
 | `data/apmedia_marks.json` | Per Plex account: the newest `viewedAt` read, and the history keys already seen inside the 7-day window. Removed when the account's last link goes. Not durable: a lost mark only re-reads history from the seed's start, and the dedupe makes that free. Overridable with `PLEXBOT_APMEDIA_MARKS_FILE`. |
 | `data/archipelago/apmedia/<seed>/<slot>.json` | Each bound slot's slot_data, written once through a `.tmp` and a rename. Every path segment is the name's letters, digits, `_` and `-` (at most 32) plus the first 12 hex digits of its SHA-256, so no seed or slot name reaches outside the folder or meets another. A seed's folder goes when its last binding does. Overridable with `PLEXBOT_APMEDIA_CACHE_DIR`. |
@@ -2695,15 +3205,67 @@ from. `test/apMediaCommand.test.js` covers the attachment: the slash and prefix 
 gate and the one-build-per-person limit around the download, and the download's limits on mock
 timers. These, and scenario H, need the `yaml` package in `node_modules`.
 
+The items and traps have two test files. `test/apMediaGame.test.js`, in its "traps and useful
+items" section (46 tests), plays them through the real game, game client and store against the
+stand-in room, the items arriving from another world as a `ReceivedItems`, with the trap timers
+fired by hand (`trapTimers`) and a book change's follow-up run at once (`trapDefer`). Thirty-nine
+hand the game a recording stand-in for the runner through `trapRunner(opts)`, which keeps the
+`onEnd` it is given so a test can send the runner's end notice. Seven let the game build the real
+runner on the fake bot, whose book engine has the director's control rules. Six of them check
+what it does to the listener's own book: a Rewind, a Remote Control on an Intermission, an
+Intermission ending with the runner's words and staying paused while its listener is out of
+voice, a slowed book at its own speed again the moment `apMediaEnabled` goes off, one whose new
+session is still starting then put back at the next start, and a Rewind that waits out a Hitster
+game with the busy line. The seventh turns each trap switch off while Plex is still reading a
+Commercial Break's clip playlist for the music: the trap fizzles with that switch named, and no
+clip is queued. `test/apMediaTraps.test.js` (44 tests) holds the runner itself: the real
+`app/bot.js` with `@discordjs/voice` swapped in `require.cache`, as in `test/pauseState.test.js`,
+for a FakePlayer that pauses as the real AudioPlayer does (`pause()` refuses anything but Playing,
+`unpause()` anything but Paused, an unforced stop of a paused player waits for `unpause()`),
+driven through the real `!pause`, `!resume`, `!seek`, `!skip`, `!stop` and `!loop` commands, books
+on a fake director with the real one's control rules, a speed put back through the real
+`helpers/bookmarks.js` in memory, and three tests against a real director cut down from
+`test/apMediaBooks.test.js`, to hold the fake to it. The clock moves only when a test moves it.
+On the world's side `test_pure.py` holds the appended ids, the pool, the trap split, the snack deal
+and the groups, and scenario C generates a list with half its filler traps beside one whose
+excluded tracks take room from its useful items.
+
 **Known gaps**, each accepted or waiting on Phase 17: a `!seek` splits a voice listen and each part
 is judged against the 85% alone for the track (the checkpoints each part played past count either
 way); the seconds between a session's last poll and its stop, and before its first sight, cannot be
-read back from `/status/sessions`; in strict mode, completing a one-part book still earns its
-checkpoints, since the part's span covers them; a stopped music player whose late Idle comes after a
-newer run started reports nothing; the session field shapes and an archipelago.gg upload are
-unverified; the Options Creator's window has not been driven, only its rules copied from the 0.6.8
-build; and DMs with buttons, `editReply` with an attachment, an attachment downloaded from
-Discord's file server and an ephemeral page turn have only met fakes.
+read back from `/status/sessions`; in strict mode a skip in a Plex app that fits inside one session
+step (under 2.5 times the poll's wall time plus 20 s), or into the seam between two sessions (under
+their two pads, about 50 s at a 15 s poll), still reads as watched, while a bot-played book or track
+sees every skip of 30 s or more; a stopped music player whose late Idle comes after a
+newer run started reports nothing; a room hosted with `ArchipelagoServer.exe`, banking, and a
+friend's own checkpoints by movie and in voice are untried live (C2, E5 and F1 to F3 of the
+2026-11-13 rehearsal, whose passes met the live session fields, an archipelago.gg upload, the
+Options Creator's window with world 0.2.0, a DM button, and a YAML attached in Discord and sent
+back filled in); and an ephemeral page turn has only met fakes. The items and traps add these,
+waiting on Phase 18 or accepted:
+- None of them has met a live room, the bot's voice playback, a Plex clip playlist or a book
+  session.
+- A YAML whose random Trap Weights could all roll 0 together passes the check, as does a fixed
+  `trap_percentage` above 0 with every weight random, and one whose only weight above 0 comes from
+  a trigger that may not fire (its condition can roll otherwise), for a fixed Trap Percentage as
+  for a random one. Each is taken, and its seed stops the whole multiworld from generating only
+  when every weight rolls 0, or the trigger does not fire, while a trap is due.
+- A book started during Slow Motion's 10 minutes keeps 0.75x.
+- `will play` plus 3 s stands in for a track-start event, so a trap waiting on a slow download
+  waits for the minute tick.
+- An unlink, then a new link of the same slot on the same seed, starts the binding's counts over:
+  the Wild Tickets, Fast Forwards and Remote Controls it used count as unused again, the snacks it
+  spent come back and the Snack Bar's trades start over, while the items it bought are forgotten.
+  The first inventory after the link only sets the item cursor, so the traps it received do not
+  fire again. The Wild Ticket part predates 0.3.0.
+- The provisional-credit marker (`rt.notes`) lives in memory, so after a restart a running
+  Buffering lets credit banked before the restart out with a 🔓 "unlocked" line.
+- A pause someone makes under a trap's pause is noticed when the trap's timer fires, up to 60 s
+  later. Until then `/apmedia status` shows the trap in force, and a Remote Control sent meanwhile
+  finds it over: it blocks a trap still armed, or else goes back on hand with
+  "📺 `ZackPlex` got a Remote Control from `Watcher`: Intermission was over already, so it blocks the next trap."
+- A book whose Slow Motion restore `apMediaEnabled` off had to put off, its session still
+  starting, plays at 0.75x until Plex Media is on again and the trap's 10 minutes are over.
 
 ---
 
@@ -4105,7 +4667,10 @@ advance, finish, sleep, voice loss, the listener leaving, an unsubscribe, a spee
 and `shutdown()`. Nothing relies on the `'exit'` event, which `stop-bot.ps1`'s `Stop-Process
 -Force` and `!restart` never fire, so a hard kill loses at most one save interval, and the resume
 rewind hides most of that. A `record()` with a non-finite position is refused and logged, so no
-caller can write `NaN`.
+caller can write `NaN`. `setSpeed()` writes a bookmark's speed alone, at once: the Plex Media trap
+runner puts a Slow Motion speed back through it on a book nobody is playing, and the place, the
+hint and `updatedAt` stay, so that work keeps its turn in `lastInProgress` (the book a bare
+`/book play` resumes) and `lastSpeed`.
 
 **Durable writes.** A power cut or a BSOD can leave NTFS with a renamed file of zero length, which
 `jsonStore` would quarantine and start empty, losing every listener's place. The bookmark store is
@@ -5105,7 +5670,7 @@ The Plex Media tests add `PLEXBOT_APMEDIA_SLOTS_FILE`, `PLEXBOT_APMEDIA_ACCOUNTS
 
 ## Quirks worth knowing
 
-- **`commands/playlist.js/` is a directory** with `.js` in its name. The auto-loader's regex (`/\.js$/`) matches the directory name, and Node resolves the `require()` to `commands/playlist.js/index.js`. Clever but surprising; rename later if it becomes confusing. `commands/book.js/` does the same, and its `index.js` requires its five subcommand files by name, so a stray file dropped in that directory never becomes a command. `commands/apmedia.js/` is the third, with `common.js` and eleven subcommand files, also required by name.
+- **`commands/playlist.js/` is a directory** with `.js` in its name. The auto-loader's regex (`/\.js$/`) matches the directory name, and Node resolves the `require()` to `commands/playlist.js/index.js`. Clever but surprising; rename later if it becomes confusing. `commands/book.js/` does the same, and its `index.js` requires its five subcommand files by name, so a stray file dropped in that directory never becomes a command. `commands/apmedia.js/` is the third, with `common.js` and thirteen subcommand files, also required by name.
 - **The `Bot` class instantiates its own `PlexAPI`** in `app/bot.js`, separate from `helpers/plexClient.js`'s shared instance. Two TCP connection pools to the same Plex server. Legacy from before the helper existed; could be unified later.
 - **`iceName` was a typo** in the Bot class's PlexAPI options — fixed in this iteration to `deviceName`. The Bot now identifies itself correctly to Plex.
 - **`!youtube` works in two modes**: a URL plays directly; anything else hits `@distube/ytsr` for search and plays the top video result.

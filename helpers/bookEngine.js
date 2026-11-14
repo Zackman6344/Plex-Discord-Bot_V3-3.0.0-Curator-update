@@ -1162,6 +1162,9 @@ function createBookDirector({ client = null, bot = null, deps: given = {} } = {}
 
 	const handlers = {
 		pause(s) {
+			// helpers/apMediaTraps.js compares it: a trap's timed pause never resumes a book someone
+			// paused again while it lasted, which leaves pausedAt as it was.
+			s.pauseCount = (s.pauseCount || 0) + 1;
 			if (s.state === 'paused') return result(true, 'noop', 'Already paused.');
 			const abs = position(s);
 			park(s, 'paused');

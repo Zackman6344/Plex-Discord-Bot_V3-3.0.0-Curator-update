@@ -21,18 +21,30 @@ from BaseClasses import Item, ItemClassification, Location, LocationProgressType
 from Options import OptionError
 from worlds.AutoWorld import WebWorld, World
 
-from .constants import (COUNTER, GAME, GOAL_LOCATION, MAX_CHECKS, MAX_UNLOCKS, POPCORN, POPCORN_ID, VICTORY,
-                        WILD_TICKET, WILD_TICKET_ID, WORLD_VERSION, check_name, static_item_table,
-                        static_location_table, unlock_name)
+from .constants import (COUNTER, FAST_FORWARD, FIXED_GROUPS, GAME, GOAL_LOCATION, MAX_CHECKS, MAX_UNLOCKS, POPCORN,
+                        REMOTE_CONTROL, SNACKS, TRAPS, USEFUL, VICTORY, WILD_TICKET, WORLD_VERSION, check_name,
+                        fixed_items, static_item_table, static_location_table, unlock_name)
 from .datapackage import build_package, checksummed
 from .entries import EntryError, parse_entries, parse_list_info
 from .options import PlexMediaOptions, option_groups, option_values
-from .plan import PlanError, plan_slot
+from .plan import PlanError, exclude_main, plan_slot
 from .registry import Registry, RegistryError
 from .rules import has, opened_by
 from .slotdata import build_slot_data
 
 logger = logging.getLogger("Plex Media")
+
+
+def _fixed_classes():
+	classes = {name: ItemClassification.filler for name in SNACKS}
+	classes[WILD_TICKET] = ItemClassification.useful
+	classes.update((item["name"], ItemClassification.useful) for item in USEFUL.values())
+	classes.update((trap["name"], ItemClassification.trap) for trap in TRAPS.values())
+	return {name: (classes[name], code) for name, code in fixed_items().items()}
+
+
+# The items that are not unlocks: name to (classification, id).
+FIXED_ITEMS = _fixed_classes()
 
 
 class PlexMediaItem(Item):
@@ -74,6 +86,9 @@ class PlexMediaWorld(World):
 	topology_present = False
 	item_name_to_id = static_item_table()
 	location_name_to_id = static_location_table()
+	# The room knows these groups from the seed's data package; here they let a YAML name them too
+	# (local_items: [Traps]), and AP expands them into their members before the world reads the option.
+	item_name_groups = {name: set(members) for name, members in FIXED_GROUPS.items()}
 	required_client_version = (0, 5, 0)
 	# Universal Tracker regenerates one slot on its own, so its registry, and every id it reads,
 	# would differ from the seed's whenever the seed holds more than one Plex slot.
@@ -110,6 +125,7 @@ class PlexMediaWorld(World):
 			# multiworld's state, and the counter must count those copies too.
 			world.unit_info = {registry.unit_name[unit.key]: (unit.steps, unit.prefix) for unit in world.plan.units}
 			world.translate_common_options()
+			world.make_room_for_exclusions()
 		for group_id in multiworld.get_game_groups(GAME):
 			group = multiworld.groups[group_id]
 			if group.get("item_pool"):
@@ -150,14 +166,30 @@ class PlexMediaWorld(World):
 			               self.player_name)
 			self.options.item_links.value = []
 
+	def make_room_for_exclusions(self):
+		"""Give each of the list's own watches, tracks and finishes in exclude_locations a filler item or
+		a trap, the only items AP puts on an EXCLUDED location: each takes a place from the useful items'
+		room (plan.exclude_main). It reads the translated option, which comes from the YAMLs alone, so
+		the !ap next worker deals the same pool."""
+		excluded = self.options.exclude_locations.value
+		names = self.registry.location_name
+		count = sum(1 for pe in self.plan.entries for key, _n in pe.main if names[key] in excluded)
+		if not count:
+			return
+		try:
+			exclude_main(self.plan, count)
+		except PlanError as err:
+			raise OptionError(f"Plex Media list of {self.player_name}: {err}") from err
+
 	def _real_items(self, option_name, names, own_units):
-		# Everything means the list's unlocks. Popcorn kept home as well cannot always fit once other
-		# games' items have taken some of the list's locations, and generation stops on a FillError.
+		# Everything means the list's unlocks. Snacks, useful items and traps kept home as well cannot
+		# always fit once other games' items have taken some of the list's locations, and generation
+		# stops on a FillError.
 		if _covers_all(names, unlock_name, MAX_UNLOCKS):
 			return set(own_units)
 		out, foreign = set(), []
 		for name in sorted(names):
-			if name in (POPCORN, WILD_TICKET) or name in own_units:
+			if name in FIXED_ITEMS or name in own_units:
 				out.add(name)
 				continue
 			key = self.registry.unit_for_static_name(name)
@@ -201,10 +233,9 @@ class PlexMediaWorld(World):
 		return None
 
 	def create_item(self, name):
-		if name == POPCORN:
-			return PlexMediaItem(name, ItemClassification.filler, POPCORN_ID, self.player)
-		if name == WILD_TICKET:
-			return PlexMediaItem(name, ItemClassification.useful, WILD_TICKET_ID, self.player)
+		fixed = FIXED_ITEMS.get(name)
+		if fixed is not None:
+			return PlexMediaItem(name, fixed[0], fixed[1], self.player)
 		if name == VICTORY:
 			return PlexMediaItem(name, ItemClassification.progression, None, self.player)
 		registry = self._any_registry()
@@ -247,15 +278,22 @@ class PlexMediaWorld(World):
 		return location
 
 	def create_items(self):
-		for unit in self.plan.units:
+		plan = self.plan
+		for unit in plan.units:
 			for _ in range(unit.start):
 				self.multiworld.push_precollected(self.create_item(self.registry.unit_name[unit.key]))
 		pool = []
-		for unit in self.plan.units:
+		for unit in plan.units:
 			name = self.registry.unit_name[unit.key]
 			pool += [self.create_item(name) for _ in range(unit.steps - unit.start)]
-		pool += [self.create_item(WILD_TICKET) for _ in range(self.plan.wild)]
-		pool += [self.create_item(POPCORN) for _ in range(len(self.placed) - len(pool))]
+		counts = [(WILD_TICKET, plan.wild), (FAST_FORWARD, plan.fast_forwards), (REMOTE_CONTROL, plan.remote_controls)]
+		counts += [(TRAPS[key]["name"], count) for key, count in plan.traps.items()]
+		counts += list(plan.snacks.items())
+		for name, count in counts:
+			pool += [self.create_item(name) for _ in range(count)]
+		if len(pool) != len(self.placed):
+			raise RuntimeError(f"Plex Media list of {self.player_name}: the plan makes {len(pool)} items for "
+			                   f"{len(self.placed)} locations")
 		self.multiworld.itempool += pool
 
 	def set_rules(self):

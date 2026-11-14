@@ -15,6 +15,9 @@ const MENTION = /<@!?(\d{15,25})>/g;
 const QUOTES = '"\u201C\u201D\u201E';
 const QUOTE = new RegExp(`[${QUOTES}]`);
 const KEY_VALUE = new RegExp(`(^|\\s)([A-Za-z][\\w-]*)=(?:[${QUOTES}]([^${QUOTES}]*)[${QUOTES}]?|(\\S*))`, 'g');
+// Single quotes, straight or as a phone types them: no quotes to KEY_VALUE, since titles hold apostrophes.
+const SINGLE_OPEN = /^['\u2018\u2019]\s*/;
+const SINGLE_CLOSE = /['\u2018\u2019]$/;
 
 function prefixOf(bot) {
 	return (bot && bot.config && bot.config.commandPrefix) || config.commandPrefix || '!';
@@ -148,6 +151,54 @@ function takeKeys(text, keys) {
 }
 
 /**
+ * The refusal for prefix text with words after an unquoted `slot=` that are not the command's own,
+ * or null. Its value ends at the first space, so `slot=Zack 2` names the slot `Zack` and hands the
+ * `2` to the rest of the command: a spend would go to the wrong slot, or a title would gain a word.
+ * A lone slot= with nothing before it but the command's other pairs may lead the text instead
+ * (`ff slot=Zack The Matrix`): the words the command reads after it are its own, it is refused only
+ * when some are left over, and the hint takes those for the rest of the slot's name. A single quote,
+ * straight or curly, is no quote to slot=, yet one that a leading value opens and does not close
+ * gives the slot every word up to the one that closes it (`ff slot='Zack 2' The Matrix`), and the
+ * command reads only the words after that. The hint leaves the marks out. A value that already
+ * names a slot the command would take opens nothing: a slot may be called `'Tis`.
+ * @param {object} [opts]
+ * @param {string[]} [opts.keys] the command's other keys, whose pairs are never stray words
+ * @param {(words: string[]) => number} [opts.own] how many of the words after a leading slot= the
+ *   command reads, from the first: by default all of them, as a title does
+ * @param {string} [opts.nothing] the refusal's last sentence
+ * @param {(name: string) => boolean} [opts.isSlot] whether a value as typed names a slot the command would take
+ */
+function slotTail(text, { keys = [], own = (words) => words.length, nothing = 'Nothing was spent.', isSlot = () => false } = {}) {
+	const s = String(text || '');
+	const pairs = [...s.matchAll(KEY_VALUE)].filter((m) => normKey(m[2]) === 'slot');
+	const leads = pairs.length === 1 && !takeKeys(s.slice(0, pairs[0].index), keys).rest;
+	for (const [i, m] of pairs.entries()) {
+		if (m[3] !== undefined) continue;
+		// takeKeys keeps the last slot=, yet a word an earlier one left behind still lands in the rest.
+		const end = i + 1 < pairs.length ? pairs[i + 1].index : s.length;
+		const words = takeKeys(s.slice(m.index + m[0].length, end), keys).rest.split(' ').filter(Boolean);
+		let stray = words;
+		if (leads) {
+			// A slot name of two words leaves its second before the command's own: `slot=Zack 2 buy rc`.
+			// Quoted, the rest of it would read as the start of a title: `slot='Zack 2' The Matrix`.
+			// A slot's own name may start with the mark: `slot='Tis Singin' in the Rain`.
+			const close = SINGLE_OPEN.test(m[4]) && !SINGLE_CLOSE.test(m[4].slice(1)) ? words.findIndex((w) => SINGLE_CLOSE.test(w)) : -1;
+			const named = close >= 0 && !isSlot(m[4]) ? close + 1 : 0;
+			const from = words.findIndex((_, k) => k >= named && own(words.slice(k)) > 0);
+			if (from >= 0) stray = [...words.slice(0, from), ...words.slice(from + own(words.slice(from)))];
+		}
+		if (!stray.length) continue;
+		// KEY_VALUE takes no single quote for a quote: in slot='Zack 2' the value is 'Zack.
+		const typed = m[4].replace(SINGLE_OPEN, '');
+		const said = [m[4], ...stray].join(' ').trim();
+		const whole = said.replace(SINGLE_OPEN, '').replace(SINGLE_CLOSE, '').trim() || said;
+		const one = typed && typed !== whole ? ` If it is ${slot(typed)}, put ${commandCode(`slot=${typed}`)} last.` : '';
+		return `Is the slot ${slot(whole)}? Then put it in quotes: ${commandCode(`slot="${whole}"`)}.${one} ${nothing}`;
+	}
+	return null;
+}
+
+/**
  * Split prefix text into words, keeping a double-quoted stretch ("...", or the curly quotes a
  * phone types) together with its quotes removed. A word that starts `key=` is a pair.
  * @returns {{key: string|null, value: string, raw: string}[]}
@@ -195,6 +246,12 @@ function slotFor(ctx, text, { others = false } = {}) {
 		ok: false,
 		message: `${r.message} Once your seed is up, claim your slot with \`${ctx.p}ap claim <slot>\`, then \`/apmedia link <slot>\`.`,
 	};
+}
+
+/** Whether text names a slot slotFor would take, or several of that name. */
+function namesSlot(ctx, text, opts) {
+	const r = slotFor(ctx, text, opts);
+	return r.ok || !!(r.candidates && r.candidates.length);
 }
 
 // --- titles --------------------------------------------------------------------------------
@@ -421,8 +478,10 @@ module.exports = {
 	normKey,
 	takeMentions,
 	takeKeys,
+	slotTail,
 	tokenize,
 	slotFor,
+	namesSlot,
 	closeness,
 	didYouMean,
 	namesInFull,

@@ -1,6 +1,6 @@
-// /apmedia status: per slot, how far the list got, the goal, the connection, the Plex account
-// and how far the last Plex session reached. Anyone sees their own slots; the owner anyone's, and
-// every slot when they name none.
+// /apmedia status: per slot, how far the list got, the goal, the connection, the useful items and
+// snacks on hand, the traps on the slot, the Plex account and how far the last Plex session reached.
+// Anyone sees their own slots; the owner anyone's, and every slot when they name none.
 
 const common = require('./common.js');
 
@@ -36,6 +36,39 @@ function accountText(account) {
 		: `${name}(account ${account.accountId}), waiting for their consent, so only Discord listening counts for now`;
 }
 
+function stamp(ms) {
+	return `<t:${Math.floor(Number(ms) / 1000)}:t>`;
+}
+
+/** The useful items on hand, the snacks and the Snack Bar's terms, and every trap on the slot now. */
+function itemLines(row) {
+	const lines = [];
+	const ff = row.fastForwards || {};
+	const rc = row.remoteControls || {};
+	if (ff.available) lines.push(`> Fast Forwards: ${ff.available} to spend with \`/apmedia ff\`.`);
+	if (rc.available) lines.push(`> Remote Controls: ${rc.available} on hand, each one blocking the next trap or ending the one on you.`);
+	// A seed made with snack_bar_trades 0 has a Snack Bar that sells nothing.
+	if (row.snackBar && row.snackBar.trades > 0 && row.snacks) {
+		const bar = row.snackBar;
+		lines.push(`> Snacks: ${row.snacks.held}. The Snack Bar takes ${common.plural(bar.price, 'snack')} a trade, ${common.plural(bar.tradesLeft, 'trade')} left (\`/apmedia snackbar\`).`);
+	}
+	const holds = row.holds || {};
+	if (holds.buffering) lines.push(`> \u23F3 Buffering: ${common.plural(holds.buffering.held, 'check')} held until ${stamp(holds.buffering.until)}.`);
+	else if (holds.bufferingNextMs) lines.push(`> \u23F3 Buffering starts with the slot's next check and holds its checks for ${Math.round(holds.bufferingNextMs / 60000)} minutes.`);
+	for (const x of holds.expired || []) {
+		lines.push(`> \u26D4 Rights expired until ${stamp(x.until)}: ${common.bold(x.title)}${x.held ? `, ${common.plural(x.held, 'check')} held` : ''}.`);
+	}
+	if (row.effect) lines.push(`> \u{1F3AC} ${row.effect.name} until ${row.effect.until === null ? 'its commercial has played' : stamp(row.effect.until)}.`);
+	if (row.slowMotion) lines.push(`> \u{1F422} Slow Motion until ${stamp(row.slowMotion.until)}.`);
+	if (row.armed && row.armed.length) {
+		const traps = row.armed.map((trap) => `${trap.name} from ${common.slot(trap.from)}`).join(', ');
+		// The words of the trap's own waiting line: a player listening now waits for the bot, not for a listen.
+		const wait = row.armedListening ? 'Waiting to hit as soon as the bot can' : 'Waiting for a listen through the bot';
+		lines.push(`> \u{1F3AC} ${wait}: ${traps}.`);
+	}
+	return lines;
+}
+
 function block(row, { showUser }) {
 	const icon = ICON[row.connection] || '\u26AA';
 	const who = showUser ? ` for <@${row.userId}>` : '';
@@ -59,6 +92,7 @@ function block(row, { showUser }) {
 	}
 	const tickets = row.wildTickets || {};
 	if (tickets.available) lines.push(`> Wild Tickets: ${tickets.available} to spend with \`/apmedia redeem\`.`);
+	lines.push(...itemLines(row));
 	lines.push(`> Plex account: ${accountText(row.account)}.`);
 	if (row.lastSession) {
 		const s = row.lastSession;
@@ -99,4 +133,4 @@ async function run(ctx) {
 	return common.sendPages(ctx, common.paginate(head, blocks));
 }
 
-module.exports = { names: ['status'], run, block };
+module.exports = { names: ['status'], run, block, itemLines };

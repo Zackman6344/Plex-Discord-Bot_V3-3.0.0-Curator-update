@@ -113,7 +113,7 @@ def _tracks(index, entry, mixed):
 			track.append(_text(index, raw[5], f"{what} artist"))
 		out.append(track)
 	# Without a track of 30 s or more the entry has no location of its own, yet its unlock still
-	# counts toward the goal, and the pool could no longer promise Popcorn for every checkpoint.
+	# counts toward the goal, and the pool could no longer promise a snack or a trap for every checkpoint.
 	if not any(track[3] >= MIN_TRACK_MS for track in out):
 		raise EntryError(index, "has no track of 30 s or more, so nothing on it could be checked")
 	return out

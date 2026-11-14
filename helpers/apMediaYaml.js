@@ -30,7 +30,10 @@ const PARAMS = new Set([
 	'name', 'label', 'preset', 'movies', 'shows', 'albums', 'books', 'maxEpisodes', 'unwatched',
 	'genre', 'years', 'collection', 'playlist', 'titles', 'timeMovies', 'timeEpisodes', 'timeAlbums',
 	'timeBooks', 'goalPercent', 'episodesPerUnlock', 'tvUnlock', 'startingUnlocks', 'wildTickets',
-	'strict', 'lockedWatches', 'checkpointItems', 'accountId', 'discordUserId', 'passthrough', 'asWritten', 'plando',
+	'strict', 'lockedWatches', 'checkpointItems', 'snackVariety', 'fastForwards', 'remoteControls', 'snackBarTrades',
+	'snackBarPrice', 'trapPercentage', 'bufferingWeight', 'rightsExpiredWeight', 'commercialBreakWeight',
+	'shuffleModeWeight', 'rewindWeight', 'intermissionWeight', 'slowMotionWeight', 'accountId', 'discordUserId',
+	'passthrough', 'asWritten', 'plando',
 ]);
 const NO_PRESET = 'none';
 const PRESET_NAMES = Object.freeze([...Object.keys(contracts.PRESETS), NO_PRESET]);
@@ -68,6 +71,19 @@ const OPTION_PARAMS = Object.freeze({
 	timeAlbums: 'timesanity_albums',
 	timeBooks: 'timesanity_books',
 	wildTickets: 'wild_tickets',
+	snackVariety: 'snack_variety',
+	fastForwards: 'fast_forwards',
+	remoteControls: 'remote_controls',
+	snackBarTrades: 'snack_bar_trades',
+	snackBarPrice: 'snack_bar_price',
+	trapPercentage: 'trap_percentage',
+	bufferingWeight: 'buffering_weight',
+	rightsExpiredWeight: 'rights_expired_weight',
+	commercialBreakWeight: 'commercial_break_weight',
+	shuffleModeWeight: 'shuffle_mode_weight',
+	rewindWeight: 'rewind_weight',
+	intermissionWeight: 'intermission_weight',
+	slowMotionWeight: 'slow_motion_weight',
 });
 const OPTION_KEYS = Object.freeze(Object.fromEntries(Object.entries(OPTION_PARAMS).map(([param, key]) => [key, param])));
 const COUNT_KEYS = Object.freeze(['movies', 'shows', 'albums', 'books']);
@@ -656,6 +672,15 @@ function hoursText(hours) {
 	return `${Math.round(hours)}`;
 }
 
+/**
+ * "16 entries (15 movies, 1 album), 113 locations, about 26 h", as the file's second line and the
+ * reply both say it. Hours go in unrounded: rounded to a tenth first, 26.4996 read 27 in the reply
+ * and 26 in the file.
+ */
+function sizeText(n, counts, locations, hours) {
+	return `${plural(n, ['entry', 'entries'])}${n ? ` (${kindPhrase(counts)})` : ''}, ${plural(locations, ['location', 'locations'])}, about ${hoursText(hours)} h`;
+}
+
 function andList(items) {
 	return items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
 }
@@ -767,7 +792,7 @@ function renderYaml(doc) {
 		return `  ${key}: ${listValue(key, spec, raw)}`;
 	});
 	const entries = (Array.isArray(doc.entries) ? doc.entries : []).map(orderedEntry);
-	const plan = planSlot(entries, options);
+	const plan = planSlot(entries, plannedOptions(options, doc.passthrough));
 	const date = new Date(createdAt * 1000).toISOString().slice(0, 10);
 	const n = plan.entryCount;
 	// A game option copied as it is stays random, and the plan was made with a value of its own.
@@ -775,8 +800,7 @@ function renderYaml(doc) {
 	const one = random.length === 1;
 	const lines = [
 		`# ${label}: Plex Media list built ${date} for ${name}`,
-		`# ${plural(n, ['entry', 'entries'])}${n ? ` (${kindPhrase(plan.counts)})` : ''}, ${plural(plan.locations, ['location', 'locations'])}, `
-			+ `about ${hoursText(plan.hours)} h; starts with ${plan.startOpen} open; goal: finish ${plan.goal_count} of ${n}`,
+		`# ${sizeText(n, plan.counts, plan.locations, plan.hours)}; starts with ${plan.startOpen} open; goal: finish ${plan.goal_count} of ${n}`,
 		...(random.length ? [`# ${andList(random)} ${one ? 'stays' : 'stay'} random until Archipelago rolls ${one ? 'it' : 'them'}: `
 			+ `the line above plans ${one ? 'it' : 'them'} at ${andList(random.map((key) => String(options[key])))}`] : []),
 		`name: ${JSON.stringify(name)}`,
@@ -843,15 +867,34 @@ function safeFileName(name) {
 }
 
 /**
- * Human lines for the reply: the counts, the start, the goal, warnings, misses and the next steps.
+ * "Items: 2 Fast Forwards, 1 Remote Control, 6 traps (2 Buffering, 2 Rights Expired, 2 Rewind), 24 snacks.",
+ * naming only what the pool holds. The counts are the plan's, before the world takes room from the
+ * useful items for the list's own excluded watches, tracks and finishes.
+ */
+function itemsText(summary) {
+	const traps = Object.entries(contracts.TRAPS).filter(([key]) => summary.traps && summary.traps[key] > 0);
+	const trapCount = traps.reduce((total, [key]) => total + summary.traps[key], 0);
+	const held = [
+		[summary.fastForwards, ['Fast Forward', 'Fast Forwards']],
+		[summary.remoteControls, ['Remote Control', 'Remote Controls']],
+	].filter(([n]) => n > 0).map(([n, words]) => plural(n, words));
+	if (trapCount) held.push(`${plural(trapCount, ['trap', 'traps'])} (${traps.map(([key, trap]) => `${summary.traps[key]} ${trap.name}`).join(', ')})`);
+	if (summary.snacks > 0) held.push(plural(summary.snacks, ['snack', 'snacks']));
+	return held.length ? `Items: ${held.join(', ')}.` : 'Items: no Fast Forwards, Remote Controls, traps or snacks.';
+}
+
+/**
+ * Human lines for the reply: the counts, the start and the goal, what the pool holds, then warnings,
+ * misses and the next steps. The command shows the first three as they are.
  * @param {object} summary build().summary
  * @param {string} name the slot name
  * @returns {string[]}
  */
 function summaryLines(summary, name) {
 	const lines = [
-		`${plural(summary.entries, ['entry', 'entries'])} (${kindPhrase(summary.counts)}), ${plural(summary.locations, ['location', 'locations'])}, about ${hoursText(summary.hours)} h.`,
+		`${sizeText(summary.entries, summary.counts, summary.locations, summary.hours)}.`,
 		`Starts with ${summary.startOpen} open; goal: finish ${summary.goalCount} of ${summary.entries} (about ${hoursText(summary.hoursToGoal)} h).`,
+		itemsText(summary),
 	];
 	for (const w of summary.warnings) lines.push(`Warning: ${w}`);
 	for (const miss of summary.misses) {
@@ -1999,9 +2042,10 @@ async function randomTimerProblem(entries, p) {
 	};
 	for (const [key, value] of p.passthrough) add(key, value, false);
 	for (const [key, value] of triggerTimers(p.passthrough)) add(key, value, true);
+	const planned = plannedOptions(p.options, p.passthrough);
 	const locations = async (over) => {
 		await new Promise((resolve) => setImmediate(resolve));
-		return planSlot(entries, { ...p.options, ...over }).locations;
+		return planSlot(entries, { ...planned, ...over }).locations;
 	};
 	for (const { key, low, trigger } of lows) {
 		const at = await locations({ [key]: low });
@@ -2032,6 +2076,96 @@ async function randomTimerProblem(entries, p) {
 			+ `locations (at most ${max}): raise one of them.`;
 	}
 	return `${names} are random in your file, and if they all roll their lowest the list makes ${at} locations (at most ${max}): set a number for one of them.`;
+}
+
+/** The highest value one choice of a game option can roll, as Archipelago reads it, or null for none it reads. */
+function choiceCeiling(key, spec, choice) {
+	if (typeof choice === 'string' && RANGE_RANDOM.test(choice)) {
+		const span = /-range-(?:[a-z]+-)?(\d+)-(\d+)$/i.exec(choice);
+		return span ? Math.min(spec.max, Math.max(Number(span[1]), Number(span[2]))) : spec.max;
+	}
+	try {
+		const n = plainValue(key, spec, choice);
+		return typeof n === 'number' ? n : null;
+	} catch (_) {
+		return null;
+	}
+}
+
+/** The highest value a game option kept random can roll: a weighted mapping's choices with a weight, or a list's items. */
+function highestRoll(key, value) {
+	const spec = contracts.OPTIONS[key];
+	const choices = value instanceof Map
+		? [...value].filter(([, weight]) => pyIntWeight(weight) > 0).map(([choice]) => choice)
+		: (Array.isArray(value) ? value : [value]);
+	let high = null;
+	for (const choice of choices) {
+		const n = choiceCeiling(key, spec, choice);
+		if (n !== null && (high === null || n > high)) high = n;
+	}
+	return high;
+}
+
+/** The values the file's triggers set for one game option; a key with - only takes choices away. */
+function triggerValues(passthrough, key) {
+	const pair = passthrough.find(([k]) => k === 'triggers');
+	const out = [];
+	if (!pair || !Array.isArray(pair[1])) return out;
+	for (const trigger of pair[1]) {
+		for (const [setting, value, prefix] of triggerSettings(trigger)) {
+			if (setting === key && prefix[0] !== '-') out.push(value);
+		}
+	}
+	return out;
+}
+
+/**
+ * The options a list is planned with: the file's, except that while every Trap Weight in it is 0, a
+ * weight a trigger may set above 0 is planned at the highest it can set. A fixed Trap Percentage is
+ * then judged by randomTrapProblem, as a random one is, instead of by the plan's own error.
+ * @param {Array<[string, *]>} [passthrough] the settings copied as they are, triggers among them
+ */
+function plannedOptions(options, passthrough) {
+	if (!Array.isArray(passthrough)) return options;
+	const o = resolveOptions(options);
+	const keys = Object.keys(contracts.TRAPS).map((trap) => `${trap}_weight`);
+	if (keys.some((key) => o[key] > 0)) return options;
+	const set = {};
+	for (const key of keys) {
+		const high = Math.max(0, ...triggerValues(passthrough, key).map((value) => highestRoll(key, value)).filter((n) => typeof n === 'number'));
+		if (high > 0) set[key] = high;
+	}
+	return Object.keys(set).length ? { ...options, ...set } : options;
+}
+
+/**
+ * The plan takes a Trap Percentage kept random at its default, and a trigger's value not at all.
+ * With no Trap Weight able to roll above 0, a roll or a trigger that makes a trap due leaves the
+ * world no trap to pick, and its OptionError stops the whole multiworld from generating. Says so,
+ * or null when nothing can make a trap due. A Trap Weight a trigger may set above 0 counts as one
+ * that can roll above 0.
+ * @param {{F: number}} plan the list's plan at the file's values: F filler slots
+ */
+function randomTrapProblem(plan, p) {
+	const kept = new Map(p.passthrough.filter(([key]) => has(contracts.OPTIONS, key)));
+	const highestOf = (key) => {
+		const rolls = triggerValues(p.passthrough, key).map((value) => highestRoll(key, value));
+		rolls.push(kept.has(key) ? highestRoll(key, kept.get(key)) : p.options[key]);
+		return Math.max(0, ...rolls.filter((n) => typeof n === 'number'));
+	};
+	if (Object.keys(contracts.TRAPS).some((trap) => highestOf(`${trap}_weight`) > 0)) return null;
+	const due = (percent) => typeof percent === 'number' && Math.floor((plan.F * percent) / 100) >= 1;
+	const name = settingName('trap_percentage');
+	const fix = 'Set a Trap Weight above 0, or Trap Percentage to 0.';
+	const need = plan.F > 0 ? Math.ceil(100 / plan.F) : null;
+	if (kept.has('trap_percentage') && due(highestRoll('trap_percentage', kept.get('trap_percentage')))) {
+		return `${name} is random in your file while every Trap Weight is 0: a roll of ${need} or more makes a trap due among the list's `
+			+ `${plan.F} filler items with no trap to pick, and that stops the whole multiworld from generating. ${fix}`;
+	}
+	const set = triggerValues(p.passthrough, 'trap_percentage').map((value) => highestRoll('trap_percentage', value)).filter(due);
+	if (!set.length) return null;
+	return `A trigger in your file sets ${name} while every Trap Weight is 0: at ${Math.max(...set)} a trap is due among the list's `
+		+ `${plan.F} filler items with no trap to pick, and that stops the whole multiworld from generating. ${fix}`;
 }
 
 class EntryList {
@@ -2774,7 +2908,7 @@ function createBuilder(deps = {}) {
 
 		const entries = list.values();
 		const createdAt = Math.floor(now() / 1000);
-		const plan = planSlot(entries, p.options);
+		const plan = planSlot(entries, plannedOptions(p.options, p.passthrough));
 		const L = contracts.LIMITS;
 		if (plan.entryCount > L.maxEntries || plan.C > L.maxCopies || plan.locations > L.maxLocations) {
 			throw new Error(`That list is too big for one slot: ${plan.entryCount} entries (at most ${L.maxEntries}), `
@@ -2783,6 +2917,8 @@ function createBuilder(deps = {}) {
 		}
 		const risky = await randomTimerProblem(entries, p);
 		if (risky) throw new Error(risky);
+		const trapRisk = randomTrapProblem(plan, p);
+		if (trapRisk) throw new Error(trapRisk);
 		if (plan.C > L.warnCopies) warnings.push(`${plan.C} unlock copies: above ${L.warnCopies}, generating the seed gets slow.`);
 		if (plan.locations > L.warnLocations) warnings.push(`${plan.locations} locations: above ${L.warnLocations}, that is a very long list.`);
 		if (plan.hoursToGoal > L.warnHoursToGoal) warnings.push(`About ${Math.round(plan.hoursToGoal)} h to the goal (more than ${L.warnHoursToGoal} h).`);
@@ -2801,10 +2937,14 @@ function createBuilder(deps = {}) {
 			copies: plan.C,
 			startCopies: plan.S,
 			wildTickets: plan.W,
+			fastForwards: plan.FF,
+			remoteControls: plan.RC,
+			traps: plan.traps,
+			snacks: Object.values(plan.snacks).reduce((total, n) => total + n, 0),
 			startOpen: plan.startOpen,
 			goalCount: plan.goal_count,
-			hours: Math.round(plan.hours * 10) / 10,
-			hoursToGoal: Math.round(plan.hoursToGoal * 10) / 10,
+			hours: plan.hours,
+			hoursToGoal: plan.hoursToGoal,
 			warnings: [...new Set(warnings)],
 			misses,
 		};
@@ -2826,6 +2966,6 @@ module.exports = {
 	FILE_MAX_BYTES,
 	_internal: {
 		parseTitle, matchScore, similarity, norm, isPlaceholderAlbum, orderedEntry, safeFileName, flowValue, yamlKey, codeSpan, LIST_PARAMS,
-		parsePlayerFile, lowestRoll, COPY_MAX_BYTES, SETTINGS_MAX, PyFloat, LOOSE_CHARS, MISSES_SHOWN,
+		parsePlayerFile, lowestRoll, highestRoll, randomTrapProblem, COPY_MAX_BYTES, SETTINGS_MAX, PyFloat, LOOSE_CHARS, MISSES_SHOWN, sizeText,
 	},
 };

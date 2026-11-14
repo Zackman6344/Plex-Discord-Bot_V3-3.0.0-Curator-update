@@ -1,15 +1,21 @@
 // helpers/apMediaPlan.js
 // What one Plex Media slot adds up to: unlock units and their steps, starting copies, locations,
-// checkpoint minutes, Wild Tickets and the goal count.
+// checkpoint minutes, the goal count, and the pool's Wild Tickets, Fast Forwards, Remote Controls,
+// traps and snacks.
 //
 // The JS twin of apworld/plex_media/plan.py (spec 4.5). The YAML builder runs it to tell a player
 // what a list will be before anything generates, and test/apMediaPlan.test.js checks it against
 // test/fixtures/apmedia/plan_cases.json, which plan.py writes. Every rule here is the Python one,
 // arithmetic included: the 0.9 cut is decided in integers (minute m counts while
-// m * 60000 * 10 < 9 * duration), so a checkpoint right at the cut falls the same way on both sides.
+// m * 60000 * 10 < 9 * duration), so a checkpoint right at the cut falls the same way on both sides,
+// and the trap split and the snack deal divide as Python's // and % do.
 //
 // Episodes of one show that share a (season, episode) pair keep their list order, as plan.py's
 // sort by (season, episode, list index) does. Any other tie rule moves steps between the two sides.
+//
+// The pool counts are the ones before exclude_locations: the world takes the useful items' room
+// for a list's own excluded watches, tracks and finishes only at generation (plan.exclude_main),
+// once the seed's registry names its locations, and writes what it dealt to slot_data's pool.
 
 const contracts = require('./apMediaContracts.js');
 
@@ -105,6 +111,55 @@ function clamp(value, lo, hi) {
 	return Math.max(lo, Math.min(value, hi));
 }
 
+function floorDiv(a, b) {
+	return Math.floor(a / b);
+}
+
+function floorMod(a, b) {
+	return ((a % b) + b) % b;
+}
+
+/**
+ * total shared out in proportion to weights by largest remainder, a tie going to the earlier weight:
+ * plan.py's split_by_weight. Some weight must be above 0 whenever total is.
+ */
+function splitByWeight(total, weights) {
+	if (total <= 0) return weights.map(() => 0);
+	const whole = sum(weights);
+	const counts = weights.map((w) => floorDiv(total * w, whole));
+	const ranked = weights.map((_, i) => i).sort((a, b) => floorMod(total * weights[b], whole) - floorMod(total * weights[a], whole) || a - b);
+	for (const i of ranked.slice(0, total - sum(counts))) counts[i] += 1;
+	return counts;
+}
+
+/**
+ * The pool beside the unlock copies, as plan.py's _pool deals it: Wild Tickets, then Fast Forwards,
+ * then Remote Controls take the room the unlocks leave in the main locations, the rest is filler,
+ * trap_percentage of it traps by weight and the other slots snacks in turn.
+ */
+function poolOf(o, N_main, N_checkpoints, C, S) {
+	const room = N_main - (C - S);
+	const W = clamp(o.wild_tickets, 0, room);
+	const FF = clamp(o.fast_forwards, 0, room - W);
+	const RC = clamp(o.remote_controls, 0, room - W - FF);
+	const F = N_main + N_checkpoints - (C - S) - W - FF - RC;
+	const T = floorDiv(F * o.trap_percentage, 100);
+	const trapKeys = Object.keys(contracts.TRAPS);
+	const weights = trapKeys.map((key) => o[`${key}_weight`]);
+	if (T !== 0 && weights.every((w) => w === 0)) {
+		throw new Error(`trap_percentage ${o.trap_percentage} makes ${T} of the list's ${F} filler items traps, but every trap weight is 0 `
+			+ '(a trap weight above 0, or trap_percentage 0, would help)');
+	}
+	const split = splitByWeight(T, weights);
+	const traps = Object.fromEntries(trapKeys.map((key, i) => [key, split[i]]));
+	const names = Object.keys(contracts.SNACKS);
+	const dealt = o.snack_variety ? names : [contracts.NAMES.popcorn];
+	const left = F - T;
+	const snacks = Object.fromEntries(names.map((name) => [name, 0]));
+	dealt.forEach((name, i) => { snacks[name] = floorDiv(left, dealt.length) + (i < floorMod(left, dealt.length) ? 1 : 0); });
+	return { W, FF, RC, F, T, traps, snacks };
+}
+
 function showSteps(members, entries, rows, tvUnlock, perUnlock) {
 	const eps = members
 		.map((i) => ({ i, sn: entries[i].sn, en: entries[i].en }))
@@ -130,6 +185,8 @@ function showSteps(members, entries, rows, tvUnlock, perUnlock) {
  * @param {object} [options] YAML option keys (contracts.OPTIONS); missing keys take their defaults
  * @returns {{
  *   C: number, S: number, W: number, N_main: number, N_checkpoints: number, goal_count: number,
+ *   FF: number, RC: number, F: number, T: number,
+ *   traps: Object<string, number>, snacks: Object<string, number>,
  *   units: Array<{key: string, steps: number, start: number, prefix: number[]}>,
  *   entries: Array<{key: string, unit: string, step: number, main: number, checkpoints: number[]}>,
  *   options: object, entryCount: number, counts: object, shows: number, locations: number,
@@ -197,7 +254,7 @@ function planSlot(entries, options = {}) {
 
 	const N_main = sum(rows.map((r) => r.main));
 	const N_checkpoints = sum(rows.map((r) => r.checkpoints.length));
-	const W = clamp(o.wild_tickets, 0, N_main - (C - S));
+	const { W, FF, RC, F, T, traps, snacks } = poolOf(o, N_main, N_checkpoints, C, S);
 	const goal_count = Math.max(1, Math.floor((entries.length * o.goal_percent) / 100));
 
 	const startByUnit = new Map(unitList.map((u) => [u.key, u.start]));
@@ -228,6 +285,12 @@ function planSlot(entries, options = {}) {
 		N_main,
 		N_checkpoints,
 		goal_count,
+		FF,
+		RC,
+		F,
+		T,
+		traps,
+		snacks,
 		units: unitList.map((u) => ({ key: u.key, steps: u.steps, start: u.start, prefix: u.prefix })),
 		entries: rows.map((r) => ({ key: r.key, unit: r.unit, step: r.step, main: r.main, checkpoints: r.checkpoints })),
 		options: o,

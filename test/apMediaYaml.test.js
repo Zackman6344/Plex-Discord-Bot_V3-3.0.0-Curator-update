@@ -13,9 +13,10 @@
 // the empty documents Archipelago skips; what the command's options replace; the list settings and
 // the copied settings written back; the limits that keep a crafted file from holding the main
 // thread or blowing a reply up (repeated keys and aliases found in one pass, 64 K of settings, 32 KB
-// of copied settings); a timer left random planned at its lowest roll; contracts.LIST_OPTIONS and
-// PRESETS against apworld/plex_media/constants.py, and the choices' numbers against
-// apworld/plex_media/options.py.
+// of copied settings); a timer left random planned at its lowest roll; a Trap Weight a trigger may
+// set, counted for a fixed Trap Percentage as for a random one; contracts.LIST_OPTIONS and PRESETS
+// against apworld/plex_media/constants.py, the choices' numbers against
+// apworld/plex_media/options.py, and what its tooltip and the world's docs say a Fast Forward earns.
 //
 // Harness: the real createPms client over the fetch stand-in in
 // test/fixtures/apmediaPlex/fakePms.js, serving the invented library in
@@ -131,7 +132,7 @@ test('renderYaml writes the exact spec layout', () => {
 		'requires:',
 		'  version: 0.6.8',
 		'  game:',
-		'    Plex Media: 0.2.0',
+		'    Plex Media: 0.3.0',
 		'Plex Media:',
 		'  starting_unlocks: 3',
 		'  goal_percent: 80',
@@ -145,6 +146,19 @@ test('renderYaml writes the exact spec layout', () => {
 		'  timesanity_albums: 0',
 		'  timesanity_books: 30',
 		'  wild_tickets: 2',
+		'  snack_variety: true',
+		'  fast_forwards: 2',
+		'  remote_controls: 1',
+		'  snack_bar_trades: 3',
+		'  snack_bar_price: 10',
+		'  trap_percentage: 0',
+		'  buffering_weight: 2',
+		'  rights_expired_weight: 2',
+		'  commercial_break_weight: 1',
+		'  shuffle_mode_weight: 1',
+		'  rewind_weight: 1',
+		'  intermission_weight: 1',
+		'  slow_motion_weight: 1',
 		'  list_preset: movies',
 		'  list_movies: preset',
 		'  list_shows: preset',
@@ -600,7 +614,11 @@ test('the summary matches the plan of the written entries', async () => {
 	assert.strictEqual(s.wildTickets, plan.W);
 	assert.strictEqual(s.startOpen, plan.startOpen);
 	assert.strictEqual(s.goalCount, plan.goal_count);
-	assert.strictEqual(s.hours, Math.round(plan.hours * 10) / 10);
+	assert.strictEqual(s.hours, plan.hours, 'unrounded: the reply rounds it once, as the file does');
+	assert.strictEqual(s.hoursToGoal, plan.hoursToGoal);
+	assert.strictEqual(summaryLines(s, 'Zack')[0], `${out.yaml.split('\n')[1].slice(2).split(';')[0]}.`, 'the reply\'s size line is the file\'s');
+	assert.deepStrictEqual([s.fastForwards, s.remoteControls, s.traps, s.snacks], [plan.FF, plan.RC, plan.traps, Object.values(plan.snacks).reduce((a, b) => a + b, 0)]);
+	assert.match(summaryLines(s, 'Zack')[2], /^Items: \d+ Fast Forwards?, 1 Remote Control, \d+ snacks\.$/, 'the line after the goal says what the pool holds');
 	assert.match(out.yaml, /\n {2}goal_percent: 50\n/);
 	assert.match(out.yaml, /\n {2}timesanity_episodes: 5\n/);
 	assert.match(out.yaml, new RegExp(`^# Zack's list: Plex Media list built 2026-11-11 for Zack\\n# ${entries.length} entries \\(`));
@@ -608,6 +626,153 @@ test('the summary matches the plan of the written entries', async () => {
 	const lines = summaryLines(s, 'Zack');
 	assert.ok(lines.some((l) => l.includes('`/apmedia link Zack`')));
 	assert.ok(lines.some((l) => /visible to the whole room/.test(l)));
+});
+
+// The bug, from the first-seed rehearsal: a list of 26.4996 h read "about 27 h" in the reply and
+// "about 26 h" in its own file, because the reply rounded a value already rounded to a tenth.
+// The same bug through the real builder: two films that add up to 26.4996 h.
+test('a built list of 26.4996 h reads about 26 h in its reply and in its file', async () => {
+	const half = Math.round(26.4996 * 3600000 / 2);
+	const { builder } = setup({ mutate: (lib) => {
+		for (const m of lib.movies) if (m.ratingKey === '1004' || m.ratingKey === '1005') m.duration = half;
+	} });
+	const out = await builder.build({ name: 'Zack', titles: 'The Matrix; Heat' });
+	const fileLine = out.yaml.split('\n')[1];
+	assert.match(fileLine, /^# 2 entries \(2 movies\), \d+ locations, about 26 h;/);
+	assert.strictEqual(summaryLines(out.summary, 'Zack')[0], `${fileLine.slice(2).split(';')[0]}.`);
+});
+
+test('the reply and the file round a list\'s hours once, the same way', () => {
+	const { sizeText } = _internal;
+	const counts = { movie: 15, album: 1 };
+	assert.strictEqual(sizeText(16, counts, 113, 26.49958833333333), '16 entries (15 movies, 1 album), 113 locations, about 26 h');
+	const reply = summaryLines({ entries: 16, counts, locations: 113, hours: 26.49958833333333, hoursToGoal: 19.874691249999998, startOpen: 3, goalCount: 12, warnings: [], misses: [] }, 'Friend');
+	assert.strictEqual(reply[0], '16 entries (15 movies, 1 album), 113 locations, about 26 h.');
+	assert.strictEqual(reply[1], 'Starts with 3 open; goal: finish 12 of 16 (about 20 h).');
+	assert.strictEqual(sizeText(1, { movie: 1 }, 9, 2.25), '1 entry (1 movie), 9 locations, about 2.3 h', 'under 10 h: a tenth');
+	assert.strictEqual(sizeText(0, {}, 0, 0), '0 entries, 0 locations, about 0 h');
+});
+
+test('the reply says what the pool holds, naming only what it has', () => {
+	const base = { entries: 6, counts: { movie: 6 }, locations: 36, hours: 10, hoursToGoal: 6.7, startOpen: 3, goalCount: 4, warnings: [], misses: [] };
+	const none = Object.fromEntries(Object.keys(contracts.TRAPS).map((key) => [key, 0]));
+	const line = (over) => summaryLines({ ...base, ...over }, 'Zack')[2];
+	assert.strictEqual(line({ fastForwards: 2, remoteControls: 1, traps: { ...none, buffering: 2, rights_expired: 2, rewind: 2 }, snacks: 24 }),
+		'Items: 2 Fast Forwards, 1 Remote Control, 6 traps (2 Buffering, 2 Rights Expired, 2 Rewind), 24 snacks.');
+	assert.strictEqual(line({ fastForwards: 1, remoteControls: 0, traps: { ...none, slow_motion: 1 }, snacks: 1 }), 'Items: 1 Fast Forward, 1 trap (1 Slow Motion), 1 snack.');
+	assert.strictEqual(line({ fastForwards: 0, remoteControls: 2, traps: none, snacks: 30 }), 'Items: 2 Remote Controls, 30 snacks.');
+	assert.strictEqual(line({ fastForwards: 0, remoteControls: 0, traps: none, snacks: 0 }), 'Items: no Fast Forwards, Remote Controls, traps or snacks.');
+	assert.strictEqual(line({}), 'Items: no Fast Forwards, Remote Controls, traps or snacks.', 'a summary that does not count them');
+});
+
+test('the item and trap options given to build() reach the file and the plan, and the summary counts what they deal', async () => {
+	const asked = { trapPercentage: '50', snackVariety: 'false', fastForwards: '0', rewindWeight: '10' };
+	const out = await setup().builder.build({ name: 'Zack', preset: 'mixed', accountId: 5, discordUserId: '42', ...asked });
+	assert.match(out.yaml, /\n {2}snack_variety: false\n {2}fast_forwards: 0\n {2}remote_controls: 1\n/);
+	assert.match(out.yaml, /\n {2}trap_percentage: 50\n/);
+	assert.match(out.yaml, /\n {2}rewind_weight: 10\n/);
+	const plan = planSlot(entriesOf(out.yaml), { trap_percentage: 50, snack_variety: false, fast_forwards: 0, rewind_weight: 10 });
+	const s = out.summary;
+	assert.ok(plan.T > 0 && plan.traps.rewind > plan.traps.buffering, 'the weight of 10 takes the most');
+	assert.deepStrictEqual([s.fastForwards, s.remoteControls, s.traps, s.snacks], [0, 1, plan.traps, plan.snacks.Popcorn]);
+	assert.strictEqual(plan.snacks.Popcorn, plan.F - plan.T, 'Popcorn alone with snack_variety off');
+	const named = Object.entries(contracts.TRAPS).filter(([key]) => plan.traps[key]).map(([key, trap]) => `${plan.traps[key]} ${trap.name}`);
+	assert.strictEqual(summaryLines(s, 'Zack')[2], `Items: 1 Remote Control, ${plan.T} traps (${named.join(', ')}), ${plan.F - plan.T} snacks.`);
+	const zero = Object.fromEntries(['buffering', 'rightsExpired', 'commercialBreak', 'shuffleMode', 'rewind', 'intermission', 'slowMotion'].map((key) => [`${key}Weight`, '0']));
+	await assert.rejects(setup().builder.build({ name: 'Zack', preset: 'mixed', accountId: 5, discordUserId: '42', trapPercentage: '50', ...zero }),
+		/^Error: trap_percentage 50 makes \d+ of the list's \d+ filler items traps, but every trap weight is 0 \(a trap weight above 0, or trap_percentage 0, would help\)$/);
+});
+
+// An earlier check found it: a Trap Percentage left random with every Trap Weight at 0 was taken,
+// planned with no trap, and Archipelago's roll then stops the whole multiworld about 100 times in 101.
+test('a Trap Percentage left random or set by a trigger is refused while no Trap Weight can roll above 0', async () => {
+	const zero = Object.fromEntries(Object.keys(contracts.TRAPS).map((key) => [`${key}_weight`, '0']));
+	const one = { list_preset: 'none', list_titles: '\'movie: Alien\'', list_movies: 'preset', list_shows: 'preset', goal_percent: '80' };
+	const build = (over) => setup().builder.build({ ...readPlayerYaml(creatorYaml({ ...one, ...zero, ...over })).params, accountId: 5, discordUserId: '42' });
+	const plain = await build({});
+	const F = planSlot(entriesOf(plain.yaml), {}).F;
+	assert.strictEqual(F, 7, 'Alien: its watch and 7 checkpoints, less the Wild Ticket the room lets in');
+	const name = 'Trap Percentage (`trap_percentage`)';
+	const fix = 'and that stops the whole multiworld from generating. Set a Trap Weight above 0, or Trap Percentage to 0.';
+	const rolled = `${name} is random in your file while every Trap Weight is 0: a roll of 15 or more makes a trap due among the list's 7 filler items with no trap to pick, ${fix}`;
+	for (const percent of ['random', 'random-high', 'random-range-0-15', 'random-range-low-15-1', '{0: 3, 50: 1}', '[0, 100]']) {
+		await assert.rejects(build({ trap_percentage: percent }), (err) => err.message === rolled, percent);
+	}
+	for (const percent of ['random-range-0-14', '{0: 3, 50: 0}', '[0, 14]']) {
+		assert.deepStrictEqual((await build({ trap_percentage: percent })).summary.traps, plain.summary.traps, `${percent}: no roll makes a trap due among 7`);
+	}
+	for (const weight of ['random', '{0: 5, 1: 1}', 'random-range-0-1']) {
+		assert.ok(await build({ trap_percentage: 'random', rewind_weight: weight }), `${weight}: a weight that can roll above 0`);
+	}
+	await assert.rejects(build({ trap_percentage: 'random', rewind_weight: '{0: 5, 1: 0}' }), (err) => err.message === rolled, 'a weight that can only roll 0 is 0');
+
+	const triggered = (set, over = {}) => build({
+		...over,
+		triggers: `[{option_category: Plex Media, option_name: tv_unlock, option_result: episodes, options: {Plex Media: {${set}}}}]`,
+	});
+	const bySet = `A trigger in your file sets ${name} while every Trap Weight is 0: at 20 a trap is due among the list's 7 filler items with no trap to pick, ${fix}`;
+	await assert.rejects(triggered('trap_percentage: 20'), (err) => err.message === bySet);
+	await assert.rejects(triggered('trap_percentage: {0: 1, 20: 1}'), (err) => err.message === bySet, 'whatever the trigger can roll');
+	for (const set of ['trap_percentage: 10', '"-trap_percentage": [20]', 'buffering_weight: 2, trap_percentage: 20']) {
+		assert.ok(await triggered(set), set);
+	}
+	assert.ok(await triggered('buffering_weight: 2', { trap_percentage: 'random' }), 'a trigger may give a weight');
+	assert.ok(await triggered('buffering_weight: 2', { trap_percentage: '50' }), 'to a fixed Trap Percentage too');
+
+	const { highestRoll } = _internal;
+	assert.deepStrictEqual([
+		highestRoll('trap_percentage', 'random'), highestRoll('trap_percentage', 'RANDOM-Range-Low-40-30'), highestRoll('trap_percentage', 'random-range-0-0'),
+		highestRoll('trap_percentage', new Map([['high', 1], [5, 0]])), highestRoll('trap_percentage', ['nonsense', 12]), highestRoll('rewind_weight', true),
+	], [100, 40, 0, 100, 12, 1]);
+});
+
+// The bug: a fixed Trap Percentage met the plan's own "every trap weight is 0" before a weight set by
+// a trigger could count, so a file whose trigger always fires was refused, and the same file with a
+// random Trap Percentage was taken. Both now go by randomTrapProblem's rule.
+test('a Trap Weight a trigger may set counts for a fixed Trap Percentage as for a random one, and the plan deals by it', async () => {
+	const zero = Object.fromEntries(Object.keys(contracts.TRAPS).map((key) => [`${key}_weight`, '0']));
+	const none = Object.fromEntries(Object.keys(contracts.TRAPS).map((key) => [key, 0]));
+	const one = { list_preset: 'none', list_titles: '\'movie: Alien\'', list_movies: 'preset', list_shows: 'preset', goal_percent: '80' };
+	const build = (over) => setup().builder.build({ ...readPlayerYaml(creatorYaml({ ...one, ...zero, ...over })).params, accountId: 5, discordUserId: '42' });
+	const trigger = '[{option_category: Plex Media, option_name: tv_unlock, option_result: episodes, options: {Plex Media: {buffering_weight: 2, rewind_weight: {0: 1, 1: 1}}}}]';
+
+	const fixed = await build({ trap_percentage: '50', triggers: trigger });
+	assert.deepStrictEqual(fixed.summary.traps, { ...none, buffering: 2, rewind: 1 }, '3 traps among 7 filler items, dealt 2 to 1');
+	assert.strictEqual(summaryLines(fixed.summary, 'Zack')[2], 'Items: 3 traps (2 Buffering, 1 Rewind), 4 snacks.');
+	assert.match(fixed.yaml, /\n {2}trap_percentage: 50\n {2}buffering_weight: 0\n/, 'the file keeps its own weights');
+	assert.match(fixed.yaml, /\n {2}triggers: \[\{"option_category": "Plex Media", .*"buffering_weight": 2/, 'and the trigger that sets one');
+	assert.match(fixed.yaml, /^# 1 entry \(1 movie\), 8 locations, about 2 h;/m);
+	assert.deepStrictEqual((await build({ trap_percentage: 'random', triggers: trigger })).summary.traps, none, 'a random one is planned at 0, as before');
+	assert.deepStrictEqual((await build({ trap_percentage: '50', triggers: trigger, timesanity_movies: 'random' })).summary.traps, fixed.summary.traps,
+		'a timer kept random is tried at its lowest with the same weights');
+	const twice = '[{option_category: Plex Media, option_name: tv_unlock, option_result: episodes, options: {Plex Media: {buffering_weight: 1, rewind_weight: 2}}}, '
+		+ '{option_category: Plex Media, option_name: tv_unlock, option_result: episodes, options: {Plex Media: {buffering_weight: 3}}}]';
+	assert.deepStrictEqual((await build({ trap_percentage: '50', triggers: twice })).summary.traps, { ...none, buffering: 2, rewind: 1 },
+		'each weight at the highest any trigger sets it to: 3 Buffering to 2 Rewind');
+	assert.deepStrictEqual((await build({ trap_percentage: '50', intermission_weight: '1', triggers: trigger })).summary.traps, { ...none, intermission: 3 },
+		'with a weight of its own above 0, the file is planned at its own weights');
+
+	await assert.rejects(build({ trap_percentage: '50' }),
+		/^Error: trap_percentage 50 makes 3 of the list's 7 filler items traps, but every trap weight is 0 \(a trap weight above 0, or trap_percentage 0, would help\)$/,
+		'with no weight anywhere, the plan\'s own error');
+	await assert.rejects(build({ trap_percentage: '50', triggers: trigger.replace(/buffering_weight: 2, rewind_weight: \{0: 1, 1: 1\}/, 'rewind_weight: {0: 1}') }),
+		/every trap weight is 0/, 'a trigger whose weight can only be 0 gives none');
+	assert.deepStrictEqual((await build({ trap_percentage: '50', rewind_weight: 'random' })).summary.traps, { ...none, rewind: 3 },
+		'a weight kept random is planned at its default, as before');
+});
+
+test('the world\'s text says what a Fast Forward earns: the next checkpoint, or under strict 10 minutes heard', () => {
+	const said = 'earns the title\'s next checkpoint without playing it (with Timesanity Strict on, the 10 minutes after where you got to count as heard '
+		+ 'instead, and the checkpoints they complete are earned)';
+	const world = path.join(__dirname, '..', 'apworld', 'plex_media');
+	const source = fs.readFileSync(path.join(world, 'options.py'), 'utf8');
+	const doc = /class FastForwards\(Range\):\s*"""([\s\S]*?)"""/.exec(source)[1].replace(/\s+/g, ' ');
+	assert.ok(doc.includes(said), doc);
+	assert.ok(doc.includes('Its watch, track or finish check still needs playing. A short list gets fewer'), doc);
+	const row = fs.readFileSync(path.join(world, 'docs', 'en_Plex Media.md'), 'utf8').split(/\r?\n/).find((line) => line.startsWith('| Fast Forward |'));
+	assert.ok(row.includes(said.replace('Timesanity Strict', '`timesanity_strict`')), row);
+	assert.ok(row.includes('Never a watch, track or finish') && row.includes('`locked_watches: ignore`'), row);
+	assert.ok(!/within 10 minutes/.test(`${doc}\n${row}`), 'no word of a 10-minute reach without strict');
 });
 
 test('a list over the caps is refused with its counts; big lists get warnings', async () => {
@@ -774,10 +939,15 @@ function settingLines(yaml) {
 	return lines.slice(lines.indexOf('Plex Media:') + 1).filter((l) => l && !/^ {2}(?:list_info|entries):/.test(l) && !l.startsWith('    - '));
 }
 
+// The item and trap options at their defaults, as a file from the Options Creator gives them.
+const ITEM_PARAMS = Object.freeze({
+	snackVariety: true, fastForwards: 2, remoteControls: 1, snackBarTrades: 3, snackBarPrice: 10, trapPercentage: 0, bufferingWeight: 2,
+	rightsExpiredWeight: 2, commercialBreakWeight: 1, shuffleModeWeight: 1, rewindWeight: 1, intermissionWeight: 1, slowMotionWeight: 1,
+});
 const CREATOR_PARAMS = Object.freeze({
 	name: 'Zack', preset: 'mixed', movies: 6, shows: 2, albums: 4, books: 1, titles: 'Alien; Aliens', unwatched: true, maxEpisodes: 24,
 	startingUnlocks: 3, tvUnlock: 'episodes', episodesPerUnlock: 3, lockedWatches: 'bank', checkpointItems: 'filler_only', strict: false,
-	timeMovies: 15, timeEpisodes: 10, timeAlbums: 0, timeBooks: 30, wildTickets: 2,
+	timeMovies: 15, timeEpisodes: 10, timeAlbums: 0, timeBooks: 30, wildTickets: 2, ...ITEM_PARAMS,
 });
 const CREATOR_KEPT = Object.freeze([
 	['progression_balancing', 50], ['accessibility', 'full'], ['goal_percent', 'random'], ['local_items', []], ['non_local_items', []],
@@ -808,6 +978,19 @@ test('an Options Creator YAML: the list settings become params, a random game op
 		'  timesanity_albums: 0',
 		'  timesanity_books: 30',
 		'  wild_tickets: 2',
+		'  snack_variety: true',
+		'  fast_forwards: 2',
+		'  remote_controls: 1',
+		'  snack_bar_trades: 3',
+		'  snack_bar_price: 10',
+		'  trap_percentage: 0',
+		'  buffering_weight: 2',
+		'  rights_expired_weight: 2',
+		'  commercial_break_weight: 1',
+		'  shuffle_mode_weight: 1',
+		'  rewind_weight: 1',
+		'  intermission_weight: 1',
+		'  slow_motion_weight: 1',
 		'  list_preset: mixed',
 		'  list_movies: preset',
 		'  list_shows: 2',
@@ -872,10 +1055,10 @@ test('readPlayerYaml refuses what it cannot use, saying which setting and how to
 	refuses(creatorYaml().replace('  wild_tickets: 2', '\twild_tickets: 2'), /^The file could not be read at line 25: /);
 	// Archipelago's loader refuses a key beside its "+" twin in any mapping. It compares Python's str()
 	// of each key with the text keys before it, so 1 after "+1" clashes and "+1" after 1 does not.
-	refuses(creatorYaml({ '+local_items': '[Wild Ticket]' }), 'The file could not be read at line 39: it gives both `local_items` and `+local_items`, which Archipelago refuses together.');
-	refuses(creatorYaml({ start_inventory: '{"+Wild Ticket": 1, Wild Ticket: 1}' }), 'The file could not be read at line 34: it gives both `+Wild Ticket` and `Wild Ticket`, which Archipelago refuses together.');
-	refuses(creatorYaml({ blob: '{"+1": a, 1: b}' }), 'The file could not be read at line 39: it gives both `+1` and `1`, which Archipelago refuses together.');
-	refuses(creatorYaml({ blob: '{"+True": a, yes: b}' }), 'The file could not be read at line 39: it gives both `+True` and `yes`, which Archipelago refuses together.');
+	refuses(creatorYaml({ '+local_items': '[Wild Ticket]' }), 'The file could not be read at line 52: it gives both `local_items` and `+local_items`, which Archipelago refuses together.');
+	refuses(creatorYaml({ start_inventory: '{"+Wild Ticket": 1, Wild Ticket: 1}' }), 'The file could not be read at line 47: it gives both `+Wild Ticket` and `Wild Ticket`, which Archipelago refuses together.');
+	refuses(creatorYaml({ blob: '{"+1": a, 1: b}' }), 'The file could not be read at line 52: it gives both `+1` and `1`, which Archipelago refuses together.');
+	refuses(creatorYaml({ blob: '{"+True": a, yes: b}' }), 'The file could not be read at line 52: it gives both `+True` and `yes`, which Archipelago refuses together.');
 	for (const blob of ['{1: a, "+1": b}', '{"+1": a, 1.0: b}']) {
 		assert.strictEqual(readPlayerYaml(creatorYaml({ blob })).passthrough.length, 11, `Archipelago reads ${blob}`);
 	}
@@ -900,9 +1083,9 @@ test('readPlayerYaml refuses what it cannot use, saying which setting and how to
 	// 13 aliases in all, but x1 holds two uses of x0 and is used 11 times: 22 copies of x0.
 	const nested = { a: '&x0 1', b: '&x1 [*x0, *x0]', ...Object.fromEntries(Array.from({ length: 11 }, (_, i) => [`c${i}`, '*x1'])) };
 	refuses(creatorYaml(nested), 'The file repeats values through aliases (*name) more than 20 times: write them out instead.', 'a repeat inside a repeat');
-	refuses(creatorYaml({ blob: '*nope' }), 'The file could not be read at line 39: the alias `*nope` has no anchor `&nope` above it.');
-	refuses(creatorYaml({ a: '*x', b: '&x 1' }), 'The file could not be read at line 39: the alias `*x` has no anchor `&x` above it.', 'an anchor after its alias');
-	refuses(creatorYaml({ a: '*`<@&1>`' }), /^The file could not be read at line 39: the alias `\*'<@&1>'` has no anchor `&'<@&1>'` above it\.$/, 'an alias name is shown as code');
+	refuses(creatorYaml({ blob: '*nope' }), 'The file could not be read at line 52: the alias `*nope` has no anchor `&nope` above it.');
+	refuses(creatorYaml({ a: '*x', b: '&x 1' }), 'The file could not be read at line 52: the alias `*x` has no anchor `&x` above it.', 'an anchor after its alias');
+	refuses(creatorYaml({ a: '*`<@&1>`' }), /^The file could not be read at line 52: the alias `\*'<@&1>'` has no anchor `&'<@&1>'` above it\.$/, 'an alias name is shown as code');
 	refuses(creatorYaml({ '""': '4' }), 'The Plex Media settings have a setting with no name: take that line out.');
 
 	refuses(creatorYaml({}, { top: ['A Link to the Past: {}'] }), 'The file has `A Link to the Past` at the top, and the bot takes one player per file: name, description, game, requires and Plex Media only.');
@@ -1012,12 +1195,12 @@ test('a lone CR ends a line, as it does for Archipelago; a raw NEL, U+2028, U+20
 	assert.deepStrictEqual(hints.find(([key]) => key === 'start_hints'), ['start_hints', ['Wild Ticket']], 'after a CR in a comment comes a setting');
 	const hex = (code) => `U+${code.toString(16).toUpperCase().padStart(4, '0')}`;
 	for (const code of [0x85, 0x2028, 0x2029]) {
-		const broken = `The file could not be read at line 39: it holds an invisible line break (${hex(code)}), which Archipelago would split the line at: delete it.`;
+		const broken = `The file could not be read at line 52: it holds an invisible line break (${hex(code)}), which Archipelago would split the line at: delete it.`;
 		assert.throws(() => readPlayerYaml(`${creatorYaml()}  notes: "a${c(code)}b"\n`), (err) => err.message === broken, hex(code));
 		assert.throws(() => readPlayerYaml(`${creatorYaml()}  # a note${c(code)}  extra: 1\n`), (err) => err.message === broken, `${hex(code)} in a comment`);
 	}
 	for (const code of [0x07, 0x1b, 0x7f, 0x9f, 0xfffe, 0xffff]) {
-		const refused = `The file could not be read at line 39: it holds an invisible control character (${hex(code)}), which Archipelago refuses: delete it.`;
+		const refused = `The file could not be read at line 52: it holds an invisible control character (${hex(code)}), which Archipelago refuses: delete it.`;
 		assert.throws(() => readPlayerYaml(`${creatorYaml()}  notes: "a${c(code)}b"\n`), (err) => err.message === refused, hex(code));
 	}
 	const escaped = readPlayerYaml(`${creatorYaml()}  notes: "a${c(92)}u0085b${c(92)}Lc"\n`).passthrough;
@@ -1047,15 +1230,15 @@ test('keys repeat and meet their "+" twins as Archipelago\'s loader has them: tr
 		return registry(key);
 	};
 	try {
-		refuses(creatorYaml({ blob: '{12345678901234567890: a, 1.0e+30: b, 2001-01-01: c, .nan: d, .NaN: e}' }), twice(39), 'one .nan repeats the other');
-		refuses(creatorYaml({ blob: '{1152921504606846976: a, 1152921504606846976.0: b}' }), twice(39), 'a big float repeats the int it equals');
-		refuses(creatorYaml({ blob: '{2001-01-01: a, 2001-01-01: b}' }), twice(39), 'two equal dates');
+		refuses(creatorYaml({ blob: '{12345678901234567890: a, 1.0e+30: b, 2001-01-01: c, .nan: d, .NaN: e}' }), twice(52), 'one .nan repeats the other');
+		refuses(creatorYaml({ blob: '{1152921504606846976: a, 1152921504606846976.0: b}' }), twice(52), 'a big float repeats the int it equals');
+		refuses(creatorYaml({ blob: '{2001-01-01: a, 2001-01-01: b}' }), twice(52), 'two equal dates');
 	} finally {
 		Symbol.for = registry;
 	}
 	assert.strictEqual(registered, 0);
 	for (const blob of ['{1: a, yes: b}', '{true: a, 1.0: b}', '{false: a, 0.0: b}', '{~: a, null: b}', '{.nan: 1, .NaN: 2}', '{2001-01-31: a, 2001-01-31: b}']) {
-		refuses(creatorYaml({ blob }), twice(39), blob);
+		refuses(creatorYaml({ blob }), twice(52), blob);
 	}
 	for (const blob of ['{off: 1, "0": 1}', '{true: 1, false: 1}', '{.nan: 1, .inf: 2}', '{1: a, "+1": b}', '{"+1": a, 1.0: b}', '{~: a, "+None": b}', '{1.0: a, "+1.0": b}',
 		'{2001-01-31: a, 2001-01-30: b}', '{2001-01-31: a, "2001-01-31": b}']) parses(blob);
@@ -1069,27 +1252,27 @@ test('keys repeat and meet their "+" twins as Archipelago\'s loader has them: tr
 	for (const [blob, a, b] of [['{"+None": a, ~: b}', '+None', '~'], ['{"+1.0": a, 1.0: b}', '+1.0', '1.0'], ['{"+1.5": a, 1.5: b}', '+1.5', '1.5'],
 		['{"+-0.0": a, -0.0: b}', '+-0.0', '-0.0'], ['{"+1e+16": a, 1.0e+16: b}', '+1e+16', '1.0e+16'], ['{"+inf": a, .inf: b}', '+inf', '.inf'],
 		['{"+90.0": a, 1:30.0: b}', '+90.0', '1:30.0'], ['{"+1e-05": a, 0.00001: b}', '+1e-05', '0.00001']]) {
-		refuses(creatorYaml({ blob }), twins(39, a, b), blob);
+		refuses(creatorYaml({ blob }), twins(52, a, b), blob);
 	}
 	// An alias used as a key is the key it names.
-	refuses(creatorYaml({ anch: '&p "+dkey"', extra: '{dkey: 1, *p : 2}' }), twins(40, 'dkey', '+dkey'));
-	refuses(creatorYaml({ anch: '&d local_items', '*d ': '[Wild Ticket]' }), twice(40), 'an alias key repeating a setting');
-	refuses(creatorYaml({ blob: '{&k dkey: 1, *k : 2}' }), twice(39));
-	refuses(creatorYaml({ a1: '&k fresh', a2: '&k local_items', '*k ': '[x]' }), 'The file could not be read at line 40: it names the anchor `&k` a second time, '
+	refuses(creatorYaml({ anch: '&p "+dkey"', extra: '{dkey: 1, *p : 2}' }), twins(53, 'dkey', '+dkey'));
+	refuses(creatorYaml({ anch: '&d local_items', '*d ': '[Wild Ticket]' }), twice(53), 'an alias key repeating a setting');
+	refuses(creatorYaml({ blob: '{&k dkey: 1, *k : 2}' }), twice(52));
+	refuses(creatorYaml({ a1: '&k fresh', a2: '&k local_items', '*k ': '[x]' }), 'The file could not be read at line 53: it names the anchor `&k` a second time, '
 		+ 'which Archipelago refuses: rename one.', 'Archipelago\'s loader refuses an anchor named twice');
 	assert.ok(readPlayerYaml(creatorYaml({ anch: '&u fresh_key', '*u ': '1' })).passthrough.some(([key, value]) => key === 'fresh_key' && value === 1));
 
 	// Archipelago's loader builds no << merge, no bare = and no bare ! tag, and !!omap and !!pairs are lists of pairs to it.
-	const at39 = (what) => `The file could not be read at line 39: ${what}.`;
-	refuses(creatorYaml({ blob: '{<<: {a: 1}, b: 2}' }), at39('it uses a << merge, which Archipelago cannot read: write the keys out instead'));
-	refuses(creatorYaml({ blob: '=' }), at39('it has a bare =, which Archipelago cannot read: put it in quotes'));
-	refuses(creatorYaml({ blob: '[a, <<]' }), at39('it uses a << merge, which Archipelago cannot read: write the keys out instead'));
+	const at52 = (what) => `The file could not be read at line 52: ${what}.`;
+	refuses(creatorYaml({ blob: '{<<: {a: 1}, b: 2}' }), at52('it uses a << merge, which Archipelago cannot read: write the keys out instead'));
+	refuses(creatorYaml({ blob: '=' }), at52('it has a bare =, which Archipelago cannot read: put it in quotes'));
+	refuses(creatorYaml({ blob: '[a, <<]' }), at52('it uses a << merge, which Archipelago cannot read: write the keys out instead'));
 	assert.deepStrictEqual(readPlayerYaml(creatorYaml({ blob: '"="', blob2: '\'<<\'' })).passthrough.slice(-2), [['blob', '='], ['blob2', '<<']], 'quoted, both are text');
-	for (const blob of ['! 1', '! "1"', '{! yes: a}']) refuses(creatorYaml({ blob }), at39('it tags a value with a bare !, which the bot does not read: take the ! out'), blob);
+	for (const blob of ['! 1', '! "1"', '{! yes: a}']) refuses(creatorYaml({ blob }), at52('it tags a value with a bare !, which the bot does not read: take the ! out'), blob);
 	for (const blob of ['!!omap [{a: 1}, {b: 2}]', '!!pairs [{a: 1}, {a: 2}]']) {
-		refuses(creatorYaml({ blob }), at39('it uses !!omap or !!pairs, which the bot does not copy: write a mapping or a list instead'), blob);
+		refuses(creatorYaml({ blob }), at52('it uses !!omap or !!pairs, which the bot does not copy: write a mapping or a list instead'), blob);
 	}
-	refuses(creatorYaml({ blob: '!!float 16' }), at39('it uses a !tag the bot does not read'));
+	refuses(creatorYaml({ blob: '!!float 16' }), at52('it uses a !tag the bot does not read'));
 
 	// A float key stays a float, so Python's str() of it after its "+" twin stays 1.0.
 	const { PyFloat } = _internal;
@@ -1107,15 +1290,15 @@ test('keys repeat and meet their "+" twins as Archipelago\'s loader has them: tr
 	assert.throws(() => flowValue(new Map([[String.fromCharCode(92).repeat(500), 1]]), '`x`'), longKey, 'a backslash is written as two');
 	assert.throws(() => flowValue(new Map([[String.fromCodePoint(0x1f600).repeat(500), 1]]), '`x`'), longKey, 'the package counts an emoji as two');
 	assert.throws(() => yamlKey('k'.repeat(1001)), /^Error: The setting name `k+.` is more than 1000 characters as the bot writes it \(an emoji counts as two\)/);
-	refuses(`${creatorYaml()}  "${'k'.repeat(1023)}": 1\n`, 'The file could not be read at line 39: a key runs past 1,024 characters (an emoji counts as two), more than the bot reads.');
+	refuses(`${creatorYaml()}  "${'k'.repeat(1023)}": 1\n`, 'The file could not be read at line 52: a key runs past 1,024 characters (an emoji counts as two), more than the bot reads.');
 
 	// A key that is not text is shown as the file spells it.
 	refuses(creatorYaml({ '2001-01-01': 'x' }), 'The Plex Media settings have `2001-01-01` where a setting name goes.');
 	refuses(creatorYaml({ '.inf': 'x' }), 'The Plex Media settings have `.inf` where a setting name goes.');
-	refuses(`${creatorYaml()}  ? [a, b]\n  : 1\n`, 'The file could not be read at line 39: it uses a list or a mapping as a key, which Archipelago cannot read.');
+	refuses(`${creatorYaml()}  ? [a, b]\n  : 1\n`, 'The file could not be read at line 52: it uses a list or a mapping as a key, which Archipelago cannot read.');
 	refuses(creatorYaml({ list_titles: '{[Alien]: 0, Heat: 1}' }), 'The file could not be read at line 12: it uses a list or a mapping as a key, which Archipelago cannot read.', 'a choice that is never rolled');
 	refuses(creatorYaml({}, { top: ['requires:', '  ? {a: 1}', '  : 1'] }), 'The file could not be read at line 5: it uses a list or a mapping as a key, which Archipelago cannot read.', 'in a part the bot rewrites');
-	refuses(creatorYaml({ anchor: '&k [a]', blob: '{*k : 1}' }), 'The file could not be read at line 40: it uses a list or a mapping as a key, which Archipelago cannot read.', 'an alias of a list');
+	refuses(creatorYaml({ anchor: '&k [a]', blob: '{*k : 1}' }), 'The file could not be read at line 53: it uses a list or a mapping as a key, which Archipelago cannot read.', 'an alias of a list');
 	refuses(creatorYaml({}, { top: ['2001-01-01: x'] }), 'The file has `2001-01-01` at the top, and the bot takes one player per file: name, description, game, requires and Plex Media only.');
 	refuses(creatorYaml().replace('game: Plex Media', 'game: 2001-01-01'), 'The file\'s game is `2001-01-01`, and the bot fills in Plex Media lists only.');
 	refuses(creatorYaml({ blob: '{2001-01-01: a}' }), '`blob` uses a date as a key, which the bot does not copy: put it in quotes.');
@@ -1356,7 +1539,7 @@ test('the plando a file requires stays in the finished file, so Archipelago stil
 	const read = readPlayerYaml(requires('items, bosses'));
 	assert.strictEqual(read.params.plando, 'items, bosses');
 	const lines = renderYaml(listDoc(validateParams(read.params), { createdAt: 1794398400, entries: [] })).split('\n');
-	assert.deepStrictEqual(lines.slice(lines.indexOf('requires:'), lines.indexOf('Plex Media:')),['requires:', '  version: 0.6.8', '  plando: "items, bosses"', '  game:', '    Plex Media: 0.2.0']);
+	assert.deepStrictEqual(lines.slice(lines.indexOf('requires:'), lines.indexOf('Plex Media:')),['requires:', '  version: 0.6.8', '  plando: "items, bosses"', '  game:', '    Plex Media: 0.3.0']);
 	assert.strictEqual(readPlayerYaml(creatorYaml()).params.plando, undefined);
 	assert.strictEqual(readPlayerYaml(requires('\'\'')).params.plando, '', 'an empty text asks for nothing, as in Archipelago');
 	const refuses = (text, message) => assert.throws(() => readPlayerYaml(text), (err) => err.message === message, message);
@@ -1408,10 +1591,10 @@ test('a list the bot wrote belongs to its person while it keeps the slot it was 
 
 test('Archipelago\'s loader refuses an anchor named twice, a list or a mapping as a key and a key left empty without "?", which the package reads anyway', () => {
 	const refuses = (text, message) => assert.throws(() => readPlayerYaml(text), (err) => err.message === message, message);
-	const at39 = (what) => `The file could not be read at line 39: ${what}.`;
-	refuses(creatorYaml({ a: '&x 1', b: '&x 2' }), 'The file could not be read at line 40: it names the anchor `&x` a second time, which Archipelago refuses: rename one.');
-	refuses(creatorYaml({ blob: '{: b}' }), at39('it has a : with no key before it, which Archipelago cannot read: give it a key'));
-	refuses(`${creatorYaml()}  blob:\n    : b\n`, 'The file could not be read at line 40: it has a : with no key before it, which Archipelago cannot read: give it a key.');
+	const at52 = (what) => `The file could not be read at line 52: ${what}.`;
+	refuses(creatorYaml({ a: '&x 1', b: '&x 2' }), 'The file could not be read at line 53: it names the anchor `&x` a second time, which Archipelago refuses: rename one.');
+	refuses(creatorYaml({ blob: '{: b}' }), at52('it has a : with no key before it, which Archipelago cannot read: give it a key'));
+	refuses(`${creatorYaml()}  blob:\n    : b\n`, 'The file could not be read at line 53: it has a : with no key before it, which Archipelago cannot read: give it a key.');
 	const explicit = readPlayerYaml(`${creatorYaml()}  blob:\n    ?\n    : b\n`).passthrough.find(([key]) => key === 'blob')[1];
 	assert.deepStrictEqual(explicit, new Map([[null, 'b']]), 'with a "?" an empty key is null to Archipelago too');
 	for (const text of [`${creatorYaml()}  blob:\n    ?   \n    : b\n`, creatorYaml({ blob: '{?   : b}' }), `${creatorYaml()}  blob:\n    ?${' '.repeat(45)}\n    : b\n`, creatorYaml({ blob: `{?${'\t'.repeat(45)}: b}` })]) {
@@ -1420,13 +1603,13 @@ test('Archipelago\'s loader refuses an anchor named twice, a list or a mapping a
 	assert.strictEqual(readPlayerYaml(creatorYaml({ blob: '{"": b}' })).passthrough.find(([key]) => key === 'blob')[1].get(''), 'b', 'a quoted empty key is text');
 	// Tagged as text, << and = are text to Archipelago; the package merges at a key << anyway.
 	assert.deepStrictEqual(readPlayerYaml(creatorYaml({ blob: '!!str <<', blob2: '!!str =' })).passthrough.slice(-2), [['blob', '<<'], ['blob2', '=']]);
-	refuses(creatorYaml({ blob: '{!!str <<: x}' }), at39('it tags a << key, which the bot does not read: write "<<" in quotes instead'));
-	refuses(creatorYaml({ blob: '{!!merge <<: {a: 1}}' }), at39('it uses a << merge, which Archipelago cannot read: write the keys out instead'));
-	refuses(creatorYaml({ blob: '! <<' }), at39('it uses a << merge, which Archipelago cannot read: write the keys out instead'));
+	refuses(creatorYaml({ blob: '{!!str <<: x}' }), at52('it tags a << key, which the bot does not read: write "<<" in quotes instead'));
+	refuses(creatorYaml({ blob: '{!!merge <<: {a: 1}}' }), at52('it uses a << merge, which Archipelago cannot read: write the keys out instead'));
+	refuses(creatorYaml({ blob: '! <<' }), at52('it uses a << merge, which Archipelago cannot read: write the keys out instead'));
 	// In octal and in minutes and seconds, an int key is the number Python's str() writes.
-	refuses(creatorYaml({ blob: '{"+8": a, 010: b}' }), at39('it gives both `+8` and `010`, which Archipelago refuses together'));
-	refuses(creatorYaml({ blob: '{"+90": a, 1:30: b}' }), at39('it gives both `+90` and `1:30`, which Archipelago refuses together'));
-	refuses(creatorYaml({ blob: '{"+2001-01-31": a, 2001-01-31: b}' }), at39('it gives both `+2001-01-31` and `2001-01-31`, which Archipelago refuses together'));
+	refuses(creatorYaml({ blob: '{"+8": a, 010: b}' }), at52('it gives both `+8` and `010`, which Archipelago refuses together'));
+	refuses(creatorYaml({ blob: '{"+90": a, 1:30: b}' }), at52('it gives both `+90` and `1:30`, which Archipelago refuses together'));
+	refuses(creatorYaml({ blob: '{"+2001-01-31": a, 2001-01-31: b}' }), at52('it gives both `+2001-01-31` and `2001-01-31`, which Archipelago refuses together'));
 });
 
 test('a quote or a bracket left open is named at the line it opens, and an indented quote\'s next line is said to be the cause too', () => {
@@ -1435,13 +1618,13 @@ test('a quote or a bracket left open is named at the line it opens, and an inden
 	refuses(creatorYaml({ list_titles: '"Alien; Aliens' }), `The file could not be read at line 12: ${open}.`);
 	refuses(creatorYaml({ list_titles: '\'Alien; Aliens' }), `The file could not be read at line 12: ${open}.`);
 	refuses(creatorYaml({ list_titles: '"Alien;\nAliens"' }), `The file could not be read at line 12: ${open}.`);
-	refuses(`${creatorYaml()}  blob: {\n    "Sword": 1,\n    "Bow: 1\n  }\n`, `The file could not be read at line 41: ${open}.`);
+	refuses(`${creatorYaml()}  blob: {\n    "Sword": 1,\n    "Bow: 1\n  }\n`, `The file could not be read at line 54: ${open}.`);
 	// A bracket left open inside the file's mappings is noticed at the next line not indented past its key.
-	refuses(creatorYaml({ local_items: '[Sword, Bow' }), `The file could not be read at line 32: ${open}.`);
-	refuses(creatorYaml({ start_inventory: '{Sword: 1' }), `The file could not be read at line 34: ${open}.`);
-	refuses(creatorYaml({ exclude_locations: '[\n      "Cave",\n      "Tower"' }), `The file could not be read at line 37: ${open}.`);
-	refuses(creatorYaml({ start_hints: '[[a, b], [c' }), `The file could not be read at line 35: ${open}.`);
-	refuses(creatorYaml({ start_hints: '[\n      [a, b],\n      [c' }), `The file could not be read at line 35: ${open}.`, 'the outermost bracket left open');
+	refuses(creatorYaml({ local_items: '[Sword, Bow' }), `The file could not be read at line 45: ${open}.`);
+	refuses(creatorYaml({ start_inventory: '{Sword: 1' }), `The file could not be read at line 47: ${open}.`);
+	refuses(creatorYaml({ exclude_locations: '[\n      "Cave",\n      "Tower"' }), `The file could not be read at line 50: ${open}.`);
+	refuses(creatorYaml({ start_hints: '[[a, b], [c' }), `The file could not be read at line 48: ${open}.`);
+	refuses(creatorYaml({ start_hints: '[\n      [a, b],\n      [c' }), `The file could not be read at line 48: ${open}.`, 'the outermost bracket left open');
 });
 
 test('a file of millions of lines is refused or read about as fast as the fullest list the bot writes', () => {
@@ -1484,7 +1667,7 @@ test('a file of millions of lines is refused or read about as fast as the fulles
 		assert.ok(Math.min(ms, time(text)[0]) < realMs * 3 + 50, `${what}: ${Math.round(ms)} ms, the list the bot wrote ${Math.round(realMs)} ms`);
 	}
 	const crOnly = creatorYaml({ notes: '"a\u0001b"' }).replace(/\n/g, '\r');
-	assert.throws(() => readPlayerYaml(crOnly), (err) => /^The file could not be read at line 39: /.test(err.message), 'a lone CR counts as a line');
+	assert.throws(() => readPlayerYaml(crOnly), (err) => /^The file could not be read at line 52: /.test(err.message), 'a lone CR counts as a line');
 });
 
 test('a list the bot built before it saved its list settings is refused until the command says what to pick, and keeps its label', () => {
@@ -1511,7 +1694,7 @@ test('a list the bot built before it saved its list settings is refused until th
 	assert.deepStrictEqual(music.params, {
 		name: 'Zack', preset: 'music', unwatched: true, maxEpisodes: 24, label: 'Album club', startingUnlocks: 3, goalPercent: 60, tvUnlock: 'episodes',
 		episodesPerUnlock: 3, lockedWatches: 'bank', checkpointItems: 'filler_only', strict: false, timeMovies: 15, timeEpisodes: 10, timeAlbums: 0, timeBooks: 30,
-		wildTickets: 2, passthrough: [],
+		wildTickets: 2, ...ITEM_PARAMS, passthrough: [],
 	});
 	assert.deepStrictEqual([music.name, music.label, music.entriesCount, music.random], ['Zack', 'Album club', 3, []]);
 	const p = validateParams(music.params);
@@ -1661,6 +1844,19 @@ test('renderYaml writes the list settings it is given, then the copied settings 
 		'  timesanity_albums: 0',
 		'  timesanity_books: 30',
 		'  wild_tickets: 2',
+		'  snack_variety: true',
+		'  fast_forwards: 2',
+		'  remote_controls: 1',
+		'  snack_bar_trades: 3',
+		'  snack_bar_price: 10',
+		'  trap_percentage: 0',
+		'  buffering_weight: 2',
+		'  rights_expired_weight: 2',
+		'  commercial_break_weight: 1',
+		'  shuffle_mode_weight: 1',
+		'  rewind_weight: 1',
+		'  intermission_weight: 1',
+		'  slow_motion_weight: 1',
 		'  list_preset: none',
 		'  list_movies: 3',
 		'  list_shows: preset',

@@ -156,21 +156,21 @@ function attach({ bot, resolve, onEvent, getConfig, now = Date.now, defer = setI
 		const atStart = Array.isArray(heard.startListeners) ? heard.startListeners.map(String) : [];
 		const userIds = [...new Set(atStart)].filter((id) => atEnd.has(id));
 		if (!userIds.length) return;
+		// A whole track is a 'complete', which earns every checkpoint inside it; a short listen is a span.
+		// The stretch that went out rides along either way: under timesanity_strict only it counts.
+		const fromMs = msOf(heard.startMs);
 		const event = {
-			type: 'complete',
+			type: whole ? 'complete' : 'span',
 			source: 'voice',
 			userIds,
 			ratingKey: ident.ratingKey,
 			partId: ident.partId,
 			artist: ident.artist,
 			title: ident.title,
+			fromMs,
+			toMs: fromMs + heardMs,
 			at,
 		};
-		// A whole track earns every checkpoint inside it already, so only a short listen is a span.
-		if (!whole) {
-			const fromMs = msOf(heard.startMs);
-			Object.assign(event, { type: 'span', fromMs, toMs: fromMs + heardMs });
-		}
 		deliver(event);
 	}
 

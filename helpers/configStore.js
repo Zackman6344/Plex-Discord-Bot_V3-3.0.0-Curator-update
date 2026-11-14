@@ -87,6 +87,9 @@ const SETTINGS = [
             { label: 'Off (problems only)', value: 'off' },
         ],
     },
+    { key: 'apMediaTraps', label: 'Traps', group: 'AP Media', type: 'bool' },
+    { key: 'apMediaVoiceTraps', label: 'Voice and book traps', group: 'AP Media', type: 'bool', warn: 'They pause, rewind or shuffle what everyone in the bot\'s voice channel hears.' },
+    { key: 'apMediaTrapClips', label: 'Trap clips playlist', group: 'AP Media', type: 'string', allowEmpty: true, maxLen: 200, placeholder: 'Commercials (blank: a 30 s pause)' },
 
     { key: 'broadcastChannelId', label: 'Broadcast channel (fallback)', group: 'Broadcasts', type: 'string', snowflake: true },
     { key: 'kometaChannelId', label: 'Kometa channel', group: 'Broadcasts', type: 'string', snowflake: true },

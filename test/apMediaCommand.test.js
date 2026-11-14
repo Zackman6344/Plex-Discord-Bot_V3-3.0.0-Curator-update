@@ -10,9 +10,17 @@
 // before the bot saved its list settings waits for the command to say what to pick, and one build
 // per person covers the download; what a file names that the library lacks comes back escaped or as code, and
 // a finished YAML over 8 MB is refused rather than sent; a check's time reads as 1h30m, @1h30m or 1:30:00, and a whole list title
-// is never split at its "at"; a check or a Wild Ticket goes only to a title named in full; a
-// self-link needs the !ap claim; the owner may name anybody's slot only where the spec lets them,
-// and nobody may while ownerId is blank; the account list stays private; the Accept button reaches
+// is never split at its "at"; a check, a Wild Ticket or a Fast Forward goes only to a title named in
+// full; words after an unquoted slot= that the command does not read spend and count nothing, in ff,
+// snackbar, redeem and check alike, and a lone slot= may come first (a single quote it opens, curly
+// too, gives the slot the words up to the one that closes it, unless the value already names a
+// slot the command would take); the Snack Bar sells what its
+// menu names, by the items' own two-word names too, a slot named like an item is that slot, and
+// "remote" before one of your slot names is the item alone; an empty list view keeps
+// the Buffering line; status shows no Snack Bar for a seed that allows no trades; a file left all
+// random still fits its reply; a self-link needs the !ap claim; the owner may name anybody's slot
+// only where the spec lets them, and nobody may while ownerId is blank; the account list stays
+// private; the Accept button reaches
 // the friend by DM, or in the channel without a ping; a failure shows Plex's error code, never its
 // host or the bot's folders; the installed apworld is read from the install dir's custom_worlds;
 // autocomplete answers from memory and never waits on Plex.
@@ -33,6 +41,7 @@ const assert = require('node:assert');
 const { Collection, ApplicationCommandOptionType } = require('discord.js');
 
 const config = require('../config/config.js');
+const contracts = require('../helpers/apMediaContracts.js');
 const slashRegistry = require('../helpers/slashRegistry.js');
 const { adaptInteraction } = require('../helpers/interactionAdapter.js');
 const buttons = require('../helpers/apMediaButtons.js');
@@ -200,6 +209,8 @@ function stubGame(over = {}) {
 		},
 		async creditManual(key, ref, opts) { calls.push(['creditManual', key, ref, opts]); return { ok: true, message: `credited ${ref}` }; },
 		async redeem(key, ref) { calls.push(['redeem', key, ref]); return { ok: true, message: `redeemed ${ref}` }; },
+		async fastForward(key, ref) { calls.push(['fastForward', key, ref]); return { ok: true, message: `forwarded ${ref}` }; },
+		async snackBar(key, opts) { calls.push(['snackBar', key, opts]); return { ok: true, message: `snack bar ${opts.buy}` }; },
 		async setAnnounce(key, on) { calls.push(['setAnnounce', key, on]); return { ok: true, message: `announce ${on}` }; },
 		async link(args) { calls.push(['link', args]); return { ok: true, message: `Linked \`${args.slot}\` on watch #${args.watchId}.`, warnings: ['No Plex account is linked for them.'] }; },
 		async unlink(key, by) { calls.push(['unlink', key, by]); return { ok: true, message: `Unlinked ${key}.` }; },
@@ -225,7 +236,8 @@ function stubBuilder(over = {}) {
 		calls,
 		summary: {
 			counts: { movie: 2, episode: 0, album: 0, mix: 0, book: 0 }, shows: 0, entries: 2, locations: 20, copies: 2,
-			startCopies: 1, wildTickets: 1, startOpen: 1, goalCount: 1, hours: 4, hoursToGoal: 2,
+			startCopies: 1, wildTickets: 1, startOpen: 1, goalCount: 1, hours: 4, hoursToGoal: 2, fastForwards: 1, remoteControls: 0,
+			traps: { buffering: 1, rights_expired: 0, commercial_break: 0, shuffle_mode: 0, rewind: 1, intermission: 0, slow_motion: 0 }, snacks: 15,
 			warnings: ['Night *Shift* starts at its first episode'], misses: [{ query: 'Alein_', didYouMean: ['Alien'] }]
 		},
 		async build(params) {
@@ -286,7 +298,7 @@ test('acting for somebody else needs the owner: a YAML for someone, a link for s
 	assert.deepStrictEqual(builder.calls, []);
 });
 
-test('the owner may name anybody\'s slot for unlink, retry, status, list and check, never for redeem or announce', async () => {
+test('the owner may name anybody\'s slot for unlink, retry, status, list and check, never for redeem, ff, snackbar or announce', async () => {
 	const { game } = use();
 	game.bindings.push({ key: '0::benplex', slot: 'BenPlex', userId: BEN, watchId: 0 });
 	const allFor = (sub) => game.calls.filter((c) => c[0] === 'resolveBinding').map((c) => c[2].all);
@@ -297,12 +309,14 @@ test('the owner may name anybody\'s slot for unlink, retry, status, list and che
 		['list', { slot: 'BenPlex' }],
 		['check', { title: 'The Matrix', slot: 'BenPlex' }],
 		['redeem', { title: 'The Matrix', slot: 'BenPlex' }],
+		['ff', { title: 'The Matrix', slot: 'BenPlex' }],
+		['snackbar', { buy: 'remote-control', slot: 'BenPlex' }],
 		['announce', { mode: 'off', slot: 'BenPlex' }]
 	];
 	for (const [sub, values] of cases) {
 		game.calls.length = 0;
 		await runSlash(owner(), sub, values);
-		assert.deepStrictEqual(allFor(sub), [!['redeem', 'announce'].includes(sub)], `${sub} by the owner`);
+		assert.deepStrictEqual(allFor(sub), [!['redeem', 'ff', 'snackbar', 'announce'].includes(sub)], `${sub} by the owner`);
 		game.calls.length = 0;
 		const r = first(await runSlash(ana(), sub, values));
 		assert.deepStrictEqual(allFor(sub), [false], `${sub} by a player`);
@@ -452,8 +466,14 @@ test('yaml from slash options: kebab-case names, numbers and booleans as Discord
 	assert.strictEqual(builder.calls.length, 1);
 	await runSlash(ana(), 'yaml', { name: 'Zack', more: 'checkpoint_items=anything locked_watches=ignore wild_tickets=0' });
 	assert.deepStrictEqual(builder.calls[1][1], { name: 'Zack', checkpointItems: 'anything', lockedWatches: 'ignore', wildTickets: '0', accountId: null, discordUserId: ANA });
+	await runSlash(ana(), 'yaml', { name: 'Zack', more: 'trap_percentage=20 snack_variety=false fast_forwards=3 remote-controls=0 snack_bar_trades=1 snack_bar_price=5 rewind_weight=4 slow_motion_weight=0' });
+	assert.deepStrictEqual(builder.calls[2][1], {
+		name: 'Zack', trapPercentage: '20', snackVariety: 'false', fastForwards: '3', remoteControls: '0', snackBarTrades: '1', snackBarPrice: '5',
+		rewindWeight: '4', slowMotionWeight: '0', accountId: null, discordUserId: ANA
+	}, 'the item and trap options arrive as the other game options do');
 	const more = apmedia._internal.SUBCOMMANDS.find((s) => s.name === 'yaml').options.find((o) => o.name === 'more');
-	for (const key of ['label', 'starting_unlocks', 'wild_tickets', 'strict', 'locked_watches', 'checkpoint_items']) assert.ok(more.description.includes(key), `the more option names ${key}`);
+	for (const key of ['label', 'strict', 'wild_tickets', 'trap_percentage']) assert.ok(more.description.includes(key), `the more option names ${key}`);
+	assert.match(first(await runSlash(ana(), 'yaml', { name: 'Zack', more: 'traps=5' })).content, /The options are: .*, trap_percentage, buffering_weight, .*, slow_motion_weight, for\./, 'a wrong key lists every key');
 	assert.ok(more.description.length <= 100);
 });
 
@@ -494,7 +514,7 @@ test('yaml attaches the file and answers with the summary, escaped, and the next
 	assert.strictEqual(r.files[0].attachment.toString('utf8'), 'name: "Zack"\nPlex Media:\n  goal_percent: 80\n');
 	assert.match(r.content, /^\u{1F4DD} `Zack`: your list, attached as `Zack\.yaml`\./u);
 	assert.match(r.content, /2 entries \(2 movies\), 20 locations, about 4 h\./);
-	assert.match(r.content, /goal: finish 1 of 2/);
+	assert.match(r.content, /goal: finish 1 of 2 \(about 2 h\)\.\nItems: 1 Fast Forward, 2 traps \(1 Buffering, 1 Rewind\), 15 snacks\.\n/, 'what the list holds, after the start and the goal');
 	assert.match(r.content, /Night \\\*Shift\\\* starts/);
 	assert.match(r.content, /Not found: Alein\\_ \(did you mean \*\*Alien\*\*\?\)/);
 	assert.match(r.content, /send this file to the bot owner\. Once the seed is up, claim the slot with `!ap claim Zack`, then link it with `\/apmedia link Zack`\./);
@@ -829,6 +849,33 @@ test('a reply with many warnings keeps its head, the next step and the tracker l
 	const r = first(await runSlash(ana(), 'yaml', { name: 'Ana' }));
 	assert.ok(r.content.length <= CONTENT_MAX && !r.content.endsWith('\u2026'), 'never clipped by say()');
 	assert.match(r.content, /more lines not shown\.\nNext: send this file to the bot owner\. .*\nEvery title on the list is visible to the whole room and on the public tracker\.$/);
+});
+
+// An earlier check measured it: a Creator file with Random ticked on all 25 game options, from a
+// player whose Plex link waits for consent, made a reply whose head and tail alone passed 2,000
+// characters, and say() clipped the line about the public tracker.
+test('a file with every game option random names six of them and counts the rest, in a line the reply may leave out', async () => {
+	const { RANDOM_SHOWN, CONTENT_MAX } = yamlCommand;
+	const warn = String.fromCharCode(0x26a0, 0xfe0f);
+	const random = Object.fromEntries(Object.keys(contracts.OPTIONS).map((key) => [key, 'random']));
+	const text = creatorYaml(random, { name: 'ABCDEFGHIJKLMNOP' });
+	const file = attachment(`${'a-long-file-name-'.repeat(5)}.yaml`, text);
+	const { game, builder } = use({ fetch: fileFetch(text) });
+	game.accounts.set(ANA, { accountId: 7, name: 'Friend', consent: 'pending', implicit: false });
+	const r = first(await runSlash(ana(), 'yaml', { file }));
+	const shown = ['starting_unlocks', 'goal_percent', 'tv_unlock', 'episodes_per_unlock', 'locked_watches', 'wild_tickets'];
+	assert.strictEqual(shown.length, RANDOM_SHOWN);
+	const line = `${warn} Left random in your file for Archipelago to roll: `
+		+ `${shown.map((key) => `${contracts.SETTING_NAMES[key]} (\`${key}\`), default ${contracts.OPTIONS[key].default}`).join('; ')}; and 19 more. `
+		+ 'The numbers above use the defaults.';
+	assert.ok(r.content.split('\n').includes(line), r.content);
+	assert.ok(r.content.length <= CONTENT_MAX);
+
+	builder.summary = { ...builder.summary, warnings: Array.from({ length: 14 }, (_, i) => `Warning ${i}: ${'x'.repeat(110)}`) };
+	const long = first(await runSlash(ana(), 'yaml', { file }));
+	assert.ok(long.content.length <= CONTENT_MAX && !long.content.endsWith(String.fromCharCode(0x2026)), `${long.content.length} characters, never clipped by say()`);
+	assert.match(long.content, /more lines? not shown\.\nNext: send this file to the bot owner\. .*\nEvery title on the list is visible to the whole room and on the public tracker\.$/);
+	assert.match(long.content, /waits for you to accept it in the bot's DM/, 'the head stays whole');
 });
 
 function realBuilder(mutate = null) {
@@ -1242,10 +1289,64 @@ test('account none withdraws the caller\'s own link, owner or not; anyone else\'
 	assert.strictEqual(first(await runPrefix(ana(), 'account none')).content, 'No Plex account is linked for you.', 'no owner set is no reason to keep a link');
 });
 
+// The bug, from the first-seed rehearsal: a Plex name with spaces, typed without them, was refused
+// as unknown with nothing suggested.
+test('account: a full name matches whatever its case, spaces and punctuation, and two such matches ask for the id', async () => {
+	const { game } = use();
+	game.plexAccounts = async () => [{ id: 1, name: 'Owner' }, { id: 12, name: 'Movie Night Crew' }, { id: 13, name: 'mo.vie' }, { id: 14, name: 'MO VIE' }, { id: 20, name: '\u{1F3AC}' }];
+	const linksMade = () => game.calls.filter((c) => c[0] === 'linkAccount');
+	assert.match(first(await runSlash(owner(), 'account', { user: ben(), plex: 'movienightcrew' })).content, /Linked/);
+	assert.deepStrictEqual(linksMade().map((c) => c[2].accountId), [12]);
+	assert.match(first(await runSlash(owner(), 'account', { user: ana(), plex: 'MOVIE-night crew!' })).content, /Linked/);
+	assert.deepStrictEqual(linksMade().map((c) => c[2].accountId), [12, 12], 'typed punctuation does not count either');
+	const links = linksMade().length;
+	assert.strictEqual(first(await runSlash(owner(), 'account', { user: ben(), plex: 'movie' })).content, 'Several Plex accounts match `movie`: give the id (13, 14).');
+	assert.match(first(await runSlash(owner(), 'account', { user: ben(), plex: 'movienight' })).content, /^No Plex account is called `movienight`\. Did you mean `Movie Night Crew` \(id 12\)\?/, 'part of a name is still only a question');
+	assert.match(first(await runSlash(owner(), 'account', { user: ben(), plex: 'nightcrew' })).content, /Did you mean `Movie Night Crew` \(id 12\)\?/, 'a part from inside the name, typed without its spaces');
+	assert.strictEqual(first(await runSlash(owner(), 'account', { user: ben(), plex: '...' })).content, 'No Plex account is called `...`: `/apmedia account` lists them.', 'no letters at all matches nobody, not even a name of none');
+	assert.strictEqual(game.calls.filter((c) => c[0] === 'linkAccount').length, links, 'none of those linked anyone');
+});
+
+// A third review's bug: marks were left out of the comparison, so two Devanagari names that differ
+// only in their vowel signs matched, and so did two emoji sharing one variation selector.
+test('account: a full name keeps its marks, and a name with no letter or digit matches nothing', async () => {
+	const { game } = use();
+	const chars = (...codes) => String.fromCharCode(...codes);
+	const meena = chars(0x92E, 0x940, 0x928, 0x93E);
+	const mona = chars(0x92E, 0x94B, 0x928, 0x93E);
+	const heart = chars(0x2764, 0xFE0F);
+	const star = chars(0x2B50, 0xFE0F);
+	game.plexAccounts = async () => [{ id: 1, name: 'Owner' }, { id: 32, name: meena }, { id: 33, name: heart }, { id: 34, name: `Jos${chars(0xE9)}` }];
+	const linksMade = () => game.calls.filter((c) => c[0] === 'linkAccount').map((c) => c[2].accountId);
+	assert.match(first(await runSlash(owner(), 'account', { user: ben(), plex: mona })).content, /^No Plex account is called/);
+	assert.match(first(await runSlash(owner(), 'account', { user: ben(), plex: star })).content, /^No Plex account is called/);
+	assert.deepStrictEqual(linksMade(), []);
+	assert.match(first(await runSlash(owner(), 'account', { user: ben(), plex: meena })).content, /Linked/);
+	assert.match(first(await runSlash(owner(), 'account', { user: ana(), plex: `jose${chars(0x301)}` })).content, /Linked/, 'a decomposed accent still matches');
+	assert.deepStrictEqual(linksMade(), [32, 34]);
+});
+
 // ---- link -------------------------------------------------------------------------------------
 
-function claimsMonitor(claims) {
-	return { listClaims: (id) => (Number(id) === 0 ? claims : null) };
+/**
+ * @param {object[]} claims {watchId, slot, userId}, watch 0 when watchId is left out
+ * @param {object} [opts] watches: the watched rooms; rooms: watch id -> its slot names, a watch left
+ *   out (or rooms null) being a room not read yet
+ */
+function claimsMonitor(claims, { watches = [{ id: 0, label: 'Configured room', slot: 'Watcher' }], rooms = null } = {}) {
+	const has = (id) => watches.some((w) => w.id === Number(id));
+	return {
+		listWatches: () => watches.map((watch) => ({ watch })),
+		listClaims: (id) => (has(id) ? claims.filter((c) => (c.watchId ?? 0) === Number(id)) : null),
+		describeSlot(id, name) {
+			if (!has(id)) return null;
+			if (!rooms || !rooms[id]) return { known: false, canonical: null, slotId: null, game: null };
+			// A room's slot is a name (playing Plex Media) or {name, game}.
+			const slots = rooms[id].map((s) => (typeof s === 'string' ? { name: s, game: 'Plex Media' } : s));
+			const hit = slots.find((s) => s.name.toLowerCase() === String(name).trim().toLowerCase()) || null;
+			return { known: true, canonical: hit ? hit.name : null, slotId: hit ? 1 : null, game: hit ? hit.game : null };
+		}
+	};
 }
 
 test('a player links only a slot they hold the !ap claim on; the owner needs none', async () => {
@@ -1268,6 +1369,161 @@ test('a player links only a slot they hold the !ap claim on; the owner needs non
 	assert.match(first(await runPrefix(ana(), 'link')).content, /Which slot\?/);
 	config.archipelagoEnabled = false;
 	assert.match(first(await runSlash(ana(), 'link', { slot: 'ZackPlex' })).content, /The Archipelago monitor is off/);
+});
+
+const LIVE = { id: 0, label: 'Configured room', slot: 'ZackLL1' };
+const TRIAL = { id: 1, label: 'archipelago.gg', slot: 'Finder' };
+const linked = (game) => game.calls.filter((c) => c[0] === 'link').map((c) => c[1]);
+
+// The bug, from the first-seed rehearsal: a friend claimed their slot on watch #1, and /apmedia link
+// without watch: looked on watch 0 and told them to claim it first.
+test('without watch: a link goes to the one room where the person claimed the slot', async () => {
+	const { game } = use({ monitor: claimsMonitor([{ watchId: 1, slot: 'FriendPlex', userId: ANA }], { watches: [LIVE, TRIAL] }) });
+	const ok = first(await runSlash(ana(), 'link', { slot: 'friendplex' }));
+	assert.deepStrictEqual(linked(game), [{ watchId: 1, slot: 'friendplex', userId: ANA, by: ANA }]);
+	assert.match(ok.content, /Linked `friendplex` on watch #1\./);
+	game.calls.length = 0;
+	await runPrefix(ana(), 'link FriendPlex');
+	assert.deepStrictEqual(linked(game).map((a) => a.watchId), [1], 'the prefix form too');
+});
+
+test('without watch: the only room watched is the room, whatever its id', async () => {
+	const { game } = use({ monitor: claimsMonitor([{ watchId: 3, slot: 'ZackPlex', userId: ANA }], { watches: [{ id: 3, label: 'localhost', slot: 'Finder' }] }) });
+	await runSlash(ana(), 'link', { slot: 'ZackPlex' });
+	await runSlash(owner(), 'link', { slot: 'Unclaimed' });
+	assert.deepStrictEqual(linked(game).map((a) => [a.watchId, a.slot]), [[3, 'ZackPlex'], [3, 'Unclaimed']]);
+	const refused = first(await runSlash(ana(), 'link', { slot: 'BenPlex' }));
+	assert.match(refused.content, /Claim the slot first: `!ap claim BenPlex` shows it is yours/, 'one room: the claim needs no id');
+});
+
+test('without watch: several rooms and no claim is a question that names the watches, never a guess', async () => {
+	const unread = use({ monitor: claimsMonitor([], { watches: [LIVE, TRIAL] }) });
+	const player = first(await runSlash(ana(), 'link', { slot: 'FriendPlex' }));
+	assert.strictEqual(player.content, 'Claim the slot first, with the id of its room: `!ap claim <id> FriendPlex` shows it is yours. Then link it again, or ask the bot owner to link it for you. Watched: #0 Configured room (as `ZackLL1`), #1 archipelago.gg (as `Finder`).');
+	const boss = first(await runSlash(owner(), 'link', { slot: 'ZackPlex' }));
+	assert.strictEqual(boss.content, 'More than one room is being watched, so say which: `/apmedia link slot:ZackPlex watch:<id>`. Watched: #0 Configured room (as `ZackLL1`), #1 archipelago.gg (as `Finder`).');
+	assert.deepStrictEqual(linked(unread.game), []);
+	restore();
+
+	const read = use({ monitor: claimsMonitor([], { watches: [LIVE, TRIAL], rooms: { 0: ['ZackLL1', 'Hunter'], 1: ['Finder', 'FriendPlex', 'ZackPlex'] } }) });
+	assert.match(first(await runSlash(ana(), 'link', { slot: 'friendplex' })).content, /^Claim the slot first: `!ap claim 1 friendplex` shows it is yours\./, 'the one room that has it');
+	assert.strictEqual(first(await runPrefix(owner(), 'link ZackPlex')).content, 'More than one room is being watched, and `ZackPlex` is in #1 archipelago.gg (as `Finder`): `!apmedia link ZackPlex watch=1`.');
+	assert.match(first(await runSlash(owner(), 'link', { slot: 'Nowhere' })).content, /so say which: `\/apmedia link slot:Nowhere watch:<id>`\. Watched: #0 .*, #1 .*\.$/, 'in no room: the list');
+	assert.deepStrictEqual(linked(read.game), []);
+	restore();
+
+	use({ monitor: claimsMonitor([], { watches: [LIVE, TRIAL], rooms: { 1: ['FriendPlex'] } }) });
+	assert.match(first(await runSlash(ana(), 'link', { slot: 'FriendPlex' })).content, /^Claim the slot first, with the id of its room: `!ap claim <id> FriendPlex`/, 'one room unread: it may have the slot too, so no room is named');
+});
+
+test('without watch: a slot claimed in two rooms asks which, and a named watch with several rooms puts its id in the claim', async () => {
+	const twice = [{ watchId: 0, slot: 'FriendPlex', userId: ANA }, { watchId: 1, slot: 'FriendPlex', userId: ANA }];
+	const { game } = use({ monitor: claimsMonitor(twice, { watches: [LIVE, TRIAL] }) });
+	assert.strictEqual(first(await runSlash(ana(), 'link', { slot: 'FriendPlex' })).content, '`FriendPlex` is claimed on more than one watch, so say which: `/apmedia link slot:FriendPlex watch:<id>`. Claimed on #0 Configured room (as `ZackLL1`), #1 archipelago.gg (as `Finder`).');
+	assert.deepStrictEqual(linked(game), []);
+	await runSlash(ana(), 'link', { slot: 'FriendPlex', watch: 1 });
+	assert.deepStrictEqual(linked(game).map((a) => a.watchId), [1]);
+	assert.match(first(await runSlash(ana(), 'link', { slot: 'BenPlex', watch: 0 })).content, /Claim the slot first: `!ap claim 0 BenPlex` shows it is yours/, 'watch 0 named in full once there are two');
+	restore();
+	use({ monitor: claimsMonitor([], { watches: [] }) });
+	assert.strictEqual(first(await runSlash(owner(), 'link', { slot: 'ZackPlex' })).content, 'No room is being watched yet: `!ap watch <room> <slot>` starts one, then link the slot.');
+});
+
+test('without watch: only the linked person\'s own claim picks the room, never somebody else\'s', async () => {
+	const { game } = use({ monitor: claimsMonitor([{ watchId: 1, slot: 'BenPlex', userId: BEN }], { watches: [LIVE, TRIAL] }) });
+	assert.match(first(await runSlash(ana(), 'link', { slot: 'BenPlex' })).content, /^Claim the slot first, with the id of its room: `!ap claim <id> BenPlex`/);
+	assert.match(first(await runSlash(owner(), 'link', { slot: 'BenPlex', user: ana() })).content, /^More than one room is being watched, so say which/, 'Ben\'s claim does not choose Ana\'s room');
+	assert.deepStrictEqual(linked(game), []);
+	await runSlash(owner(), 'link', { slot: 'BenPlex', user: ben() });
+	assert.deepStrictEqual(linked(game), [{ watchId: 1, slot: 'BenPlex', userId: BEN, by: OWNER }], 'Ben\'s own claim does');
+});
+
+// The review's bug: the command the owner was told to send again had lost the user, so sending it
+// linked the slot to the owner.
+test('without watch: a question to the owner linking for someone else keeps who it is for', async () => {
+	const { game } = use({ monitor: claimsMonitor([], { watches: [LIVE, TRIAL], rooms: { 0: ['ZackLL1'], 1: ['Finder', 'BenPlex'] } }) });
+	assert.strictEqual(first(await runPrefix(owner(), `link BenPlex <@${BEN}>`, { mentions: [ben()] })).content,
+		`More than one room is being watched, and \`BenPlex\` is in #1 archipelago.gg (as \`Finder\`): \`!apmedia link BenPlex <@${BEN}> watch=1\`.`);
+	assert.strictEqual(first(await runSlash(owner(), 'link', { slot: 'Nowhere', user: ben() })).content,
+		`More than one room is being watched, so say which: \`/apmedia link slot:Nowhere watch:<id>\` with user: <@${BEN}>. Watched: #0 Configured room (as \`ZackLL1\`), #1 archipelago.gg (as \`Finder\`).`);
+	assert.deepStrictEqual(linked(game), []);
+	await runPrefix(owner(), `link BenPlex <@${BEN}> watch=1`, { mentions: [ben()] });
+	assert.deepStrictEqual(linked(game), [{ watchId: 1, slot: 'BenPlex', userId: BEN, by: OWNER }], 'the suggested command, sent as given, links Ben');
+});
+
+const REAL = { id: 2, label: 'archipelago.gg', slot: 'Watcher' };
+
+// The review's bug: a claim left in the rehearsal's room took the link although the real seed's room
+// has a slot of the same name.
+test('without watch: a lone claim is a question when another read room has the same slot', async () => {
+	const rooms = { 0: ['ZackLL1'], 1: ['Finder', 'FriendPlex'], 2: ['Watcher', 'FriendPlex'] };
+	const { game } = use({ monitor: claimsMonitor([{ watchId: 1, slot: 'FriendPlex', userId: ANA }], { watches: [LIVE, TRIAL, REAL], rooms }) });
+	// A third review's bug: the player was offered watch:2, where they hold no claim and the link is refused.
+	assert.strictEqual(first(await runSlash(ana(), 'link', { slot: 'FriendPlex' })).content,
+		'`FriendPlex` is claimed on #1 archipelago.gg (as `Finder`): `/apmedia link slot:FriendPlex watch:1` links it there. #2 archipelago.gg (as `Watcher`) has a slot of that name too: for that one, `!ap claim 2 FriendPlex` first, then `/apmedia link slot:FriendPlex watch:2`.');
+	assert.strictEqual(first(await runSlash(owner(), 'link', { slot: 'FriendPlex', user: ana() })).content,
+		`\`FriendPlex\` is claimed on #1 archipelago.gg (as \`Finder\`), and #2 archipelago.gg (as \`Watcher\`) has a slot of that name too, so say which: \`/apmedia link slot:FriendPlex watch:<id>\` with user: <@${ANA}>.`,
+		'the owner needs no claim, so any of them can be linked');
+	assert.deepStrictEqual(linked(game), []);
+	await runSlash(ana(), 'link', { slot: 'FriendPlex', watch: 1 });
+	assert.deepStrictEqual(linked(game).map((a) => a.watchId), [1], 'the command the player was given links');
+	restore();
+
+	const alone = use({ monitor: claimsMonitor([{ watchId: 1, slot: 'FriendPlex', userId: ANA }], { watches: [LIVE, TRIAL, REAL], rooms: { 0: ['ZackLL1'], 1: ['Finder', 'FriendPlex'], 2: ['Watcher'] } }) });
+	await runSlash(ana(), 'link', { slot: 'FriendPlex' });
+	assert.deepStrictEqual(linked(alone.game).map((a) => a.watchId), [1], 'no other room has it: the claim picks');
+	restore();
+
+	// The second review's bug: one room not read yet switched the question off.
+	for (const read of [{ 1: ['Finder', 'FriendPlex'], 2: ['Watcher', 'FriendPlex'] }, { 2: ['Watcher', 'FriendPlex'] }]) {
+		const half = use({ monitor: claimsMonitor([{ watchId: 1, slot: 'FriendPlex', userId: ANA }], { watches: [LIVE, TRIAL, REAL], rooms: read }) });
+		assert.match(first(await runSlash(ana(), 'link', { slot: 'FriendPlex' })).content, /^`FriendPlex` is claimed on #1 .*links it there\. #2 archipelago\.gg \(as `Watcher`\) has a slot of that name too: for that one, `!ap claim 2 FriendPlex` first/,
+			`rooms read: ${Object.keys(read).join(', ')}`);
+		assert.deepStrictEqual(linked(half.game), []);
+		restore();
+	}
+});
+
+// A third review's bug: a slot of the same name that plays another game counted as a room for it.
+test('without watch: a slot of that name playing another game is no room for the link', async () => {
+	const rooms = { 0: ['ZackLL1'], 1: ['Finder', { name: 'Friend', game: 'Lingo' }], 2: ['Watcher', 'Friend'] };
+	const { game } = use({ monitor: claimsMonitor([{ watchId: 1, slot: 'Friend', userId: ANA }], { watches: [LIVE, TRIAL, REAL], rooms }) });
+	assert.strictEqual(first(await runSlash(ana(), 'link', { slot: 'Friend' })).content,
+		'Claim the slot first: `!ap claim 2 Friend` shows it is yours. Then link it again, or ask the bot owner to link it for you.',
+		'the claim on the Lingo slot does not pick watch #1');
+	assert.strictEqual(first(await runPrefix(owner(), 'link Friend')).content,
+		'More than one room is being watched, and `Friend` is in #2 archipelago.gg (as `Watcher`): `!apmedia link Friend watch=2`.');
+	assert.deepStrictEqual(linked(game), []);
+});
+
+test('without watch: a slot whose first word is a number keeps the id in the claim, and a player with no room watched asks the owner', async () => {
+	use({ monitor: claimsMonitor([], { watches: [{ id: 1, label: 'archipelago.gg', slot: 'Finder' }] }) });
+	assert.match(first(await runSlash(ana(), 'link', { slot: '42 Fast' })).content, /^Claim the slot first: `!ap claim 1 42 Fast` shows it is yours/, '!ap would read 42 as the id');
+	assert.match(first(await runSlash(ana(), 'link', { slot: 'Fast 42' })).content, /^Claim the slot first: `!ap claim Fast 42` shows it is yours/);
+	restore();
+	use({ monitor: claimsMonitor([], { watches: [] }) });
+	assert.strictEqual(first(await runSlash(ana(), 'link', { slot: 'AnaPlex' })).content, 'No room is being watched yet: ask the bot owner to watch the seed\'s room, then link the slot.');
+});
+
+test('without watch: one slot name in two read rooms and no claim lists every watch', async () => {
+	const rooms = { 0: ['ZackLL1'], 1: ['Finder', 'FriendPlex'], 2: ['Watcher', 'FriendPlex'] };
+	const { game } = use({ monitor: claimsMonitor([], { watches: [LIVE, TRIAL, REAL], rooms }) });
+	const watched = 'Watched: #0 Configured room (as `ZackLL1`), #1 archipelago.gg (as `Finder`), #2 archipelago.gg (as `Watcher`).';
+	assert.strictEqual(first(await runSlash(ana(), 'link', { slot: 'FriendPlex' })).content,
+		`Claim the slot first, with the id of its room: \`!ap claim <id> FriendPlex\` shows it is yours. Then link it again, or ask the bot owner to link it for you. ${watched}`);
+	assert.strictEqual(first(await runSlash(owner(), 'link', { slot: 'FriendPlex' })).content,
+		`More than one room is being watched, so say which: \`/apmedia link slot:FriendPlex watch:<id>\`. ${watched}`);
+	assert.deepStrictEqual(linked(game), []);
+});
+
+test('with the Archipelago monitor off the owner is told so too, with or without watch:', async () => {
+	const { game } = use({ monitor: claimsMonitor([], { watches: [] }) });
+	config.archipelagoEnabled = false;
+	const off = /^The Archipelago monitor is off \(`archipelagoEnabled`\)/;
+	assert.match(first(await runSlash(owner(), 'link', { slot: 'ZackPlex' })).content, off);
+	assert.match(first(await runSlash(owner(), 'link', { slot: 'ZackPlex', watch: 0 })).content, off);
+	assert.match(first(await runSlash(owner(), 'link', { slot: 'BenPlex', user: ben() })).content, off);
+	assert.deepStrictEqual(linked(game), []);
 });
 
 // ---- check, redeem, announce, unlink, retry -----------------------------------------------------
@@ -1395,6 +1651,299 @@ test('redeem, announce, unlink and retry pass the slot the caller means and show
 	assert.match(first(await runPrefix(ben(), 'retry')).content, /No Plex Media slot is linked to you\. Once your seed is up, claim your slot with `!ap claim <slot>`, then `\/apmedia link <slot>`\./);
 });
 
+test('ff spends a Fast Forward on a title named in full, from slash or prefix text, and never on a guess', async () => {
+	const { game } = use();
+	game.bindings.push({ key: '0::zack', slot: 'Zack', userId: ANA, watchId: 0 }, { key: '1::zack', slot: 'Zack 2', userId: ANA, watchId: 1 });
+	const spent = () => game.calls.filter((c) => c[0] === 'fastForward');
+	assert.strictEqual(first(await runSlash(ana(), 'ff', { title: 'The Matrix', slot: 'Zack' })).content, 'forwarded movie|The Matrix (1999)');
+	assert.strictEqual(first(await runPrefix(ana(), 'ff Alien slot="Zack 2"')).content, 'forwarded movie|Alien (1979)');
+	assert.deepStrictEqual(spent(), [['fastForward', '0::zack', 'movie|The Matrix (1999)'], ['fastForward', '1::zack', 'movie|Alien (1979)']]);
+	assert.strictEqual(first(await runPrefix(ana(), 'ff')).content,
+		'Which title? `!apmedia ff <title>` earns its next checkpoint (with Timesanity Strict on, 10 minutes of it count as heard).');
+	assert.match(first(await runPrefix(ana(), 'ff Matr slot=Zack')).content, /^Did you mean \*\*The Matrix \(1999\)\*\*\?/);
+	assert.strictEqual(spent().length, 2, 'a title named in part spends nothing');
+	assert.match(first(await runPrefix(ben(), 'ff Alien')).content, /No Plex Media slot is linked to you/);
+});
+
+test('snackbar shows the terms or buys one item, from a slash choice or the words people type', async () => {
+	const { game } = use();
+	game.bindings.push({ key: '0::zack', slot: 'Zack', userId: ANA, watchId: 0 }, { key: '1::zack', slot: 'Zack 2', userId: ANA, watchId: 1 });
+	const asked = () => game.calls.filter((c) => c[0] === 'snackBar').map((c) => [c[1], c[2].buy]);
+	assert.strictEqual(first(await runSlash(ana(), 'snackbar', { slot: 'Zack' })).content, 'snack bar null');
+	assert.strictEqual(first(await runSlash(ana(), 'snackbar', { buy: 'fast-forward', slot: 'Zack' })).content, 'snack bar fastForward');
+	await runPrefix(ana(), 'snackbar buy rc slot=Zack');
+	await runPrefix(ana(), 'snackbar remote-control Zack 2');
+	await runPrefix(ana(), 'snackbar buy=ff Zack');
+	await runPrefix(ana(), 'snackbar Zack 2');
+	assert.deepStrictEqual(asked(), [
+		['0::zack', null], ['0::zack', 'fastForward'], ['0::zack', 'remoteControl'], ['1::zack', 'remoteControl'], ['0::zack', 'fastForward'], ['1::zack', null],
+	]);
+	assert.strictEqual(first(await runPrefix(ana(), 'snackbar buy popcorn slot=Zack')).content,
+		'`popcorn` is not on the menu. The Snack Bar sells `fast-forward` and `remote-control`: `!apmedia snackbar buy fast-forward`.');
+	assert.strictEqual(asked().length, 6, 'nothing bought');
+	assert.deepStrictEqual(['Fast Forward', 'fast_forward', 'FF', 'Remote Control', 'remote', 'snack'].map(require('../commands/apmedia.js/snackbar.js').itemOf),
+		['fastForward', 'fastForward', 'fastForward', 'remoteControl', 'remoteControl', null]);
+	const spec = apmedia._internal.SUBCOMMANDS.find((s) => s.name === 'snackbar');
+	assert.deepStrictEqual(spec.options.find((o) => o.name === 'buy').choices.map((c) => c.value), ['fast-forward', 'remote-control']);
+	const help = apmedia._internal.helpEmbed(BOT).data.description;
+	assert.match(help, /`!apmedia ff <title> \[slot=x\]`/);
+	assert.match(help, /`!apmedia snackbar \[buy fast-forward\|remote-control\] \[slot=x\]`/);
+	assert.ok(help.length <= 4096, `${help.length} characters`);
+});
+
+// The bug: the help and the slash description said a Fast Forward skips 10 minutes, and the world's
+// default timers put movie and audiobook checkpoints 15 and 30 minutes apart. Without strict it now
+// earns the next checkpoint wherever it is.
+test('ff\'s description and help say what a Fast Forward earns, with strict and without', () => {
+	const spec = apmedia._internal.SUBCOMMANDS.find((s) => s.name === 'ff');
+	assert.strictEqual(spec.description, 'Spend a Fast Forward: earn a title\'s next checkpoint (strict: 10 minutes of it count as heard)');
+	assert.ok(spec.description.length <= 100, `${spec.description.length} characters`);
+	const help = apmedia._internal.helpEmbed(BOT).data.description;
+	assert.ok(help.includes('`!apmedia ff <title> [slot=x]`: Spend a Fast Forward: earn a title\'s next checkpoint without playing it '
+		+ '(with Timesanity Strict on, the 10 minutes after where you got to count as heard instead).\n'), help);
+	assert.ok(!/skip|within 10 minutes/i.test(`${spec.description}\n${help}`), 'nothing says it skips, or reaches only 10 minutes');
+});
+
+// The bug: slot= takes one word, so `slot=Zack 2` named the slot `Zack` and handed the `2` to the rest
+// of the command: a trade went to the other slot, and `ff Toy Story slot=Zack 2` spent that slot's
+// Fast Forward on Toy Story 2, with no word of either.
+test('stray words after an unquoted slot= are refused with how to write it, and nothing is spent', async () => {
+	const { game } = use();
+	game.bindings.push({ key: '0::zack', slot: 'Zack', userId: ANA, watchId: 0 }, { key: '1::zack', slot: 'Zack 2', userId: ANA, watchId: 1 });
+	game.entries = [{ t: 'Toy Story', y: 1995 }, { t: 'Toy Story 2', y: 1999 }, { t: 'The Matrix', y: 1999 }];
+	const spent = () => game.calls.filter((c) => c[0] === 'snackBar' || c[0] === 'fastForward').map((c) => [c[0], c[1], c[0] === 'snackBar' ? c[2].buy : c[2]]);
+	const asked = 'Is the slot `Zack 2`? Then put it in quotes: `slot="Zack 2"`. If it is `Zack`, put `slot=Zack` last. Nothing was spent.';
+	for (const typed of ['snackbar buy rc slot=Zack 2', 'snackbar rc slot=Zack 2', 'snackbar slot=Zack 2', 'ff Toy Story slot=Zack 2', 'ff The Matrix slot=Zack 2']) {
+		assert.strictEqual(first(await runPrefix(ana(), typed)).content, asked, typed);
+	}
+	for (const typed of ['snackbar buy rc Slot=Zack 2', 'ff Toy Story SLOT=Zack 2', 'ff Toy Story s_lot=Zack 2']) {
+		assert.strictEqual(first(await runPrefix(ana(), typed)).content, asked, `${typed}: the key is read as takeKeys reads it`);
+	}
+	for (const typed of [
+		"snackbar buy rc slot='Zack 2'", "ff Toy Story slot='Zack 2'", "snackbar slot='Zack 2' buy rc",
+		'snackbar buy rc slot=\u2018Zack 2\u2019', 'ff Toy Story slot=\u2019Zack 2\u2019',
+		'ff Toy Story slot=\u2019Zack 2 \u2018',
+	]) {
+		assert.strictEqual(first(await runPrefix(ana(), typed)).content, asked, `${typed}: single quotes, curly as a phone types them too, are no quotes to slot=, and the hint leaves them out`);
+	}
+	for (const typed of ['ff Toy Story slot=Zack 2 slot=Zack', 'ff Toy Story slot=Zack slot=Zack 2', 'snackbar slot=Zack 2 buy=rc slot=Zack']) {
+		assert.strictEqual(first(await runPrefix(ana(), typed)).content, asked, `${typed}: a slot= typed twice, either one cut short`);
+	}
+	assert.strictEqual(first(await runPrefix(ana(), 'ff slot=Zack The Matrix slot=Zack')).content,
+		'Is the slot `Zack The Matrix`? Then put it in quotes: `slot="Zack The Matrix"`. If it is `Zack`, put `slot=Zack` last. Nothing was spent.',
+		'typed twice, slot= leads no longer: every word after the first is the slot\'s');
+	assert.strictEqual(first(await runPrefix(ana(), 'ff Alien slot= Zack 2')).content, 'Is the slot `Zack 2`? Then put it in quotes: `slot="Zack 2"`. Nothing was spent.');
+	assert.strictEqual(first(await runPrefix(ana(), "ff Alien slot= 'Zack 2'")).content, 'Is the slot `Zack 2`? Then put it in quotes: `slot="Zack 2"`. Nothing was spent.');
+	assert.strictEqual(first(await runPrefix(ana(), "ff Alien slot=Zack '")).content, 'Is the slot `Zack`? Then put it in quotes: `slot="Zack"`. Nothing was spent.',
+		'a stray quote alone: no second guess that names the same slot');
+	assert.strictEqual(first(await runPrefix(ana(), "ff Alien slot= '")).content, 'Is the slot `\'`? Then put it in quotes: `slot="\'"`. Nothing was spent.', 'never an empty name');
+	assert.deepStrictEqual(spent(), []);
+	await runPrefix(ana(), 'snackbar buy rc slot="Zack 2"');
+	await runPrefix(ana(), 'snackbar buy rc slot=Zack');
+	await runPrefix(ana(), 'snackbar slot=Zack buy=ff');
+	await runPrefix(ana(), 'ff Toy Story slot="Zack 2"');
+	await runPrefix(ana(), 'ff Toy Story 2 slot=Zack');
+	await runPrefix(ana(), 'ff slot="Zack 2" The Matrix');
+	await runPrefix(ana(), 'snackbar slot="Zack 2" buy ff');
+	assert.deepStrictEqual(spent(), [
+		['snackBar', '1::zack', 'remoteControl'],
+		['snackBar', '0::zack', 'remoteControl'],
+		['snackBar', '0::zack', 'fastForward'],
+		['fastForward', '1::zack', 'movie|Toy Story (1995)'],
+		['fastForward', '0::zack', 'movie|Toy Story 2 (1999)'],
+		['fastForward', '1::zack', 'movie|The Matrix (1999)'],
+		['snackBar', '1::zack', 'fastForward'],
+	], 'quoted (words after it too), or last, or followed only by another key, it is read as typed');
+});
+
+// The bug: the refusal above took every word after an unquoted slot= for the slot's, so
+// `ff slot=Zack The Matrix` and `snackbar slot=Zack buy rc`, which had worked, were refused.
+test('a lone slot= may come first: the words the command reads after it are its own, and only the rest is refused', async () => {
+	const { game } = use();
+	game.bindings.push({ key: '0::zack', slot: 'Zack', userId: ANA, watchId: 0 }, { key: '1::zack', slot: 'Zack 2', userId: ANA, watchId: 1 });
+	game.entries = [{ t: 'Toy Story', y: 1995 }, { t: 'Toy Story 2', y: 1999 }, { t: 'The Matrix', y: 1999 }];
+	const spent = () => game.calls.filter((c) => ['snackBar', 'fastForward', 'creditManual'].includes(c[0]))
+		.map((c) => [c[0], c[1], c[0] === 'snackBar' ? c[2].buy : c[2], ...(c[0] === 'creditManual' ? [c[3].atMs] : [])]);
+	for (const typed of [
+		'ff slot=Zack The Matrix', 'snackbar slot=Zack buy rc', 'snackbar slot=Zack BUY RC', 'snackbar slot=Zack Buy rc',
+		'snackbar slot=Zack rc', 'snackbar slot=Zack remote control', 'snackbar slot=Zack buy fast forward', 'snackbar slot=Zack',
+		'check at=45m slot=Zack Toy Story 2',
+	]) {
+		await runPrefix(ana(), typed);
+	}
+	assert.deepStrictEqual(spent(), [
+		['fastForward', '0::zack', 'movie|The Matrix (1999)'],
+		['snackBar', '0::zack', 'remoteControl'],
+		['snackBar', '0::zack', 'remoteControl'],
+		['snackBar', '0::zack', 'remoteControl'],
+		['snackBar', '0::zack', 'remoteControl'],
+		['snackBar', '0::zack', 'remoteControl'],
+		['snackBar', '0::zack', 'fastForward'],
+		['snackBar', '0::zack', null],
+		['creditManual', '0::zack', 'movie|Toy Story 2 (1999)', 2700000],
+	], 'with nothing before it but the command\'s other pairs, and buy in any case');
+	assert.strictEqual(first(await runPrefix(ana(), 'snackbar slot=Zack buy popcorn')).content,
+		'`popcorn` is not on the menu. The Snack Bar sells `fast-forward` and `remote-control`: `!apmedia snackbar buy fast-forward`.',
+		'the word after buy is read as the item, on the menu or not');
+	game.calls.length = 0;
+	for (const typed of ['snackbar slot=Zack buy', 'snackbar slot=Zack BUY']) {
+		assert.strictEqual(first(await runPrefix(ana(), typed)).content, 'The Snack Bar sells `fast-forward` and `remote-control`: `!apmedia snackbar buy fast-forward`.',
+			`${typed}: buy alone is the command's own word, not the rest of the slot's name`);
+	}
+	const asked = 'Is the slot `Zack 2`? Then put it in quotes: `slot="Zack 2"`. If it is `Zack`, put `slot=Zack` last. Nothing was spent.';
+	for (const typed of ['snackbar slot=Zack 2', 'snackbar slot=Zack 2 buy rc', 'snackbar slot=Zack 2 remote control', 'snackbar slot=Zack buy rc 2', 'snackbar buy=ff slot=Zack 2']) {
+		assert.strictEqual(first(await runPrefix(ana(), typed)).content, asked, `${typed}: the words the command does not read are the slot's`);
+	}
+	assert.strictEqual(first(await runPrefix(ana(), 'snackbar buy=ff slot=Zack rc')).content,
+		'Is the slot `Zack rc`? Then put it in quotes: `slot="Zack rc"`. If it is `Zack`, put `slot=Zack` last. Nothing was spent.',
+		'after buy= the command reads no word');
+	assert.deepStrictEqual(spent(), []);
+});
+
+// The bug: redeem and check read slot= as one word while ff and snackbar refused the words after it:
+// `redeem Toy Story slot=Zack 2` spent Zack's Wild Ticket on Toy Story 2, and check counted it.
+test('redeem and check refuse stray words after an unquoted slot= as ff does, and check counts nothing', async () => {
+	const { game } = use();
+	game.bindings.push({ key: '0::zack', slot: 'Zack', userId: ANA, watchId: 0 }, { key: '1::zack', slot: 'Zack 2', userId: ANA, watchId: 1 });
+	game.entries = [{ t: 'Toy Story', y: 1995 }, { t: 'Toy Story 2', y: 1999 }, { t: 'The Matrix', y: 1999 }];
+	const spent = () => game.calls.filter((c) => c[0] === 'redeem' || c[0] === 'creditManual').map((c) => [c[0], c[1], c[2], ...(c[3] ? [c[3].atMs] : [])]);
+	const asked = (nothing) => `Is the slot \`Zack 2\`? Then put it in quotes: \`slot="Zack 2"\`. If it is \`Zack\`, put \`slot=Zack\` last. ${nothing}`;
+	assert.strictEqual(first(await runPrefix(ana(), 'redeem Toy Story slot=Zack 2')).content, asked('Nothing was spent.'));
+	assert.strictEqual(first(await runPrefix(ana(), 'redeem Toy Story slot=Zack slot=Zack 2')).content, asked('Nothing was spent.'));
+	for (const typed of ['check Toy Story slot=Zack 2 at=1h', 'check Toy Story slot=Zack 2', 'check Toy Story slot=Zack 2 at 1h', 'check Toy Story SLOT=Zack 2 @1h']) {
+		assert.strictEqual(first(await runPrefix(ana(), typed)).content, asked('Nothing was counted.'), typed);
+	}
+	assert.deepStrictEqual(spent(), []);
+	await runPrefix(ana(), 'redeem slot=Zack Toy Story');
+	await runPrefix(ana(), 'redeem Toy Story 2 slot=Zack');
+	await runPrefix(ana(), 'check slot=Zack Toy Story at 1h30m');
+	await runPrefix(ana(), 'check The Matrix slot=Zack at 1h30m');
+	await runPrefix(ana(), 'check Toy Story slot=Zack @45m');
+	await runPrefix(ana(), 'check Toy Story slot="Zack 2" at 45m');
+	assert.deepStrictEqual(spent(), [
+		['redeem', '0::zack', 'movie|Toy Story (1995)'],
+		['redeem', '0::zack', 'movie|Toy Story 2 (1999)'],
+		['creditManual', '0::zack', 'movie|Toy Story (1995)', 5400000],
+		['creditManual', '0::zack', 'movie|The Matrix (1999)', 5400000],
+		['creditManual', '0::zack', 'movie|Toy Story (1995)', 2700000],
+		['creditManual', '1::zack', 'movie|Toy Story (1995)', 2700000],
+	], 'first, last, or last before check\'s time, it is read as typed');
+});
+
+// The bug: a single quote is no quote to slot=, so `ff slot='Zack 2' The Matrix` read the slot `'Zack`
+// and the title `2' The Matrix`, and answered that no slot is called `'Zack` instead of how to write it.
+test('a single quote a leading slot= opens gives the slot the words up to the one that closes it, curly ones too', async () => {
+	const { game } = use();
+	game.bindings.push({ key: '0::zack', slot: 'Zack', userId: ANA, watchId: 0 }, { key: '1::zack', slot: 'Zack 2', userId: ANA, watchId: 1 });
+	game.entries = [{ t: 'Toy Story', y: 1995 }, { t: 'Toy Story 2', y: 1999 }, { t: 'The Matrix', y: 1999 }, { t: 'Singin\' in the Rain', y: 1952 }];
+	const spent = () => game.calls.filter((c) => ['snackBar', 'fastForward', 'redeem', 'creditManual'].includes(c[0]));
+	const asked = (nothing) => `Is the slot \`Zack 2\`? Then put it in quotes: \`slot="Zack 2"\`. If it is \`Zack\`, put \`slot=Zack\` last. ${nothing}`;
+	for (const typed of [
+		"ff slot='Zack 2' The Matrix", 'ff slot=\u2018Zack 2\u2019 The Matrix', 'ff slot=\u2019Zack 2\u2019 The Matrix', "ff slot='Zack 2'",
+		"redeem slot='Zack 2' Toy Story", 'redeem slot=\u2018Zack 2\u2019 Toy Story', 'redeem slot=\u2019Zack 2\u2019 Toy Story',
+		"snackbar slot='Zack 2' buy rc", 'snackbar slot=\u2018Zack 2\u2019 buy rc',
+		'ff slot=\u2019Zack 2 \u2018 The Matrix',
+	]) {
+		assert.strictEqual(first(await runPrefix(ana(), typed)).content, asked('Nothing was spent.'), typed);
+	}
+	for (const typed of ["check slot='Zack 2' Toy Story at 1h", 'check slot=\u2018Zack 2\u2019 Toy Story', 'check at=45m slot=\u2019Zack 2\u2019 Toy Story']) {
+		assert.strictEqual(first(await runPrefix(ana(), typed)).content, asked('Nothing was counted.'), typed);
+	}
+	assert.strictEqual(first(await runPrefix(ana(), "ff slot=' Zack 2' The Matrix")).content, 'Is the slot `Zack 2`? Then put it in quotes: `slot="Zack 2"`. Nothing was spent.',
+		'a quote alone opens too');
+	assert.strictEqual(first(await runPrefix(ana(), "ff slot='Zack 2' Singin' in the Rain")).content, asked('Nothing was spent.'),
+		'the first word that closes it ends the slot\'s name, not an apostrophe in the title after it');
+	assert.strictEqual(first(await runPrefix(ana(), "snackbar slot='Zack 2' buy rc 3")).content,
+		'Is the slot `Zack 2\' 3`? Then put it in quotes: `slot="Zack 2\' 3"`. If it is `Zack`, put `slot=Zack` last. Nothing was spent.',
+		'after the closing word the command reads its own words as before, and a word left over is the slot\'s too');
+	assert.strictEqual(first(await runPrefix(ana(), "ff slot='Zack The Matrix")).content, 'No linked Plex Media slot is called `\'Zack`.', 'a quote no later word closes gives the slot no word');
+	assert.strictEqual(first(await runPrefix(ana(), "ff slot='Zack Ocean's Eleven")).content, 'No linked Plex Media slot is called `\'Zack`.', 'an apostrophe inside a word closes nothing');
+	assert.strictEqual(first(await runPrefix(ana(), "ff slot='Zack' Singin' in the Rain")).content, 'No linked Plex Media slot is called `\'Zack\'`.',
+		'a quote the value closes itself gives the slot no word');
+	assert.strictEqual(first(await runPrefix(ana(), 'ff slot=\u2018Zack\u2019 Singin\u2019 in the Rain')).content, 'No linked Plex Media slot is called `\u2018Zack\u2019`.',
+		'a curly one too');
+	assert.deepStrictEqual(spent(), []);
+	await runPrefix(ana(), "ff slot=Zack Singin' in the Rain");
+	assert.deepStrictEqual(spent(), [['fastForward', '0::zack', 'movie|Singin\' in the Rain (1952)']], 'a value that opens no quote leaves a title its apostrophes');
+});
+
+// The bug: a slot whose name starts with a quote mark gave the title's first word to it, so
+// `ff slot='Tis Singin' in the Rain` asked whether the slot was `Tis Singin` instead of spending.
+test('a leading slot= value that names a slot as typed opens no quote', async () => {
+	const { game } = use();
+	game.bindings.push(
+		{ key: '0::tis', slot: '\'Tis', userId: ANA, watchId: 0 },
+		{ key: '1::til', slot: '\u2019Til', userId: ANA, watchId: 1 },
+		{ key: '2::twas', slot: '\'Twas', userId: BEN, watchId: 2 },
+	);
+	game.entries = [{ t: 'Singin\' in the Rain', y: 1952 }];
+	const spent = () => game.calls.filter((c) => ['fastForward', 'redeem', 'creditManual'].includes(c[0]));
+	const rain = 'movie|Singin\' in the Rain (1952)';
+	for (const typed of ["ff slot='Tis Singin' in the Rain", "redeem slot='Tis Singin' in the Rain", "check slot='Tis Singin' in the Rain at 1h", "ff slot=\u2019Til Singin' in the Rain"]) {
+		await runPrefix(ana(), typed);
+	}
+	await runPrefix(owner(), "check slot='Twas Singin' in the Rain at 1h");
+	assert.deepStrictEqual(spent(), [
+		['fastForward', '0::tis', rain],
+		['redeem', '0::tis', rain],
+		['creditManual', '0::tis', rain, { atMs: 3600000 }],
+		['fastForward', '1::til', rain],
+		['creditManual', '2::twas', rain, { atMs: 3600000 }],
+	], 'the owner checks any slot, so Ben\'s counts for them too');
+});
+
+// The bug: the item was one word, so the names the bot itself uses ("remote control", "fast forward")
+// were read as an item and a slot, or as a slot alone; and a slot named RC bought a Remote Control
+// when its player asked to see its Snack Bar.
+test('snackbar reads the items\' own two-word names, and a slot named like an item shows its Snack Bar', async () => {
+	const { game } = use();
+	game.bindings.push({ key: '0::zack', slot: 'Zack', userId: ANA, watchId: 0 }, { key: '1::zack', slot: 'Zack 2', userId: ANA, watchId: 1 });
+	const asked = () => game.calls.filter((c) => c[0] === 'snackBar').map((c) => [c[1], c[2].buy]);
+	for (const typed of ['snackbar buy remote control Zack', 'snackbar remote control Zack', 'snackbar fast forward Zack 2', 'snackbar buy Fast Forward slot=Zack', 'snackbar REMOTE CONTROL slot="Zack 2"']) {
+		await runPrefix(ana(), typed);
+	}
+	assert.deepStrictEqual(asked(), [['0::zack', 'remoteControl'], ['0::zack', 'remoteControl'], ['1::zack', 'fastForward'], ['0::zack', 'fastForward'], ['1::zack', 'remoteControl']]);
+	assert.strictEqual(first(await runPrefix(ana(), 'snackbar buy fast slot=Zack')).content,
+		'`fast` is not on the menu. The Snack Bar sells `fast-forward` and `remote-control`: `!apmedia snackbar buy fast-forward`.');
+
+	game.calls.length = 0;
+	game.bindings = [{ key: '0::rc', slot: 'RC', userId: ANA, watchId: 0 }, { key: '0::ff', slot: 'ff', userId: ANA, watchId: 0 }];
+	for (const typed of ['snackbar RC', 'snackbar FF', 'snackbar rc RC', 'snackbar buy rc ff', 'snackbar rc slot=RC']) await runPrefix(ana(), typed);
+	assert.deepStrictEqual(asked(), [['0::rc', null], ['0::ff', null], ['0::rc', 'remoteControl'], ['0::ff', 'remoteControl'], ['0::rc', 'remoteControl']]);
+	assert.strictEqual(first(await runPrefix(ana(), 'snackbar buy RC')).content, 'Several slots match.', 'after buy the word is the item, and the slot is still to name');
+	game.calls.length = 0;
+	game.bindings = [{ key: '0::rc', slot: 'RC', userId: BEN, watchId: 0 }];
+	assert.match(first(await runPrefix(ana(), 'snackbar RC')).content, /^No Plex Media slot is linked to you\./, 'only the caller\'s own slots are slots here');
+	assert.deepStrictEqual(asked(), []);
+});
+
+// The bug: the two-word name was read before a slot's, so with slots `Control Freak` and `Freak`,
+// "remote Control Freak" was the item "remote Control" and bought a Remote Control for `Freak`.
+test('remote before the name of one of your slots is the item alone, and the slot is that one', async () => {
+	const { game } = use();
+	game.bindings.push({ key: '0::cf', slot: 'Control Freak', userId: ANA, watchId: 0 }, { key: '0::freak', slot: 'Freak', userId: ANA, watchId: 0 });
+	const asked = () => game.calls.filter((c) => c[0] === 'snackBar').map((c) => [c[1], c[2].buy]);
+	for (const typed of ['snackbar buy remote Control Freak', 'snackbar remote Control Freak', 'snackbar buy rc Freak', 'snackbar buy remote control slot=Freak', 'snackbar slot=Freak remote control']) {
+		await runPrefix(ana(), typed);
+	}
+	assert.deepStrictEqual(asked(), [['0::cf', 'remoteControl'], ['0::cf', 'remoteControl'], ['0::freak', 'remoteControl'], ['0::freak', 'remoteControl'], ['0::freak', 'remoteControl']]);
+	game.calls.length = 0;
+	game.bindings = [{ key: '0::zack', slot: 'Zack', userId: ANA, watchId: 0 }, { key: '0::control', slot: 'Control', userId: ANA, watchId: 0 }];
+	await runPrefix(ana(), 'snackbar slot=Zack remote control');
+	await runPrefix(ana(), 'snackbar slot=Zack buy remote control');
+	assert.deepStrictEqual(asked(), [['0::zack', 'remoteControl'], ['0::zack', 'remoteControl']], 'with slot= no word after the item is a slot, so the item keeps both words');
+	game.calls.length = 0;
+	game.bindings = [{ key: '0::fl', slot: 'Forward Line', userId: ANA, watchId: 0 }, { key: '0::line', slot: 'Line', userId: ANA, watchId: 0 }];
+	await runPrefix(ana(), 'snackbar fast forward Line');
+	await runPrefix(ana(), 'snackbar buy fast forward Line');
+	assert.deepStrictEqual(asked(), [['0::line', 'fastForward'], ['0::line', 'fastForward']], 'fast alone is no item, so the two-word name stays whole');
+	game.calls.length = 0;
+	game.bindings = [{ key: '0::zp', slot: 'ZackPlex', userId: OWNER, watchId: 0 }, { key: '0::control', slot: 'Control', userId: BEN, watchId: 0 }];
+	await runPrefix(owner(), 'snackbar remote control');
+	await runPrefix(owner(), 'snackbar buy remote control');
+	assert.deepStrictEqual(asked(), [['0::zp', 'remoteControl'], ['0::zp', 'remoteControl']], 'the owner\'s own slots only: Ben\'s `Control` is no slot of theirs');
+});
+
 // ---- list and status pages --------------------------------------------------------------------
 
 test('a long list is paged behind buttons only the asker can turn', async () => {
@@ -1422,6 +1971,19 @@ test('a long list is paged behind buttons only the asker can turn', async () => 
 	assert.match(first(await runPrefix(ana(), 'list sideways')).content, /No linked Plex Media slot is called `sideways`/, 'a word that is no view is the slot');
 	game.lists.done = { ok: true, message: '`Zack`: nothing done.', which: 'done', groups: [] };
 	assert.match(first(await runPrefix(ana(), 'list done')).content, /Nothing is done yet\./);
+});
+
+// The bug: an empty view kept the slot's line alone, so a Buffering holding the slot's first checks
+// went unsaid on the one page that showed nothing else.
+test('an empty view keeps the Buffering line under the slot\'s line', async () => {
+	const { game } = use();
+	game.bindings.push({ key: '0::zack', slot: 'Zack', userId: ANA, watchId: 0 });
+	const buffering = { held: 3, until: 1800000000000 };
+	game.lists.done = { ok: true, message: '`Zack`: 0 done.', which: 'done', groups: [], buffering };
+	assert.strictEqual(first(await runPrefix(ana(), 'list done')).content,
+		'`Zack`: 0 done.\n\u23F3 Buffering: 3 checks held until <t:1800000000:t>.\nNothing is done yet.');
+	game.lists.locked = { ok: true, message: '`Zack`: 0 locked.', which: 'locked', groups: [] };
+	assert.strictEqual(first(await runSlash(ana(), 'list', { show: 'locked' })).content, '`Zack`: 0 locked.\nNothing is locked.');
 });
 
 // The bug: a long heading repeated as "(continued)" over a long row, plus the page footer, made a
@@ -1484,6 +2046,17 @@ test('status: a player sees their own slots, the owner anyone\'s, all of them wi
 	game.calls.length = 0;
 	await runPrefix(ana(), 'status Zack');
 	assert.deepStrictEqual(game.calls.filter((c) => c[0] === 'status'), [['status', '0::zack']]);
+});
+
+// The bug: a seed made with snack_bar_trades 0 showed "0 trades left" for a Snack Bar that never had one.
+test('status leaves the Snack Bar out of a seed that allows no trades, and keeps it once the trades are used', () => {
+	const status = require('../commands/apmedia.js/status.js');
+	// As statusRow fills them in once the room reported the slot's items.
+	const row = (snackBar) => ({ snacks: { received: 12, spent: 0, held: 12 }, snackBar, fastForwards: null, remoteControls: null, holds: null, armed: [] });
+	assert.deepStrictEqual(status.itemLines(row({ price: 10, trades: 0, tradesLeft: 0 })), []);
+	assert.deepStrictEqual(status.itemLines(row({ price: 10, trades: 3, tradesLeft: 0 })),
+		['> Snacks: 12. The Snack Bar takes 10 snacks a trade, 0 trades left (`/apmedia snackbar`).']);
+	assert.deepStrictEqual(status.itemLines(row(null)), [], 'a seed from before 0.3.0 has no Snack Bar');
 });
 
 // ---- autocomplete -----------------------------------------------------------------------------

@@ -33,6 +33,8 @@ const FILE_NAME_SHOWN = 60;
 const REPLY_FILE_MAX = 8 * 1024 * 1024;
 // Discord's limit on a message's text, which say() clips to.
 const CONTENT_MAX = 2000;
+// The settings a file left random that the reply names one by one; the rest are counted.
+const RANDOM_SHOWN = 6;
 
 // User-facing keys, without case, dashes or underscores, to the builder's parameter names.
 const KEYS = Object.freeze({
@@ -70,6 +72,19 @@ const KEYS = Object.freeze({
 	timesanitystrict: 'strict',
 	lockedwatches: 'lockedWatches',
 	checkpointitems: 'checkpointItems',
+	snackvariety: 'snackVariety',
+	fastforwards: 'fastForwards',
+	remotecontrols: 'remoteControls',
+	snackbartrades: 'snackBarTrades',
+	snackbarprice: 'snackBarPrice',
+	trappercentage: 'trapPercentage',
+	bufferingweight: 'bufferingWeight',
+	rightsexpiredweight: 'rightsExpiredWeight',
+	commercialbreakweight: 'commercialBreakWeight',
+	shufflemodeweight: 'shuffleModeWeight',
+	rewindweight: 'rewindWeight',
+	intermissionweight: 'intermissionWeight',
+	slowmotionweight: 'slowMotionWeight',
 });
 const FILLED_IN = new Map([
 	['accountid', 'from the linked Plex account'],
@@ -101,7 +116,9 @@ const SLASH = Object.freeze({
 });
 const KEY_LIST = 'name, preset, movies, shows, albums, books, titles, playlist, collection, genre, years, unwatched, max_episodes, '
 	+ 'time_movies, time_episodes, time_albums, time_books, goal_percent, tv_unlock, episodes_per_unlock, label, '
-	+ 'starting_unlocks, wild_tickets, strict, locked_watches, checkpoint_items, for';
+	+ 'starting_unlocks, wild_tickets, strict, locked_watches, checkpoint_items, snack_variety, fast_forwards, remote_controls, '
+	+ 'snack_bar_trades, snack_bar_price, trap_percentage, buffering_weight, rights_expired_weight, commercial_break_weight, '
+	+ 'shuffle_mode_weight, rewind_weight, intermission_weight, slow_motion_weight, for';
 
 /**
  * key=value words into builder params. A bare word is the name when name= is not given, and a
@@ -255,17 +272,26 @@ function settingName(key) {
 	return contracts.SETTING_NAMES[key] ? `${contracts.SETTING_NAMES[key]} (\`${key}\`)` : `\`${key}\``;
 }
 
-/** The reply's lines about the attached file: where the settings came from, and what changed. */
+/**
+ * The reply's lines about the attached file: where the settings came from and what changed (head),
+ * and the settings left random (middle). A file can leave all 25 game options random, so that line
+ * names a few and counts the rest, and fitLines may still leave it out to keep the next steps.
+ * @returns {{head: string[], middle: string[]}}
+ */
 function fileLines(fromFile, file, typed) {
 	const overrode = Object.values(typed).some((v) => v !== undefined && v !== null && String(v).trim() !== '');
-	const lines = [`\u{1F4C4} Settings from ${fileNameShown(file)}${overrode ? '; the options you typed replace the file\'s' : ''}.`];
+	const head = [`\u{1F4C4} Settings from ${fileNameShown(file)}${overrode ? '; the options you typed replace the file\'s' : ''}.`];
 	const n = fromFile.entriesCount;
-	if (n) lines.push(`\u267B\uFE0F ${n === 1 ? 'The file\'s 1 title was' : `The file's ${n} titles were`} replaced by a fresh pick from Plex.`);
+	if (n) head.push(`\u267B\uFE0F ${n === 1 ? 'The file\'s 1 title was' : `The file's ${n} titles were`} replaced by a fresh pick from Plex.`);
 	const random = fromFile.random.map((key) => `${settingName(key)}, default ${contracts.OPTIONS[key].default}`);
+	const middle = [];
 	if (random.length) {
-		lines.push(`\u26A0\uFE0F Left random in your file for Archipelago to roll: ${random.join('; ')}. The numbers above use ${random.length === 1 ? 'the default' : 'the defaults'}.`);
+		const shown = random.slice(0, RANDOM_SHOWN);
+		const more = random.length - shown.length;
+		middle.push(`\u26A0\uFE0F Left random in your file for Archipelago to roll: ${shown.join('; ')}${more ? `; and ${more} more` : ''}. `
+			+ `The numbers above use ${random.length === 1 ? 'the default' : 'the defaults'}.`);
 	}
-	return lines;
+	return { head, middle };
 }
 
 /**
@@ -391,15 +417,16 @@ async function run(ctx) {
 	const name = fromFile ? fromFile.name : params.name;
 	const head = [
 		`\u{1F4DD} ${common.slot(name)}: ${forOther ? `a list for <@${target}>` : 'your list'}, attached as \`${out.fileName}\`.`,
-		...yamlModule.summaryLines(summary, name).slice(0, 2),
+		...yamlModule.summaryLines(summary, name).slice(0, 3),
 	];
-	if (fromFile) head.push(...fileLines(fromFile, file, params));
+	const fromLines = fromFile ? fileLines(fromFile, file, params) : { head: [], middle: [] };
+	head.push(...fromLines.head);
 	if (account && account.consent === 'pending') {
 		head.push(forOther
 			? `\u26A0\uFE0F <@${target}> has not accepted the link to their Plex account yet: until they do, the bot knows nothing they watched.`
 			: '\u26A0\uFE0F Your Plex account link waits for you to accept it in the bot\'s DM: until you do, the bot knows nothing you watched.');
 	}
-	const middle = (summary.warnings || []).map((w) => `\u26A0\uFE0F ${common.esc(w)}`);
+	const middle = [...fromLines.middle, ...(summary.warnings || []).map((w) => `\u26A0\uFE0F ${common.esc(w)}`)];
 	for (const miss of summary.misses || []) {
 		const near = miss.didYouMean && miss.didYouMean.length ? ` (did you mean ${miss.didYouMean.map(common.bold).join(', ')}?)` : '';
 		middle.push(`\u2753 Not found: ${common.esc(miss.query)}${near}`);
@@ -410,4 +437,4 @@ async function run(ctx) {
 	});
 }
 
-module.exports = { names: ['yaml'], run, parsePairs, readAttachment, fitLines, KEYS, FILE_HOSTS, FILE_TIMEOUT_MS, REPLY_FILE_MAX, CONTENT_MAX };
+module.exports = { names: ['yaml'], run, parsePairs, readAttachment, fitLines, fileLines, KEYS, FILE_HOSTS, FILE_TIMEOUT_MS, REPLY_FILE_MAX, CONTENT_MAX, RANDOM_SHOWN };

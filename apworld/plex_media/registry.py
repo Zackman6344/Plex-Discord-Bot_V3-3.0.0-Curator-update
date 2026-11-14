@@ -11,14 +11,19 @@
 
 import hashlib
 
-from .constants import (COUNTER, GOAL_LOCATION, ITEM_GROUPS, LOCATION_GROUPS, MAX_CHECKS, MAX_UNLOCKS, POPCORN,
-                        VICTORY, WILD_TICKET, check_id, unlock_id)
+from .constants import (COUNTER, FIXED_GROUPS, GOAL_LOCATION, ITEM_GROUPS, LOCATION_GROUPS, MAX_CHECKS, MAX_UNLOCKS,
+                        VICTORY, check_id, fixed_items, unlock_id)
 from .naming import checkpoint_name, main_location_name, make_unique, sanitize_text, unit_name
 from .plan import LOCATION_PREFIX
 
 # Group names are resolved before item and location names by the server, so a title may not take one.
-RESERVED = frozenset(name.casefold() for name in (POPCORN, WILD_TICKET, VICTORY, COUNTER, GOAL_LOCATION,
-                                                  *ITEM_GROUPS, *LOCATION_GROUPS))
+# World 0.3.0 added the snacks, Fast Forward, Remote Control, the traps and their three groups. Of a
+# list's names only a movie without a year can be spelled like one of them, and in a seed made from
+# then on it takes a tag ("Rewind [<rating key>]"). The rename is display only, so it ships under
+# builder 1: it moves no id or key, the bot reads every id from slot_data, and a seed already
+# generated keeps the data package it shipped with.
+RESERVED = frozenset(name.casefold() for name in (*fixed_items(), VICTORY, COUNTER, GOAL_LOCATION, *ITEM_GROUPS,
+                                                  *LOCATION_GROUPS))
 UNIT_GROUP = {"movie": "Movies", "show": "Shows", "album": "Albums", "mix": "Playlists", "book": "Books"}
 MAIN_GROUP = {"movie": "Movies", "episode": "Episodes", "album": "Albums", "mix": "Playlists", "book": "Books"}
 CHECKPOINT_GROUP = "Checkpoints"
@@ -131,7 +136,9 @@ class Registry:
 
 	def item_groups(self):
 		groups = {name: [] for name in ITEM_GROUPS}
-		groups["Everything"] += [POPCORN, WILD_TICKET]
+		for name, members in FIXED_GROUPS.items():
+			groups[name] += members
+		groups["Everything"] += list(fixed_items())
 		for key in self.unit_keys:
 			name = self.unit_name[key]
 			groups[UNIT_GROUP[self.unit_kind[key]]].append(name)

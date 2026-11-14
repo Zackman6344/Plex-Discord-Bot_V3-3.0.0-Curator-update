@@ -8,7 +8,7 @@
 
 GAME = "Plex Media"
 APWORLD_NAME = "plex_media"
-WORLD_VERSION = "0.2.0"
+WORLD_VERSION = "0.3.0"
 MIN_AP_VERSION = "0.6.8"
 BUILDER_VERSION = 1
 SLOT_DATA_SCHEMA = 1
@@ -20,15 +20,54 @@ MAX_UNLOCKS = 20_000
 MAX_CHECKS = 60_000
 POPCORN_ID = BASE_ID + 1
 WILD_TICKET_ID = BASE_ID + 2
+FAST_FORWARD_ID = BASE_ID + 100
+REMOTE_CONTROL_ID = BASE_ID + 101
 
 POPCORN = "Popcorn"
 WILD_TICKET = "Wild Ticket"
+FAST_FORWARD = "Fast Forward"
+REMOTE_CONTROL = "Remote Control"
 VICTORY = "Victory"
 GOAL_LOCATION = "Plex Media Goal"
 # A state counter for the goal rule, never an item in the pool.
 COUNTER = "Plex Media Unlocked Entries"
 
-ITEM_GROUPS = ("Movies", "Shows", "Albums", "Playlists", "Books", "Everything")
+# The items that are not unlocks have fixed ids between BASE_ID + 1 and BASE_ID + 999, below the
+# first unlock. A room names items by id for as long as it lives, so one is only ever added in a
+# free id, never renumbered. SNACKS is the filler in the order the pool deals it out, Popcorn alone
+# while snack_variety is off.
+SNACKS = {
+	POPCORN: POPCORN_ID,
+	"Nachos": BASE_ID + 3,
+	"Large Soda": BASE_ID + 4,
+	"Candy Bar": BASE_ID + 5,
+	"Hot Dog": BASE_ID + 6,
+	"Soft Pretzel": BASE_ID + 7,
+	"Ice Cream Sandwich": BASE_ID + 8,
+}
+# slot_data's items.useful and items.traps are keyed like these. A trap's weight is the option
+# <key>_weight, and a tie in the trap split goes to the trap listed first.
+USEFUL = {
+	"fast_forward": {"name": FAST_FORWARD, "id": FAST_FORWARD_ID},
+	"remote_control": {"name": REMOTE_CONTROL, "id": REMOTE_CONTROL_ID},
+}
+TRAPS = {
+	"buffering": {"name": "Buffering", "id": BASE_ID + 200},
+	"rights_expired": {"name": "Rights Expired", "id": BASE_ID + 201},
+	"commercial_break": {"name": "Commercial Break", "id": BASE_ID + 202},
+	"shuffle_mode": {"name": "Shuffle Mode", "id": BASE_ID + 203},
+	"rewind": {"name": "Rewind", "id": BASE_ID + 204},
+	"intermission": {"name": "Intermission", "id": BASE_ID + 205},
+	"slow_motion": {"name": "Slow Motion", "id": BASE_ID + 206},
+}
+
+ITEM_GROUPS = ("Movies", "Shows", "Albums", "Playlists", "Books", "Snacks", "Useful", "Traps", "Everything")
+# The item groups whose members are the same in every seed.
+FIXED_GROUPS = {
+	"Snacks": list(SNACKS),
+	"Useful": [WILD_TICKET, FAST_FORWARD, REMOTE_CONTROL],
+	"Traps": [trap["name"] for trap in TRAPS.values()],
+}
 LOCATION_GROUPS = ("Movies", "Episodes", "Albums", "Playlists", "Books", "Checkpoints", "Everywhere")
 
 KINDS = ("movie", "episode", "album", "mix", "book")
@@ -65,6 +104,19 @@ OPTIONS = {
 	"timesanity_albums": {"type": "range", "min": 0, "max": 240, "default": 0},
 	"timesanity_books": {"type": "range", "min": 0, "max": 1440, "default": 30},
 	"wild_tickets": {"type": "range", "min": 0, "max": 20, "default": 2},
+	"snack_variety": {"type": "toggle", "default": True},
+	"fast_forwards": {"type": "range", "min": 0, "max": 10, "default": 2},
+	"remote_controls": {"type": "range", "min": 0, "max": 10, "default": 1},
+	"snack_bar_trades": {"type": "range", "min": 0, "max": 10, "default": 3},
+	"snack_bar_price": {"type": "range", "min": 5, "max": 50, "default": 10},
+	"trap_percentage": {"type": "range", "min": 0, "max": 100, "default": 0},
+	"buffering_weight": {"type": "range", "min": 0, "max": 10, "default": 2},
+	"rights_expired_weight": {"type": "range", "min": 0, "max": 10, "default": 2},
+	"commercial_break_weight": {"type": "range", "min": 0, "max": 10, "default": 1},
+	"shuffle_mode_weight": {"type": "range", "min": 0, "max": 10, "default": 1},
+	"rewind_weight": {"type": "range", "min": 0, "max": 10, "default": 1},
+	"intermission_weight": {"type": "range", "min": 0, "max": 10, "default": 1},
+	"slow_motion_weight": {"type": "range", "min": 0, "max": 10, "default": 1},
 }
 
 # The list settings, in the order the YAML writes them (after OPTIONS): what the bot picks from the
@@ -116,8 +168,16 @@ def check_name(j):
 	return f"Check {j}"
 
 
+def fixed_items():
+	"""Every item that is not an unlock, name to id: Popcorn and Wild Ticket first, then the rest by id."""
+	table = {POPCORN: POPCORN_ID, WILD_TICKET: WILD_TICKET_ID, **SNACKS}
+	for item in (*USEFUL.values(), *TRAPS.values()):
+		table[item["name"]] = item["id"]
+	return table
+
+
 def static_item_table():
-	table = {POPCORN: POPCORN_ID, WILD_TICKET: WILD_TICKET_ID}
+	table = fixed_items()
 	for i in range(1, MAX_UNLOCKS + 1):
 		table[unlock_name(i)] = unlock_id(i)
 	return table

@@ -186,6 +186,73 @@ function secondsToMs(value) {
 	return Number.isFinite(n) && n > 0 ? n * 1000 : 0;
 }
 
+function objectOf(value) {
+	return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+}
+
+function wholeOf(value, min = 0) {
+	const n = Number(value);
+	return Number.isSafeInteger(n) && n >= min ? n : null;
+}
+
+/**
+ * The slot's item ids: Popcorn and Wild Tickets (the contracts' ids when slot_data names none, as
+ * every seed has them), and what world 0.3.0 added. A seed without snacks, useful or traps in its
+ * items has none of those: their ids are never guessed, so a 0.2.0 seed keeps counting as it did.
+ * @param {object} items slot_data's `items`, or an index's own
+ * @returns {{popcorn: number, wildTicket: number, snacks: Set<number>, fastForward: number|null,
+ *   remoteControl: number|null, traps: Map<number, string>}} snacks holds Popcorn too; traps maps an
+ *   id to its contracts.TRAPS key
+ */
+function itemIds(items) {
+	const raw = objectOf(items) || {};
+	if (raw.snacks instanceof Set && raw.traps instanceof Map) return raw;
+	const popcorn = idOf(raw.popcorn) ?? contracts.IDS.popcorn;
+	const snacks = new Set([popcorn]);
+	for (const id of Object.values(objectOf(raw.snacks) || {})) {
+		const n = idOf(id);
+		if (n !== null) snacks.add(n);
+	}
+	const useful = objectOf(raw.useful) || {};
+	const traps = new Map();
+	for (const [key, id] of Object.entries(objectOf(raw.traps) || {})) {
+		const n = idOf(id);
+		if (n !== null && Object.prototype.hasOwnProperty.call(contracts.TRAPS, key)) traps.set(n, key);
+	}
+	return {
+		popcorn,
+		wildTicket: idOf(raw.wild_ticket ?? raw.wildTicket) ?? contracts.IDS.wildTicket,
+		snacks,
+		fastForward: idOf(useful.fast_forward ?? useful.fastForward),
+		remoteControl: idOf(useful.remote_control ?? useful.remoteControl),
+		traps,
+	};
+}
+
+/** slot_data's snack_bar as {trades, price}, or null for a seed without one. */
+function snackBarOf(value) {
+	const bar = objectOf(value);
+	if (!bar) return null;
+	const trades = wholeOf(bar.trades);
+	const price = wholeOf(bar.price, 1);
+	return trades === null || price === null ? null : { trades, price };
+}
+
+/** slot_data's pool (what the slot's own items are), or null for a seed without one. */
+function poolOf(value) {
+	const pool = objectOf(value);
+	if (!pool) return null;
+	const traps = {};
+	for (const key of Object.keys(contracts.TRAPS)) traps[key] = wholeOf((objectOf(pool.traps) || {})[key]) || 0;
+	return {
+		snacks: wholeOf(pool.snacks) || 0,
+		traps,
+		fastForwards: wholeOf(pool.fast_forwards) || 0,
+		remoteControls: wholeOf(pool.remote_controls) || 0,
+		wildTickets: wholeOf(pool.wild_tickets) || 0,
+	};
+}
+
 /**
  * Lookups for one slot's slot_data (schema 1).
  * @param {object} slotData
@@ -300,10 +367,9 @@ function indexSlot(slotData) {
 		byLocation,
 		byUnit,
 		units,
-		items: {
-			popcorn: idOf(items.popcorn) ?? contracts.IDS.popcorn,
-			wildTicket: idOf(items.wild_ticket ?? items.wildTicket) ?? contracts.IDS.wildTicket,
-		},
+		items: itemIds(items),
+		snackBar: snackBarOf(slotData.snack_bar),
+		pool: poolOf(slotData.pool),
 		goalCount,
 		goalPercent,
 		entryCount: Number.isSafeInteger(statedCount) && statedCount >= 0 ? statedCount : entries.length,
@@ -400,6 +466,26 @@ function hitsForMetadata(index, meta) {
 	return out;
 }
 
+/** The stretch of the entry's own timeline a hit stands for: all of it, or one track or part. */
+function spanOf(hit, info) {
+	if (hit.role === 'whole') return { startMs: 0, endMs: info.durationMs };
+	if (hit.role !== SUB_ROLE[info.kind]) return null;
+	const n = Number(hit.index);
+	if (!Number.isInteger(n) || n < 1 || n > info.spans.length) return null;
+	return info.spans[n - 1];
+}
+
+/** An event's fromMs..toMs moved onto the entry's timeline, or null when it holds no stretch. */
+function rangeOf(span, event) {
+	const from = Number(event.fromMs);
+	const to = Number(event.toMs);
+	if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
+	const length = span.endMs - span.startMs;
+	const lo = span.startMs + clamp(from, 0, length);
+	const hi = span.startMs + clamp(to, 0, length);
+	return hi > lo ? { lo, hi } : null;
+}
+
 /**
  * The location ids one hit earns from one event (spec 5.3). Deduped; main locations first in
  * play order, then checkpoints ascending. The span of a track or part is read from the entry, so
@@ -413,28 +499,15 @@ function hitsForMetadata(index, meta) {
 function locationsFor(hit, event, strict) {
 	if (!hit || !hit.entry || typeof hit.entry !== 'object' || !event) return [];
 	const info = derive(hit.entry);
-	let span = null;
-	if (hit.role === 'whole') {
-		span = { startMs: 0, endMs: info.durationMs };
-	} else if (hit.role === SUB_ROLE[info.kind]) {
-		const n = Number(hit.index);
-		if (!Number.isInteger(n) || n < 1 || n > info.spans.length) return [];
-		span = info.spans[n - 1];
-	} else {
-		return [];
-	}
+	const span = spanOf(hit, info);
+	if (!span) return [];
 
 	let main = [];
 	let earns;
 	if (event.type === 'span') {
-		const from = Number(event.fromMs);
-		const to = Number(event.toMs);
-		if (!Number.isFinite(from) || !Number.isFinite(to)) return [];
-		const length = span.endMs - span.startMs;
-		const lo = span.startMs + clamp(from, 0, length);
-		const hi = span.startMs + clamp(to, 0, length);
-		if (!(hi > lo)) return [];
-		earns = (atMs) => atMs > lo && atMs <= hi;
+		const range = rangeOf(span, event);
+		if (!range) return [];
+		earns = (atMs) => atMs > range.lo && atMs <= range.hi;
 	} else if (event.type === 'complete') {
 		if (hit.role === 'whole') {
 			main = info.main;
@@ -455,28 +528,144 @@ function locationsFor(hit, event, strict) {
 	return [...out];
 }
 
+// Under timesanity_strict a checkpoint needs everything from the entry's start to it heard, over any
+// number of sittings: a stretch played across the mark is not enough, as it is for locationsFor's
+// spans. A gap shorter than HEARD_GAP_MS is forgiven, since a book loses the seconds before a jump;
+// the book's 30 s skip button makes a gap that is not.
+const HEARD_GAP_MS = 30000;
+// A Plex session range carries a pad (a third number): the watcher looks only every
+// apMediaSessionSeconds, so a session's first and last seconds are never seen, and a stop and
+// resume, or every Plexamp track change, leaves a seam of up to two polls plus the client's lag. A
+// gap between two ranges is forgiven below the larger of HEARD_GAP_MS and their pads added.
+const HEARD_PAD_MAX_MS = 90000;
+// Ranges past the first gap stay apart until it is heard; this keeps a title skipped all over small.
+const HEARD_MAX_RANGES = 64;
+// Per binding, so one slot cannot grow the bindings file without bound; apMediaStore keeps the same.
+const HEARD_TOTAL_MAX = 4096;
+
+function padOf(value) {
+	const n = Number(value);
+	return Number.isFinite(n) && n > 0 ? Math.min(n, HEARD_PAD_MAX_MS) : 0;
+}
+
 /**
- * Received items counted by item id. Popcorn and Wild Tickets are not units: they are counted on
- * their own, with their ids read from slot_data's `items` (the contracts' fixed ids otherwise).
+ * Sorted, disjoint, finite [lo, hi] or [lo, hi, pad] ranges from whatever was stored. Touching
+ * ranges join and keep the larger pad; a range without one is written as a pair.
+ */
+function cleanRanges(value) {
+	const all = [];
+	for (const range of list(value)) {
+		if (!Array.isArray(range)) continue;
+		const lo = Number(range[0]);
+		const hi = Number(range[1]);
+		if (Number.isFinite(lo) && Number.isFinite(hi) && lo >= 0 && hi > lo) all.push([lo, hi, padOf(range[2])]);
+	}
+	all.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+	const out = [];
+	for (const [lo, hi, pad] of all) {
+		const last = out[out.length - 1];
+		if (last && lo <= last[1]) {
+			last[1] = Math.max(last[1], hi);
+			last[2] = Math.max(last[2], pad);
+		} else {
+			out.push([lo, hi, pad]);
+		}
+	}
+	return out.map(([lo, hi, pad]) => (pad ? [lo, hi, pad] : [lo, hi]));
+}
+
+// From the floor, through every range a forgiven gap away: how far it reaches, the pad of the range
+// that took it there, and the index of the first range left out.
+function walk(ranges, gapMs, floorMs) {
+	let reach = Math.max(0, Number(floorMs) || 0);
+	let pad = 0;
+	let next = 0;
+	for (; next < ranges.length; next++) {
+		const [lo, hi, own = 0] = ranges[next];
+		if (lo > reach && lo - reach >= Math.max(gapMs, pad + own)) break;
+		if (hi > reach) {
+			reach = hi;
+			pad = own;
+		}
+	}
+	return { reach, pad, next };
+}
+
+/**
+ * How far from the entry's start everything has been heard, from floorMs on (an earned checkpoint's
+ * mark), a gap forgiven below the larger of gapMs and the pads of the ranges on its two sides.
+ */
+function heardThrough(ranges, gapMs = HEARD_GAP_MS, floorMs = 0) {
+	return walk(cleanRanges(ranges), gapMs, floorMs).reach;
+}
+
+/**
+ * Under timesanity_strict, what one event earns for one hit, and the entry's heard ranges after it.
+ * Main locations are locationsFor's; a checkpoint comes once heardThrough reaches it. A span adds its
+ * stretch (with the event's padMs), and so does a 'complete' that carries one (voice sends the audio
+ * that went out); a Plex history row or a finished bookmark carries none, so it proves no listening.
+ * @param {object} hit @param {object} event
+ * @param {Array<number[]>} heard the entry's ranges so far, on its own timeline
+ * @param {{floorMs?: number, gapMs?: number}} [opts] floorMs: the mark of the entry's furthest
+ *   checkpoint already earned, which counts as everything before it heard
+ * @returns {{ids: number[], heard: Array<number[]>}} heard empty once every checkpoint is reached
+ */
+function strictLocations(hit, event, heard, { floorMs = 0, gapMs = HEARD_GAP_MS } = {}) {
+	let ranges = cleanRanges(heard);
+	if (!hit || !hit.entry || typeof hit.entry !== 'object' || !event) return { ids: [], heard: ranges };
+	const info = derive(hit.entry);
+	const span = spanOf(hit, info);
+	if (!span || (event.type !== 'span' && event.type !== 'complete')) return { ids: [], heard: ranges };
+	const checkpointIds = new Set(info.checkpoints.map((cp) => cp.id));
+	const out = new Set(event.type === 'complete' ? locationsFor(hit, event, true).filter((id) => !checkpointIds.has(id)) : []);
+	const range = rangeOf(span, event);
+	if (range) ranges = cleanRanges([...ranges, [range.lo, range.hi, padOf(event.padMs)]]);
+	const reached = walk(ranges, gapMs, floorMs);
+	const through = reached.reach;
+	for (const cp of info.checkpoints) if (cp.atMs <= through) out.add(cp.id);
+	const last = info.checkpoints[info.checkpoints.length - 1];
+	if (!last || through >= last.atMs) return { ids: [...out], heard: [] };
+	// What was reached is kept as one range: its forgiven gaps would be forgiven again.
+	const head = through > 0 ? [reached.pad ? [0, through, reached.pad] : [0, through]] : [];
+	return { ids: [...out], heard: [...head, ...ranges.slice(reached.next)].slice(0, HEARD_MAX_RANGES) };
+}
+
+/**
+ * Received items counted by item id. Wild Tickets, snacks (Popcorn among them), the useful items and
+ * the traps are not units: each is counted on its own, with its id read from slot_data's `items`, and
+ * an id the seed does not name falls through to the units as before.
  * @param {Array<{item: number}|number>} items NetworkItem objects (start inventory included)
  * @param {object} [source] indexSlot() result or raw slot_data
- * @returns {{units: Map<number, number>, wild: number, popcorn: number}}
+ * @returns {{units: Map<number, number>, wild: number, popcorn: number, snacks: number,
+ *   useful: {fastForward: number, remoteControl: number}, traps: Object<string, number>}}
  */
 function unitCounts(items, source) {
-	const named = (source && source.items) || {};
-	const popcornId = idOf(named.popcorn) ?? contracts.IDS.popcorn;
-	const wildId = idOf(named.wildTicket ?? named.wild_ticket) ?? contracts.IDS.wildTicket;
+	const ids = itemIds(source && source.items);
 	const units = new Map();
+	const useful = { fastForward: 0, remoteControl: 0 };
+	const traps = Object.fromEntries(Object.keys(contracts.TRAPS).map((key) => [key, 0]));
 	let wild = 0;
 	let popcorn = 0;
+	let snacks = 0;
 	for (const it of list(items)) {
 		const id = idOf(it && typeof it === 'object' ? it.item : it);
 		if (id === null) continue;
-		if (id === wildId) wild += 1;
-		else if (id === popcornId) popcorn += 1;
-		else units.set(id, (units.get(id) || 0) + 1);
+		if (id === ids.wildTicket) {
+			wild += 1;
+		} else if (ids.snacks.has(id)) {
+			snacks += 1;
+			if (id === ids.popcorn) popcorn += 1;
+		} else if (id === ids.fastForward) {
+			useful.fastForward += 1;
+		} else if (id === ids.remoteControl) {
+			useful.remoteControl += 1;
+		} else if (ids.traps.has(id)) {
+			traps[ids.traps.get(id)] += 1;
+		} else {
+			units.set(id, (units.get(id) || 0) + 1);
+		}
 	}
-	return { units, wild, popcorn };
+	return { units, wild, popcorn, snacks, useful, traps };
 }
 
 function countsMap(counts) {
@@ -616,6 +805,14 @@ module.exports = {
 	hitsFor,
 	hitsForMetadata,
 	locationsFor,
+	strictLocations,
+	cleanRanges,
+	heardThrough,
+	HEARD_GAP_MS,
+	HEARD_PAD_MAX_MS,
+	HEARD_MAX_RANGES,
+	HEARD_TOTAL_MAX,
+	itemIds,
 	unitCounts,
 	isUnlocked,
 	redeemKeys,
