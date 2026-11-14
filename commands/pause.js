@@ -18,6 +18,9 @@ module.exports = {
       const player = bot.isPlaying ? bot.dispatcher : null;
       if (player && (player.pause(true) || player.state.status === AudioPlayerStatus.Paused)) {
         bot.isPaused = true;
+        // helpers/apMediaTraps.js compares it: a trap's timed pause never lifts music someone
+        // paused while it lasted.
+        bot.pauseCount = (bot.pauseCount || 0) + 1;
         // Listener attachments removed: this command used to add fresh debug+error
         // listeners on every !pause invocation, which accumulated on long-running
         // songs. Error logging is already handled at the AudioPlayer's creation

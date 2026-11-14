@@ -1,7 +1,7 @@
 [
 	{
 		"name": "movies at the defaults",
-		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2},
+		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2, "snack_variety": true, "fast_forwards": 2, "remote_controls": 1, "snack_bar_trades": 3, "snack_bar_price": 10, "trap_percentage": 0, "buffering_weight": 2, "rights_expired_weight": 2, "commercial_break_weight": 1, "shuffle_mode_weight": 1, "rewind_weight": 1, "intermission_weight": 1, "slow_motion_weight": 1},
 		"entries": [
 			{"k": "movie", "id": "rk:1", "rk": 1, "t": "Long Film", "y": 2000, "d": 6120000},
 			{"k": "movie", "id": "rk:2", "rk": 2, "t": "Short Film", "y": 2000, "d": 5400000},
@@ -14,6 +14,12 @@
 			"N_main": 3,
 			"N_checkpoints": 11,
 			"goal_count": 2,
+			"FF": 0,
+			"RC": 0,
+			"F": 11,
+			"T": 0,
+			"traps": {"buffering": 0, "rights_expired": 0, "commercial_break": 0, "shuffle_mode": 0, "rewind": 0, "intermission": 0, "slow_motion": 0},
+			"snacks": {"Popcorn": 2, "Nachos": 2, "Large Soda": 2, "Candy Bar": 2, "Hot Dog": 1, "Soft Pretzel": 1, "Ice Cream Sandwich": 1},
 			"units": [
 				{"key": "movie|rk:1", "steps": 1, "start": 1, "prefix": [0, 1]},
 				{"key": "movie|rk:2", "steps": 1, "start": 1, "prefix": [0, 1]},
@@ -28,7 +34,7 @@
 	},
 	{
 		"name": "the 0.9 cut at 15 minutes",
-		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2},
+		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2, "snack_variety": true, "fast_forwards": 2, "remote_controls": 1, "snack_bar_trades": 3, "snack_bar_price": 10, "trap_percentage": 0, "buffering_weight": 2, "rights_expired_weight": 2, "commercial_break_weight": 1, "shuffle_mode_weight": 1, "rewind_weight": 1, "intermission_weight": 1, "slow_motion_weight": 1},
 		"entries": [
 			{"k": "movie", "id": "rk:1", "rk": 1, "t": "Exactly At The Cut", "y": 2000, "d": 1000000},
 			{"k": "movie", "id": "rk:2", "rk": 2, "t": "One Past The Cut", "y": 2000, "d": 1000001},
@@ -41,6 +47,12 @@
 			"N_main": 3,
 			"N_checkpoints": 1,
 			"goal_count": 2,
+			"FF": 0,
+			"RC": 0,
+			"F": 1,
+			"T": 0,
+			"traps": {"buffering": 0, "rights_expired": 0, "commercial_break": 0, "shuffle_mode": 0, "rewind": 0, "intermission": 0, "slow_motion": 0},
+			"snacks": {"Popcorn": 1, "Nachos": 0, "Large Soda": 0, "Candy Bar": 0, "Hot Dog": 0, "Soft Pretzel": 0, "Ice Cream Sandwich": 0},
 			"units": [
 				{"key": "movie|rk:1", "steps": 1, "start": 1, "prefix": [0, 1]},
 				{"key": "movie|rk:2", "steps": 1, "start": 1, "prefix": [0, 1]},
@@ -55,7 +67,7 @@
 	},
 	{
 		"name": "the 0.9 cut at 10 minutes",
-		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 10, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2},
+		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 10, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2, "snack_variety": true, "fast_forwards": 2, "remote_controls": 1, "snack_bar_trades": 3, "snack_bar_price": 10, "trap_percentage": 0, "buffering_weight": 2, "rights_expired_weight": 2, "commercial_break_weight": 1, "shuffle_mode_weight": 1, "rewind_weight": 1, "intermission_weight": 1, "slow_motion_weight": 1},
 		"entries": [
 			{"k": "movie", "id": "rk:1", "rk": 1, "t": "One Hundred Minutes", "y": 2000, "d": 6000000},
 			{"k": "movie", "id": "rk:2", "rk": 2, "t": "One Hundred Minutes Plus", "y": 2000, "d": 6000001}
@@ -67,6 +79,12 @@
 			"N_main": 2,
 			"N_checkpoints": 17,
 			"goal_count": 1,
+			"FF": 0,
+			"RC": 0,
+			"F": 17,
+			"T": 0,
+			"traps": {"buffering": 0, "rights_expired": 0, "commercial_break": 0, "shuffle_mode": 0, "rewind": 0, "intermission": 0, "slow_motion": 0},
+			"snacks": {"Popcorn": 3, "Nachos": 3, "Large Soda": 3, "Candy Bar": 2, "Hot Dog": 2, "Soft Pretzel": 2, "Ice Cream Sandwich": 2},
 			"units": [
 				{"key": "movie|rk:1", "steps": 1, "start": 1, "prefix": [0, 1]},
 				{"key": "movie|rk:2", "steps": 1, "start": 0, "prefix": [0, 1]}
@@ -79,7 +97,7 @@
 	},
 	{
 		"name": "episodes, three per unlock",
-		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2},
+		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2, "snack_variety": true, "fast_forwards": 2, "remote_controls": 1, "snack_bar_trades": 3, "snack_bar_price": 10, "trap_percentage": 0, "buffering_weight": 2, "rights_expired_weight": 2, "commercial_break_weight": 1, "shuffle_mode_weight": 1, "rewind_weight": 1, "intermission_weight": 1, "slow_motion_weight": 1},
 		"entries": [
 			{"k": "episode", "id": "rk:1000", "rk": 1000, "t": "Episode 3", "sh": "Show A", "sid": "plex://show/a", "srk": 50, "sn": 2, "en": 3, "d": 1320000},
 			{"k": "episode", "id": "rk:1001", "rk": 1001, "t": "Episode 1", "sh": "Show A", "sid": "plex://show/a", "srk": 50, "sn": 1, "en": 1, "d": 1320000},
@@ -96,6 +114,12 @@
 			"N_main": 7,
 			"N_checkpoints": 7,
 			"goal_count": 5,
+			"FF": 2,
+			"RC": 1,
+			"F": 8,
+			"T": 0,
+			"traps": {"buffering": 0, "rights_expired": 0, "commercial_break": 0, "shuffle_mode": 0, "rewind": 0, "intermission": 0, "slow_motion": 0},
+			"snacks": {"Popcorn": 2, "Nachos": 1, "Large Soda": 1, "Candy Bar": 1, "Hot Dog": 1, "Soft Pretzel": 1, "Ice Cream Sandwich": 1},
 			"units": [
 				{"key": "show-ep3|plex://show/a", "steps": 3, "start": 2, "prefix": [0, 3, 6, 7]}
 			],
@@ -112,7 +136,7 @@
 	},
 	{
 		"name": "episodes, one per unlock",
-		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 1, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2},
+		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 1, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2, "snack_variety": true, "fast_forwards": 2, "remote_controls": 1, "snack_bar_trades": 3, "snack_bar_price": 10, "trap_percentage": 0, "buffering_weight": 2, "rights_expired_weight": 2, "commercial_break_weight": 1, "shuffle_mode_weight": 1, "rewind_weight": 1, "intermission_weight": 1, "slow_motion_weight": 1},
 		"entries": [
 			{"k": "episode", "id": "rk:1000", "rk": 1000, "t": "Episode 3", "sh": "Show A", "sid": "plex://show/a", "srk": 50, "sn": 2, "en": 3, "d": 1320000},
 			{"k": "episode", "id": "rk:1001", "rk": 1001, "t": "Episode 1", "sh": "Show A", "sid": "plex://show/a", "srk": 50, "sn": 1, "en": 1, "d": 1320000},
@@ -129,6 +153,12 @@
 			"N_main": 7,
 			"N_checkpoints": 7,
 			"goal_count": 5,
+			"FF": 1,
+			"RC": 0,
+			"F": 7,
+			"T": 0,
+			"traps": {"buffering": 0, "rights_expired": 0, "commercial_break": 0, "shuffle_mode": 0, "rewind": 0, "intermission": 0, "slow_motion": 0},
+			"snacks": {"Popcorn": 1, "Nachos": 1, "Large Soda": 1, "Candy Bar": 1, "Hot Dog": 1, "Soft Pretzel": 1, "Ice Cream Sandwich": 1},
 			"units": [
 				{"key": "show-ep1|plex://show/a", "steps": 7, "start": 3, "prefix": [0, 1, 2, 3, 4, 5, 6, 7]}
 			],
@@ -145,7 +175,7 @@
 	},
 	{
 		"name": "episodes, twelve per unlock",
-		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 12, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2},
+		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 12, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2, "snack_variety": true, "fast_forwards": 2, "remote_controls": 1, "snack_bar_trades": 3, "snack_bar_price": 10, "trap_percentage": 0, "buffering_weight": 2, "rights_expired_weight": 2, "commercial_break_weight": 1, "shuffle_mode_weight": 1, "rewind_weight": 1, "intermission_weight": 1, "slow_motion_weight": 1},
 		"entries": [
 			{"k": "episode", "id": "rk:1000", "rk": 1000, "t": "Episode 3", "sh": "Show A", "sid": "plex://show/a", "srk": 50, "sn": 2, "en": 3, "d": 1320000},
 			{"k": "episode", "id": "rk:1001", "rk": 1001, "t": "Episode 1", "sh": "Show A", "sid": "plex://show/a", "srk": 50, "sn": 1, "en": 1, "d": 1320000},
@@ -162,6 +192,12 @@
 			"N_main": 7,
 			"N_checkpoints": 7,
 			"goal_count": 5,
+			"FF": 2,
+			"RC": 1,
+			"F": 9,
+			"T": 0,
+			"traps": {"buffering": 0, "rights_expired": 0, "commercial_break": 0, "shuffle_mode": 0, "rewind": 0, "intermission": 0, "slow_motion": 0},
+			"snacks": {"Popcorn": 2, "Nachos": 2, "Large Soda": 1, "Candy Bar": 1, "Hot Dog": 1, "Soft Pretzel": 1, "Ice Cream Sandwich": 1},
 			"units": [
 				{"key": "show-ep12|plex://show/a", "steps": 1, "start": 1, "prefix": [0, 7]}
 			],
@@ -178,7 +214,7 @@
 	},
 	{
 		"name": "episodes with specials",
-		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 2, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2},
+		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 2, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2, "snack_variety": true, "fast_forwards": 2, "remote_controls": 1, "snack_bar_trades": 3, "snack_bar_price": 10, "trap_percentage": 0, "buffering_weight": 2, "rights_expired_weight": 2, "commercial_break_weight": 1, "shuffle_mode_weight": 1, "rewind_weight": 1, "intermission_weight": 1, "slow_motion_weight": 1},
 		"entries": [
 			{"k": "episode", "id": "rk:1000", "rk": 1000, "t": "Episode 1", "sh": "Show B", "sid": "rk:60", "srk": 60, "sn": 1, "en": 1, "d": 1320000},
 			{"k": "episode", "id": "rk:1001", "rk": 1001, "t": "Episode 2", "sh": "Show B", "sid": "rk:60", "srk": 60, "sn": 0, "en": 2, "d": 1320000},
@@ -193,6 +229,12 @@
 			"N_main": 5,
 			"N_checkpoints": 5,
 			"goal_count": 4,
+			"FF": 2,
+			"RC": 0,
+			"F": 5,
+			"T": 0,
+			"traps": {"buffering": 0, "rights_expired": 0, "commercial_break": 0, "shuffle_mode": 0, "rewind": 0, "intermission": 0, "slow_motion": 0},
+			"snacks": {"Popcorn": 1, "Nachos": 1, "Large Soda": 1, "Candy Bar": 1, "Hot Dog": 1, "Soft Pretzel": 0, "Ice Cream Sandwich": 0},
 			"units": [
 				{"key": "show-ep2|rk:60", "steps": 3, "start": 2, "prefix": [0, 2, 4, 5]}
 			],
@@ -207,7 +249,7 @@
 	},
 	{
 		"name": "season mode",
-		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "season", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2},
+		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "season", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2, "snack_variety": true, "fast_forwards": 2, "remote_controls": 1, "snack_bar_trades": 3, "snack_bar_price": 10, "trap_percentage": 0, "buffering_weight": 2, "rights_expired_weight": 2, "commercial_break_weight": 1, "shuffle_mode_weight": 1, "rewind_weight": 1, "intermission_weight": 1, "slow_motion_weight": 1},
 		"entries": [
 			{"k": "episode", "id": "rk:1000", "rk": 1000, "t": "Episode 1", "sh": "Show C", "sid": "plex://show/c", "srk": 70, "sn": 3, "en": 1, "d": 1320000},
 			{"k": "episode", "id": "rk:1001", "rk": 1001, "t": "Episode 1", "sh": "Show C", "sid": "plex://show/c", "srk": 70, "sn": 1, "en": 1, "d": 1320000},
@@ -226,6 +268,12 @@
 			"N_main": 9,
 			"N_checkpoints": 15,
 			"goal_count": 7,
+			"FF": 2,
+			"RC": 1,
+			"F": 17,
+			"T": 0,
+			"traps": {"buffering": 0, "rights_expired": 0, "commercial_break": 0, "shuffle_mode": 0, "rewind": 0, "intermission": 0, "slow_motion": 0},
+			"snacks": {"Popcorn": 3, "Nachos": 3, "Large Soda": 3, "Candy Bar": 2, "Hot Dog": 2, "Soft Pretzel": 2, "Ice Cream Sandwich": 2},
 			"units": [
 				{"key": "show-season|plex://show/c", "steps": 3, "start": 1, "prefix": [0, 1, 3, 6]},
 				{"key": "show-season|plex://show/d", "steps": 1, "start": 1, "prefix": [0, 2]},
@@ -246,7 +294,7 @@
 	},
 	{
 		"name": "album with short tracks",
-		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 2, "timesanity_books": 30, "wild_tickets": 2},
+		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 2, "timesanity_books": 30, "wild_tickets": 2, "snack_variety": true, "fast_forwards": 2, "remote_controls": 1, "snack_bar_trades": 3, "snack_bar_price": 10, "trap_percentage": 0, "buffering_weight": 2, "rights_expired_weight": 2, "commercial_break_weight": 1, "shuffle_mode_weight": 1, "rewind_weight": 1, "intermission_weight": 1, "slow_motion_weight": 1},
 		"entries": [
 			{"k": "album", "id": "plex://album/30", "rk": 30, "g": "plex://album/30", "ar": "An Artist", "t": "An Album", "y": 2001, "d": 274999, "tr": [[3001, 1, "Exactly Thirty", 30000, 30001], [3002, 2, "Just Short", 29999, 30002], [3003, 3, "Long One", 200000, 30003], [3004, 4, "Skit", 15000, 30004]]}
 		],
@@ -257,6 +305,12 @@
 			"N_main": 2,
 			"N_checkpoints": 2,
 			"goal_count": 1,
+			"FF": 0,
+			"RC": 0,
+			"F": 2,
+			"T": 0,
+			"traps": {"buffering": 0, "rights_expired": 0, "commercial_break": 0, "shuffle_mode": 0, "rewind": 0, "intermission": 0, "slow_motion": 0},
+			"snacks": {"Popcorn": 1, "Nachos": 1, "Large Soda": 0, "Candy Bar": 0, "Hot Dog": 0, "Soft Pretzel": 0, "Ice Cream Sandwich": 0},
 			"units": [
 				{"key": "album|plex://album/30", "steps": 1, "start": 1, "prefix": [0, 1]}
 			],
@@ -267,7 +321,7 @@
 	},
 	{
 		"name": "a playlist mix on the albums timer",
-		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 10, "timesanity_books": 30, "wild_tickets": 2},
+		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 10, "timesanity_books": 30, "wild_tickets": 2, "snack_variety": true, "fast_forwards": 2, "remote_controls": 1, "snack_bar_trades": 3, "snack_bar_price": 10, "trap_percentage": 0, "buffering_weight": 2, "rights_expired_weight": 2, "commercial_break_weight": 1, "shuffle_mode_weight": 1, "rewind_weight": 1, "intermission_weight": 1, "slow_motion_weight": 1},
 		"entries": [
 			{"k": "mix", "id": "pl:40:1", "pl": 40, "part": 1, "t": "Road Trip Part 1", "d": 2370000, "tr": [[4001, 1, "Song 1", 151000, 40001, "Artist 1"], [4002, 2, "Song 2", 152000, 40002, "Artist 2"], [4003, 3, "Song 3", 153000, 40003, "Artist 3"], [4004, 4, "Song 4", 154000, 40004, "Artist 0"], [4005, 5, "Song 5", 155000, 40005, "Artist 1"], [4006, 6, "Song 6", 156000, 40006, "Artist 2"], [4007, 7, "Song 7", 157000, 40007, "Artist 3"], [4008, 8, "Song 8", 158000, 40008, "Artist 0"], [4009, 9, "Song 9", 159000, 40009, "Artist 1"], [4010, 10, "Song 10", 160000, 40010, "Artist 2"], [4011, 11, "Song 11", 161000, 40011, "Artist 3"], [4012, 12, "Song 12", 162000, 40012, "Artist 0"], [4013, 13, "Song 13", 163000, 40013, "Artist 1"], [4014, 14, "Song 14", 164000, 40014, "Artist 2"], [4015, 15, "Song 15", 165000, 40015, "Artist 3"]]}
 		],
@@ -278,6 +332,12 @@
 			"N_main": 15,
 			"N_checkpoints": 3,
 			"goal_count": 1,
+			"FF": 2,
+			"RC": 1,
+			"F": 13,
+			"T": 0,
+			"traps": {"buffering": 0, "rights_expired": 0, "commercial_break": 0, "shuffle_mode": 0, "rewind": 0, "intermission": 0, "slow_motion": 0},
+			"snacks": {"Popcorn": 2, "Nachos": 2, "Large Soda": 2, "Candy Bar": 2, "Hot Dog": 2, "Soft Pretzel": 2, "Ice Cream Sandwich": 1},
 			"units": [
 				{"key": "mix|pl:40:1", "steps": 1, "start": 1, "prefix": [0, 1]}
 			],
@@ -288,7 +348,7 @@
 	},
 	{
 		"name": "three books, one starting unlock",
-		"options": {"starting_unlocks": 1, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2},
+		"options": {"starting_unlocks": 1, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2, "snack_variety": true, "fast_forwards": 2, "remote_controls": 1, "snack_bar_trades": 3, "snack_bar_price": 10, "trap_percentage": 0, "buffering_weight": 2, "rights_expired_weight": 2, "commercial_break_weight": 1, "shuffle_mode_weight": 1, "rewind_weight": 1, "intermission_weight": 1, "slow_motion_weight": 1},
 		"entries": [
 			{"k": "book", "id": "book:author-a/book-one", "w": "author-a/book-one", "t": "Book One", "au": "Author A", "d": 6300000, "pa": [[7001, 8001, 3600000], [7002, 8002, 2700000]]},
 			{"k": "book", "id": "book:author-a/book-two", "w": "author-a/book-two", "t": "Book Two", "au": "Author A", "d": 5400000, "pa": [[7001, 8001, 5400000]]},
@@ -301,6 +361,12 @@
 			"N_main": 3,
 			"N_checkpoints": 7,
 			"goal_count": 2,
+			"FF": 0,
+			"RC": 0,
+			"F": 7,
+			"T": 0,
+			"traps": {"buffering": 0, "rights_expired": 0, "commercial_break": 0, "shuffle_mode": 0, "rewind": 0, "intermission": 0, "slow_motion": 0},
+			"snacks": {"Popcorn": 1, "Nachos": 1, "Large Soda": 1, "Candy Bar": 1, "Hot Dog": 1, "Soft Pretzel": 1, "Ice Cream Sandwich": 1},
 			"units": [
 				{"key": "book|book:author-a/book-one", "steps": 1, "start": 1, "prefix": [0, 1]},
 				{"key": "book|book:author-a/book-two", "steps": 1, "start": 0, "prefix": [0, 1]},
@@ -315,7 +381,7 @@
 	},
 	{
 		"name": "starting copies round robin",
-		"options": {"starting_unlocks": 7, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 1, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 0, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2},
+		"options": {"starting_unlocks": 7, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 1, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 0, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2, "snack_variety": true, "fast_forwards": 2, "remote_controls": 1, "snack_bar_trades": 3, "snack_bar_price": 10, "trap_percentage": 0, "buffering_weight": 2, "rights_expired_weight": 2, "commercial_break_weight": 1, "shuffle_mode_weight": 1, "rewind_weight": 1, "intermission_weight": 1, "slow_motion_weight": 1},
 		"entries": [
 			{"k": "episode", "id": "rk:1000", "rk": 1000, "t": "Episode 1", "sh": "Show E", "sid": "rk:91", "srk": 91, "sn": 1, "en": 1, "d": 1320000},
 			{"k": "episode", "id": "rk:1001", "rk": 1001, "t": "Episode 2", "sh": "Show E", "sid": "rk:91", "srk": 91, "sn": 1, "en": 2, "d": 1320000},
@@ -336,6 +402,12 @@
 			"N_main": 11,
 			"N_checkpoints": 7,
 			"goal_count": 8,
+			"FF": 2,
+			"RC": 1,
+			"F": 9,
+			"T": 0,
+			"traps": {"buffering": 0, "rights_expired": 0, "commercial_break": 0, "shuffle_mode": 0, "rewind": 0, "intermission": 0, "slow_motion": 0},
+			"snacks": {"Popcorn": 2, "Nachos": 2, "Large Soda": 1, "Candy Bar": 1, "Hot Dog": 1, "Soft Pretzel": 1, "Ice Cream Sandwich": 1},
 			"units": [
 				{"key": "show-ep1|rk:91", "steps": 5, "start": 3, "prefix": [0, 1, 2, 3, 4, 5]},
 				{"key": "show-ep1|rk:92", "steps": 5, "start": 3, "prefix": [0, 1, 2, 3, 4, 5]},
@@ -358,7 +430,7 @@
 	},
 	{
 		"name": "starting copies from a long list",
-		"options": {"starting_unlocks": 1, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 0, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2},
+		"options": {"starting_unlocks": 1, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 0, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2, "snack_variety": true, "fast_forwards": 2, "remote_controls": 1, "snack_bar_trades": 3, "snack_bar_price": 10, "trap_percentage": 0, "buffering_weight": 2, "rights_expired_weight": 2, "commercial_break_weight": 1, "shuffle_mode_weight": 1, "rewind_weight": 1, "intermission_weight": 1, "slow_motion_weight": 1},
 		"entries": [
 			{"k": "movie", "id": "rk:100", "rk": 100, "t": "Film 000", "y": 2000, "d": 6000000},
 			{"k": "movie", "id": "rk:101", "rk": 101, "t": "Film 001", "y": 2000, "d": 6000000},
@@ -488,6 +560,12 @@
 			"N_main": 120,
 			"N_checkpoints": 0,
 			"goal_count": 96,
+			"FF": 1,
+			"RC": 0,
+			"F": 0,
+			"T": 0,
+			"traps": {"buffering": 0, "rights_expired": 0, "commercial_break": 0, "shuffle_mode": 0, "rewind": 0, "intermission": 0, "slow_motion": 0},
+			"snacks": {"Popcorn": 0, "Nachos": 0, "Large Soda": 0, "Candy Bar": 0, "Hot Dog": 0, "Soft Pretzel": 0, "Ice Cream Sandwich": 0},
 			"units": [
 				{"key": "movie|rk:100", "steps": 1, "start": 1, "prefix": [0, 1]},
 				{"key": "movie|rk:101", "steps": 1, "start": 1, "prefix": [0, 1]},
@@ -736,7 +814,7 @@
 	},
 	{
 		"name": "a single title",
-		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2},
+		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2, "snack_variety": true, "fast_forwards": 2, "remote_controls": 1, "snack_bar_trades": 3, "snack_bar_price": 10, "trap_percentage": 0, "buffering_weight": 2, "rights_expired_weight": 2, "commercial_break_weight": 1, "shuffle_mode_weight": 1, "rewind_weight": 1, "intermission_weight": 1, "slow_motion_weight": 1},
 		"entries": [
 			{"k": "movie", "id": "rk:1", "rk": 1, "t": "Only Film", "y": 2000, "d": 6000000}
 		],
@@ -747,6 +825,12 @@
 			"N_main": 1,
 			"N_checkpoints": 5,
 			"goal_count": 1,
+			"FF": 0,
+			"RC": 0,
+			"F": 5,
+			"T": 0,
+			"traps": {"buffering": 0, "rights_expired": 0, "commercial_break": 0, "shuffle_mode": 0, "rewind": 0, "intermission": 0, "slow_motion": 0},
+			"snacks": {"Popcorn": 1, "Nachos": 1, "Large Soda": 1, "Candy Bar": 1, "Hot Dog": 1, "Soft Pretzel": 0, "Ice Cream Sandwich": 0},
 			"units": [
 				{"key": "movie|rk:1", "steps": 1, "start": 1, "prefix": [0, 1]}
 			],
@@ -757,7 +841,7 @@
 	},
 	{
 		"name": "wild tickets clamped",
-		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 1, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 0, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 20},
+		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 1, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 0, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 20, "snack_variety": true, "fast_forwards": 2, "remote_controls": 1, "snack_bar_trades": 3, "snack_bar_price": 10, "trap_percentage": 0, "buffering_weight": 2, "rights_expired_weight": 2, "commercial_break_weight": 1, "shuffle_mode_weight": 1, "rewind_weight": 1, "intermission_weight": 1, "slow_motion_weight": 1},
 		"entries": [
 			{"k": "episode", "id": "rk:1000", "rk": 1000, "t": "Episode 1", "sh": "Show G", "sid": "rk:93", "srk": 93, "sn": 1, "en": 1, "d": 1320000},
 			{"k": "episode", "id": "rk:1001", "rk": 1001, "t": "Episode 2", "sh": "Show G", "sid": "rk:93", "srk": 93, "sn": 1, "en": 2, "d": 1320000},
@@ -772,6 +856,12 @@
 			"N_main": 5,
 			"N_checkpoints": 0,
 			"goal_count": 4,
+			"FF": 0,
+			"RC": 0,
+			"F": 0,
+			"T": 0,
+			"traps": {"buffering": 0, "rights_expired": 0, "commercial_break": 0, "shuffle_mode": 0, "rewind": 0, "intermission": 0, "slow_motion": 0},
+			"snacks": {"Popcorn": 0, "Nachos": 0, "Large Soda": 0, "Candy Bar": 0, "Hot Dog": 0, "Soft Pretzel": 0, "Ice Cream Sandwich": 0},
 			"units": [
 				{"key": "show-ep1|rk:93", "steps": 5, "start": 3, "prefix": [0, 1, 2, 3, 4, 5]}
 			],
@@ -786,7 +876,7 @@
 	},
 	{
 		"name": "no wild tickets",
-		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 0},
+		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 0, "snack_variety": true, "fast_forwards": 2, "remote_controls": 1, "snack_bar_trades": 3, "snack_bar_price": 10, "trap_percentage": 0, "buffering_weight": 2, "rights_expired_weight": 2, "commercial_break_weight": 1, "shuffle_mode_weight": 1, "rewind_weight": 1, "intermission_weight": 1, "slow_motion_weight": 1},
 		"entries": [
 			{"k": "movie", "id": "rk:1", "rk": 1, "t": "Film 1", "y": 2000, "d": 6000000},
 			{"k": "movie", "id": "rk:2", "rk": 2, "t": "Film 2", "y": 2000, "d": 6000000},
@@ -800,6 +890,12 @@
 			"N_main": 4,
 			"N_checkpoints": 20,
 			"goal_count": 3,
+			"FF": 2,
+			"RC": 1,
+			"F": 20,
+			"T": 0,
+			"traps": {"buffering": 0, "rights_expired": 0, "commercial_break": 0, "shuffle_mode": 0, "rewind": 0, "intermission": 0, "slow_motion": 0},
+			"snacks": {"Popcorn": 3, "Nachos": 3, "Large Soda": 3, "Candy Bar": 3, "Hot Dog": 3, "Soft Pretzel": 3, "Ice Cream Sandwich": 2},
 			"units": [
 				{"key": "movie|rk:1", "steps": 1, "start": 1, "prefix": [0, 1]},
 				{"key": "movie|rk:2", "steps": 1, "start": 1, "prefix": [0, 1]},
@@ -816,7 +912,7 @@
 	},
 	{
 		"name": "goal of three at 80 percent",
-		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2},
+		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2, "snack_variety": true, "fast_forwards": 2, "remote_controls": 1, "snack_bar_trades": 3, "snack_bar_price": 10, "trap_percentage": 0, "buffering_weight": 2, "rights_expired_weight": 2, "commercial_break_weight": 1, "shuffle_mode_weight": 1, "rewind_weight": 1, "intermission_weight": 1, "slow_motion_weight": 1},
 		"entries": [
 			{"k": "movie", "id": "rk:1", "rk": 1, "t": "Film 1", "y": 2000, "d": 0},
 			{"k": "movie", "id": "rk:2", "rk": 2, "t": "Film 2", "y": 2000, "d": 0},
@@ -829,6 +925,12 @@
 			"N_main": 3,
 			"N_checkpoints": 0,
 			"goal_count": 2,
+			"FF": 0,
+			"RC": 0,
+			"F": 0,
+			"T": 0,
+			"traps": {"buffering": 0, "rights_expired": 0, "commercial_break": 0, "shuffle_mode": 0, "rewind": 0, "intermission": 0, "slow_motion": 0},
+			"snacks": {"Popcorn": 0, "Nachos": 0, "Large Soda": 0, "Candy Bar": 0, "Hot Dog": 0, "Soft Pretzel": 0, "Ice Cream Sandwich": 0},
 			"units": [
 				{"key": "movie|rk:1", "steps": 1, "start": 1, "prefix": [0, 1]},
 				{"key": "movie|rk:2", "steps": 1, "start": 1, "prefix": [0, 1]},
@@ -843,7 +945,7 @@
 	},
 	{
 		"name": "goal of one at 1 percent",
-		"options": {"starting_unlocks": 3, "goal_percent": 1, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2},
+		"options": {"starting_unlocks": 3, "goal_percent": 1, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2, "snack_variety": true, "fast_forwards": 2, "remote_controls": 1, "snack_bar_trades": 3, "snack_bar_price": 10, "trap_percentage": 0, "buffering_weight": 2, "rights_expired_weight": 2, "commercial_break_weight": 1, "shuffle_mode_weight": 1, "rewind_weight": 1, "intermission_weight": 1, "slow_motion_weight": 1},
 		"entries": [
 			{"k": "movie", "id": "rk:1", "rk": 1, "t": "Film", "y": 2000, "d": 0}
 		],
@@ -854,6 +956,12 @@
 			"N_main": 1,
 			"N_checkpoints": 0,
 			"goal_count": 1,
+			"FF": 0,
+			"RC": 0,
+			"F": 0,
+			"T": 0,
+			"traps": {"buffering": 0, "rights_expired": 0, "commercial_break": 0, "shuffle_mode": 0, "rewind": 0, "intermission": 0, "slow_motion": 0},
+			"snacks": {"Popcorn": 0, "Nachos": 0, "Large Soda": 0, "Candy Bar": 0, "Hot Dog": 0, "Soft Pretzel": 0, "Ice Cream Sandwich": 0},
 			"units": [
 				{"key": "movie|rk:1", "steps": 1, "start": 1, "prefix": [0, 1]}
 			],
@@ -864,7 +972,7 @@
 	},
 	{
 		"name": "goal of fifty at 80 percent",
-		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 0, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2},
+		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 0, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2, "snack_variety": true, "fast_forwards": 2, "remote_controls": 1, "snack_bar_trades": 3, "snack_bar_price": 10, "trap_percentage": 0, "buffering_weight": 2, "rights_expired_weight": 2, "commercial_break_weight": 1, "shuffle_mode_weight": 1, "rewind_weight": 1, "intermission_weight": 1, "slow_motion_weight": 1},
 		"entries": [
 			{"k": "movie", "id": "rk:1", "rk": 1, "t": "Film 1", "y": 2000, "d": 0},
 			{"k": "movie", "id": "rk:2", "rk": 2, "t": "Film 2", "y": 2000, "d": 0},
@@ -924,6 +1032,12 @@
 			"N_main": 50,
 			"N_checkpoints": 0,
 			"goal_count": 40,
+			"FF": 1,
+			"RC": 0,
+			"F": 0,
+			"T": 0,
+			"traps": {"buffering": 0, "rights_expired": 0, "commercial_break": 0, "shuffle_mode": 0, "rewind": 0, "intermission": 0, "slow_motion": 0},
+			"snacks": {"Popcorn": 0, "Nachos": 0, "Large Soda": 0, "Candy Bar": 0, "Hot Dog": 0, "Soft Pretzel": 0, "Ice Cream Sandwich": 0},
 			"units": [
 				{"key": "movie|rk:1", "steps": 1, "start": 1, "prefix": [0, 1]},
 				{"key": "movie|rk:2", "steps": 1, "start": 1, "prefix": [0, 1]},
@@ -1032,7 +1146,7 @@
 	},
 	{
 		"name": "everything mixed",
-		"options": {"starting_unlocks": 2, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 2, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 5, "timesanity_books": 30, "wild_tickets": 2},
+		"options": {"starting_unlocks": 2, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 2, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 5, "timesanity_books": 30, "wild_tickets": 2, "snack_variety": true, "fast_forwards": 2, "remote_controls": 1, "snack_bar_trades": 3, "snack_bar_price": 10, "trap_percentage": 0, "buffering_weight": 2, "rights_expired_weight": 2, "commercial_break_weight": 1, "shuffle_mode_weight": 1, "rewind_weight": 1, "intermission_weight": 1, "slow_motion_weight": 1},
 		"entries": [
 			{"k": "movie", "id": "rk:1", "rk": 1, "t": "A Film", "y": 2000, "d": 8160000},
 			{"k": "episode", "id": "rk:1000", "rk": 1000, "t": "Episode 1", "sh": "Show H", "sid": "plex://show/h", "srk": 94, "sn": 1, "en": 1, "d": 1320000},
@@ -1049,6 +1163,12 @@
 			"N_main": 11,
 			"N_checkpoints": 18,
 			"goal_count": 5,
+			"FF": 2,
+			"RC": 1,
+			"F": 20,
+			"T": 0,
+			"traps": {"buffering": 0, "rights_expired": 0, "commercial_break": 0, "shuffle_mode": 0, "rewind": 0, "intermission": 0, "slow_motion": 0},
+			"snacks": {"Popcorn": 3, "Nachos": 3, "Large Soda": 3, "Candy Bar": 3, "Hot Dog": 3, "Soft Pretzel": 3, "Ice Cream Sandwich": 2},
 			"units": [
 				{"key": "movie|rk:1", "steps": 1, "start": 1, "prefix": [0, 1]},
 				{"key": "show-ep2|plex://show/h", "steps": 2, "start": 1, "prefix": [0, 2, 3]},
@@ -1069,7 +1189,7 @@
 	},
 	{
 		"name": "timesanity off",
-		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 0, "timesanity_episodes": 0, "timesanity_albums": 0, "timesanity_books": 0, "wild_tickets": 2},
+		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 0, "timesanity_episodes": 0, "timesanity_albums": 0, "timesanity_books": 0, "wild_tickets": 2, "snack_variety": true, "fast_forwards": 2, "remote_controls": 1, "snack_bar_trades": 3, "snack_bar_price": 10, "trap_percentage": 0, "buffering_weight": 2, "rights_expired_weight": 2, "commercial_break_weight": 1, "shuffle_mode_weight": 1, "rewind_weight": 1, "intermission_weight": 1, "slow_motion_weight": 1},
 		"entries": [
 			{"k": "movie", "id": "rk:1", "rk": 1, "t": "A Film", "y": 2000, "d": 8160000},
 			{"k": "episode", "id": "rk:1000", "rk": 1000, "t": "Episode 1", "sh": "Show H", "sid": "plex://show/h", "srk": 94, "sn": 1, "en": 1, "d": 1320000},
@@ -1083,6 +1203,12 @@
 			"N_main": 4,
 			"N_checkpoints": 0,
 			"goal_count": 3,
+			"FF": 1,
+			"RC": 0,
+			"F": 0,
+			"T": 0,
+			"traps": {"buffering": 0, "rights_expired": 0, "commercial_break": 0, "shuffle_mode": 0, "rewind": 0, "intermission": 0, "slow_motion": 0},
+			"snacks": {"Popcorn": 0, "Nachos": 0, "Large Soda": 0, "Candy Bar": 0, "Hot Dog": 0, "Soft Pretzel": 0, "Ice Cream Sandwich": 0},
 			"units": [
 				{"key": "movie|rk:1", "steps": 1, "start": 1, "prefix": [0, 1]},
 				{"key": "show-ep3|plex://show/h", "steps": 1, "start": 1, "prefix": [0, 2]},
@@ -1093,6 +1219,228 @@
 				{"key": "episode|rk:1000", "unit": "show-ep3|plex://show/h", "step": 1, "main": 1, "checkpoints": []},
 				{"key": "episode|rk:1001", "unit": "show-ep3|plex://show/h", "step": 1, "main": 1, "checkpoints": []},
 				{"key": "book|book:author-c/novel", "unit": "book|book:author-c/novel", "step": 1, "main": 1, "checkpoints": []}
+			]
+		}
+	},
+	{
+		"name": "traps at 40 percent",
+		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2, "snack_variety": true, "fast_forwards": 2, "remote_controls": 1, "snack_bar_trades": 3, "snack_bar_price": 10, "trap_percentage": 40, "buffering_weight": 2, "rights_expired_weight": 2, "commercial_break_weight": 1, "shuffle_mode_weight": 1, "rewind_weight": 1, "intermission_weight": 1, "slow_motion_weight": 1},
+		"entries": [
+			{"k": "movie", "id": "rk:1", "rk": 1, "t": "Film 1", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:2", "rk": 2, "t": "Film 2", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:3", "rk": 3, "t": "Film 3", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:4", "rk": 4, "t": "Film 4", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:5", "rk": 5, "t": "Film 5", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:6", "rk": 6, "t": "Film 6", "y": 2000, "d": 6000000}
+		],
+		"expect": {
+			"C": 6,
+			"S": 3,
+			"W": 2,
+			"N_main": 6,
+			"N_checkpoints": 30,
+			"goal_count": 4,
+			"FF": 1,
+			"RC": 0,
+			"F": 30,
+			"T": 12,
+			"traps": {"buffering": 3, "rights_expired": 3, "commercial_break": 2, "shuffle_mode": 1, "rewind": 1, "intermission": 1, "slow_motion": 1},
+			"snacks": {"Popcorn": 3, "Nachos": 3, "Large Soda": 3, "Candy Bar": 3, "Hot Dog": 2, "Soft Pretzel": 2, "Ice Cream Sandwich": 2},
+			"units": [
+				{"key": "movie|rk:1", "steps": 1, "start": 1, "prefix": [0, 1]},
+				{"key": "movie|rk:2", "steps": 1, "start": 1, "prefix": [0, 1]},
+				{"key": "movie|rk:3", "steps": 1, "start": 1, "prefix": [0, 1]},
+				{"key": "movie|rk:4", "steps": 1, "start": 0, "prefix": [0, 1]},
+				{"key": "movie|rk:5", "steps": 1, "start": 0, "prefix": [0, 1]},
+				{"key": "movie|rk:6", "steps": 1, "start": 0, "prefix": [0, 1]}
+			],
+			"entries": [
+				{"key": "movie|rk:1", "unit": "movie|rk:1", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:2", "unit": "movie|rk:2", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:3", "unit": "movie|rk:3", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:4", "unit": "movie|rk:4", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:5", "unit": "movie|rk:5", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:6", "unit": "movie|rk:6", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]}
+			]
+		}
+	},
+	{
+		"name": "every filler slot a trap, equal weights",
+		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2, "snack_variety": true, "fast_forwards": 2, "remote_controls": 1, "snack_bar_trades": 3, "snack_bar_price": 10, "trap_percentage": 100, "buffering_weight": 1, "rights_expired_weight": 1, "commercial_break_weight": 1, "shuffle_mode_weight": 1, "rewind_weight": 1, "intermission_weight": 1, "slow_motion_weight": 1},
+		"entries": [
+			{"k": "movie", "id": "rk:1", "rk": 1, "t": "Film 1", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:2", "rk": 2, "t": "Film 2", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:3", "rk": 3, "t": "Film 3", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:4", "rk": 4, "t": "Film 4", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:5", "rk": 5, "t": "Film 5", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:6", "rk": 6, "t": "Film 6", "y": 2000, "d": 6000000}
+		],
+		"expect": {
+			"C": 6,
+			"S": 3,
+			"W": 2,
+			"N_main": 6,
+			"N_checkpoints": 30,
+			"goal_count": 4,
+			"FF": 1,
+			"RC": 0,
+			"F": 30,
+			"T": 30,
+			"traps": {"buffering": 5, "rights_expired": 5, "commercial_break": 4, "shuffle_mode": 4, "rewind": 4, "intermission": 4, "slow_motion": 4},
+			"snacks": {"Popcorn": 0, "Nachos": 0, "Large Soda": 0, "Candy Bar": 0, "Hot Dog": 0, "Soft Pretzel": 0, "Ice Cream Sandwich": 0},
+			"units": [
+				{"key": "movie|rk:1", "steps": 1, "start": 1, "prefix": [0, 1]},
+				{"key": "movie|rk:2", "steps": 1, "start": 1, "prefix": [0, 1]},
+				{"key": "movie|rk:3", "steps": 1, "start": 1, "prefix": [0, 1]},
+				{"key": "movie|rk:4", "steps": 1, "start": 0, "prefix": [0, 1]},
+				{"key": "movie|rk:5", "steps": 1, "start": 0, "prefix": [0, 1]},
+				{"key": "movie|rk:6", "steps": 1, "start": 0, "prefix": [0, 1]}
+			],
+			"entries": [
+				{"key": "movie|rk:1", "unit": "movie|rk:1", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:2", "unit": "movie|rk:2", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:3", "unit": "movie|rk:3", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:4", "unit": "movie|rk:4", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:5", "unit": "movie|rk:5", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:6", "unit": "movie|rk:6", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]}
+			]
+		}
+	},
+	{
+		"name": "snack variety off",
+		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2, "snack_variety": false, "fast_forwards": 2, "remote_controls": 1, "snack_bar_trades": 3, "snack_bar_price": 10, "trap_percentage": 10, "buffering_weight": 2, "rights_expired_weight": 2, "commercial_break_weight": 1, "shuffle_mode_weight": 1, "rewind_weight": 1, "intermission_weight": 1, "slow_motion_weight": 1},
+		"entries": [
+			{"k": "movie", "id": "rk:1", "rk": 1, "t": "Film 1", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:2", "rk": 2, "t": "Film 2", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:3", "rk": 3, "t": "Film 3", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:4", "rk": 4, "t": "Film 4", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:5", "rk": 5, "t": "Film 5", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:6", "rk": 6, "t": "Film 6", "y": 2000, "d": 6000000}
+		],
+		"expect": {
+			"C": 6,
+			"S": 3,
+			"W": 2,
+			"N_main": 6,
+			"N_checkpoints": 30,
+			"goal_count": 4,
+			"FF": 1,
+			"RC": 0,
+			"F": 30,
+			"T": 3,
+			"traps": {"buffering": 1, "rights_expired": 1, "commercial_break": 1, "shuffle_mode": 0, "rewind": 0, "intermission": 0, "slow_motion": 0},
+			"snacks": {"Popcorn": 27, "Nachos": 0, "Large Soda": 0, "Candy Bar": 0, "Hot Dog": 0, "Soft Pretzel": 0, "Ice Cream Sandwich": 0},
+			"units": [
+				{"key": "movie|rk:1", "steps": 1, "start": 1, "prefix": [0, 1]},
+				{"key": "movie|rk:2", "steps": 1, "start": 1, "prefix": [0, 1]},
+				{"key": "movie|rk:3", "steps": 1, "start": 1, "prefix": [0, 1]},
+				{"key": "movie|rk:4", "steps": 1, "start": 0, "prefix": [0, 1]},
+				{"key": "movie|rk:5", "steps": 1, "start": 0, "prefix": [0, 1]},
+				{"key": "movie|rk:6", "steps": 1, "start": 0, "prefix": [0, 1]}
+			],
+			"entries": [
+				{"key": "movie|rk:1", "unit": "movie|rk:1", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:2", "unit": "movie|rk:2", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:3", "unit": "movie|rk:3", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:4", "unit": "movie|rk:4", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:5", "unit": "movie|rk:5", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:6", "unit": "movie|rk:6", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]}
+			]
+		}
+	},
+	{
+		"name": "a weight of 0 never gains a trap",
+		"options": {"starting_unlocks": 3, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 2, "snack_variety": true, "fast_forwards": 2, "remote_controls": 1, "snack_bar_trades": 3, "snack_bar_price": 10, "trap_percentage": 17, "buffering_weight": 0, "rights_expired_weight": 3, "commercial_break_weight": 0, "shuffle_mode_weight": 0, "rewind_weight": 1, "intermission_weight": 0, "slow_motion_weight": 0},
+		"entries": [
+			{"k": "movie", "id": "rk:1", "rk": 1, "t": "Film 1", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:2", "rk": 2, "t": "Film 2", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:3", "rk": 3, "t": "Film 3", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:4", "rk": 4, "t": "Film 4", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:5", "rk": 5, "t": "Film 5", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:6", "rk": 6, "t": "Film 6", "y": 2000, "d": 6000000}
+		],
+		"expect": {
+			"C": 6,
+			"S": 3,
+			"W": 2,
+			"N_main": 6,
+			"N_checkpoints": 30,
+			"goal_count": 4,
+			"FF": 1,
+			"RC": 0,
+			"F": 30,
+			"T": 5,
+			"traps": {"buffering": 0, "rights_expired": 4, "commercial_break": 0, "shuffle_mode": 0, "rewind": 1, "intermission": 0, "slow_motion": 0},
+			"snacks": {"Popcorn": 4, "Nachos": 4, "Large Soda": 4, "Candy Bar": 4, "Hot Dog": 3, "Soft Pretzel": 3, "Ice Cream Sandwich": 3},
+			"units": [
+				{"key": "movie|rk:1", "steps": 1, "start": 1, "prefix": [0, 1]},
+				{"key": "movie|rk:2", "steps": 1, "start": 1, "prefix": [0, 1]},
+				{"key": "movie|rk:3", "steps": 1, "start": 1, "prefix": [0, 1]},
+				{"key": "movie|rk:4", "steps": 1, "start": 0, "prefix": [0, 1]},
+				{"key": "movie|rk:5", "steps": 1, "start": 0, "prefix": [0, 1]},
+				{"key": "movie|rk:6", "steps": 1, "start": 0, "prefix": [0, 1]}
+			],
+			"entries": [
+				{"key": "movie|rk:1", "unit": "movie|rk:1", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:2", "unit": "movie|rk:2", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:3", "unit": "movie|rk:3", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:4", "unit": "movie|rk:4", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:5", "unit": "movie|rk:5", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:6", "unit": "movie|rk:6", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]}
+			]
+		}
+	},
+	{
+		"name": "useful items clamped by the room the unlocks leave",
+		"options": {"starting_unlocks": 5, "goal_percent": 80, "tv_unlock": "episodes", "episodes_per_unlock": 3, "locked_watches": "bank", "checkpoint_items": "filler_only", "timesanity_strict": false, "timesanity_movies": 15, "timesanity_episodes": 10, "timesanity_albums": 0, "timesanity_books": 30, "wild_tickets": 1, "snack_variety": true, "fast_forwards": 3, "remote_controls": 10, "snack_bar_trades": 3, "snack_bar_price": 10, "trap_percentage": 0, "buffering_weight": 2, "rights_expired_weight": 2, "commercial_break_weight": 1, "shuffle_mode_weight": 1, "rewind_weight": 1, "intermission_weight": 1, "slow_motion_weight": 1},
+		"entries": [
+			{"k": "movie", "id": "rk:1", "rk": 1, "t": "Film 1", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:2", "rk": 2, "t": "Film 2", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:3", "rk": 3, "t": "Film 3", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:4", "rk": 4, "t": "Film 4", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:5", "rk": 5, "t": "Film 5", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:6", "rk": 6, "t": "Film 6", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:7", "rk": 7, "t": "Film 7", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:8", "rk": 8, "t": "Film 8", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:9", "rk": 9, "t": "Film 9", "y": 2000, "d": 6000000},
+			{"k": "movie", "id": "rk:10", "rk": 10, "t": "Film 10", "y": 2000, "d": 6000000}
+		],
+		"expect": {
+			"C": 10,
+			"S": 5,
+			"W": 1,
+			"N_main": 10,
+			"N_checkpoints": 50,
+			"goal_count": 8,
+			"FF": 3,
+			"RC": 1,
+			"F": 50,
+			"T": 0,
+			"traps": {"buffering": 0, "rights_expired": 0, "commercial_break": 0, "shuffle_mode": 0, "rewind": 0, "intermission": 0, "slow_motion": 0},
+			"snacks": {"Popcorn": 8, "Nachos": 7, "Large Soda": 7, "Candy Bar": 7, "Hot Dog": 7, "Soft Pretzel": 7, "Ice Cream Sandwich": 7},
+			"units": [
+				{"key": "movie|rk:1", "steps": 1, "start": 1, "prefix": [0, 1]},
+				{"key": "movie|rk:2", "steps": 1, "start": 1, "prefix": [0, 1]},
+				{"key": "movie|rk:3", "steps": 1, "start": 1, "prefix": [0, 1]},
+				{"key": "movie|rk:4", "steps": 1, "start": 1, "prefix": [0, 1]},
+				{"key": "movie|rk:5", "steps": 1, "start": 1, "prefix": [0, 1]},
+				{"key": "movie|rk:6", "steps": 1, "start": 0, "prefix": [0, 1]},
+				{"key": "movie|rk:7", "steps": 1, "start": 0, "prefix": [0, 1]},
+				{"key": "movie|rk:8", "steps": 1, "start": 0, "prefix": [0, 1]},
+				{"key": "movie|rk:9", "steps": 1, "start": 0, "prefix": [0, 1]},
+				{"key": "movie|rk:10", "steps": 1, "start": 0, "prefix": [0, 1]}
+			],
+			"entries": [
+				{"key": "movie|rk:1", "unit": "movie|rk:1", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:2", "unit": "movie|rk:2", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:3", "unit": "movie|rk:3", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:4", "unit": "movie|rk:4", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:5", "unit": "movie|rk:5", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:6", "unit": "movie|rk:6", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:7", "unit": "movie|rk:7", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:8", "unit": "movie|rk:8", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:9", "unit": "movie|rk:9", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]},
+				{"key": "movie|rk:10", "unit": "movie|rk:10", "step": 1, "main": 1, "checkpoints": [15, 30, 45, 60, 75]}
 			]
 		}
 	}

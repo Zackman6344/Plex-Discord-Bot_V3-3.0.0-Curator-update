@@ -3,8 +3,9 @@
 //
 // The bug: a bookmark store that writes a NaN position (read back as 0, the start of the book),
 // forgets a place on a write failure or a folder rename, lets one listener's save touch another's,
-// rewrites the file on every 15 s tick when nothing moved, or counts a podcast as "new episodes"
-// when nothing was added. Each of these is silent until someone resumes in the wrong place.
+// rewrites the file on every 15 s tick when nothing moved, makes a work the newest when only its
+// speed was put back, or counts a podcast as "new episodes" when nothing was added. Each of these
+// is silent until someone resumes in the wrong place.
 //
 // Harness: the store pattern of test/archipelagoHints.test.js (pid-suffixed env file set before
 // the first require, afterEach unlink and reset) and the directory-at-.tmp write breaker from
@@ -524,6 +525,32 @@ test('resume with no title picks the newest unfinished work, and speed follows t
 	assert.strictEqual(bookmarks.lastSpeed(ALICE), 1.75, 'the newest bookmark, finished or not');
 	assert.deepStrictEqual(bookmarks.forUser(ALICE).map(m => m.workId), [other.id, p.id, w.id]);
 	assert.strictEqual(bookmarks.lastInProgress(BOB), null);
+});
+
+test('setSpeed changes only the speed, so the work keeps its turn among the newest', (t) => {
+	const { tick } = setup(t);
+	const w = book();
+	const other = book({ id: 'another-author/another-book' });
+	bookmarks.record(ALICE, w, { absoluteMs: 25 * MIN, speed: 0.75, guildId: GUILD_A, addListenedMs: MIN });
+	const before = bookmarks.get(ALICE, w);
+	tick(MIN);
+	bookmarks.record(ALICE, other, { absoluteMs: 5 * MIN, speed: 1 });
+	tick(MIN);
+	const writes = countWrites(t);
+
+	assert.deepStrictEqual(bookmarks.setSpeed(ALICE, w, 1.25), { persisted: true, healthy: true });
+	assert.strictEqual(writes.n, 1, 'written at once');
+	assert.deepStrictEqual(bookmarks.get(ALICE, w), { ...before, speed: 1.25 }, 'place, hint, updatedAt and listening time as they were');
+	assert.strictEqual(bookmarks.lastInProgress(ALICE).workId, other.id, 'the work heard last is still the one a bare /book play resumes');
+	assert.strictEqual(bookmarks.lastSpeed(ALICE), 1, 'and its speed is still the next new book\'s');
+	bookmarks.reset();
+	assert.deepStrictEqual(bookmarks.get(ALICE, w), { ...before, speed: 1.25 }, 'from disk');
+
+	assert.deepStrictEqual(bookmarks.setSpeed(ALICE, w, 0.5), { persisted: false, healthy: true }, 'not a speed the books play at');
+	assert.deepStrictEqual(bookmarks.setSpeed(BOB, w, 1), { persisted: false, healthy: true }, 'no bookmark to change');
+	assert.strictEqual(bookmarks.get(BOB, w), null, 'and none is made');
+	assert.strictEqual(bookmarks.get(ALICE, w).speed, 1.25);
+	assert.strictEqual(writes.n, 1);
 });
 
 test('the hourly backup is refreshed on the first save after a restart and restores a torn file', (t) => {

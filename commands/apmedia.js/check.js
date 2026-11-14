@@ -3,6 +3,7 @@
 //   !apmedia check <title>                     finished: the title's checks
 //   !apmedia check <title> at 1h30m            watched up to there: its checkpoints so far
 //   !apmedia check <title> @1:30:00 slot=Zack  the same, on one of several slots
+//   !apmedia check slot="Zack 2" <title>       slot= first too, quoted for a name with a space
 //
 // A typed title that is not one on the list in full is answered with the titles it is probably
 // meant to be, never credited on a guess: a check sent for the wrong title cannot be taken back.
@@ -39,6 +40,13 @@ function readInput(ctx) {
 			loose: false,
 		};
 	}
+	// The time may follow slot= as at= may: `check The Matrix slot=Zack at 1h30m` has no stray word.
+	const problem = common.slotTail(splitAt(ctx.rest).title, {
+		keys: ['at'],
+		nothing: 'Nothing was counted.',
+		isSlot: (name) => common.namesSlot(ctx, name, { others: true }),
+	});
+	if (problem) return { problem };
 	const { values, rest } = common.takeKeys(ctx.rest, ['slot', 'at']);
 	return {
 		title: rest,
@@ -50,6 +58,7 @@ function readInput(ctx) {
 
 async function run(ctx) {
 	const input = readInput(ctx);
+	if (input.problem) return ctx.say(input.problem);
 	if (!input.title) return ctx.say(`Which title? \`${ctx.p}apmedia check <title> [at 1h30m]\`.`);
 	const r = common.slotFor(ctx, input.slot, { others: true });
 	if (!r.ok) return ctx.say(r.message);

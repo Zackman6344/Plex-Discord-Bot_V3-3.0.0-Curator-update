@@ -3,10 +3,13 @@
 //
 // What has to hold: a self-link needs the !ap claim and lands in the room's spelling; a player
 // reaches no slot but their own, typed by name or by key, while the owner reaches anyone's where the
-// spec lets them; the list reads the real slot index (groups, the item that opens a locked title,
-// the hint marker) and pages it; a manual check finds titles exactly, asks on a tie, suggests on a
-// typo, asks about a title named only in part, reads a whole title ending "at 1600" as that title,
-// and banks while the inventory is unknown; the Accept button grants exactly the account the
+// spec lets them; snackbar, ff, redeem and check reach a slot named in two words only when slot=
+// quotes it, a lone slot= may come first, a slot named like a Snack Bar item is that slot, and
+// "remote" before one of your slot names buys for that slot; the list reads the real slot index
+// (groups, the item that opens a locked title, the hint marker) and pages it; a manual check finds titles
+// exactly, asks on a tie, suggests on a typo, asks about a title named only in part, reads a whole
+// title ending "at 1600" as that title, and banks while the inventory is unknown; the Accept button
+// grants exactly the account the
 // owner linked, to that friend only, and a newer link or seven days turns an old button stale; the
 // YAML reads the account of the person the list is for.
 //
@@ -125,6 +128,7 @@ function fakeMonitor() {
 		hints: [],
 		room: { ZackPlex: 'Plex Media', BenPlex: 'Plex Media', Watcher: 'ChecksFinder' },
 		getWatch: (id) => (Number(id) === 0 ? { id: 0, channelId: CH, password: null, target: { host: 'localhost', port: 38281 } } : null),
+		listWatches: () => [{ watch: { id: 0, label: 'localhost', slot: 'Watcher', channelId: CH } }],
 		describeSlot(watchId, name) {
 			if (Number(watchId) !== 0) return null;
 			const names = Object.keys(mon.room);
@@ -315,6 +319,71 @@ test('status, redeem and announce speak for the player\'s own slot', async () =>
 	assert.strictEqual(h.store.bindings.get(key).announce, false);
 	assert.strictEqual((await prefix(ana, 'announce maybe')).content, 'Say `on` or `off`.');
 	assert.strictEqual(h.store.bindings.get(key).announce, false);
+});
+
+test('ff and snackbar speak for the player\'s own slot, wait for its items, and a seed without a Snack Bar says so', async () => {
+	const h = setup();
+	bind(h, 'ZackPlex', ANA);
+	const ana = person(ANA, 'Ana');
+	const unknown = (what) => `\`ZackPlex\` has not reported its items yet, so its ${what} are not known: try again once it is connected.`;
+	assert.strictEqual((await slash(ana, 'ff', { title: 'The Matrix' })).content, unknown('Fast Forwards'));
+	assert.strictEqual((await prefix(ana, 'ff Matr')).content, 'Did you mean **The Matrix (1999)**? Type its title in full, or give its code: `movie|plex://movie/5d7768b2`.');
+	assert.strictEqual((await prefix(ana, 'snackbar')).content, unknown('snacks'));
+	assert.strictEqual((await slash(ana, 'snackbar', { buy: 'remote-control' })).content, unknown('snacks'));
+	const ben = person(BEN, 'Ben');
+	assert.match((await slash(ben, 'ff', { title: 'The Matrix', slot: 'ZackPlex' })).content, /No linked Plex Media slot is called `ZackPlex`/);
+	assert.match((await slash(person(OWNER, 'Owner'), 'snackbar', { slot: 'ZackPlex' })).content, /No linked Plex Media slot is called `ZackPlex`/, 'the player\'s own, even for the owner');
+
+	const old = JSON.parse(JSON.stringify(FIXTURE));
+	delete old.snack_bar;
+	bind(h, 'BenPlex', BEN, { slotData: old });
+	assert.strictEqual((await prefix(ben, 'snackbar')).content, '`BenPlex`\'s seed has no Snack Bar: it was made with a Plex Media world before 0.3.0.');
+	const s = h.game.status(h.store.bindings.find(0, 'BenPlex').key).bindings[0];
+	assert.deepStrictEqual([s.snacks, s.snackBar, s.fastForwards, s.remoteControls, s.armed], [null, null, null, null, []], 'nothing known before the items');
+});
+
+// Against the game's own slot names: `slot=Zack 2` once reached `Zack`, and `snackbar RC` bought for,
+// or asked which slot about, the slot named RC instead of showing its Snack Bar.
+test('snackbar and ff reach a slot of two words only quoted, and a slot named like an item is that slot', async () => {
+	const h = setup();
+	for (const slot of ['Zack', 'Zack 2', 'RC']) bind(h, slot, ANA);
+	const ana = person(ANA, 'Ana');
+	const unknown = (slot, what) => `\`${slot}\` has not reported its items yet, so its ${what} are not known: try again once it is connected.`;
+	assert.strictEqual((await prefix(ana, 'snackbar buy rc slot=Zack 2')).content,
+		'Is the slot `Zack 2`? Then put it in quotes: `slot="Zack 2"`. If it is `Zack`, put `slot=Zack` last. Nothing was spent.');
+	assert.match((await prefix(ana, 'ff The Matrix slot=Zack 2')).content, /^Is the slot `Zack 2`\? Then put it in quotes/);
+	assert.strictEqual((await prefix(ana, 'snackbar buy rc slot="Zack 2"')).content, unknown('Zack 2', 'snacks'));
+	assert.strictEqual((await prefix(ana, 'ff The Matrix slot="Zack 2"')).content, unknown('Zack 2', 'Fast Forwards'));
+	assert.strictEqual((await prefix(ana, 'snackbar RC')).content, unknown('RC', 'snacks'));
+	assert.strictEqual((await prefix(ana, 'snackbar remote control slot=RC')).content, unknown('RC', 'snacks'));
+	assert.match((await prefix(ana, 'snackbar buy RC')).content, /^Several slots match: `Zack` on watch #0, `Zack 2` on watch #0, `RC` on watch #0\./);
+	h.store.bindings.put({ watchId: 1, slot: 'RC', userId: ANA, boundBy: OWNER });
+	assert.strictEqual((await prefix(ana, 'snackbar RC')).content, 'Several slots match: `RC` on watch #0, `RC` on watch #1. Name one.',
+		'a name two of your slots share is still a slot to ask about, not an item');
+});
+
+// Against the game's own slot names: `ff slot=Zack The Matrix` was refused as a slot named
+// `Zack The Matrix`, `redeem` and `check` took `slot=Zack 2` for `Zack`, and with slots
+// `Control Freak` and `Freak`, "remote Control Freak" bought for `Freak`.
+test('a lone slot= may come first, redeem and check refuse it cut short, and remote before your slot buys for that slot', async () => {
+	const h = setup();
+	const keys = {};
+	for (const slot of ['Zack', 'Zack 2', 'Control Freak', 'Freak']) keys[slot] = bind(h, slot, ANA);
+	const ana = person(ANA, 'Ana');
+	const unknown = (slot, what) => `\`${slot}\` has not reported its items yet, so its ${what} are not known: try again once it is connected.`;
+	const asked = (nothing) => `Is the slot \`Zack 2\`? Then put it in quotes: \`slot="Zack 2"\`. If it is \`Zack\`, put \`slot=Zack\` last. ${nothing}`;
+	assert.strictEqual((await prefix(ana, 'snackbar slot=Zack buy rc')).content, unknown('Zack', 'snacks'));
+	assert.strictEqual((await prefix(ana, 'ff slot=Zack The Matrix')).content, unknown('Zack', 'Fast Forwards'));
+	assert.strictEqual((await prefix(ana, 'redeem slot=Zack 1917')).content, unknown('Zack', 'Wild Tickets'));
+	assert.strictEqual((await prefix(ana, 'snackbar slot=Zack 2 buy rc')).content, asked('Nothing was spent.'));
+	assert.strictEqual((await prefix(ana, 'redeem 1917 slot=Zack 2')).content, asked('Nothing was spent.'));
+	assert.strictEqual((await prefix(ana, 'check The Matrix slot=Zack 2 at 45m')).content, asked('Nothing was counted.'));
+	assert.deepStrictEqual([h.store.bindings.get(keys.Zack).banked, h.store.bindings.get(keys['Zack 2']).banked], [[], []]);
+	assert.strictEqual((await prefix(ana, 'check slot=Zack The Matrix at 45m')).content, '\u{1F512} **The Matrix (1999)**: 3 checks held until the room reports `Zack`\'s items.');
+	assert.strictEqual(h.store.bindings.get(keys.Zack).banked.length, 3);
+	assert.strictEqual((await prefix(ana, 'snackbar buy remote Control Freak')).content, unknown('Control Freak', 'snacks'));
+	assert.strictEqual((await prefix(ana, 'snackbar remote Control Freak')).content, unknown('Control Freak', 'snacks'));
+	assert.strictEqual((await prefix(ana, 'snackbar buy remote control slot=Freak')).content, unknown('Freak', 'snacks'));
 });
 
 test('the Accept button grants the account the owner linked, to that friend only, until a newer link or seven days', async () => {

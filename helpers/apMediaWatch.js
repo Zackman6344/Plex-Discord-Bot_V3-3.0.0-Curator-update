@@ -33,6 +33,10 @@ const MAX_HISTORY_PAGES = 200;
 const MAX_ROW_TRIES = 10;
 const SPAN_FACTOR = 2.5;
 const SPAN_SLACK_MS = 20000;
+// A session step's padMs, for timesanity_strict: a session is seen only once a poll, so the first and
+// last poll of play are never seen, at the step's own rate, and a client reports its offset late.
+const PAD_LAG_MS = 10000;
+const PAD_MAX_MS = 90000;
 const ACCOUNTS_TTL_MS = 10 * 60 * 1000;
 // An unknown session user forces a fresh /accounts read at most this often.
 const ACCOUNTS_RETRY_MS = 60 * 1000;
@@ -403,7 +407,10 @@ function createWatcher({ pms, targets, onEvent, marks, now = Date.now, timers = 
 			// The baseline still resets at a poll that is not playing, so a pause's wall time never
 			// widens the bound of the step after it.
 			if ((playing || prev.playing) && dOffset > 0 && dOffset <= (at - prev.wall) * SPAN_FACTOR + SPAN_SLACK_MS) {
-				spans.push({ type: 'span', source: 'session', accountId, ratingKey, fromMs: prev.offset, toMs: offset, at });
+				const wall = at - prev.wall;
+				const rate = wall > 0 ? dOffset / wall : 1;
+				const padMs = Math.min(PAD_MAX_MS, Math.round((sessionMs || settings().sessionMs) * Math.max(1, rate) + PAD_LAG_MS));
+				spans.push({ type: 'span', source: 'session', accountId, ratingKey, fromMs: prev.offset, toMs: offset, padMs, at });
 			}
 			baselines.set(key, { offset, wall: at, playing });
 		}

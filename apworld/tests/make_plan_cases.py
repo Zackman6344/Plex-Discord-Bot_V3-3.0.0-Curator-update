@@ -5,6 +5,10 @@
 # constants.py by its YAML name, entries are YAML entries exactly as the bot writes them, and expect
 # is plan.summary() of the plan:
 #   {C, S, W, N_main, N_checkpoints, goal_count,
+#    FF, RC, F, T,                               Fast Forwards, Remote Controls, the filler slots and
+#                                                the traps among them
+#    traps: {buffering: n, ...}                  by trap key, in TRAPS order
+#    snacks: {Popcorn: n, ...}                   by name, in SNACKS order; F - T in all
 #    units: [{key, steps, start, prefix}]        in order of first appearance in entries
 #    entries: [{key, unit, step, main, checkpoints}]}  in YAML order; main counts the entry's watch,
 #                                                     finish or track locations, checkpoints lists
@@ -56,6 +60,10 @@ def show(sid, srk, name, episodes, rk=1000):
 
 SEVEN = [(2, 3), (1, 1), (1, 2), (2, 1), (1, 3), (1, 4), (2, 2)]
 MIX_TRACKS = [(f"Song {n}", f"Artist {n % 4}", 150000 + n * 1000) for n in range(1, 16)]
+# Six 100-minute films at 15 minutes: 6 watches and 30 checkpoints, 3 unlocks in the pool.
+SIX_FILMS = [movie(n, f"Film {n}", 6000000) for n in range(1, 7)]
+NO_TRAPS = {"buffering_weight": 0, "rights_expired_weight": 0, "commercial_break_weight": 0,
+            "shuffle_mode_weight": 0, "rewind_weight": 0, "intermission_weight": 0, "slow_motion_weight": 0}
 
 
 def cases():
@@ -123,6 +131,15 @@ def cases():
 			*show("plex://show/h", 94, "Show H", [(1, 1), (1, 2)]),
 			book("author-c/novel", "Novel", "Author C", [7200000]),
 		]),
+		("traps at 40 percent", {"trap_percentage": 40}, SIX_FILMS),
+		("every filler slot a trap, equal weights", {"trap_percentage": 100, **{key: 1 for key in NO_TRAPS}},
+		 SIX_FILMS),
+		("snack variety off", {"snack_variety": False, "trap_percentage": 10}, SIX_FILMS),
+		("a weight of 0 never gains a trap", {"trap_percentage": 17, **NO_TRAPS, "rights_expired_weight": 3,
+		                                      "rewind_weight": 1}, SIX_FILMS),
+		("useful items clamped by the room the unlocks leave", {"starting_unlocks": 5, "wild_tickets": 1,
+		                                                        "fast_forwards": 3, "remote_controls": 10},
+		 [movie(n, f"Film {n}", 6000000) for n in range(1, 11)]),
 	]
 
 
@@ -156,8 +173,10 @@ def render(built):
 		lines.append(f'\t\t"options": {_one(case["options"])},')
 		_rows(lines, "entries", case["entries"], "\t\t", False)
 		lines.append('\t\t"expect": {')
-		for key in ("C", "S", "W", "N_main", "N_checkpoints", "goal_count"):
+		for key in ("C", "S", "W", "N_main", "N_checkpoints", "goal_count", "FF", "RC", "F", "T"):
 			lines.append(f'\t\t\t"{key}": {expect[key]},')
+		for key in ("traps", "snacks"):
+			lines.append(f'\t\t\t"{key}": {_one(expect[key])},')
 		_rows(lines, "units", expect["units"], "\t\t\t", False)
 		_rows(lines, "entries", expect["entries"], "\t\t\t", True)
 		lines.append("\t\t}")

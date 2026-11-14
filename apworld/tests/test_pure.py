@@ -6,9 +6,13 @@
 # TV modes, checkpoint minutes at the 0.9 cut, starting copies, the Wild Ticket clamp, goal rounding,
 # the union of two slots, name collisions, the plan's caps, slot_data naming no person, the list
 # settings (list_*) as the Options Creator offers them and that they move no id, name or slot_data,
-# that constants.py and sanitize_text still mirror helpers/apMediaContracts.js, and that run.py
-# loads and runs every test file that holds scenarios. The option classes themselves import AP, so
-# test_generate.py's A0 and A1 check them against these tables.
+# world 0.3.0's items (fixed ids appended after every old one, the pool filling every location, the
+# useful items' room and what excluded watches, tracks and finishes take of it, the trap split and
+# its error, the snack deal, the item and trap options, the new slot_data keys and the reserved
+# names), that constants.py and sanitize_text still mirror
+# helpers/apMediaContracts.js, and that run.py loads and runs every test file that holds scenarios.
+# The option classes themselves import AP, so test_generate.py's A0 and A1 check them against these
+# tables.
 #
 # Harness: plain unittest, run by run.py or on its own with py -3.13 -O -s -S -B apworld/tests/test_pure.py.
 # purelib loads the modules through a stub package, so __init__.py (and AP) never loads. Bare
@@ -370,8 +374,7 @@ class PlanTest(unittest.TestCase):
 		self.assertEqual(plan_of([movie(1, "A"), movie(2, "B")], wild_tickets=20).wild, 1)
 		for entries in ([movie(n, "F") for n in range(1, 30)], eps, [album(1, [("A", 100000)] * 3)]):
 			plan = plan_of(entries, episodes_per_unlock=1, wild_tickets=20, starting_unlocks=1)
-			popcorn = plan.main_count + plan.checkpoint_count - (plan.copies - plan.start) - plan.wild
-			self.assertGreaterEqual(popcorn, plan.checkpoint_count)
+			self.assertGreaterEqual(plan.filler, plan.checkpoint_count)
 
 	def test_goal_count(self):
 		self.assertEqual(plan_of([movie(1, "A")], goal_percent=1).goal_count, 1)
@@ -399,6 +402,249 @@ class PlanTest(unittest.TestCase):
 			committed = json.load(handle)
 		self.assertEqual(committed, make_plan_cases.build_cases(),
 		                 "plan.py and plan_cases.json disagree: run make_plan_cases.py after a deliberate change")
+
+	def test_make_plan_cases_writes_every_field_of_the_summary(self):
+		# render() spells out the summary's keys, so one it leaves out would vanish from the file unseen.
+		built = make_plan_cases.build_cases()
+		self.assertEqual(json.loads(make_plan_cases.render(built)), built)
+
+
+# Every item that is not an unlock, with its id as an offset from BASE_ID. Popcorn and Wild Ticket
+# keep the ids world 0.2.0 gave them; 0.3.0 appended the rest.
+FIXED = [
+	("Popcorn", 1), ("Wild Ticket", 2), ("Nachos", 3), ("Large Soda", 4), ("Candy Bar", 5), ("Hot Dog", 6),
+	("Soft Pretzel", 7), ("Ice Cream Sandwich", 8), ("Fast Forward", 100), ("Remote Control", 101),
+	("Buffering", 200), ("Rights Expired", 201), ("Commercial Break", 202), ("Shuffle Mode", 203), ("Rewind", 204),
+	("Intermission", 205), ("Slow Motion", 206),
+]
+SNACK_NAMES = [name for name, _offset in FIXED[:1] + FIXED[2:8]]
+TRAP_NAMES = [name for name, _offset in FIXED[10:]]
+TRAP_KEYS = ["buffering", "rights_expired", "commercial_break", "shuffle_mode", "rewind", "intermission", "slow_motion"]
+# The game options of world 0.2.0, in its order. 0.3.0 writes the item and trap options after them.
+OPTIONS_0_2 = ["starting_unlocks", "goal_percent", "tv_unlock", "episodes_per_unlock", "locked_watches",
+               "checkpoint_items", "timesanity_strict", "timesanity_movies", "timesanity_episodes", "timesanity_albums",
+               "timesanity_books", "wild_tickets"]
+WEIGHT = {"type": "range", "min": 0, "max": 10}
+DESIGNED_ITEM_OPTIONS = {
+	"snack_variety": {"type": "toggle", "default": True},
+	"fast_forwards": {"type": "range", "min": 0, "max": 10, "default": 2},
+	"remote_controls": {"type": "range", "min": 0, "max": 10, "default": 1},
+	"snack_bar_trades": {"type": "range", "min": 0, "max": 10, "default": 3},
+	"snack_bar_price": {"type": "range", "min": 5, "max": 50, "default": 10},
+	"trap_percentage": {"type": "range", "min": 0, "max": 100, "default": 0},
+	"buffering_weight": dict(WEIGHT, default=2),
+	"rights_expired_weight": dict(WEIGHT, default=2),
+	"commercial_break_weight": dict(WEIGHT, default=1),
+	"shuffle_mode_weight": dict(WEIGHT, default=1),
+	"rewind_weight": dict(WEIGHT, default=1),
+	"intermission_weight": dict(WEIGHT, default=1),
+	"slow_motion_weight": dict(WEIGHT, default=1),
+}
+# 6 watches and 30 checkpoints; at the defaults 3 unlocks, 2 Wild Tickets and 1 Fast Forward leave 30 filler slots.
+SIX_FILMS = make_plan_cases.SIX_FILMS
+NO_TRAPS = make_plan_cases.NO_TRAPS
+
+
+def pool_of(plan):
+	"""The pool create_items makes from plan: unlock copies by unit key, every other item by name."""
+	pool = {unit.key: unit.steps - unit.start for unit in plan.units}
+	pool.update({"Wild Ticket": plan.wild, "Fast Forward": plan.fast_forwards, "Remote Control": plan.remote_controls})
+	pool.update({C.TRAPS[key]["name"]: count for key, count in plan.traps.items()})
+	pool.update(plan.snacks)
+	return pool
+
+
+class PoolTest(unittest.TestCase):
+	def test_fixed_ids_are_appended_and_every_old_id_is_unchanged(self):
+		table = C.static_item_table()
+		items = list(table.items())
+		fixed = [(name, C.BASE_ID + offset) for name, offset in FIXED]
+		self.assertEqual(len(table), C.MAX_UNLOCKS + 17)
+		self.assertEqual(items[:17], fixed)
+		self.assertEqual(items[17:], [(f"Unlock {i}", C.BASE_ID + 1000 + i) for i in range(1, C.MAX_UNLOCKS + 1)])
+		self.assertEqual(len(set(table.values())), len(table))
+		self.assertEqual(list(C.fixed_items().items()), fixed)
+		self.assertTrue(all(C.BASE_ID < code < C.unlock_id(1) for _name, code in fixed))
+		locations = list(C.static_location_table().items())
+		self.assertEqual(len(locations), C.MAX_CHECKS)
+		self.assertEqual([locations[0], locations[-1]], [("Check 1", C.BASE_ID + 1),
+		                                                 (f"Check {C.MAX_CHECKS}", C.BASE_ID + C.MAX_CHECKS)])
+
+	def test_snacks_useful_items_traps_and_their_groups(self):
+		ids = {name: C.BASE_ID + offset for name, offset in FIXED}
+		self.assertEqual(list(C.SNACKS.items()), [(name, ids[name]) for name in SNACK_NAMES])
+		self.assertEqual(C.USEFUL, {"fast_forward": {"name": "Fast Forward", "id": ids["Fast Forward"]},
+		                            "remote_control": {"name": "Remote Control", "id": ids["Remote Control"]}})
+		self.assertEqual([(key, trap["name"], trap["id"]) for key, trap in C.TRAPS.items()],
+		                 [(key, name, ids[name]) for key, name in zip(TRAP_KEYS, TRAP_NAMES)])
+		self.assertEqual(C.ITEM_GROUPS, ("Movies", "Shows", "Albums", "Playlists", "Books", "Snacks", "Useful", "Traps",
+		                                 "Everything"))
+		self.assertEqual(C.FIXED_GROUPS, {"Snacks": SNACK_NAMES, "Traps": TRAP_NAMES,
+		                                  "Useful": ["Wild Ticket", "Fast Forward", "Remote Control"]})
+
+	def test_the_item_and_trap_options_are_the_designed_table(self):
+		keys = list(C.OPTIONS)
+		self.assertEqual(keys[:len(OPTIONS_0_2)], OPTIONS_0_2)
+		self.assertEqual(keys[len(OPTIONS_0_2):], list(DESIGNED_ITEM_OPTIONS))
+		self.assertEqual({key: C.OPTIONS[key] for key in DESIGNED_ITEM_OPTIONS}, DESIGNED_ITEM_OPTIONS)
+		self.assertEqual([key for key in keys if key.endswith("_weight")], [f"{key}_weight" for key in TRAP_KEYS])
+		defaults = P.plan.plan_options({})
+		self.assertEqual({key: defaults[key] for key in DESIGNED_ITEM_OPTIONS},
+		                 {key: spec["default"] for key, spec in DESIGNED_ITEM_OPTIONS.items()})
+
+	def test_the_pool_fills_every_location(self):
+		variants = ({}, {"trap_percentage": 100}, {"trap_percentage": 37, "snack_variety": False},
+		            {"wild_tickets": 20, "fast_forwards": 10, "remote_controls": 10, "trap_percentage": 50},
+		            {"wild_tickets": 0, "fast_forwards": 0, "remote_controls": 0, "starting_unlocks": 50})
+		for name, options, entries in make_plan_cases.cases():
+			for variant in variants:
+				plan = plan_of(entries, **{**options, **variant})
+				pool = pool_of(plan)
+				with self.subTest(case=name, variant=variant):
+					self.assertEqual(sum(pool.values()), plan.main_count + plan.checkpoint_count)
+					self.assertTrue(all(count >= 0 for count in pool.values()), pool)
+					self.assertEqual(sum(plan.traps.values()) + sum(plan.snacks.values()), plan.filler)
+					# Every checkpoint, EXCLUDED under filler_only, still has a snack or a trap for it.
+					self.assertGreaterEqual(plan.filler, plan.checkpoint_count)
+
+	def test_useful_items_take_the_room_in_order_and_never_exceed_it(self):
+		# 10 films with 5 opening: the 5 unlocks left in the pool leave room for 5 useful items.
+		films = [movie(n, f"Film {n}") for n in range(1, 11)]
+		for asked, given in (((2, 2, 1), (2, 2, 1)), ((1, 3, 10), (1, 3, 1)), ((20, 10, 10), (5, 0, 0)),
+		                     ((0, 10, 10), (0, 5, 0)), ((0, 2, 10), (0, 2, 3)), ((0, 0, 0), (0, 0, 0))):
+			plan = plan_of(films, starting_unlocks=5, wild_tickets=asked[0], fast_forwards=asked[1],
+			               remote_controls=asked[2])
+			self.assertEqual((plan.wild, plan.fast_forwards, plan.remote_controls), given, asked)
+		for name, options, entries in make_plan_cases.cases():
+			plan = plan_of(entries, **{**options, "wild_tickets": 20, "fast_forwards": 10, "remote_controls": 10})
+			room = plan.main_count - (plan.copies - plan.start)
+			with self.subTest(case=name):
+				self.assertEqual(plan.wild + plan.fast_forwards + plan.remote_controls, min(40, room))
+				self.assertEqual(plan.wild, min(20, room))
+
+	def test_excluded_main_locations_take_room_from_the_useful_items_last_given_first(self):
+		# 10 films with 5 opening leave a room of 5: 2 Wild Tickets, 2 Fast Forwards, 1 Remote Control.
+		films = [movie(n, f"Film {n}") for n in range(1, 11)]
+		for excluded, kept in ((0, (2, 2, 1)), (1, (2, 2, 0)), (2, (2, 1, 0)), (3, (2, 0, 0)), (4, (1, 0, 0)),
+		                       (5, (0, 0, 0)), (7, (0, 0, 0))):
+			plan = plan_of(films, starting_unlocks=5)
+			before = plan.filler
+			P.plan.exclude_main(plan, excluded)
+			with self.subTest(excluded=excluded):
+				self.assertEqual((plan.excluded, (plan.wild, plan.fast_forwards, plan.remote_controls)), (excluded, kept))
+				self.assertEqual(plan.filler, before + 5 - sum(kept))
+				self.assertEqual(sum(pool_of(plan).values()), plan.main_count + plan.checkpoint_count)
+				if excluded <= 5:
+					# Every checkpoint and every excluded watch is left a snack or a trap.
+					self.assertGreaterEqual(plan.filler, plan.checkpoint_count + excluded)
+		# Room the useful items leave over is taken first: nothing moves until it runs out.
+		plan = plan_of(films, starting_unlocks=5, wild_tickets=1, fast_forwards=1, remote_controls=1)
+		P.plan.exclude_main(plan, 2)
+		self.assertEqual((plan.wild, plan.fast_forwards, plan.remote_controls), (1, 1, 1))
+		# The filler it frees counts toward the traps: 30 to 33 filler at 40% is 12 to 13 traps.
+		plan = plan_of(SIX_FILMS, trap_percentage=40)
+		P.plan.exclude_main(plan, 3)
+		self.assertEqual((plan.wild, plan.fast_forwards, plan.filler, sum(plan.traps.values()), sum(plan.snacks.values())),
+		                 (0, 0, 33, 13, 20))
+		self.assertEqual(list(plan.traps.values()), [3, 3, 2, 2, 1, 1, 1])
+		# The planner's own pool is the one with nothing excluded.
+		plan = plan_of(SIX_FILMS, trap_percentage=40)
+		P.plan.exclude_main(plan, 0)
+		self.assertEqual(P.plan.summary(plan), P.plan.summary(plan_of(SIX_FILMS, trap_percentage=40)))
+
+	def test_an_exclusion_that_makes_a_trap_due_with_every_weight_at_0_stops_the_list(self):
+		# 2 films without checkpoints: 1 unlock in the pool and 1 Wild Ticket, no filler, so no trap is due.
+		films = [movie(1, "A"), movie(2, "B")]
+		plan = plan_of(films, timesanity_movies=0, trap_percentage=100, **NO_TRAPS)
+		self.assertEqual((plan.wild, plan.filler), (1, 0))
+		with self.assertRaises(P.plan.PlanError) as caught:
+			P.plan.exclude_main(plan, 1)
+		self.assertEqual(str(caught.exception), "trap_percentage 100 makes 1 of the list's 1 filler items traps, but "
+		                                        "every trap weight is 0 (a trap weight above 0, or trap_percentage 0, "
+		                                        "would help)")
+
+	def test_traps_are_split_by_largest_remainder_with_ties_in_table_order(self):
+		split = P.plan.split_by_weight
+		defaults = [2, 2, 1, 1, 1, 1, 1]
+		self.assertEqual(split(9, defaults), [2, 2, 1, 1, 1, 1, 1])
+		self.assertEqual(split(12, defaults), [3, 3, 2, 1, 1, 1, 1])
+		self.assertEqual(split(1, defaults), [1, 0, 0, 0, 0, 0, 0])
+		self.assertEqual(split(30, [1] * 7), [5, 5, 4, 4, 4, 4, 4])
+		self.assertEqual(split(3, [1] * 7), [1, 1, 1, 0, 0, 0, 0])
+		# A larger remainder beats an earlier place, and a weight of 0 never gains one.
+		self.assertEqual(split(5, [0, 0, 0, 0, 0, 1, 1]), [0, 0, 0, 0, 0, 3, 2])
+		self.assertEqual(split(5, [0, 3, 0, 0, 1, 0, 0]), [0, 4, 0, 0, 1, 0, 0])
+		self.assertEqual(split(1, [0, 1, 1, 0, 0, 0, 0]), [0, 1, 0, 0, 0, 0, 0])
+		self.assertEqual(split(0, [0] * 7), [0] * 7)
+		for weights in (defaults, [0, 3, 0, 0, 1, 0, 0], [10, 0, 0, 0, 0, 0, 7], [1] * 7, [10] * 7):
+			whole = sum(weights)
+			for total in range(101):
+				counts = split(total, weights)
+				with self.subTest(weights=weights, total=total):
+					self.assertEqual(sum(counts), total)
+					for count, weight in zip(counts, weights):
+						# Within one of the exact share, which leaves a weight of 0 none.
+						self.assertLess(abs(count * whole - total * weight), whole)
+
+	def test_a_plan_turns_its_trap_percentage_of_the_filler_into_traps(self):
+		plan = plan_of(SIX_FILMS, trap_percentage=40)
+		self.assertEqual((plan.wild, plan.fast_forwards, plan.remote_controls, plan.filler), (2, 1, 0, 30))
+		self.assertEqual(list(plan.traps.items()), list(zip(TRAP_KEYS, [3, 3, 2, 1, 1, 1, 1])))
+		for percentage, due in ((0, 0), (3, 0), (4, 1), (33, 9), (99, 29), (100, 30)):
+			self.assertEqual(sum(plan_of(SIX_FILMS, trap_percentage=percentage).traps.values()), due, percentage)
+		self.assertEqual(plan_of(SIX_FILMS).traps, dict.fromkeys(TRAP_KEYS, 0))
+		summary = P.plan.summary(plan)
+		self.assertEqual({key: summary[key] for key in ("W", "FF", "RC", "F", "T")},
+		                 {"W": 2, "FF": 1, "RC": 0, "F": 30, "T": 12})
+		self.assertEqual(summary["traps"], plan.traps)
+		self.assertEqual(summary["snacks"], plan.snacks)
+
+	def test_traps_due_with_every_weight_at_0_stop_the_list(self):
+		# generate_early raises it as an OptionError that names the player, as it does the plan's caps.
+		with self.assertRaises(P.plan.PlanError) as caught:
+			plan_of(SIX_FILMS, trap_percentage=40, **NO_TRAPS)
+		self.assertEqual(str(caught.exception), "trap_percentage 40 makes 12 of the list's 30 filler items traps, but "
+		                                        "every trap weight is 0 (a trap weight above 0, or trap_percentage 0, "
+		                                        "would help)")
+		# While no trap is due the weights do not matter: no percentage, or one that rounds down to none.
+		for percentage in (0, 3):
+			plan = plan_of(SIX_FILMS, trap_percentage=percentage, **NO_TRAPS)
+			self.assertEqual((sum(plan.traps.values()), sum(plan.snacks.values())), (0, 30), percentage)
+
+	def test_snacks_are_dealt_round_robin_in_table_order(self):
+		plan = plan_of(SIX_FILMS, trap_percentage=40)
+		self.assertEqual(list(plan.snacks.items()), list(zip(SNACK_NAMES, [3, 3, 3, 3, 2, 2, 2])))
+		off = plan_of(SIX_FILMS, trap_percentage=40, snack_variety=False)
+		self.assertEqual(list(off.snacks.items()), list(zip(SNACK_NAMES, [18, 0, 0, 0, 0, 0, 0])))
+		self.assertEqual(off.traps, plan.traps)
+		for percentage in range(101):
+			counts = list(plan_of(SIX_FILMS, trap_percentage=percentage).snacks.values())
+			with self.subTest(percentage=percentage):
+				self.assertEqual(sum(counts), 30 - 30 * percentage // 100)
+				self.assertEqual(counts, sorted(counts, reverse=True))
+				self.assertLessEqual(counts[0] - counts[-1], 1)
+
+	def test_the_item_options_move_no_id_name_or_location(self):
+		cases = {case[0]: case for case in make_plan_cases.cases()}
+		_name, options, entries = cases["everything mixed"]
+		changed = {"snack_variety": False, "fast_forwards": 0, "remote_controls": 10, "snack_bar_trades": 0,
+		           "snack_bar_price": 50, "trap_percentage": 100, **{f"{key}_weight": 10 for key in TRAP_KEYS}}
+		info = P.entries.parse_list_info({})
+		built = []
+		for given in (options, {**options, **changed}):
+			plan = plan_of(entries, **given)
+			registry = registry_of(plan)
+			data = P.slotdata.build_slot_data(plan, registry, info, C.WORLD_VERSION, 1731300000)
+			summary = P.plan.summary(plan)
+			built.append({"units": registry.unit_name, "unit_ids": registry.unit_id,
+			              "locations": registry.location_name, "location_ids": registry.location_id,
+			              "package": P.datapackage.build_package(registry),
+			              "slot_data": {key: value for key, value in data.items() if key not in ("snack_bar", "pool")},
+			              "plan": {key: summary[key] for key in ("C", "S", "W", "N_main", "N_checkpoints", "goal_count",
+			                                                     "units", "entries")}})
+		for part in built[0]:
+			with self.subTest(part=part):
+				self.assertEqual(built[1][part], built[0][part])
 
 
 class RegistryTest(unittest.TestCase):
@@ -464,6 +710,20 @@ class RegistryTest(unittest.TestCase):
 		self.assertEqual(names["movie|rk:10"], "Wild ticket [10]")
 		folded = [name.casefold() for name in names.values()]
 		self.assertEqual(len(folded), len(set(folded)))
+
+	def test_a_yearless_title_named_like_a_fixed_item_or_group_takes_a_tag(self):
+		titles = ["Rewind", "hot dog", "Fast Forward", "Traps", "Snacks", "Useful"]
+		plan = plan_of([movie(n, title, y=None) for n, title in enumerate(titles, 1)] + [movie(9, "Rewind", y=1989)])
+		registry = registry_of(plan)
+		self.assertEqual([registry.unit_name[f"movie|rk:{n}"] for n in range(1, 7)],
+		                 [f"{title} [{n}]" for n, title in enumerate(titles, 1)])
+		self.assertEqual(registry.unit_name["movie|rk:9"], "Rewind (1989)")
+		# The rename is display only: the same keys under other titles take the same ids.
+		other = registry_of(plan_of([movie(n, f"Film {n}", y=None) for n in range(1, 7)] + [movie(9, "Film", y=1989)]))
+		self.assertEqual(other.unit_id, registry.unit_id)
+		self.assertEqual(other.location_id, registry.location_id)
+		for name in [*C.fixed_items(), *C.ITEM_GROUPS]:
+			self.assertIn(name.casefold(), P.registry.RESERVED, name)
 
 	def test_a_suffix_that_collides_again_keeps_growing(self):
 		plan = plan_of([movie(1, "Twin", y=None), movie(2, "Twin [7]", y=None), movie(7, "Twin", y=None)])
@@ -594,7 +854,8 @@ class OutputTest(unittest.TestCase):
 		self.assertEqual(list(package), ["item_name_groups", "item_name_to_id", "location_name_groups",
 		                                 "location_name_to_id"])
 		items, locations = package["item_name_to_id"], package["location_name_to_id"]
-		self.assertEqual(list(items)[:2], ["Popcorn", "Wild Ticket"])
+		self.assertEqual(list(items.items())[:17], [(name, C.BASE_ID + offset) for name, offset in FIXED])
+		self.assertEqual(len(items), 17 + len(self.registry.unit_keys))
 		self.assertEqual(len(set(items.values())), len(items))
 		self.assertEqual(len(set(locations.values())), len(locations))
 		for groups, expected in ((package["item_name_groups"], C.ITEM_GROUPS),
@@ -605,6 +866,39 @@ class OutputTest(unittest.TestCase):
 		self.assertEqual(package["item_name_groups"]["Everything"], sorted(items))
 		self.assertEqual(package["location_name_groups"]["Everywhere"], sorted(locations))
 		self.assertEqual(package["item_name_groups"]["Shows"], ["Show H: Next 2 Episodes"])
+		self.assertEqual(package["item_name_groups"]["Snacks"], sorted(SNACK_NAMES))
+		self.assertEqual(package["item_name_groups"]["Useful"], ["Fast Forward", "Remote Control", "Wild Ticket"])
+		self.assertEqual(package["item_name_groups"]["Traps"], sorted(TRAP_NAMES))
+
+	def test_slot_data_carries_the_item_ids_and_the_snack_bar(self):
+		info = P.entries.parse_list_info({})
+		data = P.slotdata.build_slot_data(self.plan, self.registry, info, C.WORLD_VERSION, 1731300000)
+		ids = {name: C.BASE_ID + offset for name, offset in FIXED}
+		self.assertEqual(data["items"], {
+			"popcorn": ids["Popcorn"],
+			"wild_ticket": ids["Wild Ticket"],
+			"snacks": {name: ids[name] for name in SNACK_NAMES},
+			"useful": {"fast_forward": ids["Fast Forward"], "remote_control": ids["Remote Control"]},
+			"traps": {key: ids[name] for key, name in zip(TRAP_KEYS, TRAP_NAMES)},
+		})
+		self.assertEqual(list(data["items"]["snacks"]), SNACK_NAMES)
+		self.assertEqual(list(data["items"]["traps"]), TRAP_KEYS)
+		self.assertEqual(data["snack_bar"], {"trades": 3, "price": 10})
+		self.assertEqual(data["pool"], {"snacks": 20, "traps": dict.fromkeys(TRAP_KEYS, 0), "fast_forwards": 2,
+		                                "remote_controls": 1, "wild_tickets": 2})
+		self.assertEqual(list(data["pool"]["traps"]), TRAP_KEYS)
+		cases = {case[0]: case for case in make_plan_cases.cases()}
+		_name, options, entries = cases["everything mixed"]
+		plan = plan_of(entries, **options, snack_bar_trades=0, snack_bar_price=50)
+		other = P.slotdata.build_slot_data(plan, registry_of(plan), info, C.WORLD_VERSION, 1731300000)
+		self.assertEqual((other["snack_bar"], other["items"]), ({"trades": 0, "price": 50}, data["items"]))
+		# pool says what the slot holds after its exclusions: 4 of them take the Remote Control and a Fast
+		# Forward from a room of 7, and the 22 filler at 25% make 5 traps.
+		plan = plan_of(entries, **options, trap_percentage=25)
+		P.plan.exclude_main(plan, 4)
+		pool = P.slotdata.build_slot_data(plan, registry_of(plan), info, C.WORLD_VERSION, 1731300000)["pool"]
+		self.assertEqual(pool, {"snacks": 17, "traps": dict(zip(TRAP_KEYS, [1, 1, 1, 1, 1, 0, 0])), "fast_forwards": 1,
+		                        "remote_controls": 0, "wild_tickets": 2})
 
 	def test_goal_counter_arithmetic(self):
 		opened = P.rules.opened_by
@@ -712,6 +1006,8 @@ class MirrorTest(unittest.TestCase):
 			"  MIN_AP_VERSION: c.MIN_AP_VERSION, BUILDER_VERSION: c.BUILDER_VERSION, SLOT_DATA_SCHEMA: c.SLOT_DATA_SCHEMA,\n"
 			"  BASE_ID: c.BASE_ID, UNLOCK_OFFSET: c.UNLOCK_OFFSET, MAX_UNLOCKS: c.MAX_UNLOCKS, MAX_CHECKS: c.MAX_CHECKS,\n"
 			"  IDS: c.IDS, NAMES: c.NAMES, ITEM_GROUPS: c.ITEM_GROUPS, LOCATION_GROUPS: c.LOCATION_GROUPS,\n"
+			"  SNACKS: c.SNACKS ? Object.entries(c.SNACKS) : null,\n"
+			"  TRAPS: c.TRAPS ? Object.entries(c.TRAPS).map(([key, trap]) => [key, trap.name, trap.id]) : null,\n"
 			"  KINDS: c.KINDS, TIMER_KIND: c.TIMER_KIND, LIMITS: c.LIMITS, OPTIONS: c.OPTIONS,\n"
 			"  LIST_OPTIONS: c.LIST_OPTIONS === undefined ? null : c.LIST_OPTIONS, PRESETS: c.PRESETS,\n"
 			"  ids: [c.unlockId(1), c.unlockId(20000), c.checkId(1), c.checkId(60000), c.unlockName(7), c.checkName(9)],\n"
@@ -725,9 +1021,14 @@ class MirrorTest(unittest.TestCase):
 			"MIN_AP_VERSION": C.MIN_AP_VERSION, "BUILDER_VERSION": C.BUILDER_VERSION,
 			"SLOT_DATA_SCHEMA": C.SLOT_DATA_SCHEMA, "BASE_ID": C.BASE_ID, "UNLOCK_OFFSET": C.UNLOCK_OFFSET,
 			"MAX_UNLOCKS": C.MAX_UNLOCKS, "MAX_CHECKS": C.MAX_CHECKS,
-			"IDS": {"popcorn": C.POPCORN_ID, "wildTicket": C.WILD_TICKET_ID},
-			"NAMES": {"popcorn": C.POPCORN, "wildTicket": C.WILD_TICKET, "victory": C.VICTORY,
-			          "goalLocation": C.GOAL_LOCATION, "counter": C.COUNTER},
+			"IDS": {"popcorn": C.POPCORN_ID, "wildTicket": C.WILD_TICKET_ID, "fastForward": C.FAST_FORWARD_ID,
+			        "remoteControl": C.REMOTE_CONTROL_ID},
+			"NAMES": {"popcorn": C.POPCORN, "wildTicket": C.WILD_TICKET, "fastForward": C.FAST_FORWARD,
+			          "remoteControl": C.REMOTE_CONTROL, "victory": C.VICTORY, "goalLocation": C.GOAL_LOCATION,
+			          "counter": C.COUNTER},
+			# In order: the pool deals snacks in this order, and a tie in the trap split goes to the earlier trap.
+			"SNACKS": list(C.SNACKS.items()),
+			"TRAPS": [[key, trap["name"], trap["id"]] for key, trap in C.TRAPS.items()],
 			"ITEM_GROUPS": C.ITEM_GROUPS, "LOCATION_GROUPS": C.LOCATION_GROUPS, "KINDS": C.KINDS,
 			"TIMER_KIND": C.TIMER_KIND,
 			"LIMITS": {"maxEntries": C.MAX_ENTRIES, "maxCopies": C.MAX_COPIES, "maxLocations": C.MAX_LOCATIONS,

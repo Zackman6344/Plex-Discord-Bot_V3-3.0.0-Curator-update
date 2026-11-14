@@ -5,8 +5,14 @@
 # each entry carries its own. Plain JSON only (lists, not tuples or sets): Main converts slot_data
 # with convert_to_base_types and the client receives it as JSON. Album and mix durations are the
 # sum of their tracks and a book's of its parts, the timeline the checkpoints were cut from.
+#
+# World 0.3.0 added items.snacks, items.useful, items.traps, snack_bar and pool without a new schema:
+# the bot reads a missing key as "this seed has none", so a 0.2.0 seed keeps crediting as it did.
+# items.snacks holds Popcorn too, so the bot counts snacks from it alone. pool is what the slot's item
+# pool holds after exclude_locations took its share of the useful items, which only generation knows:
+# the bot reads what a list holds from it instead of planning it again.
 
-from .constants import GAME, POPCORN_ID, SLOT_DATA_SCHEMA, WILD_TICKET_ID
+from .constants import GAME, POPCORN_ID, SLOT_DATA_SCHEMA, SNACKS, TRAPS, USEFUL, WILD_TICKET_ID
 
 
 def _entry(pe, registry):
@@ -81,7 +87,21 @@ def build_slot_data(plan, registry, info, world_version, generated_at):
 			"album": opts["timesanity_albums"],
 			"book": opts["timesanity_books"],
 		},
-		"items": {"popcorn": POPCORN_ID, "wild_ticket": WILD_TICKET_ID},
+		"items": {
+			"popcorn": POPCORN_ID,
+			"wild_ticket": WILD_TICKET_ID,
+			"snacks": dict(SNACKS),
+			"useful": {key: item["id"] for key, item in USEFUL.items()},
+			"traps": {key: trap["id"] for key, trap in TRAPS.items()},
+		},
+		"snack_bar": {"trades": opts["snack_bar_trades"], "price": opts["snack_bar_price"]},
+		"pool": {
+			"snacks": sum(plan.snacks.values()),
+			"traps": dict(plan.traps),
+			"fast_forwards": plan.fast_forwards,
+			"remote_controls": plan.remote_controls,
+			"wild_tickets": plan.wild,
+		},
 		"units": [{"id": registry.unit_id[unit.key], "name": registry.unit_name[unit.key], "kind": unit.kind,
 		           "steps": unit.steps, "start": unit.start} for unit in plan.units],
 		"entries": [_entry(pe, registry) for pe in plan.entries],

@@ -204,6 +204,16 @@ const defaults = {
   // 'completions' posts a title finished, banked or unlocked; 'all' also every credit that
   // finishes nothing (checkpoints, album tracks); 'off' posts nothing but refusals and other problems.
   'apMediaAnnounce' : 'completions',
+  // Traps a world 0.3.0 seed sends: Buffering and Rights Expired hold a slot's checks for a while,
+  // the others reach its player through the bot's voice or audiobook playback. Off: each trap that
+  // arrives fizzles with a line, and holds running now end with their checks sent.
+  'apMediaTraps' : true,
+  // The voice and audiobook traps (Commercial Break, Shuffle Mode, Rewind, Intermission, Slow
+  // Motion), which everyone in the bot's voice channel hears. Off: they fizzle with a line.
+  'apMediaVoiceTraps' : true,
+  // A Plex playlist (its name or ratingKey) of clips that Commercial Break plays after the current
+  // track. Blank: the music pauses for 30 seconds instead.
+  'apMediaTrapClips' : '',
 
   // --- Audiobooks and podcasts (/book, or the Audiobooks page of /config) ---
   // Plays long-form audio from the music library with a saved place per listener. Off by default

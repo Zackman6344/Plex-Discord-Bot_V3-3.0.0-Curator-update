@@ -8,11 +8,11 @@
 # own object), its keys are in alphabetical order, its groups are sorted lists of str, and the
 # checksum is taken from exactly the dict that ships.
 
-from .constants import POPCORN, POPCORN_ID, WILD_TICKET, WILD_TICKET_ID
+from .constants import fixed_items
 
 
 def build_package(registry):
-	items = {POPCORN: POPCORN_ID, WILD_TICKET: WILD_TICKET_ID}
+	items = fixed_items()
 	for key in registry.unit_keys:
 		items[registry.unit_name[key]] = registry.unit_id[key]
 	locations = {registry.location_name[key]: registry.location_id[key] for key in registry.location_keys}

@@ -42,8 +42,21 @@ const DISCORD_ID = /^\d{1,32}$/;
 
 const BINDING_FIELDS = new Set([
 	'key', 'watchId', 'slot', 'userId', 'boundAt', 'boundBy', 'seedName', 'state', 'stateDetail',
-	'pending', 'banked', 'redeemed', 'wildUsed', 'goalSent', 'announce', 'welcomed', 'lastCredit', 'lastTarget',
+	'pending', 'banked', 'redeemed', 'wildUsed', 'goalSent', 'announce', 'welcomed', 'lastCredit', 'lastTarget', 'heard',
+	'itemsSeen', 'held', 'holdUntil', 'holdMs', 'expired', 'armed', 'speedRestore', 'ffUsed', 'rcUsed', 'snackSpent',
+	'bought', 'trades',
 ]);
+// A voice or book trap waits for a listen at most 12 hours, and a burst arms at most two at once;
+// the cap only keeps a hand-edited file small.
+const ARMED_MAX = 20;
+const SENDER_MAX = 100;
+const TRAP_KINDS = new Set(Object.keys(contracts.TRAPS));
+// What a strict slot has heard of each title, as apMediaCredit.strictLocations keeps it. A key is
+// `<kind>|<id>`, and an entry id may be 1,000 characters (apworld/plex_media/entries.py).
+const HEARD_RANGES_MAX = 64;
+const HEARD_TOTAL_MAX = 4096;
+const HEARD_KEY_MAX = 1100;
+const HEARD_PAD_MAX = 90000;
 const ACCOUNT_FIELDS = new Set(['userId', 'accountId', 'name', 'linkedAt', 'linkedBy', 'consent', 'consentAt']);
 const MARK_FIELDS = new Set(['accountId', 'newestViewedAt', 'seen']);
 
@@ -96,6 +109,90 @@ function textOrNull(value) {
 	if (value === null || value === undefined) return null;
 	const s = String(value);
 	return s ? s : null;
+}
+
+/**
+ * Entry key to [[lo, hi], ...] in ms (a third number, a Plex session's pad, kept when there is one),
+ * finite and ascending; anything else is dropped. Titles are kept in stored order, each with at most
+ * HEARD_RANGES_MAX ranges, and once HEARD_TOTAL_MAX ranges are held the titles after are dropped.
+ */
+function heardMap(value) {
+	const out = {};
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return out;
+	let total = 0;
+	for (const [key, raw] of Object.entries(value)) {
+		if (total >= HEARD_TOTAL_MAX) break;
+		if (!key || key.length > HEARD_KEY_MAX || !Array.isArray(raw)) continue;
+		const ranges = [];
+		for (const range of raw) {
+			if (!Array.isArray(range)) continue;
+			const lo = Number(range[0]);
+			const hi = Number(range[1]);
+			if (!(Number.isFinite(lo) && Number.isFinite(hi) && lo >= 0 && hi > lo)) continue;
+			const pad = Number(range[2]);
+			ranges.push(Number.isFinite(pad) && pad > 0 ? [lo, hi, Math.min(pad, HEARD_PAD_MAX)] : [lo, hi]);
+		}
+		if (!ranges.length) continue;
+		ranges.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+		out[key] = ranges.slice(0, Math.min(HEARD_RANGES_MAX, HEARD_TOTAL_MAX - total));
+		total += out[key].length;
+	}
+	return out;
+}
+
+function countOf(value) {
+	const n = Number(value);
+	return Number.isSafeInteger(n) && n > 0 ? n : 0;
+}
+
+/** How much of the room's item list the game has acted on, or null before the first inventory. */
+function cursorOf(value) {
+	if (value === null || value === undefined || value === '') return null;
+	const n = Number(value);
+	return Number.isSafeInteger(n) && n >= 0 ? n : null;
+}
+
+/** Entry key to the time (ms) its Rights Expired hold ends; at most one per list title. */
+function expiredMap(value) {
+	const out = {};
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return out;
+	let n = 0;
+	for (const [key, raw] of Object.entries(value)) {
+		if (n >= contracts.LIMITS.maxEntries) break;
+		const until = Number(raw);
+		if (!key || key.length > HEARD_KEY_MAX || !Number.isFinite(until) || until <= 0) continue;
+		out[key] = until;
+		n += 1;
+	}
+	return out;
+}
+
+/** Traps waiting for the slot's player to listen through the bot: [{kind, at, from, told}], oldest first. */
+function armedList(value) {
+	const out = [];
+	for (const raw of items(value)) {
+		if (out.length >= ARMED_MAX) break;
+		if (!raw || typeof raw !== 'object' || !TRAP_KINDS.has(raw.kind)) continue;
+		const at = Number(raw.at);
+		if (!Number.isFinite(at) || at < 0) continue;
+		out.push({ kind: raw.kind, at, from: String(raw.from ?? '').slice(0, SENDER_MAX), told: raw.told === true });
+	}
+	return out;
+}
+
+/** A book speed Slow Motion changed, to put back at `until`: {kind: 'speed', workId, previous, until}, or null. */
+function speedRestoreOf(value) {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+	const workId = value.workId === undefined || value.workId === null ? '' : String(value.workId);
+	const previous = Number(value.previous);
+	const until = Number(value.until);
+	if (!workId || !Number.isFinite(previous) || previous <= 0 || !Number.isFinite(until) || until <= 0) return null;
+	return { kind: 'speed', workId, previous, until };
+}
+
+function boughtOf(value) {
+	const v = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+	return { fastForward: countOf(v.fastForward), remoteControl: countOf(v.remoteControl) };
 }
 
 // A snowflake is past 2^53: one that went through Number() has lost digits and names somebody else,
@@ -211,6 +308,19 @@ function shapeBinding(input, now) {
 		welcomed: input.welcomed === true,
 		lastCredit: credit,
 		lastTarget: target,
+		heard: heardMap(input.heard),
+		itemsSeen: cursorOf(input.itemsSeen),
+		held: idList(input.held),
+		holdUntil: timeOf(input.holdUntil),
+		holdMs: countOf(input.holdMs),
+		expired: expiredMap(input.expired),
+		armed: armedList(input.armed),
+		speedRestore: speedRestoreOf(input.speedRestore),
+		ffUsed: countOf(input.ffUsed),
+		rcUsed: countOf(input.rcUsed),
+		snackSpent: countOf(input.snackSpent),
+		bought: boughtOf(input.bought),
+		trades: countOf(input.trades),
 		...extras(input, BINDING_FIELDS),
 	};
 }

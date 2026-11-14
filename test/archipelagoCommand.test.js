@@ -193,6 +193,38 @@ test('with two watches the id is required again, and says so', async () => {
     assert.strictEqual(claims.all().length, 0, 'nothing claimed on a guess');
 });
 
+// The bug: the reply named no id, so a player who had not watched the room themselves tried one
+// that did not exist.
+test('the ID question names every watch with the slot it watches as, and where the ID goes', async () => {
+    const first = await addWatch(['ZackWord']);
+    const second = await addWatch(['OtherSlot']);
+
+    const text = said(await run('pings', 'ZackWord', 'all'));
+    assert.ok(text.includes(`#${first.id} `), text);
+    assert.ok(text.includes(`#${second.id} `), text);
+    assert.match(text, /\(as `ZackWord`\), #\d+ .*\(as `OtherSlot`\)\./);
+    assert.ok(text.endsWith('It goes right after `pings`: `!ap pings <id> …`.'), text);
+    assert.ok(!/—/.test(text), 'no em-dash');
+
+    const slash = fakeMessage();
+    slash.interaction = { options: { get: (name) => (name === 'slot' ? { value: 'ZackWord' } : null) } };
+    await ap.command.process(slash, 'claim', 'ZackWord');
+    assert.ok(said(slash).endsWith('Give it as the `id` option.'), said(slash));
+    assert.strictEqual(claims.all().length, 0, 'nothing claimed on a guess');
+});
+
+// A third review's bug: with many watches or long labels the question passed Discord's 2,000
+// characters, the send was refused, and the player got no reply at all.
+test('the ID question stays inside one message, however many watches there are', async (t) => {
+    const real = monitor.listWatches;
+    monitor.listWatches = () => Array.from({ length: 80 }, (_, i) => ({ watch: { id: i, label: 'L'.repeat(60), slot: `Slot${i}` } }));
+    t.after(() => { monitor.listWatches = real; });
+    const text = said(await run('claim', 'ZackWord'));
+    assert.ok(text.length <= 2000, `${text.length} characters`);
+    assert.match(text, /^More than one room is being watched, so I need the ID: #0 /);
+    assert.match(text, /, and \d+ more \(`!ap list` shows every watch\)\. It goes right after `claim`: `!ap claim <id> …`\.$/);
+});
+
 test('with no watches at all it says that rather than asking for an ID', async () => {
     const msg = await run('claims');
     assert.match(said(msg), /No rooms are being watched yet/);

@@ -7,7 +7,11 @@
 // and nothing is decided locked before the slot's inventory is known; the goal goes out at the
 // threshold and again on every Connected; a new seed, a refusal and a lost watch each stop the slot
 // with one notice that names the fix; announcements are batched, escaped and never ping; and start,
-// stop, the /config switch and the health check behave across a !restart.
+// stop, the /config switch and the health check behave across a !restart. For world 0.3.0's items:
+// each acts once, never as a backlog or again after a reconnect; a burst hits with two traps at most;
+// a Remote Control ends or blocks a trap; Buffering and Rights Expired hold checks, never drop them,
+// and let them go on time, after a restart too; a voice or book trap waits for a listen, then fizzles
+// after 12 hours or with its switch off; a Fast Forward and the Snack Bar spend only what is there.
 //
 // Harness: the real orchestrator (createGame) with the real ApMediaClient against
 // test/helpers/apMediaServer.js on a loopback port, serving test/fixtures/apmedia/slot_data_mixed.json
@@ -17,7 +21,8 @@
 // bookmarks and catalog; a fake monitor with the archipelagoMonitor accessors the game reads; a fake
 // Discord client that records every post; and injected timers fired by hand, so no poll or batch
 // runs on its own. Reconnects run the client's own reconnect at once (reconnectNow), never its 5 s
-// backoff.
+// backoff. The trap tests hand the game a recording stand-in for helpers/apMediaTraps.js's runner,
+// except those that let the game build the real one over the fake bot's book engine.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -26,6 +31,7 @@ const { EventEmitter } = require('node:events');
 const contracts = require('../helpers/apMediaContracts.js');
 const { createGame, commandCode } = require('../helpers/apMediaGame.js');
 const { createApMediaStore } = require('../helpers/apMediaStore.js');
+const voiceClaims = require('../helpers/voiceClaims.js');
 const { startApMediaServer } = require('./helpers/apMediaServer.js');
 const { waitFor } = require('./helpers/apServer.js');
 const FIXTURE = require('./fixtures/apmedia/slot_data_mixed.json');
@@ -214,6 +220,7 @@ async function setup(t, options = {}) {
 		watch = {},
 		room = ROOM,
 		startGame = true,
+		game: gameOptions = {},
 	} = options;
 	const server = await startApMediaServer({
 		slotData: { 1: sd },
@@ -241,7 +248,7 @@ async function setup(t, options = {}) {
 		clock: AFTER + 3600000,
 	};
 	h.bookmarks = { marks: new Map(), forUser: (id) => h.bookmarks.marks.get(String(id)) || [] };
-	h.game = createGame({
+	h.make = (more = {}) => createGame({
 		store: h.store,
 		monitor: h.monitor,
 		config: h.config,
@@ -256,7 +263,10 @@ async function setup(t, options = {}) {
 		commandLog: { recordEvent: (kind, detail) => h.events.push({ kind, ...detail }) },
 		voiceDefer: (fn) => fn(),
 		now: () => h.clock,
+		...gameOptions,
+		...more,
 	});
+	h.game = h.make();
 	t.after(() => h.game.stop());
 	if (startGame) h.game.start({ discord: h.discord, bot: h.bot });
 	return h;
@@ -651,7 +661,7 @@ test('announcements batch per channel for archipelagoBatchSeconds, escape titles
 	const key = await linkSlot(h, { slot: 'Zack`Plex' });
 	const [welcome] = await settledPosts(h);
 	assert.ok(welcome.startsWith('\u{1F3AC} `Zack\'Plex` is in the game'), welcome);
-	assert.ok(welcome.endsWith('``!ap claim Zack`Plex``, then ``!ap hintpings Zack`Plex dm``.'), 'the commands keep the exact name');
+	assert.ok(welcome.split('\n')[2].endsWith('``!ap claim Zack`Plex``, then ``!ap hintpings Zack`Plex dm``.'), 'the commands keep the exact name');
 	h.config.archipelagoBatchSeconds = 2;
 
 	await h.game._internal.handleEvent(historyEvent(MATRIX.rk));
@@ -827,16 +837,18 @@ test('a command shown in inline code keeps a slot name\'s backticks', () => {
 	assert.strictEqual(commandCode('`Plex'), '`` `Plex``');
 });
 
-test('the first Connected posts one welcome naming the open titles, the Plex account and the commands', async (t) => {
+test('the first Connected posts one welcome naming the open titles, the Plex account, the commands and the pool', async (t) => {
 	const h = await setup(t);
 	const key = await linkSlot(h, { user: FRIEND });
 	const [welcome] = await settledPosts(h);
 	const lines = welcome.split('\n');
-	assert.strictEqual(lines.length, 3);
+	assert.strictEqual(lines.length, 4);
 	assert.match(lines[0], /^\u{1F3AC} `ZackPlex` is in the game with 3 of 19 titles open: The Matrix \(1999\) \(2h16m\), Halloween \(2018\) \(1h46m\), Halloween \(2018\) \(1h45m\)\. Goal: finish 15\.$/u);
 	assert.match(lines[1], /none, so only Discord listening counts for now, and its 13 video titles need one/);
 	assert.match(lines[2], /`\/apmedia list`/);
 	assert.match(lines[2], /`!ap hintpings ZackPlex dm`/);
+	assert.strictEqual(lines[3], 'In its pool: 2 Wild Tickets, 2 Fast Forwards, 1 Remote Control, 69 snacks and no traps. '
+		+ 'The Snack Bar trades 10 snacks for a Fast Forward or a Remote Control, 3 times (`/apmedia snackbar`).', 'slot_data\'s pool, a seed without traps');
 	assert.ok(row(h, key).wildTickets && h.store.bindings.get(key).welcomed);
 
 	const client = runtime(h, key).client;
@@ -1368,7 +1380,8 @@ test('stop and start are idempotent, leave nothing behind, and a !restart hands 
 	h.game.start({ discord: h.discord, bot: h.bot });
 	assert.strictEqual(h.monitor.listenerCount(), 1);
 	assert.strictEqual(h.bot.listenerCount('track-heard'), 1);
-	assert.strictEqual(h.bot.books.listeners.size, 1);
+	assert.strictEqual(h.bot.listenerCount('will play'), 1, 'a voice track start, for an armed trap');
+	assert.strictEqual(h.bot.books.listeners.size, 2, 'audiobook credit and the armed traps');
 	assert.strictEqual(h.configStore.count(), 1);
 	await settledPosts(h);
 
@@ -1381,6 +1394,7 @@ test('stop and start are idempotent, leave nothing behind, and a !restart hands 
 	h.game.stop();
 	assert.strictEqual(h.monitor.listenerCount(), 0);
 	assert.strictEqual(h.bot.listenerCount('track-heard'), 0);
+	assert.strictEqual(h.bot.listenerCount('will play'), 0);
 	assert.strictEqual(h.bot.books.listeners.size, 0);
 	assert.strictEqual(h.configStore.count(), 1, 'bound once per process');
 	assert.strictEqual(h.timers.pending.size, 0);
@@ -1552,4 +1566,1836 @@ test('the health check reports Plex Media through the shared instance', () => {
 	const result = healthCheck.checkApMedia();
 	if (!config.apMediaEnabled) assert.deepStrictEqual(result, { status: 'disabled', detail: 'apMediaEnabled is false in config/config.js' });
 	assert.ok(['ok', 'error', 'missing', 'disabled'].includes(result.status));
+});
+// --- timesanity_strict: everything before a checkpoint heard -------------------------------------
+
+const MIN_MS = 60000;
+// Race-free: a credited id sits in pending from creditIds until the room has registered it.
+const earned = (h, key, id, server = h.server) => {
+	const b = h.store.bindings.get(key);
+	return b.pending.includes(id) || b.banked.includes(id) || server.checkedOf(1).has(id);
+};
+const sessionSpan = (rk, fromMs, toMs, at = AFTER) => ({ type: 'span', source: 'session', accountId: 1, ratingKey: rk, fromMs, toMs, at });
+
+// The first rehearsal's audiobook earned its 30-minute checkpoint after 8 skipped minutes. Under
+// strict the owner wants all of it heard, over any number of sittings.
+test('under strict a checkpoint needs everything before it heard, and what was heard is kept on the binding', async (t) => {
+	const h = await setup(t, { sd: slotData({ timesanity_strict: true }) });
+	const key = await linkSlot(h);
+	await settledPosts(h);
+	const [watch, m15, m30] = MATRIX.ids;
+	await h.game._internal.handleEvent(sessionSpan(MATRIX.rk, 0, 21.5 * MIN_MS));
+	await waitFor(() => h.server.checkedOf(1).has(m15), 'the 15-minute checkpoint');
+	assert.deepStrictEqual(Object.values(h.store.bindings.get(key).heard), [[[0, 21.5 * MIN_MS]]], 'written with the credit');
+	await h.game._internal.handleEvent(sessionSpan(MATRIX.rk, 29.9 * MIN_MS, 30.1 * MIN_MS, AFTER + 1000));
+	await h.game._internal.idle();
+	assert.ok(!earned(h, key, m30), 'crossing 30:00 after a skip is not enough');
+	assert.deepStrictEqual(Object.values(h.store.bindings.get(key).heard), [[[0, 21.5 * MIN_MS]]], 'a stretch that earns nothing waits in memory');
+	h.timers.fire(60000);
+	const stored = h.store.bindings.get(key).heard;
+	assert.deepStrictEqual(Object.values(stored), [[[0, 21.5 * MIN_MS], [29.9 * MIN_MS, 30.1 * MIN_MS]]], 'and is written a minute later');
+	assert.match(Object.keys(stored)[0], /^movie\|/);
+
+	await h.game._internal.handleEvent(historyEvent(MATRIX.rk, { at: AFTER + 2000 }));
+	await waitFor(() => h.server.checkedOf(1).has(watch), 'the watch');
+	assert.ok(!earned(h, key, m30), 'a Plex history row proves no listening');
+
+	await h.game._internal.handleEvent(sessionSpan(MATRIX.rk, 21.5 * MIN_MS, 29.9 * MIN_MS, AFTER + 3000));
+	await waitFor(() => h.server.checkedOf(1).has(m30), 'the 30-minute checkpoint once the skipped stretch is heard');
+	assert.deepStrictEqual(Object.values(h.store.bindings.get(key).heard), [[[0, 30.1 * MIN_MS]]]);
+	await h.game._internal.handleEvent(sessionSpan(MATRIX.rk, 30.1 * MIN_MS, 136 * MIN_MS, AFTER + 4000));
+	await waitFor(() => hasAll(h.server.checkedOf(1), MATRIX.ids), 'every checkpoint');
+	assert.deepStrictEqual(h.store.bindings.get(key).heard, {}, 'nothing kept once every checkpoint is reached');
+});
+
+test('without strict a stretch across a mark still earns it, and nothing is kept', async (t) => {
+	const h = await setup(t);
+	const key = await linkSlot(h);
+	await h.game._internal.handleEvent(sessionSpan(MATRIX.rk, 29.9 * MIN_MS, 30.1 * MIN_MS));
+	await waitFor(() => h.server.checkedOf(1).has(MATRIX.ids[2]), 'the 30-minute checkpoint');
+	assert.deepStrictEqual(h.store.bindings.get(key).heard, {});
+});
+
+test('under strict with locked_watches ignore, a locked title heard counts for nothing, then or after its unlock', async (t) => {
+	const h = await setup(t, { sd: slotData({ timesanity_strict: true, locked_watches: 'ignore' }) });
+	const key = await linkSlot(h);
+	await h.game._internal.handleEvent(sessionSpan(N1917.rk, 0, 20 * MIN_MS));
+	await h.game._internal.idle();
+	assert.deepStrictEqual(h.store.bindings.get(key).heard, {}, 'nothing recorded while it is locked');
+	assert.strictEqual(row(h, key).banked, 0);
+	await receive(h, key, N1917.unit);
+	await h.game._internal.handleEvent(sessionSpan(N1917.rk, 20 * MIN_MS, 21 * MIN_MS, AFTER + 1000));
+	await h.game._internal.idle();
+	assert.ok(!earned(h, key, N1917.ids[1]), 'the stretch heard while locked does not count after the unlock');
+	await h.game._internal.handleEvent(sessionSpan(N1917.rk, 0, 20 * MIN_MS, AFTER + 2000));
+	await waitFor(() => h.server.checkedOf(1).has(N1917.ids[1]), 'heard again once open');
+});
+
+test('under strict with locked_watches bank, a locked title heard banks its checkpoints for the unlock', async (t) => {
+	const h = await setup(t, { sd: slotData({ timesanity_strict: true }) });
+	const key = await linkSlot(h);
+	await h.game._internal.handleEvent(sessionSpan(N1917.rk, 0, 16 * MIN_MS));
+	await waitFor(() => row(h, key).banked === 1, 'the 15-minute checkpoint in the bank');
+	assert.strictEqual(Object.keys(h.store.bindings.get(key).heard).length, 1);
+});
+test('under strict a time credited by hand counts as heard, so playing on from it earns the next checkpoint', async (t) => {
+	const h = await setup(t, { sd: slotData({ timesanity_strict: true }) });
+	const key = await linkSlot(h);
+	const [, m15, m30] = MATRIX.ids;
+	const byHand = await h.game.creditManual(key, 'movie|plex://movie/5d7768b2', { atMs: '20m' });
+	assert.ok(byHand.ok, byHand.message);
+	await waitFor(() => h.server.checkedOf(1).has(m15), 'the 15-minute checkpoint, by hand');
+	assert.deepStrictEqual(Object.values(h.store.bindings.get(key).heard), [[[0, 20 * MIN_MS]]]);
+	await h.game._internal.handleEvent(sessionSpan(MATRIX.rk, 20 * MIN_MS, 31 * MIN_MS, AFTER + 1000));
+	await waitFor(() => h.server.checkedOf(1).has(m30), 'the 30-minute checkpoint, played on from 20:00');
+});
+// A durable write on every 10 to 15 s step, beside voice playback, is the synchronous disk work that
+// makes this PC's voice stutter.
+test('under strict what was heard is written with the next credit, else a minute later, and at stop, never on every step', async (t) => {
+	const h = await setup(t, { sd: slotData({ timesanity_strict: true }) });
+	const key = await linkSlot(h);
+	let writes = 0;
+	const patch = h.store.bindings.patch;
+	h.store.bindings.patch = (...args) => {
+		if (args[1] && Object.prototype.hasOwnProperty.call(args[1], 'heard')) writes += 1;
+		return patch(...args);
+	};
+	const flushes = () => h.timers.delays().filter((ms) => ms === 60000).length;
+	for (let m = 1; m <= 10; m++) await h.game._internal.handleEvent(sessionSpan(MATRIX.rk, (m - 1) * MIN_MS, m * MIN_MS, AFTER + m * 1000));
+	await h.game._internal.idle();
+	assert.strictEqual(writes, 0, 'ten steps that earn nothing write nothing');
+	assert.strictEqual(flushes(), 1, 'one flush timer for all of them');
+	await h.game._internal.handleEvent(sessionSpan(MATRIX.rk, 10 * MIN_MS, 16 * MIN_MS, AFTER + 11000));
+	await waitFor(() => h.server.checkedOf(1).has(MATRIX.ids[1]), 'the 15-minute checkpoint');
+	assert.strictEqual(writes, 1, 'the credit writes what was heard in its own patch');
+	assert.deepStrictEqual(Object.values(h.store.bindings.get(key).heard), [[[0, 16 * MIN_MS]]]);
+	assert.strictEqual(flushes(), 0, 'and the flush timer goes');
+	await h.game._internal.handleEvent(sessionSpan(MATRIX.rk, 16 * MIN_MS, 17 * MIN_MS, AFTER + 12000));
+	await h.game._internal.idle();
+	h.timers.fire(60000);
+	assert.strictEqual(writes, 2, 'the timer writes what no credit did');
+	await h.game._internal.handleEvent(sessionSpan(MATRIX.rk, 17 * MIN_MS, 18 * MIN_MS, AFTER + 13000));
+	await h.game._internal.idle();
+	h.game.stop();
+	assert.strictEqual(writes, 3, 'stop writes what is left');
+	assert.deepStrictEqual(Object.values(h.store.bindings.get(key).heard), [[[0, 18 * MIN_MS]]]);
+	assert.strictEqual(flushes(), 0);
+});
+
+test('under strict a checkpoint the room already holds counts as everything before it heard: a live seed carries on', async (t) => {
+	const [, m15, m30, m45] = MATRIX.ids;
+	const h = await setup(t, { sd: slotData({ timesanity_strict: true }), server: { checked: { 1: [m15] } } });
+	const key = await linkSlot(h);
+	await h.game._internal.handleEvent(sessionSpan(MATRIX.rk, 15 * MIN_MS, 31 * MIN_MS));
+	await waitFor(() => h.server.checkedOf(1).has(m30), 'the 30-minute checkpoint from 15:00 on');
+	await h.game._internal.handleEvent(sessionSpan(MATRIX.rk, 32 * MIN_MS, 46 * MIN_MS, AFTER + 1000));
+	await h.game._internal.idle();
+	assert.ok(!earned(h, key, m45), 'a minute unheard after 31:00 still blocks 45:00');
+	h.game.stop();
+	assert.deepStrictEqual(Object.values(h.store.bindings.get(key).heard), [[[0, 31 * MIN_MS], [32 * MIN_MS, 46 * MIN_MS]]]);
+});
+
+test('under strict a retry onto a new seed clears what was heard, so nothing from before it counts', async (t) => {
+	const h = await setup(t, { sd: slotData({ timesanity_strict: true }) });
+	const key = await linkSlot(h);
+	await h.game._internal.handleEvent(sessionSpan(MATRIX.rk, 0, 10 * MIN_MS));
+	await h.game._internal.idle();
+	h.timers.fire(60000);
+	assert.strictEqual(Object.keys(h.store.bindings.get(key).heard).length, 1);
+
+	const fresh = await startApMediaServer({ seedName: 'Seed_NEW', slotData: { 1: slotData({ timesanity_strict: true }) }, locations: { 1: ALL_LOCATIONS }, startInventory: { 1: START } });
+	t.after(() => fresh.close());
+	h.monitor.put(0, { target: fresh.target }, 'repointed');
+	await waitFor(() => row(h, key).state === 'stale', 'the stale state');
+	const res = await h.game.retry(key);
+	assert.ok(res.ok, res.message);
+	await waitFor(() => row(h, key).seedName === 'Seed_NEW' && row(h, key).inventoryKnown, 'the new seed');
+	assert.deepStrictEqual(h.store.bindings.get(key).heard, {});
+	await h.game._internal.handleEvent(sessionSpan(MATRIX.rk, 10 * MIN_MS, 16 * MIN_MS, AFTER + 1000));
+	await h.game._internal.idle();
+	assert.ok(!earned(h, key, MATRIX.ids[1], fresh), 'the old seed\'s first ten minutes do not count for the new one');
+	h.game.stop();
+	assert.deepStrictEqual(Object.values(h.store.bindings.get(key).heard), [[[10 * MIN_MS, 16 * MIN_MS]]]);
+});
+
+test('under strict with locked_watches ignore, nothing is recorded while the inventory is not known', async (t) => {
+	const h = await setup(t, { sd: slotData({ timesanity_strict: true, locked_watches: 'ignore' }) });
+	const key = await linkSlot(h);
+	const counts = runtime(h, key).counts;
+	runtime(h, key).counts = null;
+	await h.game._internal.handleEvent(sessionSpan(MATRIX.rk, 0, 10 * MIN_MS));
+	await h.game._internal.idle();
+	runtime(h, key).counts = counts;
+	h.game.stop();
+	assert.deepStrictEqual(h.store.bindings.get(key).heard, {}, 'any title might be locked');
+});
+test('under strict a binding holding 4,096 ranges judges a title not started yet on each stretch alone, and keeps nothing of it', async (t) => {
+	const h = await setup(t, { sd: slotData({ timesanity_strict: true }) });
+	const key = await linkSlot(h);
+	const full = {};
+	for (let i = 0; i < 64; i++) full[`movie|filler-${i}`] = Array.from({ length: 64 }, (_, j) => [j * 100000, j * 100000 + 50000]);
+	h.store.bindings.patch(key, { heard: full });
+	const [, m15, m30] = MATRIX.ids;
+	await h.game._internal.handleEvent(sessionSpan(MATRIX.rk, 0, 10 * MIN_MS));
+	await h.game._internal.handleEvent(sessionSpan(MATRIX.rk, 10 * MIN_MS, 16 * MIN_MS, AFTER + 1000));
+	await h.game._internal.idle();
+	assert.ok(!earned(h, key, m15), 'two sittings do not add up: the first was not kept');
+	await h.game._internal.handleEvent(sessionSpan(MATRIX.rk, 0, 16 * MIN_MS, AFTER + 2000));
+	await waitFor(() => h.server.checkedOf(1).has(m15), 'one sitting from 0:00 still earns 15:00');
+	await h.game._internal.handleEvent(sessionSpan(MATRIX.rk, 15 * MIN_MS, 31 * MIN_MS, AFTER + 3000));
+	await waitFor(() => h.server.checkedOf(1).has(m30), 'and the earned 15:00 carries on');
+	h.game.stop();
+	const heard = h.store.bindings.get(key).heard;
+	assert.ok(!Object.keys(heard).some((k) => k.startsWith('movie|plex')), 'The Matrix keeps nothing');
+	assert.strictEqual(Object.keys(heard).length, 64);
+});
+
+// --- traps and useful items (world 0.3.0) ----------------------------------------------------------
+//
+// The voice and book effects belong to helpers/apMediaTraps.js; here a recording stand-in plays the
+// runner the game is handed (trapRunner), the trap timers are fired by hand (trapTimers), and a book
+// engine change runs its follow-up at once (trapDefer). Items reach the slot from the AP stand-in as
+// another world would send them. The emoji are built with String.fromCharCode, so the file stays ASCII.
+
+const TRAP = (key) => contracts.TRAPS[key].id;
+const FF = contracts.IDS.fastForward;
+const RC = contracts.IDS.remoteControl;
+const SNACK = contracts.SNACKS;
+const E = Object.freeze({
+	done: String.fromCharCode(0x2705),
+	buffering: String.fromCharCode(0x23f3),
+	expired: String.fromCharCode(0x26d4),
+	trap: String.fromCodePoint(0x1f3ac),
+	remote: String.fromCodePoint(0x1f4fa),
+	forward: String.fromCharCode(0x23e9),
+	snack: String.fromCodePoint(0x1f37f),
+	dodged: String.fromCodePoint(0x1f340),
+	slow: String.fromCodePoint(0x1f422),
+	unlocked: String.fromCodePoint(0x1f513),
+});
+const HOUR_MS = 60 * MIN_MS;
+const stampOf = (ms) => `<t:${Math.floor(ms / 1000)}:t>`;
+const MUSIC = Object.freeze({ where: 'music', guildId: 'g1', channelId: 'c1' });
+const BOOK = Object.freeze({ where: 'book', guildId: 'g1', channelId: 'c1' });
+const MATRIX_KEY = 'movie|plex://movie/5d7768b2';
+const ALBUM_KEY = 'album|plex://album/2300';
+const WAITS = (name) => `${E.trap} \`ZackPlex\` got ${name} from \`Watcher\`: it hits during their next listen through the bot, within 12 hours.`;
+const BUSY = (name) => `${E.trap} \`ZackPlex\` got ${name} from \`Watcher\`: it hits as soon as the bot can, within 12 hours.`;
+
+// The other track of the agreed interface (helpers/apMediaTraps.js createTrapRunner), recording calls.
+// The game makes it through trapRunner(opts), so ended() can send the end notice the runner's onEnd does.
+function fakeRunner() {
+	const r = {
+		calls: [],
+		listeners: new Map(),
+		results: [],
+		endResult: true,
+		onEnd: null,
+		async ended(kind, line, how = 'done', userId = OWNER, slot = SLOT, more = {}) {
+			await r.onEnd({ userId, slot, kind, where: 'music', line, how, ...more });
+		},
+		listening(userId) {
+			r.calls.push(['listening', String(userId)]);
+			return r.listeners.get(String(userId)) || null;
+		},
+		async apply(kind, ctx) {
+			r.calls.push(['apply', kind, ctx.userId, ctx.slot]);
+			return r.results.length ? r.results.shift() : { applied: true, line: `${kind} line` };
+		},
+		async end(userId) {
+			r.calls.push(['end', String(userId)]);
+			return r.endResult;
+		},
+		async restore(record) {
+			r.calls.push(['restore', record]);
+		},
+		stop() {
+			r.calls.push(['stop']);
+		},
+		applied: () => r.calls.filter((c) => c[0] === 'apply').map((c) => c[1]),
+		of: (name) => r.calls.filter((c) => c[0] === name),
+	};
+	return r;
+}
+
+async function trapSetup(t, options = {}) {
+	const runner = fakeRunner();
+	const trapTimers = handTimers();
+	const make = (opts) => {
+		runner.onEnd = opts.onEnd;
+		return runner;
+	};
+	const h = await setup(t, { ...options, game: { trapRunner: make, trapTimers, trapDefer: (fn) => fn(), ...(options.game || {}) } });
+	h.runner = runner;
+	h.trapTimers = trapTimers;
+	return h;
+}
+
+const binding = (h, key) => h.store.bindings.get(key);
+
+/** Items as another world sends them, in one ReceivedItems, and everything the game does with them. */
+async function sendItems(h, key, ids, player = 2) {
+	const before = binding(h, key).itemsSeen;
+	h.server.pushItems(1, ids.map((item) => ({ item, location: 999, player, flags: 0 })));
+	await waitFor(() => binding(h, key).itemsSeen === before + ids.length, `${ids.length} items`);
+	await h.game._internal.trapsIdle();
+}
+
+/** Every line posted since the last call, one per line, once the trap work has settled. */
+async function trapPosts(h) {
+	await h.game._internal.trapsIdle();
+	await h.game._internal.flushAll();
+	const lines = h.discord.posts.flatMap((p) => p.content.split('\n'));
+	h.discord.posts.length = 0;
+	return lines;
+}
+
+async function tick(h, ms = 60000) {
+	h.trapTimers.fire(ms);
+	await h.game._internal.trapsIdle();
+}
+
+/** A new process over the same store: memory and timers gone, the binding as it was saved. */
+async function restartGame(h, meanwhile = null) {
+	h.game.stop();
+	if (meanwhile) meanwhile();
+	h.game = h.make();
+	h.game.start({ discord: h.discord, bot: h.bot });
+	await waitFor(() => h.game.status().bindings.every((r) => r.inventoryKnown), 'the slot back after the restart');
+	await h.game._internal.trapsIdle();
+}
+
+/** As sendItems while the runner holds a trap in flight: waits for the queue, not for the runner's answer. */
+async function pushItems(h, key, ids) {
+	const before = binding(h, key).itemsSeen;
+	h.server.pushItems(1, ids.map((item) => ({ item, location: 999, player: 2, flags: 0 })));
+	await waitFor(() => binding(h, key).itemsSeen === before + ids.length, `${ids.length} items`);
+	await h.game._internal.idle();
+}
+
+/** A runner whose apply() answers only when the test says, so a trap stays in flight meanwhile. */
+function holdApply(h) {
+	const gate = { answer: null };
+	h.runner.apply = (kind, ctx) => {
+		h.runner.calls.push(['apply', kind, ctx.userId, ctx.slot]);
+		return new Promise((resolve) => { gate.answer = resolve; });
+	};
+	return gate;
+}
+
+/** The room out of reach (its watch re-pointed at a closed port), then back: the inventory is unknown in between. */
+async function roomAway(h, key) {
+	h.monitor.put(0, { target: { kind: 'direct', host: '127.0.0.1', port: 9 } }, 'repointed');
+	await h.game._internal.idle();
+	assert.strictEqual(row(h, key).inventoryKnown, false);
+}
+
+async function roomBack(h, key) {
+	h.monitor.put(0, { target: h.server.target }, 'repointed');
+	await waitFor(() => row(h, key).inventoryKnown, 'the room back');
+	await h.game._internal.trapsIdle();
+}
+
+test('the item cursor: a late link fires no backlog, and a reconnect, which sends every item again, fires nothing twice', async (t) => {
+	const backlog = [TRAP('rewind'), TRAP('buffering'), RC].map((item) => ({ item, location: 5, player: 2, flags: 0 }));
+	const h = await trapSetup(t, { server: { received: { 1: backlog } } });
+	const key = await linkSlot(h);
+	await h.game._internal.trapsIdle();
+	const b = binding(h, key);
+	assert.strictEqual(b.itemsSeen, START.length + backlog.length, 'the start inventory and the backlog, seen');
+	assert.deepStrictEqual([b.armed, b.holdMs, b.rcUsed], [[], 0, 0], 'and none of it fired');
+	assert.deepStrictEqual(h.runner.applied(), []);
+	assert.strictEqual((await trapPosts(h)).length, 4, 'the welcome alone');
+	assert.deepStrictEqual(row(h, key).remoteControls, { received: 1, bought: 0, used: 0, available: 1 }, 'the backlog\'s Remote Control is on hand');
+
+	h.store.bindings.patch(key, { rcUsed: 1 });
+	await sendItems(h, key, [TRAP('rewind')]);
+	assert.deepStrictEqual(binding(h, key).armed.map((x) => [x.kind, x.from, x.told]), [['rewind', 'Watcher', true]]);
+	assert.deepStrictEqual(await trapPosts(h), [WAITS('Rewind')]);
+
+	const client = runtime(h, key).client;
+	for (const socket of h.server.clientsOn(1)) socket.socket.terminate();
+	await waitFor(() => !client.connected, 'the drop');
+	reconnectNow(client);
+	await waitFor(() => client.connected && client.inventoryKnown, 'the reconnect');
+	await h.game._internal.trapsIdle();
+	assert.strictEqual(binding(h, key).itemsSeen, START.length + backlog.length + 1);
+	assert.strictEqual(binding(h, key).armed.length, 1, 'the whole list again, and nothing armed twice');
+	assert.deepStrictEqual(await trapPosts(h), []);
+});
+
+test('a burst hits with two traps at most, and the rest are announced as dodged', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	await sendItems(h, key, [TRAP('buffering'), TRAP('rights_expired'), TRAP('rewind'), TRAP('intermission'), TRAP('shuffle_mode')]);
+	const b = binding(h, key);
+	assert.strictEqual(b.holdMs, 15 * MIN_MS);
+	assert.deepStrictEqual(b.expired, { [MATRIX_KEY]: h.clock + 45 * MIN_MS }, 'nothing plays, so the first ready title');
+	assert.deepStrictEqual(b.armed, []);
+	assert.deepStrictEqual(await trapPosts(h), [
+		`${E.buffering} \`ZackPlex\` got Buffering from \`Watcher\`: the checks of its next credit wait 15 minutes.`,
+		`${E.expired} \`ZackPlex\` got Rights Expired from \`Watcher\`: the checks of **The Matrix (1999)** wait until ${stampOf(h.clock + 45 * MIN_MS)}.`,
+		`${E.dodged} \`ZackPlex\` dodged Rewind from \`Watcher\`, Intermission from \`Watcher\` and Shuffle Mode from \`Watcher\`: at most 2 traps hit at once.`,
+	]);
+	assert.deepStrictEqual(h.events.filter((e) => e.kind === 'apmedia-trap').map((e) => e.outcome), ['hit', 'hit', 'dodged', 'dodged', 'dodged']);
+});
+
+test('a voice trap with apMediaVoiceTraps off fizzles before the burst count and a kept Remote Control, which go to the traps that act', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await sendItems(h, key, [RC]);
+	await trapPosts(h);
+	h.config.apMediaVoiceTraps = false;
+	await sendItems(h, key, [TRAP('rewind'), TRAP('intermission'), TRAP('buffering'), TRAP('rights_expired')]);
+	const b = binding(h, key);
+	assert.deepStrictEqual([b.armed, b.holdMs, b.rcUsed], [[], 0, 1], 'the Remote Control blocked the Buffering');
+	assert.deepStrictEqual(b.expired, { [MATRIX_KEY]: h.clock + 45 * MIN_MS }, 'and the Rights Expired, second in the burst, hit');
+	assert.deepStrictEqual(await trapPosts(h), [
+		`${E.remote} \`ZackPlex\`: Remote Control blocked Buffering from \`Watcher\`.`,
+		`${E.expired} \`ZackPlex\` got Rights Expired from \`Watcher\`: the checks of **The Matrix (1999)** wait until ${stampOf(h.clock + 45 * MIN_MS)}.`,
+		`${E.trap} \`ZackPlex\`: Rewind from \`Watcher\` and Intermission from \`Watcher\` fizzled: voice traps are off on this server.`,
+	]);
+	assert.deepStrictEqual(h.events.filter((e) => e.kind === 'apmedia-trap').map((e) => [e.trap, e.outcome]), [
+		['buffering', 'blocked'], ['rights_expired', 'hit'], ['rewind', 'fizzled'], ['intermission', 'fizzled'],
+	]);
+});
+
+test('a Rights Expired with no title open to lose says so and takes no burst place and no Remote Control', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	h.server.checkFromElsewhere(1, ALL_LOCATIONS);
+	await waitFor(() => row(h, key).ready === 0, 'nothing open');
+	await sendItems(h, key, [RC]);
+	await trapPosts(h);
+	await sendItems(h, key, [TRAP('rights_expired'), TRAP('rewind'), TRAP('intermission')]);
+	const b = binding(h, key);
+	assert.deepStrictEqual([b.expired, b.rcUsed, b.armed.map((x) => x.kind)], [{}, 1, ['intermission']], 'the Remote Control blocked the Rewind');
+	assert.deepStrictEqual(await trapPosts(h), [
+		`${E.expired} \`ZackPlex\` got Rights Expired from \`Watcher\`, but none of its titles is open to lose.`,
+		`${E.remote} \`ZackPlex\`: Remote Control blocked Rewind from \`Watcher\`.`,
+		WAITS('Intermission'),
+	]);
+	assert.deepStrictEqual(h.events.filter((e) => e.kind === 'apmedia-trap').map((e) => [e.trap, e.outcome]), [
+		['rights_expired', 'fizzled'], ['rewind', 'blocked'], ['intermission', 'armed'],
+	]);
+});
+
+test('a voice trap with 20 traps waiting already fizzles before the burst count and a kept Remote Control, and its batch makes and takes room as it goes', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await sendItems(h, key, [RC]);
+	await trapPosts(h);
+	h.store.bindings.patch(key, { armed: Array.from({ length: 20 }, () => ({ kind: 'intermission', at: h.clock, from: 'Watcher', told: true })) });
+	await sendItems(h, key, [TRAP('rewind'), TRAP('buffering')]);
+	const b = binding(h, key);
+	assert.deepStrictEqual([b.armed.length, b.holdMs, b.rcUsed], [20, 0, 1], 'the Remote Control blocked the Buffering');
+	assert.ok(!b.armed.some((x) => x.kind === 'rewind'));
+	assert.deepStrictEqual(await trapPosts(h), [
+		`${E.remote} \`ZackPlex\`: Remote Control blocked Buffering from \`Watcher\`.`,
+		`${E.trap} \`ZackPlex\`: Rewind from \`Watcher\` fizzled: 20 traps already wait to hit.`,
+	]);
+	assert.deepStrictEqual(h.events.filter((e) => e.kind === 'apmedia-trap').map((e) => [e.trap, e.outcome]), [['buffering', 'blocked'], ['rewind', 'fizzled']]);
+
+	// The Remote Control blocks the oldest trap waiting, the Rewind arms in its place, and the Shuffle Mode finds no room.
+	h.events.length = 0;
+	await sendItems(h, key, [RC, TRAP('rewind'), TRAP('shuffle_mode')]);
+	assert.deepStrictEqual(binding(h, key).armed.map((x) => x.kind), [...Array(19).fill('intermission'), 'rewind']);
+	assert.deepStrictEqual(await trapPosts(h), [
+		`${E.remote} \`ZackPlex\`: Remote Control blocked Intermission from \`Watcher\`.`,
+		`${E.trap} \`ZackPlex\`: Shuffle Mode from \`Watcher\` fizzled: 20 traps already wait to hit.`,
+		WAITS('Rewind'),
+	]);
+	assert.deepStrictEqual(h.events.filter((e) => e.kind === 'apmedia-trap').map((e) => [e.trap, e.outcome]), [
+		['rewind', 'armed'], ['shuffle_mode', 'fizzled'], ['intermission', 'blocked'],
+	]);
+
+	// With no Remote Control left, the two traps after the one with no room both hit.
+	h.events.length = 0;
+	await sendItems(h, key, [TRAP('intermission'), TRAP('buffering'), TRAP('rights_expired')]);
+	assert.deepStrictEqual([binding(h, key).armed.length, binding(h, key).holdMs, binding(h, key).expired], [20, 15 * MIN_MS, { [MATRIX_KEY]: h.clock + 45 * MIN_MS }]);
+	assert.deepStrictEqual(await trapPosts(h), [
+		`${E.buffering} \`ZackPlex\` got Buffering from \`Watcher\`: the checks of its next credit wait 15 minutes.`,
+		`${E.expired} \`ZackPlex\` got Rights Expired from \`Watcher\`: the checks of **The Matrix (1999)** wait until ${stampOf(h.clock + 45 * MIN_MS)}.`,
+		`${E.trap} \`ZackPlex\`: Intermission from \`Watcher\` fizzled: 20 traps already wait to hit.`,
+	]);
+	assert.deepStrictEqual(h.events.filter((e) => e.kind === 'apmedia-trap').map((e) => [e.trap, e.outcome]), [
+		['buffering', 'hit'], ['rights_expired', 'hit'], ['intermission', 'fizzled'],
+	]);
+});
+
+test('a Remote Control kept on hand blocks the next trap, and one arriving during Buffering ends it and sends what it held', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	await sendItems(h, key, [RC]);
+	assert.deepStrictEqual(row(h, key).remoteControls, { received: 1, bought: 0, used: 0, available: 1 });
+	await sendItems(h, key, [TRAP('rewind')]);
+	assert.deepStrictEqual(binding(h, key).armed, []);
+	assert.deepStrictEqual(row(h, key).remoteControls, { received: 1, bought: 0, used: 1, available: 0 });
+	assert.deepStrictEqual(await trapPosts(h), [
+		`${E.remote} \`ZackPlex\` got a Remote Control from \`Watcher\`: it blocks the next trap.`,
+		`${E.remote} \`ZackPlex\`: Remote Control blocked Rewind from \`Watcher\`.`,
+	]);
+
+	await sendItems(h, key, [TRAP('buffering')]);
+	await h.game._internal.handleEvent(historyEvent(MATRIX.rk));
+	await h.game._internal.idle();
+	assert.strictEqual(binding(h, key).held.length, MATRIX.ids.length);
+	assert.ok(!MATRIX.ids.some((id) => h.server.checkedOf(1).has(id)), 'nothing sent while Buffering runs');
+	await trapPosts(h);
+	await sendItems(h, key, [RC]);
+	await waitFor(() => hasAll(h.server.checkedOf(1), MATRIX.ids), 'the held checks');
+	const b = binding(h, key);
+	assert.deepStrictEqual([b.held, b.holdUntil, b.rcUsed], [[], null, 2]);
+	assert.deepStrictEqual(await trapPosts(h), [`${E.remote} \`ZackPlex\`: Remote Control ended Buffering, 9 checks sent.`]);
+});
+
+test('a Remote Control ends the pause playing for the player through the runner, puts a Slow Motion speed back, and blocks a trap still waiting', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	h.runner.listeners.set(OWNER, MUSIC);
+	h.runner.results.push({ applied: true, line: 'the music pauses for 60 s', until: h.clock + 60000 });
+	await sendItems(h, key, [TRAP('intermission')]);
+	assert.deepStrictEqual(h.runner.of('apply'), [['apply', 'intermission', OWNER, SLOT]]);
+	assert.deepStrictEqual(row(h, key).effect, { kind: 'intermission', name: 'Intermission', until: h.clock + 60000 });
+	await sendItems(h, key, [RC]);
+	assert.deepStrictEqual(h.runner.of('end'), [['end', OWNER]]);
+	assert.strictEqual(row(h, key).effect, null);
+	assert.deepStrictEqual(await trapPosts(h), [
+		`${E.trap} \`ZackPlex\` got Intermission from \`Watcher\`: the music pauses for 60 s`,
+		`${E.remote} \`ZackPlex\`: Remote Control ended Intermission.`,
+	]);
+	await h.runner.ended('intermission', 'the music plays again');
+	assert.deepStrictEqual(await trapPosts(h), [], 'no end line for a pause the Remote Control ended');
+
+	// A pause the runner had ended already, its end notice still on the way: the Remote Control is
+	// not spent on it, and says so.
+	h.runner.results.push({ applied: true, line: 'commercial_break line', until: h.clock + 30000 });
+	await sendItems(h, key, [TRAP('commercial_break')]);
+	h.runner.endResult = false;
+	await sendItems(h, key, [RC]);
+	assert.deepStrictEqual(row(h, key).remoteControls, { received: 2, bought: 0, used: 1, available: 1 });
+	assert.strictEqual(row(h, key).effect, null);
+	await h.runner.ended('commercial_break', 'someone resumed the music early', 'early');
+	assert.deepStrictEqual(await trapPosts(h), [
+		`${E.trap} \`ZackPlex\` got Commercial Break from \`Watcher\`: commercial\\_break line`,
+		`${E.remote} \`ZackPlex\` got a Remote Control from \`Watcher\`: Commercial Break was over already, so it blocks the next trap.`,
+	]);
+	h.store.bindings.patch(key, { rcUsed: 2 });
+
+	h.runner.listeners.set(OWNER, BOOK);
+	const record = { kind: 'speed', workId: 'jane-austen/pride-and-prejudice', previous: 1.25, until: h.clock + 10 * MIN_MS };
+	h.runner.results.push({ applied: true, line: '0.75x for 10 minutes', restore: record });
+	await sendItems(h, key, [TRAP('slow_motion')]);
+	assert.deepStrictEqual(binding(h, key).speedRestore, record);
+	await sendItems(h, key, [RC]);
+	assert.deepStrictEqual(h.runner.of('restore').map(([, r]) => r), [{ ...record, until: h.clock, userId: OWNER, slot: SLOT }], 'at once');
+	assert.strictEqual(binding(h, key).speedRestore, null);
+	assert.deepStrictEqual(await trapPosts(h), [
+		`${E.trap} \`ZackPlex\` got Slow Motion from \`Watcher\`: 0.75x for 10 minutes`,
+		`${E.remote} \`ZackPlex\`: Remote Control ended Slow Motion.`,
+	]);
+
+	h.runner.listeners.clear();
+	await sendItems(h, key, [TRAP('rewind'), TRAP('intermission')]);
+	await trapPosts(h);
+	await sendItems(h, key, [RC]);
+	assert.deepStrictEqual(binding(h, key).armed.map((x) => x.kind), ['intermission'], 'the oldest one waiting');
+	assert.deepStrictEqual(await trapPosts(h), [`${E.remote} \`ZackPlex\`: Remote Control blocked Rewind from \`Watcher\`.`]);
+
+	// A pause the runner had ended already, with a trap waiting behind it: the Remote Control blocks that one.
+	h.runner.listeners.set(OWNER, MUSIC);
+	h.runner.results.push({ applied: true, line: 'the music pauses', until: h.clock + 60000 }, { applied: false, reason: 'busy' });
+	await sendItems(h, key, [TRAP('rewind')]);
+	assert.deepStrictEqual(binding(h, key).armed.map((x) => x.kind), ['rewind'], 'busy behind the Intermission');
+	h.runner.endResult = false;
+	await sendItems(h, key, [RC]);
+	assert.deepStrictEqual(binding(h, key).armed, []);
+	assert.strictEqual(row(h, key).remoteControls.available, 0, 'spent on the Rewind');
+	assert.deepStrictEqual(await trapPosts(h), [
+		`${E.trap} \`ZackPlex\` got Intermission from \`Watcher\`: the music pauses`,
+		BUSY('Rewind'),
+		`${E.remote} \`ZackPlex\`: Remote Control blocked Rewind from \`Watcher\`.`,
+	]);
+	assert.deepStrictEqual(h.events.filter((e) => e.kind === 'apmedia-trap').slice(-1).map((e) => [e.trap, e.outcome]), [['rewind', 'blocked']]);
+});
+
+test('Buffering holds the checks of the next credit for 15 minutes, 15 more a time up to 60, counts them for dedupe, and lets them go on time', async (t) => {
+	const h = await trapSetup(t, { config: { apMediaAnnounce: 'all' } });
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	await sendItems(h, key, [TRAP('buffering')]);
+	await sendItems(h, key, [TRAP('buffering')]);
+	assert.deepStrictEqual([binding(h, key).holdMs, binding(h, key).holdUntil], [30 * MIN_MS, null], 'waiting for the next credit');
+	assert.deepStrictEqual(row(h, key).holds, { held: 0, buffering: null, bufferingNextMs: 30 * MIN_MS, expired: [] });
+	await trapPosts(h);
+	const sent = sentChecks(h).length;
+	await h.game._internal.handleEvent(historyEvent(MATRIX.rk));
+	await h.game._internal.idle();
+	const until = h.clock + 30 * MIN_MS;
+	const b = binding(h, key);
+	assert.deepStrictEqual([b.holdUntil, b.holdMs, b.held.length, b.pending.length], [until, 0, 9, 0]);
+	assert.strictEqual(sentChecks(h).length, sent, 'nothing sent');
+	assert.deepStrictEqual(await trapPosts(h), [`${E.buffering} \`ZackPlex\` watched **The Matrix (1999)**, 9 checks held until ${stampOf(until)}`]);
+
+	let writes = 0;
+	const patch = h.store.bindings.patch;
+	h.store.bindings.patch = (...args) => {
+		writes += 1;
+		return patch(...args);
+	};
+	await h.game._internal.handleEvent(historyEvent(MATRIX.rk, { at: AFTER + 1000 }));
+	await h.game._internal.idle();
+	h.store.bindings.patch = patch;
+	assert.strictEqual(writes, 0, 'a held check counts as earned for a repeat');
+
+	const manual = await h.game.creditManual(key, HALLOWEEN.key, { atMs: '31m' });
+	assert.strictEqual(manual.message, `${E.buffering} **Halloween (2018)**: 2 checks held by a trap until ${stampOf(until)}.`);
+	h.server.checkFromElsewhere(1, [MATRIX.ids[0]]);
+	await waitFor(() => !binding(h, key).held.includes(MATRIX.ids[0]), 'a hold to let go of what the room has checked');
+
+	for (let i = 0; i < 3; i++) await sendItems(h, key, [TRAP('buffering')]);
+	assert.strictEqual(binding(h, key).holdUntil, h.clock + HOUR_MS, '30 minutes, and 15 more three times, held to 60');
+	await trapPosts(h);
+	assert.deepStrictEqual(row(h, key).holds.buffering, { until: h.clock + HOUR_MS, held: 10 });
+
+	h.clock += HOUR_MS;
+	await tick(h, HOUR_MS);
+	await waitFor(() => hasAll(h.server.checkedOf(1), [...MATRIX.ids, loc(57), loc(58)]), 'every held check');
+	assert.deepStrictEqual([binding(h, key).held, binding(h, key).holdUntil], [[], null]);
+	assert.deepStrictEqual(await trapPosts(h), [`${E.buffering} \`ZackPlex\`: Buffering is over, 10 checks sent.`]);
+});
+
+test('a hold outlasts a restart: one still running keeps its time, one that ran out meanwhile ends at the start, and an unlink counts it', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await sendItems(h, key, [TRAP('buffering')]);
+	await h.game._internal.handleEvent(historyEvent(MATRIX.rk));
+	await h.game._internal.idle();
+	const until = h.clock + 15 * MIN_MS;
+	assert.strictEqual(binding(h, key).holdUntil, until);
+	await trapPosts(h);
+
+	await restartGame(h, () => { h.clock += 5 * MIN_MS; });
+	assert.deepStrictEqual([binding(h, key).holdUntil, binding(h, key).held.length], [until, 9], 'still running');
+	assert.ok(h.trapTimers.delays().includes(10 * MIN_MS), 'its timer, for the time left');
+	assert.ok(!MATRIX.ids.some((id) => h.server.checkedOf(1).has(id)));
+
+	await restartGame(h, () => { h.clock += 20 * MIN_MS; });
+	await waitFor(() => hasAll(h.server.checkedOf(1), MATRIX.ids), 'released at the start');
+	assert.deepStrictEqual(await trapPosts(h), [`${E.buffering} \`ZackPlex\`: Buffering is over, 9 checks sent.`]);
+
+	await sendItems(h, key, [TRAP('buffering')]);
+	await h.game._internal.handleEvent(historyEvent(2002));
+	await h.game._internal.idle();
+	assert.strictEqual(binding(h, key).held.length, HALLOWEEN.ids.length);
+	const gone = await h.game.unlink(key);
+	assert.match(gone.message, /Its 7 unsent checks went with it\./);
+});
+
+test('a hold that cannot end yet sets no timer that fires again at once', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await sendItems(h, key, [TRAP('buffering')]);
+	await h.game._internal.handleEvent(historyEvent(MATRIX.rk));
+	await h.game._internal.idle();
+	assert.ok(h.trapTimers.delays().includes(15 * MIN_MS));
+	h.store.bindings.patch(key, { state: 'stale' });
+	h.clock += 16 * MIN_MS;
+	await tick(h, 15 * MIN_MS);
+	assert.deepStrictEqual(h.trapTimers.delays(), [60000], 'the minute check alone');
+	assert.strictEqual(binding(h, key).held.length, MATRIX.ids.length, 'a stale slot has no room to send them to');
+});
+
+test('Rights Expired takes the title playing now, else the first ready one, holds its credit 45 minutes, shows in the list and status, and outlasts a restart', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	h.pms.sessionRows = [{ ratingKey: '2002', viewOffset: 600000, duration: 6360000, User: { id: '1', title: 'Owner' }, Player: { state: 'playing' }, Session: { id: 's1' } }];
+	await h.game._internal.watcher().pollSessions();
+	await sendItems(h, key, [TRAP('rights_expired')]);
+	const until = h.clock + 45 * MIN_MS;
+	assert.deepStrictEqual(binding(h, key).expired, { [HALLOWEEN.key]: until }, 'the Plex session of the consented account');
+	await h.game._internal.handleEvent(historyEvent(2002));
+	await h.game._internal.handleEvent(historyEvent(MATRIX.rk));
+	await waitFor(() => hasAll(h.server.checkedOf(1), MATRIX.ids), 'another title, not held');
+	assert.strictEqual(binding(h, key).held.length, HALLOWEEN.ids.length);
+	assert.deepStrictEqual(await trapPosts(h), [
+		`${E.expired} \`ZackPlex\` got Rights Expired from \`Watcher\`: the checks of **Halloween (2018)** wait until ${stampOf(until)}.`,
+		`${E.buffering} \`ZackPlex\` watched **Halloween (2018)**, 7 checks held until ${stampOf(until)}`,
+		`${E.done} \`ZackPlex\` watched **The Matrix (1999)**, 9 checks sent`,
+	]);
+
+	const ready = h.game.list(key, 'ready');
+	const rows = ready.groups[0].rows;
+	const marked = rows.find((r) => r.entryKey === HALLOWEEN.key);
+	assert.strictEqual(marked.expiredUntil, until);
+	assert.ok(!rows.find((r) => r.entryKey === 'movie|rk:2003').expiredUntil, 'its twin keeps its rights');
+	const listCommand = require('../commands/apmedia.js/list.js');
+	assert.ok(listCommand.rowLine(marked, ready.groups[0], 'ready').endsWith(` ${E.expired} Rights expired until ${stampOf(until)}`));
+	const status = row(h, key);
+	assert.deepStrictEqual(status.holds.expired, [{ entryKey: HALLOWEEN.key, title: 'Halloween (2018)', until, held: 7 }]);
+	const statusCommand = require('../commands/apmedia.js/status.js');
+	assert.ok(statusCommand.itemLines(status).includes(`> ${E.expired} Rights expired until ${stampOf(until)}: **Halloween (2018)**, 7 checks held.`));
+
+	await restartGame(h, () => { h.clock += 46 * MIN_MS; });
+	await waitFor(() => hasAll(h.server.checkedOf(1), HALLOWEEN.ids), 'released at the start');
+	assert.deepStrictEqual(binding(h, key).expired, {});
+	assert.deepStrictEqual(await trapPosts(h), [`${E.expired} \`ZackPlex\`: the rights to **Halloween (2018)** are back, 7 checks sent.`]);
+
+	// A list track playing in voice for the player, and a book session of theirs, are playing now too.
+	await sendItems(h, key, [unit(1), unit(4)]);
+	h.runner.listeners.set(OWNER, MUSIC);
+	h.bot.songQueue = [{ ratingKey: 23002, title: 'Aerodynamic', artist: 'Daft Punk', key: '/library/parts/230002/file.mp3' }];
+	await sendItems(h, key, [TRAP('rights_expired')]);
+	assert.deepStrictEqual(Object.keys(binding(h, key).expired), [ALBUM_KEY]);
+	h.runner.listeners.clear();
+	h.bot.books.list = [{ id: 'b1', userId: OWNER, workId: 'jane-austen/pride-and-prejudice', state: 'playing' }];
+	await sendItems(h, key, [TRAP('rights_expired')]);
+	assert.deepStrictEqual(Object.keys(binding(h, key).expired), [ALBUM_KEY, 'book|book:jane-austen/pride-and-prejudice']);
+});
+
+// Credit that comes while the slot's inventory is not known (at a boot, with the room out of reach,
+// or while the slot is refused) waits in the bank until the next items say what is open.
+test('credit banked while the inventory was unknown is held by its title\'s Rights Expired once the items come', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await sendItems(h, key, [TRAP('rights_expired')]);
+	const until = h.clock + 45 * MIN_MS;
+	assert.deepStrictEqual(binding(h, key).expired, { [MATRIX_KEY]: until });
+	await trapPosts(h);
+	await roomAway(h, key);
+	await h.game._internal.handleEvent(historyEvent(MATRIX.rk));
+	await h.game._internal.idle();
+	assert.strictEqual(binding(h, key).banked.length, MATRIX.ids.length);
+	await roomBack(h, key);
+	const b = binding(h, key);
+	assert.deepStrictEqual([b.banked.length, b.held.length, b.pending.length], [0, MATRIX.ids.length, 0], 'held, not sent');
+	assert.deepStrictEqual(row(h, key).holds.expired, [{ entryKey: MATRIX_KEY, title: 'The Matrix (1999)', until, held: 9 }]);
+	assert.deepStrictEqual(await trapPosts(h), [`${E.buffering} \`ZackPlex\` watched **The Matrix (1999)**, 9 checks held until ${stampOf(until)}`]);
+	h.clock = until;
+	await tick(h, 45 * MIN_MS);
+	await waitFor(() => hasAll(h.server.checkedOf(1), MATRIX.ids), 'sent when the rights are back');
+	assert.deepStrictEqual(await trapPosts(h), [`${E.expired} \`ZackPlex\`: the rights to **The Matrix (1999)** are back, 9 checks sent.`]);
+});
+
+test('credit banked while the inventory was unknown is held by its title\'s Rights Expired after a restart too, and said so, when nothing is left in memory of how it was banked', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await sendItems(h, key, [TRAP('rights_expired')]);
+	const until = h.clock + 45 * MIN_MS;
+	await trapPosts(h);
+	await roomAway(h, key);
+	await h.game._internal.handleEvent(historyEvent(MATRIX.rk));
+	await h.game._internal.idle();
+	assert.strictEqual(binding(h, key).banked.length, MATRIX.ids.length);
+	h.game.stop();
+	h.game = h.make();
+	h.game.start({ discord: h.discord, bot: h.bot });
+	await h.game._internal.idle();
+	await roomBack(h, key);
+	const b = binding(h, key);
+	assert.deepStrictEqual([b.banked.length, b.held.length, b.pending.length], [0, MATRIX.ids.length, 0], 'a title whose rights are out holds every check of its own');
+	assert.ok(!MATRIX.ids.some((id) => h.server.checkedOf(1).has(id)));
+	assert.deepStrictEqual(await trapPosts(h), [`${E.buffering} \`ZackPlex\` watched **The Matrix (1999)**, 9 checks held until ${stampOf(until)}`], 'as it would have been without the restart');
+	h.clock = until;
+	await tick(h, 45 * MIN_MS);
+	await waitFor(() => hasAll(h.server.checkedOf(1), MATRIX.ids), 'sent when the rights are back');
+	assert.deepStrictEqual(await trapPosts(h), [`${E.expired} \`ZackPlex\`: the rights to **The Matrix (1999)** are back, 9 checks sent.`]);
+});
+
+test('credit banked for two titles under their own Rights Expired is held after a restart, and each title\'s line names its own end, whichever was banked first', async (t) => {
+	// Either order alone misses a wrong end: a title given the latest end held so far looks right
+	// when the earlier end is banked first, and one given the earliest so far when the later one is.
+	for (const laterFirst of [true, false]) {
+		const h = await trapSetup(t);
+		const key = await linkSlot(h);
+		await sendItems(h, key, [TRAP('rights_expired')]);
+		const matrixUntil = h.clock + 45 * MIN_MS;
+		h.clock += 5 * MIN_MS;
+		await sendItems(h, key, [TRAP('rights_expired')]);
+		const halloweenUntil = h.clock + 45 * MIN_MS;
+		assert.deepStrictEqual(binding(h, key).expired, { [MATRIX_KEY]: matrixUntil, [HALLOWEEN.key]: halloweenUntil }, 'the second takes the next ready title');
+		await trapPosts(h);
+		const matrix = [MATRIX.rk, `${E.buffering} \`ZackPlex\` watched **The Matrix (1999)**, 9 checks held until ${stampOf(matrixUntil)}`];
+		const halloween = [2002, `${E.buffering} \`ZackPlex\` watched **Halloween (2018)**, 7 checks held until ${stampOf(halloweenUntil)}`];
+		const bankOrder = laterFirst ? [halloween, matrix] : [matrix, halloween];
+		await roomAway(h, key);
+		for (const [rk] of bankOrder) await h.game._internal.handleEvent(historyEvent(rk));
+		await h.game._internal.idle();
+		assert.strictEqual(binding(h, key).banked.length, MATRIX.ids.length + HALLOWEEN.ids.length);
+		h.game.stop();
+		h.game = h.make();
+		h.game.start({ discord: h.discord, bot: h.bot });
+		await h.game._internal.idle();
+		await roomBack(h, key);
+		const b = binding(h, key);
+		assert.deepStrictEqual([b.banked.length, b.held.length, b.pending.length], [0, MATRIX.ids.length + HALLOWEEN.ids.length, 0]);
+		assert.deepStrictEqual(await trapPosts(h), bankOrder.map(([, line]) => line), laterFirst ? 'Halloween, the later end, banked first' : 'The Matrix, the earlier end, banked first');
+		h.clock = matrixUntil;
+		await tick(h, 40 * MIN_MS);
+		await waitFor(() => hasAll(h.server.checkedOf(1), MATRIX.ids), 'The Matrix sent at its own end');
+		assert.ok(!HALLOWEEN.ids.some((id) => h.server.checkedOf(1).has(id)), 'Halloween waits for its own');
+		assert.deepStrictEqual(await trapPosts(h), [`${E.expired} \`ZackPlex\`: the rights to **The Matrix (1999)** are back, 9 checks sent.`]);
+	}
+});
+
+test('the tracks a Rights Expired already holds count toward their album, so the track that finishes it is announced as held', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await sendItems(h, key, [unit(1)]);
+	h.runner.listeners.set(OWNER, MUSIC);
+	h.bot.songQueue = [{ ratingKey: 23001, title: 'One More Time', artist: 'Daft Punk', key: '/library/parts/230001/file.mp3' }];
+	await sendItems(h, key, [TRAP('rights_expired')]);
+	h.runner.listeners.clear();
+	const until = h.clock + 45 * MIN_MS;
+	await trapPosts(h);
+	await h.game._internal.handleEvent(historyEvent(23001));
+	await h.game._internal.idle();
+	assert.deepStrictEqual(await trapPosts(h), [], 'one track does not finish the album');
+	await h.game._internal.handleEvent(historyEvent(23002));
+	await h.game._internal.handleEvent(historyEvent(23004));
+	await h.game._internal.idle();
+	assert.strictEqual(binding(h, key).held.length, 5);
+	assert.deepStrictEqual(await trapPosts(h), [`${E.buffering} \`ZackPlex\` listened to **Daft Punk - Discovery**, 2 checks held until ${stampOf(until)}`]);
+});
+
+test('the tracks a Rights Expired held before a restart count toward their album, so the banked rest held after it is announced as finishing the album', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await sendItems(h, key, [unit(1)]);
+	h.runner.listeners.set(OWNER, MUSIC);
+	h.bot.songQueue = [{ ratingKey: 23001, title: 'One More Time', artist: 'Daft Punk', key: '/library/parts/230001/file.mp3' }];
+	await sendItems(h, key, [TRAP('rights_expired')]);
+	h.runner.listeners.clear();
+	const until = h.clock + 45 * MIN_MS;
+	assert.deepStrictEqual(binding(h, key).expired, { [ALBUM_KEY]: until });
+	await trapPosts(h);
+	// A movie is finished by its one watch location alone, so only a title of several tracks shows
+	// whether the ones held before the restart count.
+	await h.game._internal.handleEvent(historyEvent(23001));
+	await h.game._internal.idle();
+	assert.deepStrictEqual(binding(h, key).held, [loc(1), loc(4)], 'the first track and the 5-minute checkpoint it passed');
+	assert.deepStrictEqual(await trapPosts(h), [], 'one track does not finish the album');
+	await roomAway(h, key);
+	await h.game._internal.handleEvent(historyEvent(23002));
+	await h.game._internal.handleEvent(historyEvent(23004));
+	await h.game._internal.idle();
+	assert.deepStrictEqual(binding(h, key).banked, [loc(2), loc(3), loc(5)]);
+	h.game.stop();
+	h.game = h.make();
+	h.game.start({ discord: h.discord, bot: h.bot });
+	await h.game._internal.idle();
+	await roomBack(h, key);
+	const b = binding(h, key);
+	assert.deepStrictEqual([b.banked.length, b.held.length, b.pending.length], [0, 5, 0]);
+	assert.deepStrictEqual(await trapPosts(h), [`${E.buffering} \`ZackPlex\` listened to **Daft Punk - Discovery**, 3 checks held until ${stampOf(until)}`]);
+});
+
+test('credit banked while the inventory was unknown waits out a running Buffering, and checks that waited for an unlock still go out', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await h.game._internal.handleEvent(historyEvent(N1917.rk));
+	await sendItems(h, key, [TRAP('buffering')]);
+	await h.game._internal.handleEvent(historyEvent(2002));
+	await h.game._internal.idle();
+	const until = h.clock + 15 * MIN_MS;
+	assert.deepStrictEqual([binding(h, key).holdUntil, binding(h, key).held.length, binding(h, key).banked.length], [until, 7, 8]);
+	await trapPosts(h);
+	await roomAway(h, key);
+	h.clock += 2 * MIN_MS;
+	await h.game._internal.handleEvent(historyEvent(MATRIX.rk));
+	await h.game._internal.idle();
+	await roomBack(h, key);
+	const b = binding(h, key);
+	assert.deepStrictEqual([b.held.length, b.banked.length, b.pending.length, b.holdUntil], [16, 8, 0, until], 'The Matrix waits with Halloween; 1917 is still locked');
+	assert.deepStrictEqual(await trapPosts(h), [`${E.buffering} \`ZackPlex\` watched **The Matrix (1999)**, 9 checks held until ${stampOf(until)}`]);
+
+	await receive(h, key, N1917.unit);
+	await waitFor(() => hasAll(h.server.checkedOf(1), N1917.ids), 'the checks that waited for the unlock');
+	assert.strictEqual(binding(h, key).held.length, 16, 'Buffering still holds the rest');
+	assert.ok(![...MATRIX.ids, ...HALLOWEEN.ids].some((id) => h.server.checkedOf(1).has(id)));
+	assert.deepStrictEqual(await trapPosts(h), [`${E.unlocked} \`ZackPlex\` **1917** unlocked, 8 checks sent`]);
+});
+
+test('credit banked while the inventory was unknown starts a Buffering that waits for the next credit', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await sendItems(h, key, [TRAP('buffering')]);
+	await trapPosts(h);
+	await roomAway(h, key);
+	await h.game._internal.handleEvent(historyEvent(MATRIX.rk));
+	await h.game._internal.idle();
+	await roomBack(h, key);
+	const until = h.clock + 15 * MIN_MS;
+	const b = binding(h, key);
+	assert.deepStrictEqual([b.holdUntil, b.holdMs, b.held.length, b.pending.length], [until, 0, 9, 0]);
+	assert.ok(h.trapTimers.delays().includes(15 * MIN_MS), 'its end is timed');
+	assert.deepStrictEqual(await trapPosts(h), [`${E.buffering} \`ZackPlex\` watched **The Matrix (1999)**, 9 checks held until ${stampOf(until)}`]);
+	h.clock = until;
+	await tick(h, 15 * MIN_MS);
+	await waitFor(() => hasAll(h.server.checkedOf(1), MATRIX.ids), 'sent when Buffering is over');
+});
+
+test('checks that waited in the bank for a real unlock go out past a waiting Buffering, which still waits for the next credit', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await h.game._internal.handleEvent(historyEvent(N1917.rk));
+	await h.game._internal.idle();
+	assert.strictEqual(binding(h, key).banked.length, N1917.ids.length);
+	await sendItems(h, key, [TRAP('buffering')]);
+	await trapPosts(h);
+	await receive(h, key, N1917.unit);
+	await waitFor(() => hasAll(h.server.checkedOf(1), N1917.ids), 'the checks that waited for the unlock');
+	const b = binding(h, key);
+	assert.deepStrictEqual([b.holdMs, b.holdUntil, b.held], [15 * MIN_MS, null, []], 'not new credit, so Buffering has not started');
+	assert.deepStrictEqual(await trapPosts(h), [`${E.unlocked} \`ZackPlex\` **1917** unlocked, 8 checks sent`]);
+	await h.game._internal.handleEvent(historyEvent(MATRIX.rk));
+	await h.game._internal.idle();
+	const until = h.clock + 15 * MIN_MS;
+	const after = binding(h, key);
+	assert.deepStrictEqual([after.holdUntil, after.holdMs, after.held.length], [until, 0, MATRIX.ids.length]);
+	assert.deepStrictEqual(await trapPosts(h), [`${E.buffering} \`ZackPlex\` watched **The Matrix (1999)**, 9 checks held until ${stampOf(until)}`]);
+});
+
+test('a voice trap waits armed for a listen, and hits through the runner on the next tick, a track start, a book change or a credit heard', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	await sendItems(h, key, [TRAP('rewind')]);
+	assert.deepStrictEqual(await trapPosts(h), [WAITS('Rewind')]);
+	assert.deepStrictEqual(row(h, key).armed, [{ kind: 'rewind', name: 'Rewind', from: 'Watcher', at: h.clock, until: h.clock + 12 * HOUR_MS }]);
+	await tick(h);
+	assert.deepStrictEqual(h.runner.applied(), [], 'nobody listening');
+	assert.deepStrictEqual(await trapPosts(h), [], 'said once');
+
+	h.runner.listeners.set(OWNER, MUSIC);
+	h.runner.results.push({ applied: true, line: 'back to the start of *this* track' });
+	await tick(h);
+	assert.deepStrictEqual(h.runner.of('apply'), [['apply', 'rewind', OWNER, SLOT]]);
+	assert.deepStrictEqual(binding(h, key).armed, []);
+	assert.deepStrictEqual(await trapPosts(h), [`${E.trap} \`ZackPlex\` got Rewind from \`Watcher\`: back to the start of \\*this\\* track`], 'the runner\'s words, escaped');
+
+	h.runner.listeners.clear();
+	await sendItems(h, key, [TRAP('shuffle_mode')]);
+	h.runner.listeners.set(OWNER, MUSIC);
+	h.bot.emit('will play', {});
+	assert.ok(h.trapTimers.delays().includes(3000), 'tried once the track is playing');
+	await tick(h, 3000);
+	assert.deepStrictEqual(h.runner.applied(), ['rewind', 'shuffle_mode']);
+
+	h.runner.listeners.clear();
+	await sendItems(h, key, [TRAP('commercial_break')]);
+	h.runner.listeners.set(OWNER, BOOK);
+	h.runner.results.push({ applied: true, line: 'the book pauses for 30 seconds', until: h.clock + 30000 });
+	for (const fn of [...h.bot.books.listeners]) fn({ id: 'b1', userId: OWNER, state: 'playing' }, 'started');
+	await h.game._internal.trapsIdle();
+	assert.deepStrictEqual(h.runner.applied(), ['rewind', 'shuffle_mode', 'commercial_break']);
+	await h.runner.ended('commercial_break', 'the book plays again');
+
+	h.runner.listeners.clear();
+	await sendItems(h, key, [TRAP('intermission')]);
+	h.runner.listeners.set(OWNER, MUSIC);
+	h.runner.results.push({ applied: true, line: 'the music pauses for 60 seconds', until: h.clock + 60000 });
+	await h.game._internal.handleEvent({ type: 'complete', source: 'voice', userIds: [OWNER], ratingKey: 999999, title: 'x', artist: 'y', at: AFTER });
+	await h.game._internal.trapsIdle();
+	assert.deepStrictEqual(h.runner.applied(), ['rewind', 'shuffle_mode', 'commercial_break', 'intermission']);
+	for (const kind of ['rewind', 'shuffle_mode']) await h.runner.ended(kind, 'the music plays again');
+	await h.runner.ended('intermission', 'the music plays again');
+	const lines = await trapPosts(h);
+	assert.ok(lines.includes(`${E.trap} \`ZackPlex\`: Commercial Break is over, the book plays again.`), lines.join('\n'));
+	assert.ok(lines.includes(`${E.trap} \`ZackPlex\`: Intermission is over, the music plays again.`), lines.join('\n'));
+	assert.ok(!lines.some((line) => /Shuffle Mode is over|Rewind is over/.test(line)), 'those are over when they hit');
+});
+
+test('a pause or a commercial clip is in force until the runner says it ended, with its words, and a Remote Control takes a clip off', async (t) => {
+	const h = await trapSetup(t, { config: { apMediaTrapClips: 'Commercials' } });
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	h.runner.listeners.set(OWNER, MUSIC);
+	h.runner.results.push({ applied: true, line: 'the music pauses', until: h.clock + 45000 });
+	await sendItems(h, key, [TRAP('intermission')]);
+	assert.deepStrictEqual(row(h, key).effect, { kind: 'intermission', name: 'Intermission', until: h.clock + 45000 });
+	assert.deepStrictEqual(h.trapTimers.delays(), [60000], 'the minute check alone: the runner times the pause');
+	await h.runner.ended('intermission', 'someone resumed the music early', 'early', OWNER, 'Someone Else');
+	await h.runner.ended('commercial_break', 'the music plays again');
+	assert.notStrictEqual(row(h, key).effect, null, 'another slot\'s notice, or another trap\'s, ends nothing here');
+	await h.runner.ended('intermission', 'someone resumed the music *early*', 'early');
+	assert.strictEqual(row(h, key).effect, null);
+	assert.deepStrictEqual(await trapPosts(h), [
+		`${E.trap} \`ZackPlex\` got Intermission from \`Watcher\`: the music pauses`,
+		`${E.trap} \`ZackPlex\`: Intermission is over, someone resumed the music \\*early\\*.`,
+	]);
+	await h.runner.ended('intermission', 'the music plays again');
+	assert.deepStrictEqual(await trapPosts(h), [], 'once');
+
+	h.runner.results.push({ applied: true, line: 'a commercial plays after this track' });
+	await sendItems(h, key, [TRAP('commercial_break')]);
+	assert.deepStrictEqual(row(h, key).effect, { kind: 'commercial_break', name: 'Commercial Break', until: null }, 'a clip, until it has played');
+	h.clock += 2 * HOUR_MS;
+	assert.notStrictEqual(row(h, key).effect, null, 'however long the track before it runs');
+	assert.ok(require('../commands/apmedia.js/status.js').itemLines(row(h, key)).includes(`> ${E.trap} Commercial Break until its commercial has played.`));
+	await h.runner.ended('commercial_break', 'the commercial is over');
+	assert.strictEqual(row(h, key).effect, null);
+	assert.deepStrictEqual(await trapPosts(h), [
+		`${E.trap} \`ZackPlex\` got Commercial Break from \`Watcher\`: a commercial plays after this track`,
+		`${E.trap} \`ZackPlex\`: Commercial Break is over.`,
+	]);
+
+	h.runner.results.push({ applied: true, line: 'a commercial plays after this track' });
+	await sendItems(h, key, [TRAP('commercial_break')]);
+	await sendItems(h, key, [RC]);
+	assert.deepStrictEqual(h.runner.of('end'), [['end', OWNER]]);
+	assert.strictEqual(row(h, key).effect, null);
+	assert.deepStrictEqual((await trapPosts(h)).slice(-1), [`${E.remote} \`ZackPlex\`: Remote Control ended Commercial Break.`]);
+});
+
+test('an end notice with the runner\'s effect id ends only that effect, and a speed put back never ends a Slow Motion pause', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	h.runner.listeners.set(OWNER, BOOK);
+	h.runner.results.push({ applied: true, line: 'already at 0.75x, so the book pauses for 30 seconds', until: h.clock + 30000, id: 7 });
+	await sendItems(h, key, [TRAP('slow_motion')]);
+	assert.deepStrictEqual(row(h, key).effect, { kind: 'slow_motion', name: 'Slow Motion', until: h.clock + 30000 });
+	await h.runner.ended('slow_motion', 'back to 1x', 'done', OWNER, SLOT, { where: 'book', speed: true });
+	await h.runner.ended('slow_motion', 'the book plays again', 'done', OWNER, SLOT, { where: 'book', id: 6 });
+	await h.game._internal.idle();
+	assert.notStrictEqual(row(h, key).effect, null, 'an earlier Slow Motion\'s speed, or another effect, leaves the pause in force');
+	await h.runner.ended('slow_motion', 'the book plays again', 'done', OWNER, SLOT, { where: 'book', id: 7 });
+	await h.game._internal.idle();
+	assert.strictEqual(row(h, key).effect, null);
+	assert.deepStrictEqual(await trapPosts(h), [
+		`${E.trap} \`ZackPlex\` got Slow Motion from \`Watcher\`: already at 0.75x, so the book pauses for 30 seconds`,
+		`${E.trap} \`ZackPlex\`: Slow Motion is over, the book plays again.`,
+	]);
+});
+
+test('a trap the runner cannot play now waits again, one it calls off fizzles, and a runner that throws is busy', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	h.runner.listeners.set(OWNER, MUSIC);
+	h.runner.results.push({ applied: false, reason: 'busy' });
+	await sendItems(h, key, [TRAP('rewind')]);
+	assert.deepStrictEqual(binding(h, key).armed.map((x) => [x.kind, x.told]), [['rewind', true]]);
+	assert.deepStrictEqual(await trapPosts(h), [BUSY('Rewind')], 'the player is listening, so it waits for the bot, not for a listen');
+	h.runner.results.push({ applied: false, reason: 'absent' });
+	await tick(h);
+	assert.strictEqual(binding(h, key).armed.length, 1);
+	assert.deepStrictEqual(await trapPosts(h), [], 'said once');
+	h.runner.results.push({ applied: false, reason: 'off' });
+	await tick(h);
+	assert.deepStrictEqual(binding(h, key).armed, []);
+	assert.deepStrictEqual(await trapPosts(h), [`${E.trap} \`ZackPlex\`: Rewind from \`Watcher\` fizzled: voice traps are off on this server.`]);
+	h.runner.apply = async () => { throw new Error('voice is gone'); };
+	await sendItems(h, key, [TRAP('intermission')]);
+	assert.deepStrictEqual(binding(h, key).armed.map((x) => x.kind), ['intermission']);
+	assert.ok(h.logger.lines.some((l) => l.level === 'warn' && l.text.includes('voice is gone')));
+});
+
+test('a trap the runner keeps calling busy stays on the binding, and each try writes nothing', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	h.runner.listeners.set(OWNER, BOOK);
+	h.runner.apply = async (kind, ctx) => {
+		h.runner.calls.push(['apply', kind, ctx.userId, ctx.slot]);
+		return { applied: false, reason: 'busy' };
+	};
+	await sendItems(h, key, [TRAP('intermission')]);
+	assert.deepStrictEqual(binding(h, key).armed.map((x) => [x.kind, x.told]), [['intermission', true]]);
+	assert.deepStrictEqual(await trapPosts(h), [BUSY('Intermission')]);
+	let writes = 0;
+	const patch = h.store.bindings.patch;
+	h.store.bindings.patch = (...args) => {
+		writes += 1;
+		return patch(...args);
+	};
+	for (let i = 0; i < 3; i++) {
+		// A book span every 10 s, and the minute check.
+		await h.game._internal.handleEvent({ type: 'span', source: 'book', userIds: [OWNER], workId: 'nobody/nothing', fromMs: 0, toMs: 10000, at: AFTER });
+		await h.game._internal.trapsIdle();
+		await tick(h);
+	}
+	h.store.bindings.patch = patch;
+	assert.strictEqual(h.runner.applied().length, 7, 'tried again at each');
+	assert.strictEqual(writes, 0);
+	assert.deepStrictEqual(binding(h, key).armed.map((x) => [x.kind, x.told]), [['intermission', true]]);
+	assert.deepStrictEqual(await trapPosts(h), [], 'its line once');
+});
+
+test('a trap in flight stays on the binding: a Remote Control meanwhile blocks the one behind it, and a trap taken off meanwhile that plays is still announced', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	h.runner.listeners.set(OWNER, MUSIC);
+	const gate = holdApply(h);
+	await pushItems(h, key, [TRAP('rewind'), TRAP('intermission')]);
+	await waitFor(() => h.runner.applied().length === 1, 'the Rewind in flight');
+	assert.deepStrictEqual(binding(h, key).armed.map((x) => x.kind), ['rewind', 'intermission']);
+	await pushItems(h, key, [RC]);
+	assert.deepStrictEqual(binding(h, key).armed.map((x) => x.kind), ['rewind'], 'the Remote Control took the one the runner is not playing');
+	gate.answer({ applied: true, line: 'this track starts over' });
+	await h.game._internal.trapsIdle();
+	assert.deepStrictEqual(binding(h, key).armed, []);
+	assert.deepStrictEqual(await trapPosts(h), [
+		`${E.remote} \`ZackPlex\`: Remote Control blocked Intermission from \`Watcher\`.`,
+		`${E.trap} \`ZackPlex\` got Rewind from \`Watcher\`: this track starts over`,
+	]);
+
+	// A new seed's reset takes the armed traps off: a busy answer after it puts nothing back.
+	await pushItems(h, key, [TRAP('shuffle_mode')]);
+	await waitFor(() => h.runner.applied().length === 2, 'the Shuffle Mode in flight');
+	h.store.bindings.patch(key, { armed: [] });
+	gate.answer({ applied: false, reason: 'busy' });
+	await h.game._internal.trapsIdle();
+	assert.deepStrictEqual(binding(h, key).armed, []);
+	assert.deepStrictEqual(await trapPosts(h), []);
+
+	await pushItems(h, key, [TRAP('commercial_break')]);
+	await waitFor(() => h.runner.applied().length === 3, 'the Commercial Break in flight');
+	await h.game.unlink(key);
+	gate.answer({ applied: true, line: 'the music pauses for 30 seconds', until: h.clock + 30000 });
+	await h.game._internal.trapsIdle();
+	assert.deepStrictEqual(await trapPosts(h), [`${E.trap} \`ZackPlex\` got Commercial Break from \`Watcher\`: the music pauses for 30 seconds`], 'it played, so it is said');
+	assert.strictEqual(h.game._internal.runtime(key), null, 'and nothing is kept for the slot');
+});
+
+test('a trap in flight is left to the runner\'s answer: voice traps turned off fizzle only the ones behind it, and a Remote Control that finds the effect over passes it by', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	h.runner.listeners.set(OWNER, MUSIC);
+	const gate = holdApply(h);
+	await pushItems(h, key, [TRAP('rewind'), TRAP('intermission')]);
+	await waitFor(() => h.runner.applied().length === 1, 'the Rewind in flight');
+	h.config.apMediaVoiceTraps = false;
+	h.configStore.fire('apMediaVoiceTraps', false);
+	await h.game._internal.idle();
+	assert.deepStrictEqual(binding(h, key).armed.map((x) => x.kind), ['rewind'], 'the Intermission fizzled, and the Rewind waits for its answer');
+	gate.answer({ applied: true, line: 'this track starts over' });
+	await h.game._internal.trapsIdle();
+	assert.deepStrictEqual(binding(h, key).armed, []);
+	assert.deepStrictEqual(await trapPosts(h), [
+		`${E.trap} \`ZackPlex\`: Intermission from \`Watcher\` fizzled: voice traps are off on this server.`,
+		`${E.trap} \`ZackPlex\` got Rewind from \`Watcher\`: this track starts over`,
+	], 'the Rewind played, so it never fizzled');
+	assert.deepStrictEqual(h.events.filter((e) => e.kind === 'apmedia-trap').map((e) => [e.trap, e.outcome]), [
+		['rewind', 'armed'], ['intermission', 'armed'], ['intermission', 'fizzled'], ['rewind', 'hit'],
+	]);
+	h.config.apMediaVoiceTraps = true;
+
+	// A Remote Control on a pause the runner finds over already blocks the trap behind the one in
+	// flight, and with none behind it goes back on hand.
+	await pushItems(h, key, [TRAP('intermission')]);
+	await waitFor(() => h.runner.applied().length === 2, 'the Intermission in flight');
+	gate.answer({ applied: true, line: 'the music pauses', until: h.clock + 60000 });
+	await h.game._internal.trapsIdle();
+	assert.strictEqual(row(h, key).effect.kind, 'intermission');
+	h.runner.endResult = false;
+	await pushItems(h, key, [TRAP('rewind'), TRAP('shuffle_mode')]);
+	await waitFor(() => h.runner.applied().length === 3, 'the Rewind in flight');
+	await pushItems(h, key, [RC]);
+	await waitFor(() => h.runner.of('end').length === 1, 'the Remote Control at the runner');
+	await h.game._internal.idle();
+	assert.deepStrictEqual(binding(h, key).armed.map((x) => x.kind), ['rewind']);
+	assert.deepStrictEqual(row(h, key).remoteControls, { received: 1, bought: 0, used: 1, available: 0 });
+	gate.answer({ applied: true, line: 'this track starts over' });
+	await h.game._internal.trapsIdle();
+	assert.deepStrictEqual(await trapPosts(h), [
+		`${E.trap} \`ZackPlex\` got Intermission from \`Watcher\`: the music pauses`,
+		`${E.remote} \`ZackPlex\`: Remote Control blocked Shuffle Mode from \`Watcher\`.`,
+		`${E.trap} \`ZackPlex\` got Rewind from \`Watcher\`: this track starts over`,
+	]);
+
+	await pushItems(h, key, [TRAP('intermission')]);
+	await waitFor(() => h.runner.applied().length === 4, 'the Intermission in flight');
+	gate.answer({ applied: true, line: 'the music pauses', until: h.clock + 60000 });
+	await h.game._internal.trapsIdle();
+	await pushItems(h, key, [TRAP('rewind')]);
+	await waitFor(() => h.runner.applied().length === 5, 'the Rewind in flight');
+	await pushItems(h, key, [RC]);
+	await waitFor(() => h.runner.of('end').length === 2, 'the Remote Control at the runner');
+	await h.game._internal.idle();
+	assert.deepStrictEqual(binding(h, key).armed.map((x) => x.kind), ['rewind']);
+	assert.deepStrictEqual(row(h, key).remoteControls, { received: 2, bought: 0, used: 1, available: 1 });
+	gate.answer({ applied: true, line: 'this track starts over' });
+	await h.game._internal.trapsIdle();
+	assert.deepStrictEqual(await trapPosts(h), [
+		`${E.trap} \`ZackPlex\` got Intermission from \`Watcher\`: the music pauses`,
+		`${E.remote} \`ZackPlex\` got a Remote Control from \`Watcher\`: Intermission was over already, so it blocks the next trap.`,
+		`${E.trap} \`ZackPlex\` got Rewind from \`Watcher\`: this track starts over`,
+	]);
+});
+
+test('an armed trap fizzles after 12 hours or with apMediaVoiceTraps off; with apMediaTraps off every trap fizzles and the holds end', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	await sendItems(h, key, [TRAP('rewind')]);
+	await trapPosts(h);
+	h.clock += 12 * HOUR_MS;
+	await tick(h);
+	assert.deepStrictEqual(binding(h, key).armed, []);
+	assert.deepStrictEqual(await trapPosts(h), [`${E.trap} \`ZackPlex\`: Rewind from \`Watcher\` fizzled: no listen through the bot in 12 hours.`]);
+
+	h.config.apMediaVoiceTraps = false;
+	await sendItems(h, key, [TRAP('intermission')]);
+	assert.deepStrictEqual(binding(h, key).armed, [], 'never armed');
+	assert.deepStrictEqual(await trapPosts(h), [`${E.trap} \`ZackPlex\`: Intermission from \`Watcher\` fizzled: voice traps are off on this server.`]);
+	h.config.apMediaVoiceTraps = true;
+	await sendItems(h, key, [TRAP('slow_motion')]);
+	await trapPosts(h);
+	h.config.apMediaVoiceTraps = false;
+	h.configStore.fire('apMediaVoiceTraps', false);
+	await h.game._internal.trapsIdle();
+	assert.deepStrictEqual(binding(h, key).armed, []);
+	assert.deepStrictEqual(await trapPosts(h), [`${E.trap} \`ZackPlex\`: Slow Motion from \`Watcher\` fizzled: voice traps are off on this server.`]);
+	h.config.apMediaVoiceTraps = true;
+
+	await sendItems(h, key, [TRAP('buffering')]);
+	await h.game._internal.handleEvent(historyEvent(MATRIX.rk));
+	await h.game._internal.idle();
+	assert.strictEqual(binding(h, key).held.length, 9);
+	await trapPosts(h);
+	h.config.apMediaTraps = false;
+	await sendItems(h, key, [TRAP('rewind'), TRAP('buffering')]);
+	assert.deepStrictEqual([binding(h, key).armed, binding(h, key).holdMs], [[], 0]);
+	h.configStore.fire('apMediaTraps', false);
+	await waitFor(() => hasAll(h.server.checkedOf(1), MATRIX.ids), 'the held checks');
+	assert.deepStrictEqual(await trapPosts(h), [
+		`${E.trap} \`ZackPlex\`: Rewind from \`Watcher\` and Buffering from \`Watcher\` fizzled: traps are off on this server.`,
+		`${E.buffering} \`ZackPlex\`: traps are off on this server, so its holds ended, 9 checks sent.`,
+	]);
+	await h.game._internal.handleEvent(historyEvent(2002));
+	await waitFor(() => hasAll(h.server.checkedOf(1), HALLOWEEN.ids), 'new credit goes out at once');
+});
+
+test('a line that says a switch is off names the one that is: a Slow Motion speed put back, and a trap the runner calls off', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	h.runner.listeners.set(OWNER, BOOK);
+	const record = { kind: 'speed', workId: 'jane-austen/pride-and-prejudice', previous: 1.25, until: h.clock + 10 * MIN_MS };
+	for (const [name, words] of [['apMediaTraps', 'traps are off on this server'], ['apMediaVoiceTraps', 'voice traps are off on this server']]) {
+		h.runner.results.push({ applied: true, line: '0.75x for 10 minutes', restore: record });
+		await sendItems(h, key, [TRAP('slow_motion')]);
+		await trapPosts(h);
+		h.config[name] = false;
+		h.configStore.fire(name, false);
+		await h.game._internal.trapsIdle();
+		assert.strictEqual(binding(h, key).speedRestore, null, name);
+		assert.deepStrictEqual(await trapPosts(h), [`${E.slow} \`ZackPlex\`: Slow Motion ended: ${words}.`], name);
+		h.config[name] = true;
+	}
+
+	// apMediaTraps off while the runner plays a trap: the runner's answer is off, and the line names that switch.
+	h.runner.listeners.set(OWNER, MUSIC);
+	const gate = holdApply(h);
+	const tried = h.runner.applied().length;
+	await pushItems(h, key, [TRAP('rewind')]);
+	await waitFor(() => h.runner.applied().length === tried + 1, 'the Rewind in flight');
+	h.config.apMediaTraps = false;
+	h.configStore.fire('apMediaTraps', false);
+	await h.game._internal.idle();
+	assert.deepStrictEqual(binding(h, key).armed.map((x) => x.kind), ['rewind'], 'left to the runner\'s answer');
+	gate.answer({ applied: false, reason: 'off' });
+	await h.game._internal.trapsIdle();
+	assert.deepStrictEqual(binding(h, key).armed, []);
+	assert.deepStrictEqual(await trapPosts(h), [`${E.trap} \`ZackPlex\`: Rewind from \`Watcher\` fizzled: traps are off on this server.`]);
+	h.config.apMediaTraps = true;
+});
+
+test('a Slow Motion speed put back because apMediaTraps went off says so, even when the switch is on again before the runner answers', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	h.runner.listeners.set(OWNER, BOOK);
+	const record = { kind: 'speed', workId: 'jane-austen/pride-and-prejudice', previous: 1.25, until: h.clock + 10 * MIN_MS };
+	h.runner.results.push({ applied: true, line: '0.75x for 10 minutes', restore: record });
+	await sendItems(h, key, [TRAP('slow_motion')]);
+	await trapPosts(h);
+	let answer = null;
+	h.runner.restore = (r) => {
+		h.runner.calls.push(['restore', r]);
+		return new Promise((resolve) => { answer = resolve; });
+	};
+	h.config.apMediaTraps = false;
+	h.configStore.fire('apMediaTraps', false);
+	await h.game._internal.idle();
+	await waitFor(() => answer !== null, 'the speed being put back');
+	h.config.apMediaTraps = true;
+	h.configStore.fire('apMediaTraps', true);
+	await h.game._internal.idle();
+	assert.strictEqual(h.runner.of('restore').length, 1, 'the sweep with the switch on again asks for nothing more');
+	assert.deepStrictEqual(binding(h, key).speedRestore, record, 'kept until the runner answers');
+	answer();
+	await h.game._internal.trapsIdle();
+	assert.strictEqual(binding(h, key).speedRestore, null);
+	assert.deepStrictEqual(await trapPosts(h), [`${E.slow} \`ZackPlex\`: Slow Motion ended: traps are off on this server.`]);
+});
+
+test('Slow Motion on a book saves its speed restore, puts the speed back when due, and after a restart before or after the time', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	h.runner.listeners.set(OWNER, BOOK);
+	const record = (until) => ({ kind: 'speed', workId: 'jane-austen/pride-and-prejudice', previous: 1.25, until });
+	h.runner.results.push({ applied: true, line: '0.75x for 10 minutes', until: h.clock + 10 * MIN_MS, restore: record(h.clock + 10 * MIN_MS) });
+	await sendItems(h, key, [TRAP('slow_motion')]);
+	assert.deepStrictEqual(binding(h, key).speedRestore, record(h.clock + 10 * MIN_MS));
+	assert.deepStrictEqual(row(h, key).slowMotion, { until: h.clock + 10 * MIN_MS });
+	assert.strictEqual(row(h, key).effect, null, 'a speed is the binding\'s own record, not an effect in force');
+	assert.ok(h.trapTimers.delays().includes(10 * MIN_MS));
+	assert.deepStrictEqual(await trapPosts(h), [`${E.trap} \`ZackPlex\` got Slow Motion from \`Watcher\`: 0.75x for 10 minutes`]);
+	h.clock += 10 * MIN_MS;
+	await h.runner.ended('slow_motion', 'back to 1.25x');
+	await tick(h, 10 * MIN_MS);
+	assert.deepStrictEqual(h.runner.of('restore').map(([, r]) => r), [{ ...record(h.clock), userId: OWNER, slot: SLOT }]);
+	assert.strictEqual(binding(h, key).speedRestore, null);
+	assert.deepStrictEqual(await trapPosts(h), [`${E.slow} \`ZackPlex\`: Slow Motion is over.`]);
+
+	const until = h.clock + 10 * MIN_MS;
+	h.runner.results.push({ applied: true, line: 'slower', restore: record(until) });
+	await sendItems(h, key, [TRAP('slow_motion')]);
+	await trapPosts(h);
+	h.runner.calls.length = 0;
+	await restartGame(h, () => { h.clock += 4 * MIN_MS; });
+	assert.deepStrictEqual(h.runner.of('restore').map(([, r]) => r), [{ ...record(until), userId: OWNER, slot: SLOT }], 'handed to the runner again');
+	assert.deepStrictEqual(binding(h, key).speedRestore, record(until), 'and still waiting for its time');
+	assert.ok(h.trapTimers.delays().includes(6 * MIN_MS));
+	h.runner.calls.length = 0;
+	await restartGame(h, () => { h.clock += 7 * MIN_MS; });
+	assert.deepStrictEqual(h.runner.of('restore').map(([, r]) => r), [{ ...record(until), userId: OWNER, slot: SLOT }], 'overdue: put back at the start');
+	assert.strictEqual(binding(h, key).speedRestore, null);
+	assert.deepStrictEqual(await trapPosts(h), [`${E.slow} \`ZackPlex\`: Slow Motion is over.`]);
+
+	h.runner.results.push({ applied: true, line: 'slower', restore: record(h.clock + 10 * MIN_MS) });
+	await sendItems(h, key, [TRAP('slow_motion')]);
+	h.runner.calls.length = 0;
+	await h.game.unlink(key);
+	await h.game._internal.trapsIdle();
+	assert.deepStrictEqual(h.runner.of('restore').map(([, r]) => r.until), [h.clock], 'an unlink puts the speed back first');
+});
+
+test('turning apMediaEnabled off puts a Slow Motion speed back before the runner stops, and its record goes once the runner says the speed is back', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	h.runner.listeners.set(OWNER, BOOK);
+	// As the runner's finishRestore: a speed put back is told a turn later with `speed: true`, and a
+	// restore put off while the book's new session is still starting is not told at all.
+	let starting = false;
+	h.runner.restore = async (record) => {
+		h.runner.calls.push(['restore', record]);
+		if (starting) return;
+		Promise.resolve().then(() => h.runner.onEnd({ userId: record.userId, slot: record.slot, kind: 'slow_motion', where: 'book', line: `back to ${record.previous}x`, how: 'overdue', speed: true }));
+	};
+	const record = { kind: 'speed', workId: 'jane-austen/pride-and-prejudice', previous: 1.25, until: h.clock + 10 * MIN_MS };
+	h.runner.results.push({ applied: true, line: '0.75x for 10 minutes', restore: record });
+	await sendItems(h, key, [TRAP('slow_motion')]);
+	await trapPosts(h);
+	h.runner.calls.length = 0;
+	h.clock += 2 * MIN_MS;
+	h.config.apMediaEnabled = false;
+	h.configStore.fire('apMediaEnabled', false);
+	assert.deepStrictEqual(h.runner.calls.filter(([name]) => name === 'restore' || name === 'stop'), [
+		['restore', { ...record, until: h.clock, userId: OWNER, slot: SLOT }],
+		['stop'],
+	]);
+	await h.game._internal.idle();
+	assert.strictEqual(binding(h, key).speedRestore, null);
+	assert.deepStrictEqual(await trapPosts(h), [], 'no line: none goes out while Plex Media is off');
+
+	h.config.apMediaEnabled = true;
+	h.configStore.fire('apMediaEnabled', true);
+	await waitFor(() => row(h, key).inventoryKnown, 'on again');
+	await h.game._internal.trapsIdle();
+	assert.strictEqual(h.runner.of('restore').length, 1, 'nothing left to hand back');
+
+	const next = { ...record, until: h.clock + 10 * MIN_MS };
+	h.runner.results.push({ applied: true, line: '0.75x for 10 minutes', restore: next });
+	await sendItems(h, key, [TRAP('slow_motion')]);
+	await trapPosts(h);
+	h.runner.calls.length = 0;
+	starting = true;
+	const offAt = h.clock;
+	h.config.apMediaEnabled = false;
+	h.configStore.fire('apMediaEnabled', false);
+	await h.game._internal.idle();
+	assert.deepStrictEqual(binding(h, key).speedRestore, next, 'the restore the runner put off went with its stop(), so the record stays');
+	starting = false;
+	h.clock += HOUR_MS;
+	h.config.apMediaEnabled = true;
+	h.configStore.fire('apMediaEnabled', true);
+	await waitFor(() => row(h, key).inventoryKnown, 'on again');
+	await h.game._internal.trapsIdle();
+	assert.deepStrictEqual(h.runner.of('restore').map(([, r]) => r.until), [offAt, next.until], 'handed over again at the start');
+	assert.strictEqual(binding(h, key).speedRestore, null);
+	assert.deepStrictEqual(await trapPosts(h), [`${E.slow} \`ZackPlex\`: Slow Motion is over.`]);
+});
+
+test('a Slow Motion on another book puts the first book\'s speed back at once, since the binding keeps one to put back', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	h.runner.listeners.set(OWNER, BOOK);
+	const a = { kind: 'speed', workId: 'author/book-a', previous: 1.25, until: h.clock + 10 * MIN_MS };
+	h.runner.results.push({ applied: true, line: '0.75x for 10 minutes', restore: a });
+	await sendItems(h, key, [TRAP('slow_motion')]);
+	h.clock += 3 * MIN_MS;
+	const b = { kind: 'speed', workId: 'author/book-b', previous: 1.5, until: h.clock + 10 * MIN_MS };
+	h.runner.results.push({ applied: true, line: '0.75x for 10 minutes', restore: b });
+	await sendItems(h, key, [TRAP('slow_motion')]);
+	assert.deepStrictEqual(h.runner.of('restore').map(([, r]) => r), [{ ...a, until: h.clock, userId: OWNER, slot: SLOT }]);
+	assert.deepStrictEqual(binding(h, key).speedRestore, b);
+	assert.ok(h.trapTimers.delays().includes(10 * MIN_MS), 'book B\'s own time');
+	assert.deepStrictEqual(await trapPosts(h), Array(2).fill(`${E.trap} \`ZackPlex\` got Slow Motion from \`Watcher\`: 0.75x for 10 minutes`));
+
+	h.runner.calls.length = 0;
+	const again = { ...b, previous: 1.25, until: h.clock + 10 * MIN_MS };
+	h.runner.results.push({ applied: true, line: '0.75x for 10 minutes', restore: again });
+	await sendItems(h, key, [TRAP('slow_motion')]);
+	assert.deepStrictEqual(h.runner.of('restore'), [], 'the same book only takes the newer record');
+	assert.deepStrictEqual(binding(h, key).speedRestore, again);
+});
+
+test('an armed trap outlasts a restart and hits at the first listen after it', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await sendItems(h, key, [TRAP('intermission')]);
+	await trapPosts(h);
+	h.runner.listeners.set(OWNER, MUSIC);
+	await restartGame(h);
+	assert.deepStrictEqual(h.runner.applied(), ['intermission'], 'tried at the start');
+	assert.deepStrictEqual(binding(h, key).armed, []);
+	assert.deepStrictEqual(await trapPosts(h), [`${E.trap} \`ZackPlex\` got Intermission from \`Watcher\`: intermission line`]);
+});
+
+// --- the game with the real trap runner ------------------------------------------------------------
+//
+// No trapRunner here: the game builds helpers/apMediaTraps.js's runner itself, on the bot it was
+// started with, as app/music.js starts it. The fake bot's book engine gets the two calls the runner
+// adds to what the game reads, with the real director's rules (test/apMediaTraps.test.js holds its
+// own fake to a real director): the listener's own id passes, pause and resume move state and
+// pausedAt, back moves the place, speed sets the speed, and every change notifies before the call
+// returns.
+
+async function realRunnerSetup(t) {
+	const trapTimers = handTimers();
+	const h = await setup(t, { game: { trapTimers, trapDefer: (fn) => fn() } });
+	h.trapTimers = trapTimers;
+	const engine = h.bot.books;
+	engine.calls = [];
+	engine.sessionById = (id) => engine.list.find((s) => s.id === id && s.state !== 'ended') || null;
+	engine.controlSession = (s, member, action, arg) => {
+		const by = String((member && member.id) || '');
+		engine.calls.push([action, by, arg]);
+		if (!engine.list.includes(s) || s.state === 'ended') return { ok: false, code: 'no-session' };
+		if (by !== s.userId) return { ok: false, code: 'forbidden' };
+		let kind = 'moved';
+		if (action === 'pause') {
+			s.state = 'paused';
+			s.pausedAt = h.clock;
+			kind = 'paused';
+		} else if (action === 'resume') {
+			s.state = 'playing';
+			s.pausedAt = null;
+		} else if (action === 'back') {
+			engine.positions.set(s.id, Math.max(0, engine.position(s) - arg * 1000));
+		} else if (action === 'speed') {
+			s.speed = arg;
+			kind = 'speed';
+		} else {
+			return { ok: false, code: 'bad-action' };
+		}
+		for (const fn of [...engine.listeners]) fn(s, kind);
+		return { ok: true, code: 'ok' };
+	};
+	h.book = { id: 'b1', guildId: 'g1', userId: OWNER, member: { id: OWNER }, workId: 'jane-austen/pride-and-prejudice', state: 'playing', speed: 1, pausedAt: null, voiceChannelId: 'v1' };
+	return h;
+}
+
+test('a Rewind from another world goes through the real trap runner to the listener\'s own book, and the game says what it did', async (t) => {
+	const h = await realRunnerSetup(t);
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	const engine = h.bot.books;
+
+	await sendItems(h, key, [TRAP('rewind')]);
+	assert.deepStrictEqual(binding(h, key).armed.map((x) => x.kind), ['rewind'], 'nobody listening yet');
+	assert.deepStrictEqual(await trapPosts(h), [WAITS('Rewind')]);
+
+	engine.list.push(h.book);
+	engine.positions.set(h.book.id, 20 * MIN_MS);
+	for (const fn of [...engine.listeners]) fn(h.book, 'started');
+	await h.game._internal.trapsIdle();
+	assert.deepStrictEqual(engine.calls, [['back', OWNER, 300]], '5 minutes, as the listener');
+	assert.strictEqual(engine.position(h.book), 15 * MIN_MS);
+	assert.strictEqual(h.book.state, 'playing');
+	assert.deepStrictEqual(binding(h, key).armed, []);
+	assert.strictEqual(row(h, key).effect, null, 'over when it hits');
+	assert.deepStrictEqual(await trapPosts(h), [`${E.trap} \`ZackPlex\` got Rewind from \`Watcher\`: back 5 minutes`]);
+	assert.ok(h.logger.lines.some((l) => l.level === 'info' && l.text === 'Plex Media: Rewind for ZackPlex on the book: back 5 minutes.'), 'the runner\'s own log line');
+	assert.deepStrictEqual(h.events.filter((e) => e.kind === 'apmedia-trap').map((e) => [e.trap, e.outcome]), [['rewind', 'armed'], ['rewind', 'hit']]);
+});
+
+test('a Remote Control ends an Intermission the real trap runner put on the book, and one arriving after an early resume is kept', async (t) => {
+	const h = await realRunnerSetup(t);
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	const engine = h.bot.books;
+	engine.list.push(h.book);
+	engine.positions.set(h.book.id, 20 * MIN_MS);
+
+	await sendItems(h, key, [TRAP('intermission')]);
+	assert.strictEqual(h.book.state, 'paused');
+	assert.deepStrictEqual(row(h, key).effect, { kind: 'intermission', name: 'Intermission', until: h.clock + 60000 });
+	await sendItems(h, key, [RC]);
+	assert.strictEqual(h.book.state, 'playing', 'at once, not at the minute');
+	assert.deepStrictEqual(engine.calls.map(([action, by]) => [action, by]), [['pause', OWNER], ['resume', OWNER]]);
+	assert.strictEqual(row(h, key).effect, null);
+	assert.deepStrictEqual(row(h, key).remoteControls, { received: 1, bought: 0, used: 1, available: 0 });
+	assert.deepStrictEqual(await trapPosts(h), [
+		`${E.trap} \`ZackPlex\` got Intermission from \`Watcher\`: the book pauses for 60 seconds`,
+		`${E.remote} \`ZackPlex\`: Remote Control ended Intermission.`,
+	]);
+	h.clock += MIN_MS;
+	await tick(h, MIN_MS);
+	assert.strictEqual(engine.calls.length, 2, 'the runner\'s timer went with the pause');
+	assert.deepStrictEqual(await trapPosts(h), [], 'and the game has no end line left');
+
+	await sendItems(h, key, [TRAP('intermission')]);
+	assert.strictEqual(h.book.state, 'paused');
+	engine.controlSession(h.book, h.book.member, 'resume');
+	await sendItems(h, key, [RC]);
+	assert.deepStrictEqual(row(h, key).remoteControls, { received: 2, bought: 0, used: 1, available: 1 });
+	h.clock += MIN_MS;
+	await tick(h, MIN_MS);
+	assert.strictEqual(h.book.state, 'playing');
+	assert.deepStrictEqual(await trapPosts(h), [
+		`${E.trap} \`ZackPlex\` got Intermission from \`Watcher\`: the book pauses for 60 seconds`,
+		`${E.trap} \`ZackPlex\`: Intermission is over, the book was resumed early.`,
+		`${E.remote} \`ZackPlex\` got a Remote Control from \`Watcher\`: it blocks the next trap.`,
+	]);
+});
+
+test('an Intermission the real trap runner put on the book ends with the runner\'s own words, and leaves the book paused while its listener is out of voice', async (t) => {
+	const h = await realRunnerSetup(t);
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	const engine = h.bot.books;
+	const voice = new Map([[OWNER, { channelId: 'v1' }]]);
+	h.book.guild = { voiceStates: { cache: voice } };
+	engine.list.push(h.book);
+	engine.positions.set(h.book.id, 20 * MIN_MS);
+
+	await sendItems(h, key, [TRAP('intermission')]);
+	assert.strictEqual(h.book.state, 'paused');
+	h.clock += MIN_MS;
+	await tick(h, MIN_MS);
+	assert.strictEqual(h.book.state, 'playing', 'resumed at the minute');
+	assert.strictEqual(row(h, key).effect, null);
+	assert.deepStrictEqual(await trapPosts(h), [
+		`${E.trap} \`ZackPlex\` got Intermission from \`Watcher\`: the book pauses for 60 seconds`,
+		`${E.trap} \`ZackPlex\`: Intermission is over, the book plays again.`,
+	]);
+
+	await sendItems(h, key, [TRAP('intermission')]);
+	voice.delete(OWNER);
+	h.clock += MIN_MS;
+	await tick(h, MIN_MS);
+	assert.strictEqual(h.book.state, 'paused', 'nobody left in the channel to hear it');
+	assert.deepStrictEqual(await trapPosts(h), [
+		`${E.trap} \`ZackPlex\` got Intermission from \`Watcher\`: the book pauses for 60 seconds`,
+		`${E.trap} \`ZackPlex\`: Intermission is over, the book stays paused until its listener is back in voice.`,
+	]);
+});
+
+test('a book the real trap runner slowed plays at its own speed again the moment apMediaEnabled goes off', async (t) => {
+	const h = await realRunnerSetup(t);
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	h.book.speed = 1.25;
+	h.bot.books.list.push(h.book);
+	await sendItems(h, key, [TRAP('slow_motion')]);
+	assert.strictEqual(h.book.speed, 0.75);
+	assert.strictEqual(binding(h, key).speedRestore.previous, 1.25);
+	h.clock += 2 * MIN_MS;
+	h.config.apMediaEnabled = false;
+	h.configStore.fire('apMediaEnabled', false);
+	assert.strictEqual(h.book.speed, 1.25);
+	assert.deepStrictEqual(h.trapTimers.delays(), [], 'and nothing is left to fire');
+	await h.game._internal.idle();
+	assert.strictEqual(binding(h, key).speedRestore, null, 'the runner said the speed is back');
+});
+
+test('a slowed book whose new session is still starting when apMediaEnabled goes off keeps its speed record, and the next start puts the speed back', async (t) => {
+	const h = await realRunnerSetup(t);
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	const engine = h.bot.books;
+	h.book.speed = 1.25;
+	engine.list.push(h.book);
+	await sendItems(h, key, [TRAP('slow_motion')]);
+	assert.strictEqual(h.book.speed, 0.75);
+	await trapPosts(h);
+	// The listener stops the book and plays it again: the new session is joining at the switch.
+	h.clock += 2 * MIN_MS;
+	h.book.state = 'ended';
+	for (const fn of [...engine.listeners]) fn(h.book, 'ended');
+	const again = { ...h.book, id: 'b2', state: 'starting', speed: 0.75 };
+	engine.list.push(again);
+	h.config.apMediaEnabled = false;
+	h.configStore.fire('apMediaEnabled', false);
+	await h.game._internal.idle();
+	assert.deepStrictEqual(h.trapTimers.delays(), [], 'the runner\'s retry went with its stop()');
+	assert.strictEqual(binding(h, key).speedRestore.previous, 1.25, 'so the record stays');
+	again.state = 'playing';
+	h.clock += HOUR_MS;
+	h.config.apMediaEnabled = true;
+	h.configStore.fire('apMediaEnabled', true);
+	await waitFor(() => row(h, key).inventoryKnown, 'on again');
+	await h.game._internal.trapsIdle();
+	assert.strictEqual(again.speed, 1.25);
+	assert.strictEqual(binding(h, key).speedRestore, null);
+	assert.deepStrictEqual(await trapPosts(h), [`${E.slow} \`ZackPlex\`: Slow Motion is over.`]);
+});
+
+test('a trap the real runner cannot play while a Hitster game holds the voice waits with a line that names no trap at work, and hits once the game is over', async (t) => {
+	const h = await realRunnerSetup(t);
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	let hitster = true;
+	voiceClaims.register('hitster', (guildId) => (hitster && guildId === 'g1' ? 'Hitster' : null));
+	t.after(() => { hitster = false; });
+	const engine = h.bot.books;
+	engine.list.push(h.book);
+	engine.positions.set(h.book.id, 20 * MIN_MS);
+	await sendItems(h, key, [TRAP('rewind')]);
+	assert.deepStrictEqual(engine.calls, [], 'the book is left alone');
+	assert.deepStrictEqual(binding(h, key).armed.map((x) => [x.kind, x.told]), [['rewind', true]]);
+	assert.deepStrictEqual(await trapPosts(h), [BUSY('Rewind')]);
+	hitster = false;
+	await tick(h);
+	assert.deepStrictEqual(engine.calls, [['back', OWNER, 300]]);
+	assert.deepStrictEqual(binding(h, key).armed, []);
+	assert.deepStrictEqual(await trapPosts(h), [`${E.trap} \`ZackPlex\` got Rewind from \`Watcher\`: back 5 minutes`]);
+});
+
+test('a Commercial Break whose clip playlist Plex is still reading when a trap switch goes off fizzles with that switch named, and queues no clip', async (t) => {
+	const h = await realRunnerSetup(t);
+	h.config.apMediaTrapClips = 'Clips';
+	let answer = null;
+	h.pms.playlists = async () => [{ ratingKey: '901', title: 'Clips', playlistType: 'audio' }];
+	h.pms.playlistItems = () => new Promise((resolve) => { answer = resolve; });
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	const bot = h.bot;
+	Object.assign(bot, { isPlaying: true, isPaused: false, voiceChannel: { id: 'c1', guild: { id: 'g1' } }, dispatcher: { state: { status: 'playing' } } });
+	bot.inVoice.add(OWNER);
+	bot.songQueue = [{ title: 'A', key: '/library/parts/1/a.mp3' }, { title: 'B', key: '/library/parts/2/b.mp3' }];
+	const clips = [{ type: 'track', title: 'Jingle', duration: 30000, Media: [{ Part: [{ key: '/library/parts/9/jingle.mp3' }] }] }];
+	for (const [name, words] of [['apMediaVoiceTraps', 'voice traps are off on this server'], ['apMediaTraps', 'traps are off on this server']]) {
+		answer = null;
+		await pushItems(h, key, [TRAP('commercial_break')]);
+		await waitFor(() => answer !== null, `${name}: the clip playlist being read`);
+		h.config[name] = false;
+		h.configStore.fire(name, false);
+		await h.game._internal.idle();
+		assert.deepStrictEqual(binding(h, key).armed.map((x) => x.kind), ['commercial_break'], `${name}: left to the runner's answer`);
+		answer(clips);
+		await h.game._internal.trapsIdle();
+		assert.deepStrictEqual(bot.songQueue.map((e) => e.title), ['A', 'B'], name);
+		assert.deepStrictEqual(binding(h, key).armed, [], name);
+		assert.deepStrictEqual(await trapPosts(h), [`${E.trap} \`ZackPlex\`: Commercial Break from \`Watcher\` fizzled: ${words}.`], name);
+		h.config[name] = true;
+	}
+	assert.deepStrictEqual(h.events.filter((e) => e.kind === 'apmedia-trap').map((e) => e.outcome), ['armed', 'fizzled', 'armed', 'fizzled']);
+});
+
+test('a Fast Forward without strict earns the title\'s next checkpoint however far off it is, never a main location, and spends nothing when it cannot', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	const none = await h.game.fastForward(key, 'The Matrix');
+	assert.strictEqual(none.message, '`ZackPlex` has no Fast Forward to spend (0 received, 0 bought, 0 used).');
+	await sendItems(h, key, [FF, FF, FF, FF, FF, unit(1)]);
+	assert.deepStrictEqual(row(h, key).fastForwards, { received: 5, bought: 0, used: 0, available: 5 });
+	assert.deepStrictEqual((await trapPosts(h)).filter((l) => l.includes('Fast Forward')), Array(5).fill(`${E.forward} \`ZackPlex\` got a Fast Forward from \`Watcher\`: \`/apmedia ff\` earns a title's next checkpoint.`));
+	const movie = await h.game.fastForward(key, 'The Matrix');
+	assert.strictEqual(movie.message, `${E.forward} \`ZackPlex\` spent a Fast Forward on **The Matrix (1999)**: 1 check sent. 4 Fast Forwards left.`);
+	await waitFor(() => h.server.checkedOf(1).has(MATRIX.ids[1]), 'the 15-minute checkpoint');
+	await h.game._internal.handleEvent(sessionSpan(MATRIX.rk, 40 * MIN_MS, 46 * MIN_MS));
+	await waitFor(() => h.server.checkedOf(1).has(MATRIX.ids[3]), 'the 45-minute checkpoint, by watching');
+	const gap = await h.game.fastForward(key, 'The Matrix');
+	assert.ok(gap.ok, gap.message);
+	await waitFor(() => h.server.checkedOf(1).has(MATRIX.ids[2]), 'the earliest one not earned: 30 minutes, not 60');
+	assert.ok(!h.server.checkedOf(1).has(MATRIX.ids[4]));
+	assert.ok(!h.server.checkedOf(1).has(MATRIX.ids[0]), 'never the watch');
+	const first = await h.game.fastForward(key, ALBUM_KEY);
+	assert.strictEqual(first.message, `${E.forward} \`ZackPlex\` spent a Fast Forward on **Daft Punk - Discovery**: 1 check sent. 2 Fast Forwards left.`);
+	await waitFor(() => h.server.checkedOf(1).has(loc(4)), 'the 5-minute checkpoint');
+	const second = await h.game.fastForward(key, ALBUM_KEY);
+	assert.ok(second.ok, second.message);
+	await waitFor(() => h.server.checkedOf(1).has(loc(5)), 'the 10-minute checkpoint');
+	assert.ok(![1, 2, 3].some((j) => h.server.checkedOf(1).has(loc(j))), 'no track: finishing the album still takes listening');
+	const done = await h.game.fastForward(key, ALBUM_KEY);
+	assert.deepStrictEqual([done.ok, done.message], [false, '**Daft Punk - Discovery** has no checkpoint left to skip to.']);
+	assert.strictEqual(binding(h, key).ffUsed, 4);
+	const locked = await h.game.fastForward(key, 'episode|rk:2101');
+	assert.strictEqual(locked.message, `${E.forward} \`ZackPlex\` spent a Fast Forward on **Breaking Point S01E01**: 1 check banked until it unlocks. 0 Fast Forwards left.`);
+	assert.ok(binding(h, key).banked.includes(loc(17)), 'banked under locked_watches bank');
+	assert.deepStrictEqual(row(h, key).fastForwards, { received: 5, bought: 0, used: 5, available: 0 });
+
+	const sd = slotData();
+	delete sd.items.useful;
+	const old = await trapSetup(t, { sd });
+	const oldKey = await linkSlot(old);
+	assert.strictEqual((await old.game.fastForward(oldKey, 'The Matrix')).message, '`ZackPlex`\'s seed has no Fast Forwards: it was made with a Plex Media world before 0.3.0.');
+});
+
+test('a Fast Forward under strict counts 10 more minutes heard from the furthest point heard, and a locked title under ignore refuses it', async (t) => {
+	const h = await trapSetup(t, { sd: slotData({ timesanity_strict: true }) });
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	await sendItems(h, key, [FF, FF]);
+	assert.deepStrictEqual(await trapPosts(h), Array(2).fill(`${E.forward} \`ZackPlex\` got a Fast Forward from \`Watcher\`: \`/apmedia ff\` counts 10 minutes of a title as heard.`));
+	const first = await h.game.fastForward(key, 'The Matrix');
+	assert.strictEqual(first.message, `${E.forward} \`ZackPlex\` spent a Fast Forward on **The Matrix (1999)**: The first 10m count as heard. That reaches no checkpoint yet. 1 Fast Forward left.`);
+	assert.deepStrictEqual(Object.values(binding(h, key).heard), [[[0, 10 * MIN_MS]]], 'written at once');
+	const second = await h.game.fastForward(key, 'The Matrix');
+	assert.strictEqual(second.message, `${E.forward} \`ZackPlex\` spent a Fast Forward on **The Matrix (1999)**: From 10m to 20m counts as heard. 1 check sent. 0 Fast Forwards left.`);
+	await waitFor(() => h.server.checkedOf(1).has(MATRIX.ids[1]), 'the 15-minute checkpoint');
+	assert.ok(!h.server.checkedOf(1).has(MATRIX.ids[0]), 'never the watch');
+	assert.deepStrictEqual(Object.values(binding(h, key).heard), [[[0, 20 * MIN_MS]]]);
+
+	const ignoring = await trapSetup(t, { sd: slotData({ timesanity_strict: true, locked_watches: 'ignore' }) });
+	const other = await linkSlot(ignoring);
+	await sendItems(ignoring, other, [FF]);
+	const refused = await ignoring.game.fastForward(other, '1917');
+	assert.strictEqual(refused.message, '**1917** is locked, and this slot ignores locked titles, so a Fast Forward on it would count for nothing.');
+	assert.strictEqual(binding(ignoring, other).ffUsed, 0);
+});
+
+test('the Snack Bar shows the snacks held, trades them for a Fast Forward or a Remote Control, and runs out; a seed without one has none', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await sendItems(h, key, [...Array(12).fill(SNACK.Popcorn), ...Array(13).fill(SNACK.Nachos)]);
+	const menu = await h.game.snackBar(key);
+	assert.strictEqual(menu.message, `${E.snack} \`ZackPlex\` has 25 snacks. The Snack Bar: 10 snacks a trade, 3 trades left; one trade buys a Fast Forward or a Remote Control.`);
+	const ff = await h.game.snackBar(key, { buy: 'fastForward' });
+	assert.strictEqual(ff.message, `${E.snack} \`ZackPlex\` bought a Fast Forward for 10 snacks: 15 snacks and 2 trades left. \`/apmedia ff <title>\` spends it.`);
+	assert.deepStrictEqual(row(h, key).fastForwards, { received: 0, bought: 1, used: 0, available: 1 });
+
+	await sendItems(h, key, [TRAP('buffering')]);
+	await trapPosts(h);
+	const rc = await h.game.snackBar(key, { buy: 'remoteControl' });
+	assert.strictEqual(rc.message, `${E.snack} \`ZackPlex\` bought a Remote Control for 10 snacks: 5 snacks and 1 trade left. It went straight to the trap on this slot.`);
+	assert.deepStrictEqual([binding(h, key).holdMs, row(h, key).remoteControls], [0, { received: 0, bought: 1, used: 1, available: 0 }]);
+	assert.deepStrictEqual(await trapPosts(h), [`${E.remote} \`ZackPlex\`: Remote Control ended Buffering.`]);
+
+	const poor = await h.game.snackBar(key, { buy: 'fastForward' });
+	assert.deepStrictEqual([poor.ok, poor.message], [false, 'A trade costs 10 snacks, and `ZackPlex` has 5 snacks.']);
+	await sendItems(h, key, Array(20).fill(SNACK['Hot Dog']));
+	assert.ok((await h.game.snackBar(key, { buy: 'fastForward' })).ok);
+	const out = await h.game.snackBar(key, { buy: 'remoteControl' });
+	assert.deepStrictEqual([out.ok, out.message], [false, '`ZackPlex`\'s Snack Bar has no trades left (3 trades in all).']);
+	const b = binding(h, key);
+	assert.deepStrictEqual([b.snackSpent, b.trades, b.bought], [30, 3, { fastForward: 2, remoteControl: 1 }]);
+	assert.deepStrictEqual([row(h, key).snacks, row(h, key).snackBar], [{ received: 45, spent: 30, held: 15 }, { price: 10, trades: 3, tradesLeft: 0 }]);
+	assert.strictEqual((await h.game.snackBar(key, { buy: 'popcorn' })).message, 'Buy a Fast Forward or a Remote Control.');
+	assert.strictEqual((await h.game.snackBar(key, { buy: 'constructor' })).message, 'Buy a Fast Forward or a Remote Control.');
+
+	const sd = slotData();
+	delete sd.snack_bar;
+	const old = await trapSetup(t, { sd });
+	const oldKey = await linkSlot(old);
+	assert.strictEqual((await old.game.snackBar(oldKey)).message, '`ZackPlex`\'s seed has no Snack Bar: it was made with a Plex Media world before 0.3.0.');
+	assert.strictEqual(row(old, oldKey).snackBar, null);
+});
+
+test('the status row and the status reply show the useful items on hand, the snacks, the holds and the armed traps', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await sendItems(h, key, [TRAP('buffering'), TRAP('rights_expired')]);
+	await sendItems(h, key, [TRAP('rewind'), FF, SNACK.Popcorn, SNACK.Nachos]);
+	await h.game._internal.handleEvent(historyEvent(2002));
+	await h.game._internal.idle();
+	const s = row(h, key);
+	const until = h.clock + 15 * MIN_MS;
+	const expires = h.clock + 45 * MIN_MS;
+	assert.deepStrictEqual(s.fastForwards, { received: 1, bought: 0, used: 0, available: 1 });
+	assert.deepStrictEqual(s.remoteControls, { received: 0, bought: 0, used: 0, available: 0 });
+	assert.deepStrictEqual([s.snacks, s.snackBar], [{ received: 2, spent: 0, held: 2 }, { price: 10, trades: 3, tradesLeft: 3 }]);
+	assert.deepStrictEqual(s.holds, {
+		held: 7, buffering: { until, held: 7 }, bufferingNextMs: 0,
+		expired: [{ entryKey: MATRIX_KEY, title: 'The Matrix (1999)', until: expires, held: 0 }],
+	});
+	assert.deepStrictEqual(s.armed, [{ kind: 'rewind', name: 'Rewind', from: 'Watcher', at: h.clock, until: h.clock + 12 * HOUR_MS }]);
+	assert.deepStrictEqual([s.effect, s.slowMotion, s.armedListening], [null, null, false]);
+	const lines = require('../commands/apmedia.js/status.js').block(s, { showUser: false }).rows;
+	for (const line of [
+		'> Fast Forwards: 1 to spend with `/apmedia ff`.',
+		'> Snacks: 2. The Snack Bar takes 10 snacks a trade, 3 trades left (`/apmedia snackbar`).',
+		`> ${E.buffering} Buffering: 7 checks held until ${stampOf(until)}.`,
+		`> ${E.expired} Rights expired until ${stampOf(expires)}: **The Matrix (1999)**.`,
+		`> ${E.trap} Waiting for a listen through the bot: Rewind from \`Watcher\`.`,
+	]) assert.ok(lines.includes(line), `${line}\n${lines.join('\n')}`);
+	const [page] = require('../commands/apmedia.js/list.js').listPages(h.game.list(key, 'ready'));
+	assert.strictEqual(page.split('\n')[1], `${E.buffering} Buffering: 7 checks held until ${stampOf(until)}.`, 'the list heads every page with it');
+});
+
+test('the status words a waiting trap as its own line did: it waits for the bot while its player listens, else for a listen', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await trapPosts(h);
+	const status = require('../commands/apmedia.js/status.js');
+	const waiting = () => status.block(row(h, key), { showUser: false }).rows.filter((line) => line.startsWith(`> ${E.trap} Waiting`));
+	h.runner.listeners.set(OWNER, MUSIC);
+	assert.strictEqual(row(h, key).armedListening, false, 'no trap waits');
+	h.runner.results.push({ applied: false, reason: 'busy' });
+	await sendItems(h, key, [TRAP('intermission')]);
+	assert.deepStrictEqual(await trapPosts(h), [BUSY('Intermission')]);
+	assert.strictEqual(row(h, key).armedListening, true);
+	assert.deepStrictEqual(waiting(), [`> ${E.trap} Waiting to hit as soon as the bot can: Intermission from \`Watcher\`.`]);
+	h.runner.listeners.clear();
+	assert.strictEqual(row(h, key).armedListening, false);
+	assert.deepStrictEqual(waiting(), [`> ${E.trap} Waiting for a listen through the bot: Intermission from \`Watcher\`.`]);
+	h.runner.listeners.set(OWNER, MUSIC);
+	h.game.stop();
+	assert.strictEqual(row(h, key).armedListening, false, 'nothing hits while the game is stopped');
+
+	const broken = await trapSetup(t, { game: { trapRunner: () => { throw new Error('the voice library is missing'); } } });
+	const other = await linkSlot(broken);
+	await trapPosts(broken);
+	await sendItems(broken, other, [TRAP('rewind')]);
+	assert.deepStrictEqual(await trapPosts(broken), [WAITS('Rewind')]);
+	assert.strictEqual(row(broken, other).armedListening, false, 'no runner to ask');
+});
+
+test('a retry onto a new seed resets the item cursor, the holds, the armed traps and every item spent', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await sendItems(h, key, [TRAP('buffering'), TRAP('rewind'), FF]);
+	h.store.bindings.patch(key, {
+		ffUsed: 1, rcUsed: 1, snackSpent: 10, trades: 1, bought: { fastForward: 1, remoteControl: 0 },
+		held: [loc(48)], expired: { [HALLOWEEN.key]: h.clock + MIN_MS },
+	});
+	const fresh = await startApMediaServer({ seedName: 'Seed_NEW', slotData: { 1: slotData() }, locations: { 1: ALL_LOCATIONS }, startInventory: { 1: START } });
+	t.after(() => fresh.close());
+	h.monitor.put(0, { target: fresh.target }, 'repointed');
+	await waitFor(() => row(h, key).state === 'stale', 'the stale state');
+	await h.game.retry(key);
+	await waitFor(() => row(h, key).seedName === 'Seed_NEW' && row(h, key).inventoryKnown, 'the new seed');
+	await h.game._internal.trapsIdle();
+	const b = binding(h, key);
+	assert.deepStrictEqual(
+		[b.itemsSeen, b.held, b.holdUntil, b.holdMs, b.expired, b.armed, b.speedRestore, b.ffUsed, b.rcUsed, b.snackSpent, b.bought, b.trades],
+		[START.length, [], null, 0, {}, [], null, 0, 0, 0, { fastForward: 0, remoteControl: 0 }, 0],
+		'the new seed\'s first inventory starts the cursor again',
+	);
 });

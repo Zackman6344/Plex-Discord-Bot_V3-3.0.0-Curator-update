@@ -90,8 +90,10 @@ test('a list track heard to 85% credits the people there at both ends, once the 
 		partId: 9876,
 		artist: 'Daft Punk',
 		title: 'One More Time',
+		fromMs: 0,
+		toMs: 300000,
 		at: NOW
-	}]);
+	}], 'a whole track carries the stretch that went out too, for timesanity_strict');
 });
 
 test("the 85% line uses the queue entry's own length first, then the slot's", async () => {

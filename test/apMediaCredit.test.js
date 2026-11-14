@@ -73,7 +73,19 @@ test('the index reads the slot settings slot_data carries', () => {
 	assert.ok(!('account' in raw) && !('discord' in raw));
 	assert.ok(!('account' in ix) && !('discord' in ix));
 	assert.deepStrictEqual(ix.timesanity, { movie: 15, episode: 10, album: 5, book: 30 });
-	assert.deepStrictEqual(ix.items, { popcorn: BASE + 1, wildTicket: BASE + 2 });
+	assert.deepStrictEqual(ix.items, {
+		popcorn: BASE + 1,
+		wildTicket: BASE + 2,
+		snacks: new Set([1, 3, 4, 5, 6, 7, 8].map((n) => BASE + n)),
+		fastForward: BASE + 100,
+		remoteControl: BASE + 101,
+		traps: new Map(Object.entries(contracts.TRAPS).map(([key, trap]) => [trap.id, key])),
+	});
+	assert.deepStrictEqual(ix.snackBar, { trades: 3, price: 10 });
+	assert.deepStrictEqual(ix.pool, {
+		snacks: 69, fastForwards: 2, remoteControls: 1, wildTickets: 2,
+		traps: { buffering: 0, rights_expired: 0, commercial_break: 0, shuffle_mode: 0, rewind: 0, intermission: 0, slow_motion: 0 },
+	});
 	assert.strictEqual(ix.units.size, 14);
 	assert.deepStrictEqual(ix.units.get(1347001013), { id: 1347001013, name: 'Breaking Point: Next 3 Episodes', kind: 'show', steps: 2, start: 0 });
 	for (const entry of ix.entries) {
@@ -306,6 +318,44 @@ test('unitCounts counts units by item id and Popcorn and Wild Tickets apart, wit
 	assert.deepStrictEqual([fixed.units.size, fixed.wild, fixed.popcorn], [0, 1, 1]);
 });
 
+const TRAP = (key) => contracts.TRAPS[key].id;
+
+test('unitCounts counts snacks (Popcorn among them), Fast Forwards, Remote Controls and each trap apart from the units', () => {
+	const ids = [
+		BASE + 1, BASE + 3, BASE + 3, BASE + 8, BASE + 2, BASE + 100, BASE + 101, BASE + 101,
+		TRAP('buffering'), TRAP('rewind'), TRAP('rewind'), TRAP('slow_motion'), 1347001007, 1347001007,
+	];
+	const items = ids.map((item, i) => ({ item, location: 100 + i, player: 2, flags: 0 }));
+	for (const source of [ix, fixture()]) {
+		const tally = credit.unitCounts(items, source);
+		assert.deepStrictEqual([...tally.units], [[1347001007, 2]], 'only the unlocks are units');
+		assert.deepStrictEqual([tally.wild, tally.popcorn, tally.snacks], [1, 1, 4]);
+		assert.deepStrictEqual(tally.useful, { fastForward: 1, remoteControl: 2 });
+		assert.deepStrictEqual(tally.traps, { buffering: 1, rights_expired: 0, commercial_break: 0, shuffle_mode: 0, rewind: 2, intermission: 0, slow_motion: 1 });
+	}
+});
+
+test('slot_data without the 0.3.0 keys has none of the new items: their ids stay units, and Popcorn is its only snack', () => {
+	const old = credit.indexSlot(slot([]));
+	assert.deepStrictEqual([old.items.fastForward, old.items.remoteControl, old.items.traps.size, [...old.items.snacks]], [null, null, 0, [BASE + 1]]);
+	assert.deepStrictEqual([old.snackBar, old.pool], [null, null]);
+	const items = [BASE + 1, BASE + 3, BASE + 100, TRAP('rewind')].map((item) => ({ item, location: 5, player: 2, flags: 0 }));
+	const tally = credit.unitCounts(items, old);
+	assert.deepStrictEqual([tally.popcorn, tally.snacks], [1, 1]);
+	assert.deepStrictEqual(tally.useful, { fastForward: 0, remoteControl: 0 });
+	assert.ok(Object.values(tally.traps).every((n) => n === 0), 'no trap');
+	assert.deepStrictEqual([...tally.units.keys()], [BASE + 3, BASE + 100, TRAP('rewind')], 'unknown ids, as a 0.2.0 seed counts them');
+	// Half the new keys, or a bad value: what can be read is, the rest is none.
+	const half = credit.indexSlot(slot([], {
+		items: { popcorn: BASE + 1, wild_ticket: BASE + 2, traps: { rewind: TRAP('rewind'), nope: BASE + 299, intermission: 'x' } },
+		snack_bar: { trades: 2, price: 0 },
+		pool: { snacks: '12', traps: { rewind: 3 } },
+	}));
+	assert.deepStrictEqual([...half.items.traps], [[TRAP('rewind'), 'rewind']]);
+	assert.strictEqual(half.snackBar, null, 'a price of 0 is no Snack Bar');
+	assert.deepStrictEqual([half.pool.snacks, half.pool.traps.rewind, half.pool.traps.buffering, half.pool.fastForwards], [12, 3, 0, 0]);
+});
+
 test('the starting copies open the starting titles and nothing else', () => {
 	const start = [1347001007, 1347001008, 1347001009].map((item) => ({ item, location: -2, player: 1, flags: 1 }));
 	const tally = credit.unitCounts(start, ix);
@@ -448,4 +498,119 @@ test('titleKey needs a letter or digit on each side, so two emoji titles with a 
 	assert.deepStrictEqual([...index.byTitle.keys()], ['band|real song']);
 	assert.deepStrictEqual(credit.hitsFor(index, { artist: 'Band', title: star }), [], 'a play of one emoji title credits no other');
 	assert.strictEqual(only(credit.hitsFor(index, { ratingKey: 2 })).index, 2, 'the ratingKey still finds it');
+});
+
+// --- timesanity_strict: everything before a checkpoint heard -------------------------------------
+
+// The first rehearsal's audiobook: about 21 minutes heard, 16 skips to 29:54, and the 30:00
+// checkpoint came from the ten seconds played across it. The owner wants all of it heard.
+test('under strict a stretch played across a mark after a skip earns nothing; hearing the skipped stretch does', () => {
+	const whole = credit.wholeHit(MATRIX);
+	const [m15, m30] = credit.entryLocations(MATRIX).checkpoints.map((cp) => cp.id);
+	let r = credit.strictLocations(whole, span(0, 21.5 * MIN), []);
+	assert.deepStrictEqual(r.ids, [m15]);
+	r = credit.strictLocations(whole, span(29.9 * MIN, 30.1 * MIN), r.heard);
+	assert.ok(!r.ids.includes(m30), 'crossing the mark is not enough');
+	assert.deepStrictEqual(r.heard, [[0, 21.5 * MIN], [29.9 * MIN, 30.1 * MIN]]);
+	r = credit.strictLocations(whole, span(21.5 * MIN, 29.9 * MIN), r.heard);
+	assert.deepStrictEqual(r.ids, [m15, m30]);
+	assert.deepStrictEqual(r.heard, [[0, 30.1 * MIN]], 'what is reached is kept as one range');
+	assert.deepStrictEqual(credit.locationsFor(whole, span(29.9 * MIN, 30.1 * MIN), true), [m30], 'locationsFor alone still counts a crossing');
+});
+
+test('under strict a gap shorter than 30 s is forgiven and one of 30 s is not, wherever it is', () => {
+	const whole = credit.wholeHit(MATRIX);
+	const m15 = credit.entryLocations(MATRIX).checkpoints[0].id;
+	const SEC = 1000;
+	assert.deepStrictEqual(credit.strictLocations(whole, span(29 * SEC, 16 * MIN), []).ids, [m15], 'a session\'s unseen first seconds');
+	assert.deepStrictEqual(credit.strictLocations(whole, span(30 * SEC, 16 * MIN), []).ids, []);
+	assert.deepStrictEqual(credit.strictLocations(whole, span(15 * MIN + 10 * SEC, 16 * MIN), [[0, 14 * MIN + 41 * SEC]]).ids, [m15]);
+	assert.deepStrictEqual(credit.strictLocations(whole, span(15 * MIN + 10 * SEC, 16 * MIN), [[0, 14 * MIN + 40 * SEC]]).ids, []);
+	assert.strictEqual(credit.HEARD_GAP_MS, 30 * SEC);
+});
+
+test('under strict a completion with no stretch earns its main locations alone and proves no listening', () => {
+	const whole = credit.wholeHit(MATRIX);
+	const r = credit.strictLocations(whole, COMPLETE, [[0, 10 * MIN]]);
+	assert.deepStrictEqual(r.ids, [MATRIX.w], 'a Plex history row or a finished bookmark');
+	assert.deepStrictEqual(r.heard, [[0, 10 * MIN]]);
+	const track1 = only(ix.byRk.get(23001));
+	assert.deepStrictEqual(credit.strictLocations(track1, COMPLETE, []).ids, [BASE + 1], 'a track from history: no 5:00');
+	assert.deepStrictEqual(credit.strictLocations(track1, { type: 'complete', fromMs: 0, toMs: 320000 }, []).ids, [BASE + 1, BASE + 4], 'a track heard in voice');
+	assert.deepStrictEqual(credit.strictLocations(track1, { type: 'complete', fromMs: 0, toMs: 272000 }, []).ids, [BASE + 1], 'heard to 85%: 5:00 is in the unheard tail');
+});
+
+test('under strict a track or part stretch lands on the album or book timeline, and sittings add up', () => {
+	const track2 = only(ix.byRk.get(23002));
+	let r = credit.strictLocations(track2, span(0, 212000), []);
+	assert.deepStrictEqual(r.heard, [[320000, 532000]], 'track 2 starts at 5:20');
+	assert.deepStrictEqual(r.ids, [], 'track 1 is still unheard');
+	r = credit.strictLocations(only(ix.byRk.get(23001)), span(0, 320000), r.heard);
+	assert.deepStrictEqual(r.ids, [BASE + 4]);
+	const part2 = only(ix.byRk.get(27002));
+	const [cp30, cp60, cp90] = credit.entryLocations(HOBBIT).checkpoints.map((cp) => cp.id);
+	r = credit.strictLocations(part2, span(0, 31 * MIN), []);
+	assert.deepStrictEqual(r.ids, [], 'part 2 alone, with part 1 unheard');
+	r = credit.strictLocations(only(ix.byRk.get(27001)), span(0, 60 * MIN), r.heard);
+	assert.deepStrictEqual(r.ids, [cp30, cp60, cp90]);
+});
+
+test('under strict the ranges come back empty once every checkpoint is reached, and stay small before', () => {
+	const whole = credit.wholeHit(MATRIX);
+	assert.deepStrictEqual(credit.strictLocations(whole, span(0, 136 * MIN), []).heard, []);
+	const scattered = Array.from({ length: 400 }, (_, i) => [i * 2 * MIN + MIN, i * 2 * MIN + 90000]);
+	const r = credit.strictLocations(whole, span(0, 30000), scattered);
+	assert.strictEqual(r.heard.length, credit.HEARD_MAX_RANGES);
+	assert.deepStrictEqual(r.heard[0], [0, 30000], 'the start is kept first');
+	assert.deepStrictEqual(credit.strictLocations(whole, { type: 'span' }, [[5, 1], [0, 'x'], null, [0, 20]]).heard, [[0, 20]], 'bad stored ranges are dropped');
+	assert.deepStrictEqual(credit.cleanRanges([[10, 20], [0, 5], [5, 12], [30, 40]]), [[0, 20], [30, 40]]);
+	assert.strictEqual(credit.heardThrough([[0, 10000], [35000, 50000]]), 50000);
+	assert.strictEqual(credit.heardThrough([[0, 10000], [40000, 50000]]), 10000);
+	assert.strictEqual(credit.heardThrough([]), 0);
+});
+// A Plexamp stop and resume, or a track change, leaves a seam of up to two polls plus the client's lag
+// that nobody skipped. Session ranges carry a pad for it; bot-played books and voice carry none.
+test('under strict a seam between two Plex session ranges is forgiven up to their pads, a bot-book gap only below 30 s', () => {
+	const whole = credit.wholeHit(MATRIX);
+	const m15 = credit.entryLocations(MATRIX).checkpoints[0].id;
+	const SEC = 1000;
+	const session = (from, to) => ({ type: 'span', fromMs: from, toMs: to, padMs: 25 * SEC });
+	let r = credit.strictLocations(whole, session(0, 10 * MIN), []);
+	assert.deepStrictEqual(r.heard, [[0, 10 * MIN, 25 * SEC]], 'the pad rides on the range');
+	r = credit.strictLocations(whole, session(10 * MIN + 45 * SEC, 16 * MIN), r.heard);
+	assert.deepStrictEqual(r.ids, [m15], 'a 45 s seam between two session ranges at a 15 s poll');
+	assert.deepStrictEqual(r.heard, [[0, 16 * MIN, 25 * SEC]], 'the reached range keeps the last pad');
+	r = credit.strictLocations(whole, session(10 * MIN + 50 * SEC, 16 * MIN), [[0, 10 * MIN, 25 * SEC]]);
+	assert.deepStrictEqual(r.ids, [], 'one of 50 s is not forgiven');
+	r = credit.strictLocations(whole, span(10 * MIN + 35 * SEC, 16 * MIN), [[0, 10 * MIN]]);
+	assert.deepStrictEqual(r.ids, [], 'a 35 s gap between bot-played ranges is not forgiven');
+	r = credit.strictLocations(whole, span(10 * MIN + 29 * SEC, 16 * MIN), [[0, 10 * MIN, 25 * SEC]]);
+	assert.deepStrictEqual(r.ids, [m15], 'a session range next to a bot-played one: below 30 s still forgiven');
+	r = credit.strictLocations(whole, span(10 * MIN + 31 * SEC, 16 * MIN), [[0, 10 * MIN, 25 * SEC]]);
+	assert.deepStrictEqual(r.ids, [], 'and 31 s is not, one pad being 25 s');
+	assert.deepStrictEqual(credit.strictLocations(whole, { ...session(40 * SEC, 16 * MIN), padMs: 45 * SEC }, []).ids, [m15], 'a 2x Plexamp step pads its own head');
+	assert.deepStrictEqual(credit.strictLocations(whole, session(40 * SEC, 16 * MIN), []).ids, [], 'at 1x, 40 s into the title is too late');
+});
+
+test('under strict touching ranges keep the larger pad, a pad stops at 90 s, and a bad pad counts as none', () => {
+	assert.deepStrictEqual(credit.cleanRanges([[0, 10, 5], [10, 20, 9], [30, 40, 'x'], [50, 60, 999999]]), [[0, 20, 9], [30, 40], [50, 60, credit.HEARD_PAD_MAX_MS]]);
+	assert.strictEqual(credit.HEARD_PAD_MAX_MS, 90000);
+	assert.strictEqual(credit.heardThrough([[0, 60000, 25000], [105000, 200000, 25000]]), 200000);
+	assert.strictEqual(credit.heardThrough([[0, 60000, 25000], [110000, 200000, 25000]]), 60000);
+});
+
+// Seeds already running when strict became all-heard earned checkpoints by crossing them; those, and
+// a time credited by hand, carry on from their mark rather than from 0.
+test('under strict a checkpoint already earned counts as everything before it heard', () => {
+	const whole = credit.wholeHit(MATRIX);
+	const [m15, m30, m45] = credit.entryLocations(MATRIX).checkpoints.map((cp) => cp.id);
+	let r = credit.strictLocations(whole, span(15 * MIN, 31 * MIN), [], { floorMs: 15 * MIN });
+	assert.deepStrictEqual(r.ids, [m15, m30]);
+	assert.deepStrictEqual(r.heard, [[0, 31 * MIN]]);
+	r = credit.strictLocations(whole, span(16 * MIN, 31 * MIN), [], { floorMs: 15 * MIN });
+	assert.deepStrictEqual(r.ids, [m15], 'the floor is a mark, not a pass: 15:00 to 16:00 is still unheard');
+	r = credit.strictLocations(whole, span(45 * MIN, 46 * MIN), [], { floorMs: 45 * MIN });
+	assert.deepStrictEqual(r.ids, [m15, m30, m45]);
+	assert.strictEqual(credit.heardThrough([[20 * MIN, 25 * MIN]], credit.HEARD_GAP_MS, 15 * MIN), 15 * MIN);
+	assert.deepStrictEqual(credit.strictLocations(whole, span(0, 1000), [], { floorMs: 120 * MIN }).heard, [], 'the last checkpoint earned: nothing to keep');
 });

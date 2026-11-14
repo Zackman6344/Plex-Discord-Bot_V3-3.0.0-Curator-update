@@ -1,20 +1,22 @@
 # apworld/tests/test_generate.py
 # Generates real seeds with the owner's frozen Archipelago 0.6.8 and the built dist/plex_media.apworld.
 #
-# Scenarios (SPEC 4.10): (a) two solo lists, one in the YAML text the bot itself writes (renderYaml()
-# of helpers/apMediaYaml.js, run through node -e) and the committed builder-1 fixture YAML, (b) a
-# mixed list with every kind and every timer, (c) two Plex lists sharing titles beside a ChecksFinder
-# slot, (d) season mode with checkpoints open to anything, (e) 600 unlock copies solo at spoiler 3
-# inside 90 s, and, beyond the SPEC's list, (f) two Plex lists naming one item link, which the world
-# must warn about and leave empty while the multiworld still generates, and (h) a list with every
-# list_* setting changed, which must give the same seed as the list without them. A1 runs the
-# Archipelago Options Creator's own rules (OptionsCreator.py in AP 0.6.8) on the world's options:
-# its groups, a widget for every option, what it exports for an untouched form, and that such a
-# YAML, like the Launcher's own template, stops at the "no titles yet" message until the bot fills
-# it in. Every seed must ship a data
+# Scenarios (SPEC 4.10): (a) two solo lists, one in the YAML text the bot itself writes
+# (renderYaml() of helpers/apMediaYaml.js, run through node -e) and the committed builder-1 fixture
+# YAML, (b) a mixed list with every kind and every timer, (c) two Plex lists sharing titles beside a
+# ChecksFinder slot, one with half its filler traps and Popcorn alone, the other excluding two of
+# its tracks, which take room from its useful items, (d) season mode with checkpoints open to
+# anything, (e) 600 unlock copies solo at spoiler 3 inside 90 s, and, beyond the SPEC's list, (f)
+# two Plex lists naming one item link, which the world must warn about and leave empty while the
+# multiworld still generates, and (h) a list with every list_* setting changed, which must give the
+# same seed as the list without them. A1 runs the Archipelago Options Creator's own rules
+# (OptionsCreator.py in AP 0.6.8) on the world's options: its groups, a widget for every option,
+# what it exports for an untouched form, and that such a YAML, like the Launcher's own template,
+# stops at the "no titles yet" message until the bot fills it in. Every seed must ship a data
 # package of real names that passes archipelago.gg's upload check, name ids by title in MultiServer
 # (a !hint for a title resolves), put every slot_data id in that slot's own locations or starting
-# items, show titles in its spoiler, keep excluded checkpoints to filler, and give each location the
+# items, show titles in its spoiler, keep excluded locations to filler and traps, place exactly the
+# plan's useful items, traps and snacks and say so in slot_data's pool, and give each location the
 # rule of its own unit and step. (c) is generated again in a child process under another
 # PYTHONHASHSEED and must come out identical, and the bot's own !ap next worker must rebuild (c) and
 # (f) and verify every slot, and pick (f)'s yamls out of a Players folder that has moved on.
@@ -27,6 +29,7 @@
 # ids and names, test/fixtures/apmedia/slot_data_mixed.json is scenario (b)'s slot_data for the JS side.
 
 import collections
+import copy
 import json
 import os
 import re
@@ -42,7 +45,7 @@ sys.path.insert(0, HERE)
 import ap_harness  # noqa: E402
 
 GAME = "Plex Media"
-WORLD_VERSION = "0.2.0"
+WORLD_VERSION = "0.3.0"
 CHILD = os.path.join(HERE, "ap_child.py")
 FIXTURE_YAML = os.path.join(HERE, "fixtures", "builder1_mixed.yaml")
 FIXTURE_EXPECT = os.path.join(HERE, "fixtures", "builder1_mixed.expect.json")
@@ -253,7 +256,8 @@ class SeedChecks:
 			data = {key: value for key, value in sorted(data.items())}
 			self.assertEqual(data_package_checksum(data), original, game)
 		units = {world.registry.unit_name[unit.key] for world in self.seed.worlds for unit in world.plan.units}
-		self.assertEqual(set(package["item_name_to_id"]), {"Popcorn", "Wild Ticket"} | units)
+		constants = sys.modules[type(self.seed.worlds[0]).__module__ + ".constants"]
+		self.assertEqual(set(package["item_name_to_id"]), set(constants.fixed_items()) | units)
 		locations = set()
 		for world in self.seed.worlds:
 			locations |= set(md["locations"][world.player])
@@ -304,6 +308,17 @@ class SeedChecks:
 				self.assertEqual(start[unit["id"]], unit["start"], unit["name"])
 				self.assertEqual(placed[unit["id"]], unit["steps"] - unit["start"], unit["name"])
 			self.assertEqual(placed[data["items"]["wild_ticket"]], world.plan.wild)
+			items = data["items"]
+			self.assertEqual([placed[items["useful"][key]] for key in ("fast_forward", "remote_control")],
+			                 [world.plan.fast_forwards, world.plan.remote_controls])
+			self.assertEqual({key: placed[code] for key, code in items["traps"].items()}, world.plan.traps)
+			self.assertEqual({name: placed[code] for name, code in items["snacks"].items()}, world.plan.snacks)
+			self.assertEqual(data["snack_bar"], {"trades": world.options.snack_bar_trades.value,
+			                                     "price": world.options.snack_bar_price.value})
+			# The counts the plan placed above, after exclude_locations took its share of the useful items.
+			self.assertEqual(data["pool"], {"snacks": sum(world.plan.snacks.values()), "traps": world.plan.traps,
+			                                "fast_forwards": world.plan.fast_forwards,
+			                                "remote_controls": world.plan.remote_controls, "wild_tickets": world.plan.wild})
 			self.assertEqual(sum(start.values()), world.plan.start)
 
 	def test_spoiler_shows_titles_not_placeholders(self):
@@ -314,7 +329,7 @@ class SeedChecks:
 			location = world.placed[0][0]
 			self.assertIn(location.name, spoiler)
 
-	def test_excluded_checkpoints_hold_only_filler(self):
+	def test_excluded_locations_hold_only_filler_and_traps(self):
 		from BaseClasses import LocationProgressType
 
 		md = self.seed.md
@@ -324,8 +339,11 @@ class SeedChecks:
 			                  for pe in world.plan.entries for minute in pe.minutes}
 			for location, _pe in world.placed:
 				if location.address not in checkpoint_ids:
-					if location.name not in world.options.exclude_locations.value:
-						self.assertNotEqual(location.progress_type, LocationProgressType.EXCLUDED, location.name)
+					excluded = location.name in world.options.exclude_locations.value
+					self.assertEqual(location.progress_type == LocationProgressType.EXCLUDED, excluded, location.name)
+					if excluded:
+						_code, _receiver, flags = md["locations"][world.player][location.address]
+						self.assertEqual(flags & 0b011, 0, location.name)
 					continue
 				excluded = location.progress_type == LocationProgressType.EXCLUDED
 				self.assertEqual(excluded, filler_only, location.name)
@@ -394,7 +412,14 @@ class A0_BuiltApworld(unittest.TestCase):
 		self.assertEqual(os.path.normcase(str(world.zip_path)), os.path.normcase(loaded))
 		with open(loaded, "rb") as installed, open(STATE["apworld"], "rb") as built:
 			self.assertEqual(installed.read(), built.read())
-		self.assertEqual(len(world.item_name_to_id), 20002)
+		self.assertEqual(len(world.item_name_to_id), 20017)
+		groups = {name: set(members) for name, members in world.item_name_groups.items() if name != "Everything"}
+		self.assertEqual(groups, {
+			"Snacks": {"Popcorn", "Nachos", "Large Soda", "Candy Bar", "Hot Dog", "Soft Pretzel", "Ice Cream Sandwich"},
+			"Useful": {"Wild Ticket", "Fast Forward", "Remote Control"},
+			"Traps": {"Buffering", "Rights Expired", "Commercial Break", "Shuffle Mode", "Rewind", "Intermission",
+			          "Slow Motion"},
+		})
 		self.assertEqual(len(world.location_name_to_id), 60000)
 
 	def test_option_classes_follow_the_table(self):
@@ -600,6 +625,7 @@ def launcher_template():
 
 
 LIST_GROUP = "Your list (the bot picks the titles)"
+ITEMS_GROUP = "Items and traps"
 NO_TITLES = ("this YAML has no titles yet. Attach it to /apmedia yaml in Discord, and the bot picks them from the "
              "Plex library.")
 
@@ -618,13 +644,17 @@ class A1_OptionsCreator(unittest.TestCase):
 		world, constants = self.loaded()
 		panel = creator_panel(world)
 		names = {group: [key for key, _option in options] for group, options in panel.items()}
-		self.assertEqual(list(names)[:4], ["Game Options", LIST_GROUP, "Unlocks and goal", "Timesanity"])
+		self.assertEqual(list(names)[:5], ["Game Options", LIST_GROUP, "Unlocks and goal", "Timesanity", ITEMS_GROUP])
 		self.assertEqual(names["Game Options"], ["progression_balancing", "accessibility"])
 		self.assertEqual(names[LIST_GROUP], list(constants.LIST_OPTIONS))
 		self.assertEqual(names["Unlocks and goal"], ["starting_unlocks", "goal_percent", "tv_unlock",
 		                                             "episodes_per_unlock", "locked_watches", "wild_tickets"])
 		self.assertEqual(names["Timesanity"], ["checkpoint_items", "timesanity_strict", "timesanity_movies",
 		                                       "timesanity_episodes", "timesanity_albums", "timesanity_books"])
+		self.assertEqual(names[ITEMS_GROUP], ["snack_variety", "fast_forwards", "remote_controls", "snack_bar_trades",
+		                                      "snack_bar_price", "trap_percentage", "buffering_weight",
+		                                      "rights_expired_weight", "commercial_break_weight", "shuffle_mode_weight",
+		                                      "rewind_weight", "intermission_weight", "slow_motion_weight"])
 		shown = {key: option for options in panel.values() for key, option in options}
 		for key in ("entries", "list_info"):
 			self.assertNotIn(key, shown)
@@ -638,7 +668,7 @@ class A1_OptionsCreator(unittest.TestCase):
 		from Options import get_option_groups
 
 		templated = get_option_groups(world)
-		for group in (LIST_GROUP, "Unlocks and goal", "Timesanity"):
+		for group in (LIST_GROUP, "Unlocks and goal", "Timesanity", ITEMS_GROUP):
 			self.assertEqual(list(templated[group]), names[group], group)
 
 	def test_an_untouched_form_exports_the_list_defaults(self):
@@ -843,7 +873,8 @@ def shared_players(folder):
 	beta = [MATRIX, *[episode(2100 + n, *BREAKING, 1, n, 1500000) for n in (3, 4, 5, 6)],
 	        album(3100, "Band", "Record", [("One", 200000), ("Deux", 200000), ("Three", 200000)]),
 	        book(3200, "someone/beta-book", "Beta Book", "Someone", [3600000])]
-	write_list(folder, "A_Alpha.yaml", "Alpha Fan", alpha, {"timesanity_episodes": 10},
+	write_list(folder, "A_Alpha.yaml", "Alpha Fan", alpha,
+	           {"timesanity_episodes": 10, "trap_percentage": 50, "snack_variety": False},
 	           {"local_items": ["Everything"]})
 	write_list(folder, "B_Beta.yaml", "Beta Fan", beta,
 	           {"timesanity_movies": 20, "timesanity_episodes": 15, "starting_unlocks": 1},
@@ -921,6 +952,33 @@ class C_SharedTitles(SeedChecks, unittest.TestCase):
 				if receiver == alpha.player and code in alpha_ids:
 					self.assertEqual(finder, alpha.player, "local_items keeps Alpha's unlocks in Alpha's list")
 
+	def test_excluded_tracks_take_useful_room_and_traps_land_on_excluded_checkpoints(self):
+		from BaseClasses import LocationProgressType
+
+		alpha, beta = self.seed.worlds
+		# Beta's room is 5 (9 main locations, 4 unlocks in the pool), filled by 2 Wild Tickets, 2 Fast
+		# Forwards and the Remote Control. Its 2 excluded tracks take 2 of it: the Remote Control and a
+		# Fast Forward become snacks, so the 11 checkpoints and the 2 tracks get 13.
+		self.assertEqual((beta.plan.excluded, beta.plan.wild, beta.plan.fast_forwards, beta.plan.remote_controls,
+		                  beta.plan.filler), (2, 2, 1, 0, 13))
+		# Alpha: 23 filler at trap_percentage 50 make 11 traps by the default weights, and Popcorn alone the rest.
+		self.assertEqual((alpha.plan.excluded, alpha.plan.filler, list(alpha.plan.traps.values()),
+		                  sum(alpha.plan.snacks.values()), alpha.plan.snacks["Popcorn"]),
+		                 (0, 23, [3, 3, 1, 1, 1, 1, 1], 12, 12))
+		md = self.seed.md
+		on_checkpoints = 0
+		for world in self.seed.worlds:
+			checkpoint_ids = {world.registry.location_id[pe.checkpoint_key(minute)]
+			                  for pe in world.plan.entries for minute in pe.minutes}
+			for location, _pe in world.placed:
+				if location.address in checkpoint_ids:
+					self.assertEqual(location.progress_type, LocationProgressType.EXCLUDED, location.name)
+					_code, _receiver, flags = md["locations"][world.player][location.address]
+					on_checkpoints += bool(flags & 0b100)
+		# 36 snacks and traps for 34 EXCLUDED locations (ChecksFinder brings none), 2 of them Beta's
+		# tracks: at least 7 of Alpha's 11 traps sit on checkpoints.
+		self.assertGreaterEqual(on_checkpoints, 7)
+
 	def test_bad_names_and_bad_lists_raise_option_errors_naming_the_player(self):
 		from Options import OptionError
 
@@ -962,6 +1020,22 @@ class C_SharedTitles(SeedChecks, unittest.TestCase):
 		                caught.exception)
 		self.assertIn("at most 10000 fit in one slot", str(caught.exception))
 		self.assertIs(alpha.plan, plan)
+
+		# Beta's 2 excluded tracks free filler, which the plan's trap split must still be able to deal:
+		# with every weight 0, a trap due from it stops the list the same way, on a copy of its plan.
+		_alpha, beta = self.seed.worlds
+		traps = sys.modules[world_type.__module__ + ".constants"].TRAPS
+		kept = beta.plan
+		beta.plan = copy.deepcopy(kept)
+		beta.plan.options = {**kept.options, "trap_percentage": 100, **{f"{key}_weight": 0 for key in traps}}
+		try:
+			with self.assertRaises(OptionError) as caught:
+				beta.make_room_for_exclusions()
+		finally:
+			beta.plan = kept
+		self.assertEqual(str(caught.exception), "Plex Media list of Beta Fan: trap_percentage 100 makes 13 of the list's 13 "
+		                                        "filler items traps, but every trap weight is 0 (a trap weight above 0, or "
+		                                        "trap_percentage 0, would help)")
 
 	def test_regenerates_identically_under_another_hash_seed(self):
 		mine = ap_harness.seed_digest(self.seed.md)

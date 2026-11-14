@@ -1,6 +1,6 @@
 // /apmedia list: one slot's titles that are ready, locked or done, grouped by show, album,
-// playlist and kind, with the titles somebody hinted marked. Long lists are paged behind buttons
-// only the asker can turn.
+// playlist and kind, with the titles somebody hinted marked, and those whose rights a trap took.
+// Long lists are paged behind buttons only the asker can turn.
 
 const common = require('./common.js');
 
@@ -38,13 +38,20 @@ function rowLine(row, group, which) {
 		const who = (row.hintedFor || []).map(common.slot);
 		line += ` \u00B7 \u{1F4A1} ${who.length ? `hinted for ${who.join(', ')}` : 'hinted'}`;
 	}
+	if (row.expiredUntil) line += ` \u00B7 \u26D4 Rights expired until ${stamp(row.expiredUntil)}`;
 	return line;
+}
+
+function stamp(ms) {
+	return `<t:${Math.floor(Number(ms) / 1000)}:t>`;
 }
 
 /** The pages of one list() result. */
 function listPages(res) {
 	const head = [res.message, `**${VIEW[res.which] || VIEW.ready}**`];
-	if (!res.groups.length) return [[...head.slice(0, 1), EMPTY[res.which] || EMPTY.ready].join('\n')];
+	// Buffering holds whatever any title earns, so it heads every page.
+	if (res.buffering) head.splice(1, 0, `\u23F3 Buffering: ${common.plural(res.buffering.held, 'check')} held until ${stamp(res.buffering.until)}.`);
+	if (!res.groups.length) return [[...head.slice(0, -1), EMPTY[res.which] || EMPTY.ready].join('\n')];
 	const blocks = res.groups.map((g) => ({
 		title: `**${common.esc(g.name)}** (${g.done} of ${g.total} done)`,
 		rows: g.rows.map((row) => rowLine(row, g, res.which)),

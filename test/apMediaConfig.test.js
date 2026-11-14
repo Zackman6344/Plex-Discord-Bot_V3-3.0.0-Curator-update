@@ -92,6 +92,23 @@ test('the rows check what the watcher and the announcer rely on', () => {
 	assert.deepStrictEqual(store.validate(announce, 'all'), { value: 'all' });
 });
 
+test('the trap switches: traps and voice traps on by default, the clips playlist blank, each a row of its own', () => {
+	const get = (key) => store.getSetting(key);
+	assert.deepStrictEqual(
+		[contracts.SETTINGS.apMediaTraps.default, contracts.SETTINGS.apMediaVoiceTraps.default, contracts.SETTINGS.apMediaTrapClips.default],
+		[true, true, ''],
+	);
+	assert.strictEqual(get('apMediaTraps').type, 'bool');
+	assert.strictEqual(get('apMediaVoiceTraps').type, 'bool');
+	assert.match(get('apMediaVoiceTraps').warn, /everyone in the bot's voice channel/, 'the room hears them');
+	const clips = get('apMediaTrapClips');
+	assert.strictEqual(clips.type, 'string');
+	assert.deepStrictEqual(store.validate(clips, ''), { value: '' }, 'blank: a 30 s pause instead');
+	assert.deepStrictEqual(store.validate(clips, ' Commercials '), { value: 'Commercials' });
+	assert.deepStrictEqual(store.validate(clips, '12345'), { value: '12345' }, 'a ratingKey');
+	assert.ok(store.validate(clips, 'x'.repeat(201)).error);
+});
+
 test('the group fits one settings menu', () => {
 	const pages = store.selectPages(GROUP);
 	assert.strictEqual(pages.length, 1);

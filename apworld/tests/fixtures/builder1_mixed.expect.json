@@ -2,6 +2,21 @@
 	"item_name_to_id": {
 		"Popcorn": 1347000001,
 		"Wild Ticket": 1347000002,
+		"Nachos": 1347000003,
+		"Large Soda": 1347000004,
+		"Candy Bar": 1347000005,
+		"Hot Dog": 1347000006,
+		"Soft Pretzel": 1347000007,
+		"Ice Cream Sandwich": 1347000008,
+		"Fast Forward": 1347000100,
+		"Remote Control": 1347000101,
+		"Buffering": 1347000200,
+		"Rights Expired": 1347000201,
+		"Commercial Break": 1347000202,
+		"Shuffle Mode": 1347000203,
+		"Rewind": 1347000204,
+		"Intermission": 1347000205,
+		"Slow Motion": 1347000206,
 		"Daft Punk - Discovery": 1347001001,
 		"Pride and Prejudice by Jane Austen": 1347001002,
 		"Road Trip Part 1 (playlist)": 1347001003,
@@ -56,7 +71,7 @@
 	"slot_data": {
 		"schema": 1,
 		"game": "Plex Media",
-		"world_version": "0.2.0",
+		"world_version": "0.3.0",
 		"builder": 1,
 		"created_at": 1731200000,
 		"label": "Fixture list",
@@ -76,7 +91,48 @@
 		},
 		"items": {
 			"popcorn": 1347000001,
-			"wild_ticket": 1347000002
+			"wild_ticket": 1347000002,
+			"snacks": {
+				"Popcorn": 1347000001,
+				"Nachos": 1347000003,
+				"Large Soda": 1347000004,
+				"Candy Bar": 1347000005,
+				"Hot Dog": 1347000006,
+				"Soft Pretzel": 1347000007,
+				"Ice Cream Sandwich": 1347000008
+			},
+			"useful": {
+				"fast_forward": 1347000100,
+				"remote_control": 1347000101
+			},
+			"traps": {
+				"buffering": 1347000200,
+				"rights_expired": 1347000201,
+				"commercial_break": 1347000202,
+				"shuffle_mode": 1347000203,
+				"rewind": 1347000204,
+				"intermission": 1347000205,
+				"slow_motion": 1347000206
+			}
+		},
+		"snack_bar": {
+			"trades": 3,
+			"price": 10
+		},
+		"pool": {
+			"snacks": 31,
+			"traps": {
+				"buffering": 0,
+				"rights_expired": 0,
+				"commercial_break": 0,
+				"shuffle_mode": 0,
+				"rewind": 0,
+				"intermission": 0,
+				"slow_motion": 0
+			},
+			"fast_forwards": 2,
+			"remote_controls": 1,
+			"wild_tickets": 2
 		},
 		"units": [
 			{

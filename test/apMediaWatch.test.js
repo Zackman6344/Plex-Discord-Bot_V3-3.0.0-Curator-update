@@ -410,11 +410,28 @@ test('sessions: a forward step that fits the wall time is a span; a still offset
 	await at(0, 60000);
 	assert.deepStrictEqual(events, [], 'first sight only sets the baseline');
 	await at(15, 75000);
-	assert.deepStrictEqual(events, [{ type: 'span', source: 'session', accountId: 5, ratingKey: 777, fromMs: 60000, toMs: 75000, at: NOW_MS + 15000 }]);
+	assert.deepStrictEqual(events, [{ type: 'span', source: 'session', accountId: 5, ratingKey: 777, fromMs: 60000, toMs: 75000, padMs: 25000, at: NOW_MS + 15000 }],
+		'padMs, for timesanity_strict: a 15 s poll at 1x plus 10 s of client lag');
 	await at(30, 75000);
 	assert.strictEqual(events.length, 1);
 	await at(75, 225000);
 	assert.deepStrictEqual(events.slice(1).map((e) => [e.fromMs, e.toMs]), [[75000, 225000]], 'fits 60 s of wall time (the kept one), not the 45 s since the still poll');
+	assert.strictEqual(events[1].padMs, 47500, 'a step played at 2.5x pads 2.5 polls');
+});
+
+test('sessions: the pad follows apMediaSessionSeconds and stops at 90 s', async () => {
+	const { w, pms, events, clock } = setup({ config: { apMediaHistorySeconds: 120, apMediaSessionSeconds: 30 } });
+	const at = (s, offset) => {
+		clock.ms = NOW_MS + s * 1000;
+		pms.state.sessions = [session({ offset })];
+		return w.pollSessions();
+	};
+	await at(0, 0);
+	await at(30, 30000);
+	await at(60, 90000);
+	assert.deepStrictEqual(events.map((e) => e.padMs), [40000, 70000], '1x, then 2x, at a 30 s poll');
+	await at(90, 180000);
+	assert.strictEqual(events[2].padMs, 90000, '3x at a 30 s poll would be 100 s');
 });
 
 test('sessions: a step of exactly 2.5x the wall time plus 20 s is a span; 1 ms more is a seek', async () => {

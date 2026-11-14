@@ -504,9 +504,30 @@ module.exports = {
                 const ids = watchIds();
                 return ids.length === 1 ? ids[0] : null;
             };
-            const badId = () => say(watchIds().length === 0
-                ? `No rooms are being watched yet. \`${prefix}ap watch <room url> <slot name>\` starts one.`
-                : `More than one room is being watched, so I need the ID. \`${prefix}ap list\` shows them.`);
+            // Every watch is named with the slot it watches as, so the reply alone is enough to
+            // choose: a player who has never seen `!ap list` guesses an id otherwise.
+            const badId = () => {
+                const entries = monitor.listWatches();
+                if (entries.length === 0) {
+                    return say(`No rooms are being watched yet. \`${prefix}ap watch <room url> <slot name>\` starts one.`);
+                }
+                const how = interaction
+                    ? 'Give it as the `id` option.'
+                    : `It goes right after \`${action}\`: \`${prefix}ap ${action} <id> …\`.`;
+                const head = 'More than one room is being watched, so I need the ID: ';
+                // Discord refuses a send over 2,000 characters, and a label can be long.
+                const shown = [];
+                let size = head.length + how.length + 80;
+                for (const { watch } of entries) {
+                    const choice = `#${watch.id} ${escapeName(String(watch.label || ''))} (as ${slotLabel(watch.slot)})`;
+                    if (size + choice.length + 2 > 1900) break;
+                    shown.push(choice);
+                    size += choice.length + 2;
+                }
+                const more = entries.length - shown.length;
+                const tail = more ? `, and ${more} more (\`${prefix}ap list\` shows every watch)` : '';
+                return say(`${head}${shown.join(', ')}${tail}. ${how}`);
+            };
 
             try {
                 if (action === 'watch') {

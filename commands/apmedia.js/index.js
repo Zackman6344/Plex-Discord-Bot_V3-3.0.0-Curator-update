@@ -2,9 +2,9 @@
 //
 // This file holds the slash spec, autocomplete, the sub-help and the dispatch. The subcommands
 // live in yaml.js, apworld.js, account.js, link.js, unlink.js, retry.js, status.js, list.js,
-// check.js, redeem.js and announce.js, each exporting { names, run(ctx) }, and are required
-// explicitly so a stray file can never become a subcommand. helpers/apMediaGame.js does the work
-// and trusts its caller, so every permission check is made here, before it is called.
+// check.js, redeem.js, ff.js, snackbar.js and announce.js, each exporting { names, run(ctx) }, and
+// are required explicitly so a stray file can never become a subcommand. helpers/apMediaGame.js
+// does the work and trusts its caller, so every permission check is made here, before it is called.
 //
 // Replies go through say(): the first is message.reply (on slash, the editReply that closes the
 // defer), later ones an ephemeral followUp on slash and a channel message on prefix. The adapter
@@ -28,6 +28,8 @@ const status = require('./status.js');
 const list = require('./list.js');
 const check = require('./check.js');
 const redeem = require('./redeem.js');
+const ff = require('./ff.js');
+const snackbar = require('./snackbar.js');
 const announce = require('./announce.js');
 
 const EPHEMERAL = 64;
@@ -36,12 +38,12 @@ const CHOICE_MAX = 100;
 const MAX_CHOICES = 25;
 // The world file is for the owner to pass on; everything else is about one person's slot or account.
 const PUBLIC = new Set(['apworld']);
-// Where the owner may name anybody's slot; redeem and announce are the bound player's own.
+// Where the owner may name anybody's slot; redeem, ff, snackbar and announce are the bound player's own.
 const OTHERS = new Set(['unlink', 'retry', 'status', 'list', 'check']);
 
 // No prototype: `!apmedia constructor` would otherwise find Object and throw instead of answering.
 const HANDLERS = Object.create(null);
-for (const mod of [yaml, apworld, account, link, unlink, retry, status, list, check, redeem, announce]) {
+for (const mod of [yaml, apworld, account, link, unlink, retry, status, list, check, redeem, ff, snackbar, announce]) {
 	for (const name of mod.names) HANDLERS[name] = mod;
 }
 
@@ -116,7 +118,7 @@ const SUBCOMMANDS = [
 			{ name: 'tv-unlock', type: 'STRING', description: 'What one show item opens (default episodes)',
 				choices: [{ name: 'a few episodes', value: 'episodes' }, { name: 'a season', value: 'season' }] },
 			{ name: 'episodes-per-unlock', type: 'INTEGER', description: 'Episodes one show item opens (1-12, default 3)' },
-			{ name: 'more', type: 'STRING', description: 'More as key=value: label, starting_unlocks, wild_tickets, strict, locked_watches, checkpoint_items' }
+			{ name: 'more', type: 'STRING', description: 'More as key=value: label, strict, wild_tickets, trap_percentage and others (a wrong key lists all)' }
 		] },
 	{ name: 'apworld', description: 'Owner: the Plex Media world file to install in Archipelago' },
 	{ name: 'account', description: 'Owner: the server\'s Plex accounts, or link one to someone. Anyone: plex:none drops your own link',
@@ -129,7 +131,7 @@ const SUBCOMMANDS = [
 		options: [
 			{ name: 'slot', type: 'STRING', required: true, description: 'The slot name in the room' },
 			{ name: 'user', type: 'USER', description: 'Owner: link it for someone else', omitFromQuery: true },
-			{ name: 'watch', type: 'INTEGER', description: 'Watch id from /ap list (default 0)' }
+			{ name: 'watch', type: 'INTEGER', description: 'Watch id from /ap list (default: the room you claimed it in)' }
 		] },
 	{ name: 'unlink', description: 'Drop a slot link (its unsent checks go with it)', options: [SLOT('The linked slot', true)] },
 	{ name: 'retry', description: 'Reconnect a refused or stale slot', options: [SLOT(ONE_SLOT)] },
@@ -144,6 +146,13 @@ const SUBCOMMANDS = [
 	{ name: 'check', description: 'Count a title by hand: finished, or watched up to a time',
 		options: [TITLE('A title on your list'), { name: 'at', type: 'STRING', description: 'Only up to here: 45m, 1h30m or 1:30:00' }, SLOT(ONE_SLOT)] },
 	{ name: 'redeem', description: 'Spend a Wild Ticket to open a locked title', options: [TITLE('A locked title on your list'), SLOT(ONE_SLOT)] },
+	{ name: 'ff', description: 'Spend a Fast Forward: earn a title\'s next checkpoint (strict: 10 minutes of it count as heard)', options: [TITLE('A title on your list'), SLOT(ONE_SLOT)] },
+	{ name: 'snackbar', description: 'Your snacks, and a trade for a Fast Forward or a Remote Control',
+		options: [
+			{ name: 'buy', type: 'STRING', description: 'What to trade snacks for (empty: show the prices)',
+				choices: [{ name: 'Fast Forward', value: 'fast-forward' }, { name: 'Remote Control', value: 'remote-control' }] },
+			SLOT(ONE_SLOT)
+		] },
 	{ name: 'announce', description: 'Turn your slot\'s lines in the channel on or off',
 		options: [
 			{ name: 'mode', type: 'STRING', required: true, description: 'on or off', choices: [{ name: 'on', value: 'on' }, { name: 'off', value: 'off' }] },
@@ -211,7 +220,7 @@ function helpEmbed(bot) {
 		.setDescription(
 			'Your Plex to-watch list as an Archipelago game: items from the multiworld unlock its titles, and watching or listening sends the checks. Everything works as `/apmedia ...` too.\n\n' +
 			'**\u{1F4DD} JOINING A SEED**\n' +
-			`> \`${p}apmedia yaml name=You [movies=10] [titles="Alien; Aliens"] [unwatched=false]\`: Build your list and send the file to the owner. Keys: preset, movies, shows, albums, books, titles, playlist, collection, genre, years, unwatched, max_episodes, time_movies, time_episodes, time_albums, time_books, goal_percent, tv_unlock, episodes_per_unlock, label, starting_unlocks, wild_tickets, strict, locked_watches, checkpoint_items.\n` +
+			`> \`${p}apmedia yaml name=You [movies=10] [titles="Alien; Aliens"] [unwatched=false]\`: Build your list and send the file to the owner. Keys: preset, movies, shows, albums, books, titles, playlist, collection, genre, years, unwatched, max_episodes, time_movies, time_episodes, time_albums, time_books, goal_percent, tv_unlock, episodes_per_unlock, label, starting_unlocks, wild_tickets, strict, locked_watches, checkpoint_items, snack_variety, fast_forwards, remote_controls, snack_bar_trades, snack_bar_price, trap_percentage, buffering_weight, rights_expired_weight, commercial_break_weight, shuffle_mode_weight, rewind_weight, intermission_weight, slow_motion_weight.\n` +
 			`> Or make the YAML in the Archipelago Launcher's Options Creator and attach it to \`${p}apmedia yaml\` (\`/apmedia yaml file:\`): the bot picks the titles its list settings ask for and keeps every other setting. Keys you type replace the file's.\n` +
 			`> \`${p}ap claim <slot>\`, then \`${p}apmedia link <slot> [watch=n]\`: Once the seed is up, tie your slot to you.\n\n` +
 			'**\u{1F37F} PLAYING**\n' +
@@ -219,6 +228,8 @@ function helpEmbed(bot) {
 			`> \`${p}apmedia status [slot]\`: Progress, goal, connection, Plex account and how far your last Plex session got.\n` +
 			`> \`${p}apmedia check <title> [at 1h30m] [slot=x]\`: Count a title by hand: finished, or up to a time.\n` +
 			`> \`${p}apmedia redeem <title> [slot=x]\`: Spend a Wild Ticket on a locked title (a show: its next few episodes).\n` +
+			`> \`${p}apmedia ff <title> [slot=x]\`: Spend a Fast Forward: earn a title's next checkpoint without playing it (with Timesanity Strict on, the 10 minutes after where you got to count as heard instead).\n` +
+			`> \`${p}apmedia snackbar [buy fast-forward|remote-control] [slot=x]\`: Your snacks, and a trade at the Snack Bar. A Remote Control blocks the next trap or ends the one on you.\n` +
 			`> \`${p}apmedia announce on|off [slot]\`: Your slot's lines in the channel.\n` +
 			`> \`${p}apmedia retry [slot]\` / \`${p}apmedia unlink <slot>\`: Reconnect a refused or stale slot, or drop it.\n` +
 			`> \`${p}apmedia account none\`: Take back your Plex account link; its history is no longer read.\n\n` +
@@ -310,7 +321,7 @@ function unknownText(p, word) {
 module.exports = {
 	name: 'apmedia',
 	command: {
-		usage: '<yaml|apworld|account|link|unlink|retry|status|list|check|redeem|announce>',
+		usage: '<yaml|apworld|account|link|unlink|retry|status|list|check|redeem|ff|snackbar|announce>',
 		description: 'Plex Media: your Plex to-watch list as an Archipelago game. Type "!apmedia ?" for more help.',
 		slash: {
 			description: 'Plex Media: your Plex to-watch list as an Archipelago game',

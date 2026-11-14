@@ -1,13 +1,15 @@
 # apworld/plex_media/plan.py
-# One slot's plan from its parsed entries: units, steps, starting copies, locations and the goal.
+# One slot's plan from its parsed entries: units, steps, starting copies, locations, the goal and
+# what the item pool holds.
 #
 # helpers/apMediaPlan.js mirrors this so the bot can describe a list before it is generated, and
 # test/fixtures/apmedia/plan_cases.json holds this module's answers for that twin to match
 # (apworld/tests/make_plan_cases.py writes it). Everything here depends on the entries and options
 # alone: no randomness, no set order, no clock, because the !ap next worker rebuilds the seed in
-# another process and must land on the same ids.
+# another process and must land on the same ids, and the bot's twin must count the same pool.
 
-from .constants import COPIES_PER_START, MAX_COPIES, MAX_ENTRIES, MAX_LOCATIONS, MIN_TRACK_MS, OPTIONS, TIMER_KIND
+from .constants import (COPIES_PER_START, MAX_COPIES, MAX_ENTRIES, MAX_LOCATIONS, MIN_TRACK_MS, OPTIONS, POPCORN,
+                        SNACKS, TIMER_KIND, TRAPS)
 from .entries import entry_key
 from .naming import track_norm
 
@@ -65,8 +67,12 @@ class PlanEntry:
 
 
 class Plan:
+	"""filler counts every item slot left after the unlocks and the useful items, the traps among them;
+	traps and snacks are counts by TRAPS key and by SNACKS name, in their tables' order. excluded counts
+	the list's own watches, tracks and finishes that exclude_locations names (exclude_main)."""
 	__slots__ = ("options", "entries", "units", "unit_by_key", "copies", "start", "wild", "main_count",
-	             "checkpoint_count", "goal_count")
+	             "checkpoint_count", "goal_count", "fast_forwards", "remote_controls", "filler", "traps", "snacks",
+	             "excluded")
 
 
 def plan_options(options=None):
@@ -154,6 +160,58 @@ def _hand_out(units, wanted):
 	return given
 
 
+def split_by_weight(total, weights):
+	"""total shared out in proportion to weights by largest remainder, a tie going to the earlier weight.
+
+	Whole numbers only, so the JS twin lands on the same counts. Some weight must be above 0 whenever
+	total is. A weight of 0 never gains one: the shares left to hand out are fewer than the weights
+	with a fraction left over."""
+	if total <= 0:
+		return [0] * len(weights)
+	whole = sum(weights)
+	counts = [total * weight // whole for weight in weights]
+	ranked = sorted(range(len(weights)), key=lambda i: (-(total * weights[i] % whole), i))
+	for i in ranked[:total - sum(counts)]:
+		counts[i] += 1
+	return counts
+
+
+def _pool(plan, opts):
+	# Unlock copies and useful items together never outnumber the main locations left after the
+	# excluded ones, so every checkpoint (EXCLUDED under filler_only) and every excluded watch, track
+	# or finish is left a filler item or a trap: AP fills an EXCLUDED location with nothing else.
+	room = plan.main_count - (plan.copies - plan.start) - plan.excluded
+	plan.wild = max(0, min(opts["wild_tickets"], room))
+	plan.fast_forwards = max(0, min(opts["fast_forwards"], room - plan.wild))
+	plan.remote_controls = max(0, min(opts["remote_controls"], room - plan.wild - plan.fast_forwards))
+	plan.filler = (plan.main_count + plan.checkpoint_count - (plan.copies - plan.start) - plan.wild
+	               - plan.fast_forwards - plan.remote_controls)
+	due = plan.filler * opts["trap_percentage"] // 100
+	weights = [opts[f"{key}_weight"] for key in TRAPS]
+	if due and not any(weights):
+		raise PlanError(f"trap_percentage {opts['trap_percentage']} makes {due} of the list's {plan.filler} "
+		                "filler items traps, but every trap weight is 0 (a trap weight above 0, or "
+		                "trap_percentage 0, would help)")
+	plan.traps = dict(zip(TRAPS, split_by_weight(due, weights)))
+	dealt = list(SNACKS) if opts["snack_variety"] else [POPCORN]
+	left = plan.filler - due
+	plan.snacks = {name: 0 for name in SNACKS}
+	for i, name in enumerate(dealt):
+		plan.snacks[name] = left // len(dealt) + (1 if i < left % len(dealt) else 0)
+
+
+def exclude_main(plan, count):
+	"""The pool dealt again with count of the list's watches, tracks and finishes excluded.
+
+	Each one takes a place from the useful items' room, so the useful items that no longer fit go,
+	Remote Controls first, then Fast Forwards, then Wild Tickets, and their places become filler,
+	trap_percentage of it traps. Only generation knows the exclusions (exclude_locations names
+	placeholders until the registry exists), so plan_cases.json and the bot's twin plan without them.
+	Raises PlanError when the larger filler is due a trap and every trap weight is 0."""
+	plan.excluded = count
+	_pool(plan, plan.options)
+
+
 def plan_slot(entries, options=None):
 	"""entries: parsed entries (entries.parse_entries); options: YAML option names to values."""
 	opts = plan_options(options)
@@ -193,8 +251,9 @@ def plan_slot(entries, options=None):
 	wanted = max(opts["starting_unlocks"], _ceil_div(plan.copies, COPIES_PER_START))
 	wanted = min(max(wanted, 1), max(1, plan.copies - 1))
 	plan.start = _hand_out(plan.units, wanted)
-	plan.wild = max(0, min(opts["wild_tickets"], plan.main_count - (plan.copies - plan.start)))
 	plan.goal_count = max(1, len(plan.entries) * opts["goal_percent"] // 100)
+	plan.excluded = 0
+	_pool(plan, opts)
 	return plan
 
 
@@ -207,6 +266,12 @@ def summary(plan):
 		"N_main": plan.main_count,
 		"N_checkpoints": plan.checkpoint_count,
 		"goal_count": plan.goal_count,
+		"FF": plan.fast_forwards,
+		"RC": plan.remote_controls,
+		"F": plan.filler,
+		"T": sum(plan.traps.values()),
+		"traps": dict(plan.traps),
+		"snacks": dict(plan.snacks),
 		"units": [{"key": u.key, "steps": u.steps, "start": u.start, "prefix": list(u.prefix)} for u in plan.units],
 		"entries": [{"key": pe.key, "unit": pe.unit, "step": pe.step, "main": len(pe.main),
 		             "checkpoints": list(pe.minutes)} for pe in plan.entries],
