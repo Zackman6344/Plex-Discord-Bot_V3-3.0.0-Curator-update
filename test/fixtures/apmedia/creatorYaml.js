@@ -30,6 +30,7 @@ const OPTIONS = Object.freeze({
 	goal_percent: 'random',
 	tv_unlock: 'episodes',
 	episodes_per_unlock: '3',
+	songs_per_unlock: '\'off\'',
 	locked_watches: 'bank',
 	wild_tickets: '2',
 	checkpoint_items: 'filler_only',

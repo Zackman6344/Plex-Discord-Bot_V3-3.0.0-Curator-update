@@ -2,16 +2,18 @@
 // permission check is the command's, so this file proves them against the game's own data.
 //
 // What has to hold: a self-link needs the !ap claim and lands in the room's spelling; a player
-// reaches no slot but their own, typed by name or by key, while the owner reaches anyone's where the
-// spec lets them; snackbar, ff, redeem and check reach a slot named in two words only when slot=
-// quotes it, a lone slot= may come first, a slot named like a Snack Bar item is that slot, and
-// "remote" before one of your slot names buys for that slot; the list reads the real slot index
-// (groups, the item that opens a locked title, the hint marker) and pages it; a manual check finds titles
-// exactly, asks on a tie, suggests on a typo, asks about a title named only in part, reads a whole
-// title ending "at 1600" as that title, and banks while the inventory is unknown; the Accept button
-// grants exactly the account the
-// owner linked, to that friend only, and a newer link or seven days turns an old button stale; the
-// YAML reads the account of the person the list is for.
+// reaches no slot but their own, typed by name or by key, while the owner reaches anyone's where
+// the spec lets them; snackbar, ff, redeem and check reach a slot named in two words only when
+// slot= quotes it, a lone slot= may come first, a slot named like a Snack Bar item is that slot,
+// and "remote" before one of your slot names buys for that slot; the list reads the real slot index
+// (groups, the item that opens a locked title, the hint marker, a part's songs) and pages it; a
+// manual check finds titles exactly, asks on a tie, suggests on a typo, asks about a title named
+// only in part, reads a whole title ending "at 1600" as that title, and banks while the inventory
+// is unknown; one of a playlist part's songs names the part in full in check, ff and redeem exactly
+// where the game finds the part by it, and the title choices show a part's songs and find it by
+// them; the Accept button grants exactly the account the owner linked, to that friend only, and a
+// newer link or seven days turns an old button stale; the YAML reads the account of the person the
+// list is for.
 //
 // Harness: the real command module through the slash()/prefix() fakes of test/bookCommand.test.js;
 // the real game (createGame), never started, over the real apMediaStore in memory
@@ -238,7 +240,71 @@ test('list reads the slot index: groups, what opens a locked title, the hint mar
 	assert.match(all, /\u2022 S01E03 \u00B7 45m \u00B7 opened by Breaking Point: Next 3 Episodes \(the 2nd\)/);
 	assert.match(all, /\u2022 S01E01 \u00B7 45m \u00B7 opened by Breaking Point: Next 3 Episodes\n/);
 	assert.match(all, /\u2022 1917 \u00B7 1h59m \u00B7 opened by 1917 \(movie\)/);
+	assert.match(all, /\u2022 Road Trip Part 1 \(Song A, \u6771\u4EAC and Short One\) \u00B7 7m \u00B7 opened by Road Trip Part 1 \(playlist\)\n/, 'a part names its songs');
+	assert.match(all, /\u2022 Road Trip Part 2 \(Song D\) \u00B7 4m \u00B7 opened by Road Trip Part 2 \(playlist\)/);
 	assert.ok(!/The Matrix/.test(all), 'a ready title is not in the locked view');
+});
+
+function focus(who, sub, value, slot = null) {
+	const responded = [];
+	return {
+		responded,
+		commandName: 'apmedia',
+		user: who,
+		options: {
+			getFocused: () => ({ name: 'title', value }),
+			getSubcommand: () => sub,
+			get: (n) => (n === 'slot' && slot !== null ? { name: n, value: slot } : null)
+		},
+		async respond(choices) { responded.push(choices); }
+	};
+}
+
+// The bug: the game found a playlist part by one of its songs, and the command still asked "Did you
+// mean **Road Trip Part 2**?", so at 1 to 3 songs a part every check and Wild Ticket took two steps.
+test('one of a playlist part\'s songs names the part in full, exactly where the game finds the part by it, and the choices show the songs', async () => {
+	const h = setup();
+	const key = bind(h, 'ZackPlex', ANA);
+	const ana = person(ANA, 'Ana');
+	const common = require('../commands/apmedia.js/common.js');
+	const takes = (text) => {
+		const found = h.game.findEntry(key, text);
+		return found.ok && common.namesInFull(text, found) ? found.entryKey : null;
+	};
+	const parts = FIXTURE.entries.filter((e) => e.k === 'mix');
+	assert.strictEqual(parts.length, 2);
+	for (const part of parts) {
+		for (const song of part.tr.map((t) => t[2])) {
+			assert.strictEqual(takes(song), `mix|${part.id}`, song);
+			assert.strictEqual(takes(song.toUpperCase()), `mix|${part.id}`, `${song}, in capitals`);
+			const piece = [...song].slice(0, -1).join('');
+			assert.strictEqual(takes(piece), null, `${piece}: a piece of ${song}`);
+			assert.ok(!h.game.findEntry(key, piece).ok, `${piece}: the game finds nothing by it either`);
+		}
+	}
+	for (const track of FIXTURE.entries.filter((e) => e.k === 'album').flatMap((e) => e.tr.map((t) => t[2]))) {
+		assert.strictEqual(takes(track), null, `${track}: an album goes by its own title`);
+	}
+
+	const choices = async (sub, typed) => {
+		const f = focus(ana, sub, typed);
+		await apmedia.command.slash.autocomplete(f);
+		return f.responded[0];
+	};
+	assert.deepStrictEqual(await choices('check', 'song d'), [{ name: 'Road Trip Part 2 (Song D)', value: 'mix|pl:2500:2' }]);
+	assert.deepStrictEqual(await choices('ff', 'road trip'), [
+		{ name: 'Road Trip Part 1 (Song A, \u6771\u4EAC and 1 more)', value: 'mix|pl:2500:1' },
+		{ name: 'Road Trip Part 2 (Song D)', value: 'mix|pl:2500:2' }
+	]);
+	assert.deepStrictEqual(await choices('redeem', 'short'), [{ name: 'Road Trip Part 1 (Song A, \u6771\u4EAC and 1 more)', value: 'mix|pl:2500:1' }], 'a locked part, by its third song');
+	assert.deepStrictEqual(await choices('check', 'one more time'), [], 'an album\'s track finds no album');
+
+	assert.strictEqual((await prefix(ana, 'check Song D')).content, '\u{1F512} **Road Trip Part 2**: 1 check held until the room reports `ZackPlex`\'s items.');
+	assert.strictEqual((await slash(ana, 'check', { title: 'song a' })).content, '\u{1F512} **Road Trip Part 1**: 3 checks held until the room reports `ZackPlex`\'s items.');
+	assert.strictEqual((await prefix(ana, 'ff Song D')).content, '`ZackPlex` has not reported its items yet, so its Fast Forwards are not known: try again once it is connected.');
+	assert.strictEqual((await slash(ana, 'redeem', { title: '\u6771\u4EAC' })).content, '`ZackPlex` has not reported its items yet, so its Wild Tickets are not known: try again once it is connected.');
+	assert.strictEqual((await prefix(ana, 'check Song')).content, 'Nothing on `ZackPlex`\'s list matches **Song**.', 'a piece of a song counts nothing');
+	assert.strictEqual(h.store.bindings.get(key).banked.length, 4);
 });
 
 test('check finds the title exactly, asks on a tie, suggests on a typo, and banks while the items are unknown', async () => {

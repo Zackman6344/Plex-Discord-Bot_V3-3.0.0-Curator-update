@@ -33,19 +33,22 @@ class RegistryError(ValueError):
 	pass
 
 
-def _tag(entry, for_unit):
+def _tag(entry, for_unit, unit_key=""):
 	"""What tells two same-named titles apart in a name: the rating key, else the list id.
 
 	Ids are kept as written, so a hand-edited YAML can put a control character in a book's work id;
 	the tag is cleaned like any title. The bot writes slugs and numbers, which cleaning leaves alone,
 	so builder 1's names stay as they were. A tag that cleans away to nothing becomes a hash of the
 	id: sha1, since hash() changes with PYTHONHASHSEED and the !ap next worker rebuilds the names in
-	another process.
+	another process. A playlist whose parts share one unit (songs_per_unlock) is tagged by the
+	playlist's rating key alone.
 	"""
 	if entry["k"] == "episode" and for_unit:
 		raw = str(entry["srk"])
 	elif "rk" in entry:
 		raw = str(entry["rk"])
+	elif unit_key.startswith("mix-songs"):
+		raw = str(entry["pl"])
 	elif entry["k"] == "mix":
 		raw = entry["id"][len("pl:"):]
 	else:
@@ -75,15 +78,15 @@ class Registry:
 		for _player, plan in plans:
 			for unit in plan.units:
 				if unit.key not in source:
-					source[unit.key] = (unit.kind, plan.entries[unit.first].entry)
+					source[unit.key] = (unit.kind, plan.entries[unit.first].entry, unit.steps)
 		self.unit_keys = sorted(source)
 		if len(self.unit_keys) > MAX_UNLOCKS:
 			raise RegistryError(f"the Plex Media lists of this seed hold {len(self.unit_keys)} unlocks together; "
 			                    f"at most {MAX_UNLOCKS} fit in one seed")
 		self.unit_id = {key: unlock_id(i) for i, key in enumerate(self.unit_keys, 1)}
 		self.unit_kind = {key: source[key][0] for key in self.unit_keys}
-		names = {key: unit_name(key, source[key][1]) for key in self.unit_keys}
-		tags = {key: _tag(source[key][1], True) for key in self.unit_keys}
+		names = {key: unit_name(key, source[key][1], source[key][2]) for key in self.unit_keys}
+		tags = {key: _tag(source[key][1], True, key) for key in self.unit_keys}
 		self.unit_name = make_unique(self.unit_keys, names, tags, self.unit_kind, RESERVED)
 		self.unit_by_name = {name: key for key, name in self.unit_name.items()}
 

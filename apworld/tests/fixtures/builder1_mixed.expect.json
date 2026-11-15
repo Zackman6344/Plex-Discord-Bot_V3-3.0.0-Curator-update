@@ -71,7 +71,7 @@
 	"slot_data": {
 		"schema": 1,
 		"game": "Plex Media",
-		"world_version": "0.3.0",
+		"world_version": "0.4.0",
 		"builder": 1,
 		"created_at": 1731200000,
 		"label": "Fixture list",
@@ -80,6 +80,7 @@
 		"entry_count": 10,
 		"tv_unlock": "episodes",
 		"episodes_per_unlock": 3,
+		"songs_per_unlock": 0,
 		"locked_watches": "bank",
 		"checkpoint_items": "filler_only",
 		"timesanity_strict": false,

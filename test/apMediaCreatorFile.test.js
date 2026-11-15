@@ -44,8 +44,9 @@ const ITEM_AND_LOCATION = Object.freeze([
 	['start_location_hints', []], ['exclude_locations', []], ['priority_locations', []],
 ]);
 const UNTOUCHED_COMMON = Object.freeze([['progression_balancing', 'normal'], ['accessibility', 'items'], ...ITEM_AND_LOCATION]);
+// Songs per Unlock as the Creator exports it untouched: 'off', which the bot reads as 0.
 const GAME_DEFAULTS = Object.freeze({
-	startingUnlocks: 3, goalPercent: 80, tvUnlock: 'episodes', episodesPerUnlock: 3, lockedWatches: 'bank', wildTickets: 2,
+	startingUnlocks: 3, goalPercent: 80, tvUnlock: 'episodes', episodesPerUnlock: 3, songsPerUnlock: 0, lockedWatches: 'bank', wildTickets: 2,
 	checkpointItems: 'filler_only', strict: false, timeMovies: 15, timeEpisodes: 10, timeAlbums: 0, timeBooks: 30,
 	snackVariety: true, fastForwards: 2, remoteControls: 1, snackBarTrades: 3, snackBarPrice: 10, trapPercentage: 0, bufferingWeight: 2,
 	rightsExpiredWeight: 2, commercialBreakWeight: 1, shuffleModeWeight: 1, rewindWeight: 1, intermissionWeight: 1, slowMotionWeight: 1,

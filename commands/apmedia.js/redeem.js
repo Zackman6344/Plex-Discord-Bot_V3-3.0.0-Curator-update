@@ -1,5 +1,6 @@
 // /apmedia redeem: spend a Wild Ticket to open a locked title on your own slot (a show: the
-// episodes of that title's step). Only the bound player spends their tickets.
+// episodes of that title's step; a playlist part: its songs, out of the playlist's order). Only the
+// bound player spends their tickets.
 //
 //   !apmedia redeem <title>              the only linked slot
 //   !apmedia redeem <title> slot=Zack    one of several; slot="Zack 2" for a name with a space

@@ -1,0 +1,309 @@
+<title>Your Plex Media YAML</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+	/* Layout: one reading column, as on the async-hosts page. A short-version card first, then numbered steps per route, a YAML file card, and the settings. */
+	:root {
+		--bg: #f4f3f8;
+		--surface: #ffffff;
+		--ink: #1c1a25;
+		--muted: #5b586d;
+		--line: #dcd9e6;
+		--stub: #ebe8f5;
+		--accent: #5a3fcf;
+		--list: #0a7681;
+		--game: #6c4fd0;
+		--code-bg: #efedf6;
+		--display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+		--body: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+		--mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+	}
+	@media (prefers-color-scheme: dark) {
+		:root:not([data-theme="light"]) {
+			--bg: #121118;
+			--surface: #1b1a24;
+			--ink: #ebe8f5;
+			--muted: #a39fb7;
+			--line: #2e2c3b;
+			--stub: #232130;
+			--accent: #af99ef;
+			--list: #3fd3dd;
+			--game: #af99ef;
+			--code-bg: #23212e;
+			color-scheme: dark;
+		}
+	}
+	:root[data-theme="dark"] {
+		--bg: #121118;
+		--surface: #1b1a24;
+		--ink: #ebe8f5;
+		--muted: #a39fb7;
+		--line: #2e2c3b;
+		--stub: #232130;
+		--accent: #af99ef;
+		--list: #3fd3dd;
+		--game: #af99ef;
+		--code-bg: #23212e;
+		color-scheme: dark;
+	}
+
+	body {
+		background: var(--bg);
+		color: var(--ink);
+		font-family: var(--body);
+		font-size: 16px;
+		line-height: 1.6;
+	}
+	.wrap {
+		max-width: 46rem;
+		margin: 0 auto;
+		padding-left: max(16px, env(safe-area-inset-left, 0px));
+		padding-right: max(16px, env(safe-area-inset-right, 0px));
+		padding-block: 40px 56px;
+		display: grid;
+		gap: 44px;
+	}
+	h1, h2 {
+		font-family: var(--display);
+		font-weight: 700;
+		line-height: 1.05;
+		text-wrap: balance;
+		margin: 0;
+	}
+	h1 { font-size: clamp(2.9rem, 10.5vw, 4.5rem); letter-spacing: 0.01em; }
+	h2 { font-size: 1.85rem; letter-spacing: 0.01em; }
+	p { margin: 0; }
+	code {
+		font-family: var(--mono);
+		font-size: 0.86em;
+		background: var(--code-bg);
+		border-radius: 4px;
+		padding: 0.05em 0.3em;
+		overflow-wrap: anywhere;
+	}
+	:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+	.eyebrow {
+		font-size: 0.78rem;
+		font-weight: 600;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: var(--muted);
+	}
+	header { display: grid; gap: 14px; }
+	.lede { font-size: 1.12rem; max-width: 40rem; }
+	.public {
+		margin-top: 4px;
+		padding: 12px 16px;
+		border-left: 3px solid var(--accent);
+		background: var(--surface);
+		border-radius: 0 8px 8px 0;
+		font-weight: 600;
+	}
+
+	section { display: grid; gap: 16px; min-width: 0; }
+	section > p, section > ul { max-width: 40rem; }
+	ul.plain { margin: 0; padding-left: 1.2rem; display: grid; gap: 8px; }
+
+	.short {
+		background: var(--surface);
+		border: 1px solid var(--line);
+		border-radius: 12px;
+		padding: 22px 22px 24px;
+		display: grid;
+		gap: 16px;
+	}
+	.short h2 { font-size: 1.5rem; }
+
+	ol.steps {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: grid;
+		gap: 16px;
+		counter-reset: step;
+	}
+	ol.steps > li {
+		counter-increment: step;
+		display: grid;
+		grid-template-columns: 2.2rem minmax(0, 1fr);
+		gap: 0 10px;
+		min-width: 0;
+	}
+	ol.steps > li::before {
+		content: counter(step);
+		font-family: var(--display);
+		font-weight: 700;
+		font-size: 1.8rem;
+		line-height: 1;
+		color: var(--accent);
+		padding-top: 1px;
+	}
+	ol.steps > li > div { min-width: 0; display: grid; gap: 6px; }
+
+	.note { color: var(--muted); max-width: 40rem; }
+	.strong-line { font-weight: 600; max-width: 40rem; }
+
+	.file {
+		background: var(--surface);
+		border: 1px solid var(--line);
+		border-radius: 12px;
+		overflow: hidden;
+		min-width: 0;
+	}
+	.file-head {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: space-between;
+		gap: 4px 16px;
+		padding: 10px 16px;
+		background: var(--stub);
+		border-bottom: 1px solid var(--line);
+		font-size: 0.85rem;
+	}
+	.file-head .name { font-family: var(--mono); font-weight: 500; }
+	.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); }
+	.legend span::before {
+		content: "";
+		display: inline-block;
+		width: 0.7em;
+		height: 0.7em;
+		border-radius: 2px;
+		margin-right: 6px;
+		vertical-align: -0.05em;
+	}
+	.legend .l::before { background: var(--list); }
+	.legend .g::before { background: var(--game); }
+	.file pre {
+		margin: 0;
+		padding: 12px 0;
+		overflow-x: auto;
+		font-family: var(--mono);
+		font-size: 0.82rem;
+		line-height: 1.55;
+	}
+	.file pre span { display: block; padding: 0 16px 0 13px; border-left: 3px solid transparent; white-space: pre; }
+	.file pre .l { border-left-color: var(--list); }
+	.file pre .g { border-left-color: var(--game); }
+	.file pre .gap { color: var(--muted); }
+	.file figcaption {
+		padding: 10px 16px 14px;
+		border-top: 1px solid var(--line);
+		color: var(--muted);
+		font-size: 0.88rem;
+	}
+	figure { margin: 0; }
+
+	dl.settings { margin: 0; display: grid; gap: 14px; max-width: 40rem; }
+	dl.settings div { display: grid; gap: 2px; min-width: 0; }
+	dl.settings dt { font-weight: 600; }
+	dl.settings dt .key { font-weight: 400; color: var(--muted); font-size: 0.92rem; }
+	dl.settings dd { margin: 0; }
+
+	footer {
+		border-top: 1px solid var(--line);
+		padding-top: 14px;
+		color: var(--muted);
+		font-size: 0.88rem;
+	}
+</style>
+
+<div class="wrap">
+	<header>
+		<p class="eyebrow">Plex Media &middot; Archipelago &middot; world 0.4.0</p>
+		<h1>Your Plex Media YAML</h1>
+		<p class="lede">Archipelago joins several players' games into one multiworld. Each player has a slot, and a YAML is one slot's settings file. The owner generates the seed (the shuffled game) from everyone's YAMLs and hosts it as a room.</p>
+		<p class="lede">In Plex Media, your slot is a list of movies, TV episodes, music albums and audiobooks from the owner's Plex server. Your titles start locked, apart from the ones your 3 starting unlocks open (the default). The multiworld sends the other unlocks, and watching or listening sends checks. The bot runs your slot, so playing needs no Archipelago program.</p>
+		<p class="public">Every title on your list is visible to every player and on the room's public tracker.</p>
+	</header>
+
+	<section class="short" aria-labelledby="short-title">
+		<h2 id="short-title">The short version</h2>
+		<ol class="steps">
+			<li><div><p>Pick a slot name, 1 to 16 characters.</p></div></li>
+			<li><div><p>In the server, send <code>/apmedia yaml name:YourName</code>. Add <code>unwatched:False</code> unless you have accepted a Plex link (below).</p></div></li>
+			<li><div><p>Save the file the bot sends you and give it to the owner before they generate.</p></div></li>
+			<li><div><p>Once the bot is watching the room, send <code>!ap claim YourName</code>, then <code>/apmedia link slot:YourName</code>.</p></div></li>
+		</ol>
+	</section>
+
+	<section aria-labelledby="need-title">
+		<h2 id="need-title">What you need</h2>
+		<ul class="plain">
+			<li><strong>A slot name</strong>: 1 to 16 characters, without <code>{</code>, <code>}</code>, <code>%</code>, a space at either end or a double space, and not <code>Archipelago</code> or another slot's name in the seed.</li>
+			<li><strong>Optional: a Plex link</strong>, for watching in Plex to count. Give the owner your Plex user name, and they link it with <code>/apmedia account user:@you plex:&lt;name&gt;</code>. The bot DMs you an <strong>Accept</strong> button that works for 7 days, so allow DMs from server members (the server's Privacy Settings). Until you accept, only music and audiobooks the bot plays for you count, plus titles you mark with <code>/apmedia check</code>.</li>
+			<li><strong>For the Options Creator only:</strong> a PC with Archipelago 0.6.8 or later.</li>
+		</ul>
+	</section>
+
+	<section aria-labelledby="discord-title">
+		<h2 id="discord-title">Build it in Discord</h2>
+		<ol class="steps">
+			<li><div><p>In a server channel, type <code>/apmedia</code>, pick <strong>yaml</strong>, add <strong>name</strong> with your slot name, and send. The bot picks 15 random movies you have not watched. Add the options below the same way.</p></div></li>
+			<li><div><p>Without an accepted Plex link, add <code>unwatched:False</code>. Random movies and shows need the link; albums, audiobooks and titles you name do not.</p></div></li>
+			<li><div><p>For another mix, add <code>preset:</code> with <code>tv</code> (3 shows, up to 24 episodes each), <code>music</code> (10 albums), <code>books</code> (3 audiobooks) or <code>mixed</code> (6 movies, 1 show, 4 albums, 1 audiobook).</p></div></li>
+			<li><div><p>Or set totals with <code>movies:</code>, <code>shows:</code>, <code>albums:</code> and <code>books:</code>, and name up to 50 titles with <code>titles:</code> (<code>Alien; Halloween (2018); show: Lost S1-2</code>). A count or title given without <code>preset:</code> makes every kind you left out 0: <code>albums:5</code> gives 5 albums and nothing else.</p></div></li>
+			<li><div><p>Add a Plex playlist with <code>playlist:</code>. A music playlist goes on in its own order, cut into parts of 3 songs, and its unlock opens them one part at a time (Songs per Unlock, below).</p></div></li>
+			<li><div><p>The bot replies privately with <code>YourName.yaml</code> and the list's hours, goal and items. A "Not found" line names a title it left out.</p></div></li>
+			<li><div><p>Save the file and send it to the owner before they generate. Each build draws new random titles.</p></div></li>
+		</ol>
+		<p class="note"><code>!apmedia yaml name=YourName preset=music</code> posts the reply and the file in the channel instead, with options as key=value, quotes around spaces (<code>titles="Alien; Aliens"</code>) and <code>more:</code> settings as pairs of their own (<code>strict=true</code>).</p>
+	</section>
+
+	<section aria-labelledby="creator-title">
+		<h2 id="creator-title">Or start in the Options Creator (PC)</h2>
+		<ol class="steps">
+			<li><div><p>Ask the owner to post <code>/apmedia apworld</code>, and save <code>plex_media.apworld</code> from a post that says world 0.4.0. Its lines about "this PC" mean the owner's PC.</p></div></li>
+			<li><div><p>With every other Archipelago program closed, choose <strong>Install APWorld</strong> in the Launcher, pick the file, and reopen the Launcher. A PC with an older copy cannot generate the bot's 0.4.0 YAMLs, and an older form lacks Songs per Unlock, so install 0.4.0 over any older copy.</p></div></li>
+			<li><div><p>Open <strong>Options Creator</strong>, pick <strong>Plex Media</strong>, and type your slot name under <strong>Player Name</strong>.</p></div></li>
+			<li><div><p>Fill in <strong>Your list (the bot picks the titles)</strong>; pointing at a setting's name shows what it does. A count at -1 follows List: Preset, and List: Preset <code>none</code> keeps only the counts you set and the titles you name. Without an accepted Plex link, turn <strong>List: Unwatched Only</strong> off. Leave <strong>Random?</strong> off on List settings.</p></div></li>
+			<li><div><p>Change the other Plex Media groups if you like, leave Item &amp; Location Options empty, and choose <strong>Export Options</strong>.</p></div></li>
+			<li><div><p>Attach the file to <code>/apmedia yaml</code> (its <strong>file</strong> option) or to a <code>!apmedia yaml</code> message. Options you type with it replace the file's.</p></div></li>
+			<li><div><p>Send the owner the file the bot returns. Your export can share its name but has no titles, and a seed made with it stops at "this YAML has no titles yet": save the bot's file over it.</p></div></li>
+		</ol>
+
+		<figure class="file">
+			<div class="file-head">
+				<span class="name">YourName.yaml</span>
+				<span class="legend"><span class="l">your list</span><span class="g">how the game plays</span></span>
+			</div>
+			<pre><span>name: YourName</span><span>description: YAML generated by Archipelago 0.6.8.</span><span>game: Plex Media</span><span>Plex Media:</span><span class="gap">  &#8943;</span><span class="l">  list_preset: movies</span><span class="l">  list_movies: preset</span><span class="l">  list_shows: preset</span><span class="l">  list_albums: preset</span><span class="l">  list_books: preset</span><span class="l">  list_titles: ''</span><span class="l">  list_playlist: ''</span><span class="gap">  &#8943;</span><span class="l">  list_unwatched: true</span><span class="gap">  &#8943;</span><span class="g">  goal_percent: 80</span><span class="gap">  &#8943;</span><span class="g">  songs_per_unlock: 'off'</span><span class="gap">  &#8943;</span><span class="g">  timesanity_strict: false</span><span class="g">  timesanity_movies: 15</span><span class="g">  timesanity_episodes: 10</span><span class="g">  timesanity_albums: 'off'</span><span class="g">  timesanity_books: 30</span><span class="gap">  &#8943;</span><span class="g">  fast_forwards: 2</span><span class="g">  remote_controls: 1</span><span class="g">  snack_bar_trades: 3</span><span class="g">  snack_bar_price: 10</span><span class="g">  trap_percentage: 0</span><span class="gap">  &#8943;</span></pre>
+			<figcaption>An Options Creator export for world 0.4.0 with every setting at its default, trimmed. The bot keeps these settings and fills in the titles.</figcaption>
+		</figure>
+	</section>
+
+	<section aria-labelledby="after-title">
+		<h2 id="after-title">After the seed is made</h2>
+		<ol class="steps">
+			<li><div><p>When the owner says the bot is watching the room, send <code>!ap claim YourName</code>, or <code>!ap claim &lt;id&gt; YourName</code> if the bot lists rooms.</p></div></li>
+			<li><div><p>Send <code>/apmedia link slot:YourName</code>. The bot answers "Linked <code>YourName</code> on watch #N." and posts a welcome.</p></div></li>
+			<li><div><p><code>/apmedia status</code> shows your progress, goal and items, and <code>/apmedia list</code> your open titles (<code>show:locked</code> or <code>show:done</code> for the others).</p></div></li>
+		</ol>
+		<p>Watch open titles in Plex, or play albums, playlists and audiobooks through the bot.</p>
+		<p>In the bot's voice channel, a song of a playlist part still locked for someone listening is skipped, unless someone there has it open on their list. Plexamp and the other Plex apps play it, and with an accepted Plex link its checks wait for its part to unlock, as a locked title's checks do by default.</p>
+		<p class="strong-line">Only playback after the seed was generated counts.</p>
+	</section>
+
+	<section aria-labelledby="settings-title">
+		<h2 id="settings-title">Settings you can change</h2>
+		<p>Set them with the <code>/apmedia yaml</code> options shown here, or in the Options Creator. Settings marked <code>more:</code> share one option, split by spaces: <code>more:strict=true trap_percentage=20</code>.</p>
+		<dl class="settings">
+			<div><dt>Goal Percent <span class="key"><code>goal-percent:</code>, default 80</span></dt><dd>The share of the list to finish.</dd></div>
+			<div><dt>Songs per Unlock <span class="key"><code>more:songs_per_unlock=</code>, default 3, off in the Options Creator</span></dt><dd>How many songs of your music playlist one unlock opens, 1 to 15: the first copy of the unlock opens part 1, the second part 2. A Wild Ticket opens the part you name. Off puts the playlist in parts of up to 15 songs, each with an unlock of its own. Each part counts as a title toward your goal. To change it, attach your file to <code>/apmedia yaml</code> again with the new number: a lower number typed into the finished file stops the seed from generating.</dd></div>
+			<div><dt>Timesanity <span class="key"><code>time-movies:</code> 15, <code>time-episodes:</code> 10, <code>time-albums:</code> 0, <code>time-books:</code> 30</span></dt><dd>Minutes between checkpoints, extra checks at set times inside a title; 0 is off.</dd></div>
+			<div><dt>Timesanity Strict <span class="key"><code>more:strict=true</code>, default off</span></dt><dd>On, a checkpoint needs everything before it played. Off, finishing a title earns them all.</dd></div>
+			<div><dt>Wild Tickets <span class="key"><code>more:wild_tickets=</code>, default 2</span></dt><dd>Each opens a locked title you choose (<code>/apmedia redeem</code>).</dd></div>
+			<div><dt>Fast Forwards <span class="key"><code>more:fast_forwards=</code>, default 2</span></dt><dd>Each earns a title's next checkpoint without playing it (<code>/apmedia ff</code>), or with Timesanity Strict on counts the 10 minutes after where you got to as heard. Never a watch, track or finish.</dd></div>
+			<div><dt>Remote Controls <span class="key"><code>more:remote_controls=</code>, default 1</span></dt><dd>Each ends a trap at work on your slot, or blocks the next one.</dd></div>
+			<div><dt>Snack Bar Trades <span class="key"><code>more:snack_bar_trades=</code>, default 3</span></dt><dd>Snacks are the filler items that are not traps. Each trade turns 10 of them (<code>more:snack_bar_price=</code>, 5 to 50) into a Fast Forward or a Remote Control (<code>/apmedia snackbar</code>).</dd></div>
+			<div><dt>Trap Percentage <span class="key"><code>more:trap_percentage=</code>, default 0</span></dt><dd>The percent of the filler items that come as traps instead of snacks. Five of the seven act only on music or an audiobook the bot plays for you, and everyone in the voice channel hears a music trap. No trap takes away an item or a check.</dd></div>
+		</dl>
+		<p class="note">A short list gets fewer Wild Tickets, Fast Forwards and Remote Controls: 15 movies at the defaults get 2, 1 and none.</p>
+	</section>
+
+	<footer>
+		<p>Written 2026-11-14 for world 0.4.0. Every command, default and reply here was checked against the bot's code that day.</p>
+	</footer>
+</div>

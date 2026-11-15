@@ -132,7 +132,7 @@ test('renderYaml writes the exact spec layout', () => {
 		'requires:',
 		'  version: 0.6.8',
 		'  game:',
-		'    Plex Media: 0.3.0',
+		'    Plex Media: 0.4.0',
 		'Plex Media:',
 		'  starting_unlocks: 3',
 		'  goal_percent: 80',
@@ -159,6 +159,7 @@ test('renderYaml writes the exact spec layout', () => {
 		'  rewind_weight: 1',
 		'  intermission_weight: 1',
 		'  slow_motion_weight: 1',
+		'  songs_per_unlock: 0',
 		'  list_preset: movies',
 		'  list_movies: preset',
 		'  list_shows: preset',
@@ -492,9 +493,9 @@ test('a hand-picked show without seasons is a run from the first unwatched episo
 	assert.strictEqual(entriesOf(seasons.yaml).length, 3, 'named with its seasons it stays whole');
 });
 
-test('an audio playlist becomes mixes of at most 15 tracks, book parts left out', async () => {
+test('an audio playlist with songs per unlock off becomes mixes of at most 15 tracks, book parts left out', async () => {
 	const { builder } = setup();
-	const out = await builder.build({ name: 'Ears', playlist: 'boardwalk bumps' });
+	const out = await builder.build({ name: 'Ears', playlist: 'boardwalk bumps', songsPerUnlock: 0 });
 	const mixes = entriesOf(out.yaml);
 	assert.deepStrictEqual(mixes.map((m) => [m.id, m.part, m.t, m.tr.length]), [
 		['pl:5001:1', 1, 'Boardwalk Bumps Part 1', 15],
@@ -504,16 +505,17 @@ test('an audio playlist becomes mixes of at most 15 tracks, book parts left out'
 	assert.deepStrictEqual(mixes[0].tr[0], [51001, 1, 'Bump 1', 150000, 451001, 'Artist 0']);
 	assert.deepStrictEqual(mixes[2].tr[1], [51032, 32, 'Bump 32', 181000, 451032, 'Artist 1']);
 	assert.ok(mixes.flatMap((m) => m.tr).every((t) => t[0] !== 59999));
-	assert.ok(out.summary.warnings.includes('1 audiobook part in Boardwalk Bumps were left out.'));
+	assert.ok(out.summary.warnings.includes('1 audiobook part in Boardwalk Bumps was left out.'));
 	assert.strictEqual(mixes[0].d, mixes[0].tr.reduce((n, t) => n + t[3], 0));
 
-	const lofi = await setup().builder.build({ name: 'Ears', playlist: '5002' });
+	const lofi = await setup().builder.build({ name: 'Ears', playlist: '5002', songsPerUnlock: 'off' });
 	assert.deepStrictEqual(entriesOf(lofi.yaml).map((m) => [m.id, m.t]), [['pl:5002:1', 'Lofi']]);
+	assert.match(lofi.yaml, /\n {2}songs_per_unlock: 0\n/, 'typed off is 0');
 	await assert.rejects(setup().builder.build({ name: 'Ears', playlist: 'Beach Photos' }), /No playlist called `Beach Photos`\. Playlists: /);
 });
 
 test('a playlist part of only short tracks, or a hand-picked album of them, is left out rather than breaking the seed', async () => {
-	const out = await setup().builder.build({ name: 'Ears', playlist: 'Interludes' });
+	const out = await setup().builder.build({ name: 'Ears', playlist: 'Interludes', songsPerUnlock: 0 });
 	assert.deepStrictEqual(entriesOf(out.yaml).map((m) => [m.id, m.t, m.tr.length]), [['pl:5006:1', 'Interludes', 15]]);
 	assert.ok(out.summary.warnings.includes('3 short tracks of Interludes were left out: a part needs one track of 30 s or more.'));
 
@@ -525,7 +527,7 @@ test('a playlist part of only short tracks, or a hand-picked album of them, is l
 
 test('a library-sized smart playlist is read only as far as the list can use', async () => {
 	const audio = setup({ library: { bigAudioPlaylist: 5000 } });
-	const built = await audio.builder.build({ name: 'Ears', playlist: 'Everything Ever' });
+	const built = await audio.builder.build({ name: 'Ears', playlist: 'Everything Ever', songsPerUnlock: 0 });
 	const mixes = entriesOf(built.yaml);
 	assert.strictEqual(mixes.length, 40);
 	assert.ok(mixes.every((m) => m.tr.length === 15));
@@ -579,7 +581,7 @@ test('a playlist or collection episode with no show ratingKey is left out with a
 test('a playlist whose title is empty once cleaned is called "Playlist <rk>", since a mix needs a title', async () => {
 	const c = String.fromCharCode;
 	const { builder } = setup({ mutate: (lib) => { lib.playlists[1].title = `${c(0x2028)} ${c(0x85)}\t`; } });
-	const out = await builder.build({ name: 'Ears', playlist: '5002' });
+	const out = await builder.build({ name: 'Ears', playlist: '5002', songsPerUnlock: 0 });
 	assert.deepStrictEqual(entriesOf(out.yaml).map((m) => [m.id, m.t]), [['pl:5002:1', 'Playlist 5002']]);
 	assert.deepStrictEqual((await builder.playlists('playlist')).map((x) => [x.rk, x.title]), [[5002, 'Playlist 5002']]);
 });
@@ -946,8 +948,8 @@ const ITEM_PARAMS = Object.freeze({
 });
 const CREATOR_PARAMS = Object.freeze({
 	name: 'Zack', preset: 'mixed', movies: 6, shows: 2, albums: 4, books: 1, titles: 'Alien; Aliens', unwatched: true, maxEpisodes: 24,
-	startingUnlocks: 3, tvUnlock: 'episodes', episodesPerUnlock: 3, lockedWatches: 'bank', checkpointItems: 'filler_only', strict: false,
-	timeMovies: 15, timeEpisodes: 10, timeAlbums: 0, timeBooks: 30, wildTickets: 2, ...ITEM_PARAMS,
+	startingUnlocks: 3, tvUnlock: 'episodes', episodesPerUnlock: 3, songsPerUnlock: 0, lockedWatches: 'bank', checkpointItems: 'filler_only',
+	strict: false, timeMovies: 15, timeEpisodes: 10, timeAlbums: 0, timeBooks: 30, wildTickets: 2, ...ITEM_PARAMS,
 });
 const CREATOR_KEPT = Object.freeze([
 	['progression_balancing', 50], ['accessibility', 'full'], ['goal_percent', 'random'], ['local_items', []], ['non_local_items', []],
@@ -991,6 +993,7 @@ test('an Options Creator YAML: the list settings become params, a random game op
 		'  rewind_weight: 1',
 		'  intermission_weight: 1',
 		'  slow_motion_weight: 1',
+		'  songs_per_unlock: 0',
 		'  list_preset: mixed',
 		'  list_movies: preset',
 		'  list_shows: 2',
@@ -1033,7 +1036,7 @@ test('a count at preset or -1 follows list_preset, none makes it 0 and a number 
 	assert.deepStrictEqual(counts({ list_preset: undefined, list_shows: undefined }), ['movies', 15, 0, 0, 0], 'a missing setting is its default');
 
 	const bare = readPlayerYaml(['name: Kim', 'game: Plex Media', 'Plex Media:', '  goal_percent: 70', ''].join('\n'));
-	assert.deepStrictEqual(bare.params, { name: 'Kim', preset: 'movies', movies: 15, shows: 0, albums: 0, books: 0, unwatched: true, maxEpisodes: 24, goalPercent: 70, passthrough: [] });
+	assert.deepStrictEqual(bare.params, { name: 'Kim', preset: 'movies', movies: 15, shows: 0, albums: 0, books: 0, unwatched: true, maxEpisodes: 24, goalPercent: 70, songsPerUnlock: 0, passthrough: [] });
 	assert.deepStrictEqual(readPlayerYaml('name: Kim\ngame: Plex Media\nPlex Media:\n').params.movies, 15, 'an empty Plex Media: is all defaults');
 });
 
@@ -1051,14 +1054,14 @@ test('readPlayerYaml refuses what it cannot use, saying which setting and how to
 	refuses(`${creatorYaml()}---\nname: Ben\ngame: Plex Media\nPlex Media: {}\n`, 'The file holds 2 YAML documents (split by ---), and the bot takes one player per file.');
 	refuses('- a\n- b\n', 'The file is not a player YAML: it needs name, game and Plex Media at the top.');
 	refuses('x'.repeat(FILE_MAX_BYTES + 1), 'The file is over 8 MB, the most the bot reads.');
-	refuses(creatorYaml().replace('  wild_tickets: 2', '  wild_tickets: 2\n  wild_tickets: 3'), 'The file could not be read at line 26: a key is given twice.');
-	refuses(creatorYaml().replace('  wild_tickets: 2', '\twild_tickets: 2'), /^The file could not be read at line 25: /);
+	refuses(creatorYaml().replace('  wild_tickets: 2', '  wild_tickets: 2\n  wild_tickets: 3'), 'The file could not be read at line 27: a key is given twice.');
+	refuses(creatorYaml().replace('  wild_tickets: 2', '\twild_tickets: 2'), /^The file could not be read at line 26: /);
 	// Archipelago's loader refuses a key beside its "+" twin in any mapping. It compares Python's str()
 	// of each key with the text keys before it, so 1 after "+1" clashes and "+1" after 1 does not.
-	refuses(creatorYaml({ '+local_items': '[Wild Ticket]' }), 'The file could not be read at line 52: it gives both `local_items` and `+local_items`, which Archipelago refuses together.');
-	refuses(creatorYaml({ start_inventory: '{"+Wild Ticket": 1, Wild Ticket: 1}' }), 'The file could not be read at line 47: it gives both `+Wild Ticket` and `Wild Ticket`, which Archipelago refuses together.');
-	refuses(creatorYaml({ blob: '{"+1": a, 1: b}' }), 'The file could not be read at line 52: it gives both `+1` and `1`, which Archipelago refuses together.');
-	refuses(creatorYaml({ blob: '{"+True": a, yes: b}' }), 'The file could not be read at line 52: it gives both `+True` and `yes`, which Archipelago refuses together.');
+	refuses(creatorYaml({ '+local_items': '[Wild Ticket]' }), 'The file could not be read at line 53: it gives both `local_items` and `+local_items`, which Archipelago refuses together.');
+	refuses(creatorYaml({ start_inventory: '{"+Wild Ticket": 1, Wild Ticket: 1}' }), 'The file could not be read at line 48: it gives both `+Wild Ticket` and `Wild Ticket`, which Archipelago refuses together.');
+	refuses(creatorYaml({ blob: '{"+1": a, 1: b}' }), 'The file could not be read at line 53: it gives both `+1` and `1`, which Archipelago refuses together.');
+	refuses(creatorYaml({ blob: '{"+True": a, yes: b}' }), 'The file could not be read at line 53: it gives both `+True` and `yes`, which Archipelago refuses together.');
 	for (const blob of ['{1: a, "+1": b}', '{"+1": a, 1.0: b}']) {
 		assert.strictEqual(readPlayerYaml(creatorYaml({ blob })).passthrough.length, 11, `Archipelago reads ${blob}`);
 	}
@@ -1083,9 +1086,9 @@ test('readPlayerYaml refuses what it cannot use, saying which setting and how to
 	// 13 aliases in all, but x1 holds two uses of x0 and is used 11 times: 22 copies of x0.
 	const nested = { a: '&x0 1', b: '&x1 [*x0, *x0]', ...Object.fromEntries(Array.from({ length: 11 }, (_, i) => [`c${i}`, '*x1'])) };
 	refuses(creatorYaml(nested), 'The file repeats values through aliases (*name) more than 20 times: write them out instead.', 'a repeat inside a repeat');
-	refuses(creatorYaml({ blob: '*nope' }), 'The file could not be read at line 52: the alias `*nope` has no anchor `&nope` above it.');
-	refuses(creatorYaml({ a: '*x', b: '&x 1' }), 'The file could not be read at line 52: the alias `*x` has no anchor `&x` above it.', 'an anchor after its alias');
-	refuses(creatorYaml({ a: '*`<@&1>`' }), /^The file could not be read at line 52: the alias `\*'<@&1>'` has no anchor `&'<@&1>'` above it\.$/, 'an alias name is shown as code');
+	refuses(creatorYaml({ blob: '*nope' }), 'The file could not be read at line 53: the alias `*nope` has no anchor `&nope` above it.');
+	refuses(creatorYaml({ a: '*x', b: '&x 1' }), 'The file could not be read at line 53: the alias `*x` has no anchor `&x` above it.', 'an anchor after its alias');
+	refuses(creatorYaml({ a: '*`<@&1>`' }), /^The file could not be read at line 53: the alias `\*'<@&1>'` has no anchor `&'<@&1>'` above it\.$/, 'an alias name is shown as code');
 	refuses(creatorYaml({ '""': '4' }), 'The Plex Media settings have a setting with no name: take that line out.');
 
 	refuses(creatorYaml({}, { top: ['A Link to the Past: {}'] }), 'The file has `A Link to the Past` at the top, and the bot takes one player per file: name, description, game, requires and Plex Media only.');
@@ -1195,12 +1198,12 @@ test('a lone CR ends a line, as it does for Archipelago; a raw NEL, U+2028, U+20
 	assert.deepStrictEqual(hints.find(([key]) => key === 'start_hints'), ['start_hints', ['Wild Ticket']], 'after a CR in a comment comes a setting');
 	const hex = (code) => `U+${code.toString(16).toUpperCase().padStart(4, '0')}`;
 	for (const code of [0x85, 0x2028, 0x2029]) {
-		const broken = `The file could not be read at line 52: it holds an invisible line break (${hex(code)}), which Archipelago would split the line at: delete it.`;
+		const broken = `The file could not be read at line 53: it holds an invisible line break (${hex(code)}), which Archipelago would split the line at: delete it.`;
 		assert.throws(() => readPlayerYaml(`${creatorYaml()}  notes: "a${c(code)}b"\n`), (err) => err.message === broken, hex(code));
 		assert.throws(() => readPlayerYaml(`${creatorYaml()}  # a note${c(code)}  extra: 1\n`), (err) => err.message === broken, `${hex(code)} in a comment`);
 	}
 	for (const code of [0x07, 0x1b, 0x7f, 0x9f, 0xfffe, 0xffff]) {
-		const refused = `The file could not be read at line 52: it holds an invisible control character (${hex(code)}), which Archipelago refuses: delete it.`;
+		const refused = `The file could not be read at line 53: it holds an invisible control character (${hex(code)}), which Archipelago refuses: delete it.`;
 		assert.throws(() => readPlayerYaml(`${creatorYaml()}  notes: "a${c(code)}b"\n`), (err) => err.message === refused, hex(code));
 	}
 	const escaped = readPlayerYaml(`${creatorYaml()}  notes: "a${c(92)}u0085b${c(92)}Lc"\n`).passthrough;
@@ -1220,7 +1223,7 @@ test('keys repeat and meet their "+" twins as Archipelago\'s loader has them: tr
 
 	// A Python dict holds True and 1, False, 0 and 0.0, and every null as one key. PyYAML makes every
 	// .nan one shared float, which a dict finds by itself, and two equal dates are one key too.
-	refuses(creatorYaml({ timesanity_albums: '{off: 1, 0: 1, 30: 2}' }), twice(30), 'a weighted timer with off and 0');
+	refuses(creatorYaml({ timesanity_albums: '{off: 1, 0: 1, 30: 2}' }), twice(31), 'a weighted timer with off and 0');
 	// Those keys are told apart for one file at a time: a key kept in the global symbol registry would
 	// stay in the bot's memory for as long as it runs, one for every big number or date anyone sends.
 	const registry = Symbol.for;
@@ -1230,15 +1233,15 @@ test('keys repeat and meet their "+" twins as Archipelago\'s loader has them: tr
 		return registry(key);
 	};
 	try {
-		refuses(creatorYaml({ blob: '{12345678901234567890: a, 1.0e+30: b, 2001-01-01: c, .nan: d, .NaN: e}' }), twice(52), 'one .nan repeats the other');
-		refuses(creatorYaml({ blob: '{1152921504606846976: a, 1152921504606846976.0: b}' }), twice(52), 'a big float repeats the int it equals');
-		refuses(creatorYaml({ blob: '{2001-01-01: a, 2001-01-01: b}' }), twice(52), 'two equal dates');
+		refuses(creatorYaml({ blob: '{12345678901234567890: a, 1.0e+30: b, 2001-01-01: c, .nan: d, .NaN: e}' }), twice(53), 'one .nan repeats the other');
+		refuses(creatorYaml({ blob: '{1152921504606846976: a, 1152921504606846976.0: b}' }), twice(53), 'a big float repeats the int it equals');
+		refuses(creatorYaml({ blob: '{2001-01-01: a, 2001-01-01: b}' }), twice(53), 'two equal dates');
 	} finally {
 		Symbol.for = registry;
 	}
 	assert.strictEqual(registered, 0);
 	for (const blob of ['{1: a, yes: b}', '{true: a, 1.0: b}', '{false: a, 0.0: b}', '{~: a, null: b}', '{.nan: 1, .NaN: 2}', '{2001-01-31: a, 2001-01-31: b}']) {
-		refuses(creatorYaml({ blob }), twice(52), blob);
+		refuses(creatorYaml({ blob }), twice(53), blob);
 	}
 	for (const blob of ['{off: 1, "0": 1}', '{true: 1, false: 1}', '{.nan: 1, .inf: 2}', '{1: a, "+1": b}', '{"+1": a, 1.0: b}', '{~: a, "+None": b}', '{1.0: a, "+1.0": b}',
 		'{2001-01-31: a, 2001-01-30: b}', '{2001-01-31: a, "2001-01-31": b}']) parses(blob);
@@ -1252,27 +1255,27 @@ test('keys repeat and meet their "+" twins as Archipelago\'s loader has them: tr
 	for (const [blob, a, b] of [['{"+None": a, ~: b}', '+None', '~'], ['{"+1.0": a, 1.0: b}', '+1.0', '1.0'], ['{"+1.5": a, 1.5: b}', '+1.5', '1.5'],
 		['{"+-0.0": a, -0.0: b}', '+-0.0', '-0.0'], ['{"+1e+16": a, 1.0e+16: b}', '+1e+16', '1.0e+16'], ['{"+inf": a, .inf: b}', '+inf', '.inf'],
 		['{"+90.0": a, 1:30.0: b}', '+90.0', '1:30.0'], ['{"+1e-05": a, 0.00001: b}', '+1e-05', '0.00001']]) {
-		refuses(creatorYaml({ blob }), twins(52, a, b), blob);
+		refuses(creatorYaml({ blob }), twins(53, a, b), blob);
 	}
 	// An alias used as a key is the key it names.
-	refuses(creatorYaml({ anch: '&p "+dkey"', extra: '{dkey: 1, *p : 2}' }), twins(53, 'dkey', '+dkey'));
-	refuses(creatorYaml({ anch: '&d local_items', '*d ': '[Wild Ticket]' }), twice(53), 'an alias key repeating a setting');
-	refuses(creatorYaml({ blob: '{&k dkey: 1, *k : 2}' }), twice(52));
-	refuses(creatorYaml({ a1: '&k fresh', a2: '&k local_items', '*k ': '[x]' }), 'The file could not be read at line 53: it names the anchor `&k` a second time, '
+	refuses(creatorYaml({ anch: '&p "+dkey"', extra: '{dkey: 1, *p : 2}' }), twins(54, 'dkey', '+dkey'));
+	refuses(creatorYaml({ anch: '&d local_items', '*d ': '[Wild Ticket]' }), twice(54), 'an alias key repeating a setting');
+	refuses(creatorYaml({ blob: '{&k dkey: 1, *k : 2}' }), twice(53));
+	refuses(creatorYaml({ a1: '&k fresh', a2: '&k local_items', '*k ': '[x]' }), 'The file could not be read at line 54: it names the anchor `&k` a second time, '
 		+ 'which Archipelago refuses: rename one.', 'Archipelago\'s loader refuses an anchor named twice');
 	assert.ok(readPlayerYaml(creatorYaml({ anch: '&u fresh_key', '*u ': '1' })).passthrough.some(([key, value]) => key === 'fresh_key' && value === 1));
 
 	// Archipelago's loader builds no << merge, no bare = and no bare ! tag, and !!omap and !!pairs are lists of pairs to it.
-	const at52 = (what) => `The file could not be read at line 52: ${what}.`;
-	refuses(creatorYaml({ blob: '{<<: {a: 1}, b: 2}' }), at52('it uses a << merge, which Archipelago cannot read: write the keys out instead'));
-	refuses(creatorYaml({ blob: '=' }), at52('it has a bare =, which Archipelago cannot read: put it in quotes'));
-	refuses(creatorYaml({ blob: '[a, <<]' }), at52('it uses a << merge, which Archipelago cannot read: write the keys out instead'));
+	const at53 = (what) => `The file could not be read at line 53: ${what}.`;
+	refuses(creatorYaml({ blob: '{<<: {a: 1}, b: 2}' }), at53('it uses a << merge, which Archipelago cannot read: write the keys out instead'));
+	refuses(creatorYaml({ blob: '=' }), at53('it has a bare =, which Archipelago cannot read: put it in quotes'));
+	refuses(creatorYaml({ blob: '[a, <<]' }), at53('it uses a << merge, which Archipelago cannot read: write the keys out instead'));
 	assert.deepStrictEqual(readPlayerYaml(creatorYaml({ blob: '"="', blob2: '\'<<\'' })).passthrough.slice(-2), [['blob', '='], ['blob2', '<<']], 'quoted, both are text');
-	for (const blob of ['! 1', '! "1"', '{! yes: a}']) refuses(creatorYaml({ blob }), at52('it tags a value with a bare !, which the bot does not read: take the ! out'), blob);
+	for (const blob of ['! 1', '! "1"', '{! yes: a}']) refuses(creatorYaml({ blob }), at53('it tags a value with a bare !, which the bot does not read: take the ! out'), blob);
 	for (const blob of ['!!omap [{a: 1}, {b: 2}]', '!!pairs [{a: 1}, {a: 2}]']) {
-		refuses(creatorYaml({ blob }), at52('it uses !!omap or !!pairs, which the bot does not copy: write a mapping or a list instead'), blob);
+		refuses(creatorYaml({ blob }), at53('it uses !!omap or !!pairs, which the bot does not copy: write a mapping or a list instead'), blob);
 	}
-	refuses(creatorYaml({ blob: '!!float 16' }), at52('it uses a !tag the bot does not read'));
+	refuses(creatorYaml({ blob: '!!float 16' }), at53('it uses a !tag the bot does not read'));
 
 	// A float key stays a float, so Python's str() of it after its "+" twin stays 1.0.
 	const { PyFloat } = _internal;
@@ -1290,15 +1293,15 @@ test('keys repeat and meet their "+" twins as Archipelago\'s loader has them: tr
 	assert.throws(() => flowValue(new Map([[String.fromCharCode(92).repeat(500), 1]]), '`x`'), longKey, 'a backslash is written as two');
 	assert.throws(() => flowValue(new Map([[String.fromCodePoint(0x1f600).repeat(500), 1]]), '`x`'), longKey, 'the package counts an emoji as two');
 	assert.throws(() => yamlKey('k'.repeat(1001)), /^Error: The setting name `k+.` is more than 1000 characters as the bot writes it \(an emoji counts as two\)/);
-	refuses(`${creatorYaml()}  "${'k'.repeat(1023)}": 1\n`, 'The file could not be read at line 52: a key runs past 1,024 characters (an emoji counts as two), more than the bot reads.');
+	refuses(`${creatorYaml()}  "${'k'.repeat(1023)}": 1\n`, 'The file could not be read at line 53: a key runs past 1,024 characters (an emoji counts as two), more than the bot reads.');
 
 	// A key that is not text is shown as the file spells it.
 	refuses(creatorYaml({ '2001-01-01': 'x' }), 'The Plex Media settings have `2001-01-01` where a setting name goes.');
 	refuses(creatorYaml({ '.inf': 'x' }), 'The Plex Media settings have `.inf` where a setting name goes.');
-	refuses(`${creatorYaml()}  ? [a, b]\n  : 1\n`, 'The file could not be read at line 52: it uses a list or a mapping as a key, which Archipelago cannot read.');
+	refuses(`${creatorYaml()}  ? [a, b]\n  : 1\n`, 'The file could not be read at line 53: it uses a list or a mapping as a key, which Archipelago cannot read.');
 	refuses(creatorYaml({ list_titles: '{[Alien]: 0, Heat: 1}' }), 'The file could not be read at line 12: it uses a list or a mapping as a key, which Archipelago cannot read.', 'a choice that is never rolled');
 	refuses(creatorYaml({}, { top: ['requires:', '  ? {a: 1}', '  : 1'] }), 'The file could not be read at line 5: it uses a list or a mapping as a key, which Archipelago cannot read.', 'in a part the bot rewrites');
-	refuses(creatorYaml({ anchor: '&k [a]', blob: '{*k : 1}' }), 'The file could not be read at line 53: it uses a list or a mapping as a key, which Archipelago cannot read.', 'an alias of a list');
+	refuses(creatorYaml({ anchor: '&k [a]', blob: '{*k : 1}' }), 'The file could not be read at line 54: it uses a list or a mapping as a key, which Archipelago cannot read.', 'an alias of a list');
 	refuses(creatorYaml({}, { top: ['2001-01-01: x'] }), 'The file has `2001-01-01` at the top, and the bot takes one player per file: name, description, game, requires and Plex Media only.');
 	refuses(creatorYaml().replace('game: Plex Media', 'game: 2001-01-01'), 'The file\'s game is `2001-01-01`, and the bot fills in Plex Media lists only.');
 	refuses(creatorYaml({ blob: '{2001-01-01: a}' }), '`blob` uses a date as a key, which the bot does not copy: put it in quotes.');
@@ -1539,7 +1542,7 @@ test('the plando a file requires stays in the finished file, so Archipelago stil
 	const read = readPlayerYaml(requires('items, bosses'));
 	assert.strictEqual(read.params.plando, 'items, bosses');
 	const lines = renderYaml(listDoc(validateParams(read.params), { createdAt: 1794398400, entries: [] })).split('\n');
-	assert.deepStrictEqual(lines.slice(lines.indexOf('requires:'), lines.indexOf('Plex Media:')),['requires:', '  version: 0.6.8', '  plando: "items, bosses"', '  game:', '    Plex Media: 0.3.0']);
+	assert.deepStrictEqual(lines.slice(lines.indexOf('requires:'), lines.indexOf('Plex Media:')),['requires:', '  version: 0.6.8', '  plando: "items, bosses"', '  game:', '    Plex Media: 0.4.0']);
 	assert.strictEqual(readPlayerYaml(creatorYaml()).params.plando, undefined);
 	assert.strictEqual(readPlayerYaml(requires('\'\'')).params.plando, '', 'an empty text asks for nothing, as in Archipelago');
 	const refuses = (text, message) => assert.throws(() => readPlayerYaml(text), (err) => err.message === message, message);
@@ -1591,10 +1594,10 @@ test('a list the bot wrote belongs to its person while it keeps the slot it was 
 
 test('Archipelago\'s loader refuses an anchor named twice, a list or a mapping as a key and a key left empty without "?", which the package reads anyway', () => {
 	const refuses = (text, message) => assert.throws(() => readPlayerYaml(text), (err) => err.message === message, message);
-	const at52 = (what) => `The file could not be read at line 52: ${what}.`;
-	refuses(creatorYaml({ a: '&x 1', b: '&x 2' }), 'The file could not be read at line 53: it names the anchor `&x` a second time, which Archipelago refuses: rename one.');
-	refuses(creatorYaml({ blob: '{: b}' }), at52('it has a : with no key before it, which Archipelago cannot read: give it a key'));
-	refuses(`${creatorYaml()}  blob:\n    : b\n`, 'The file could not be read at line 53: it has a : with no key before it, which Archipelago cannot read: give it a key.');
+	const at53 = (what) => `The file could not be read at line 53: ${what}.`;
+	refuses(creatorYaml({ a: '&x 1', b: '&x 2' }), 'The file could not be read at line 54: it names the anchor `&x` a second time, which Archipelago refuses: rename one.');
+	refuses(creatorYaml({ blob: '{: b}' }), at53('it has a : with no key before it, which Archipelago cannot read: give it a key'));
+	refuses(`${creatorYaml()}  blob:\n    : b\n`, 'The file could not be read at line 54: it has a : with no key before it, which Archipelago cannot read: give it a key.');
 	const explicit = readPlayerYaml(`${creatorYaml()}  blob:\n    ?\n    : b\n`).passthrough.find(([key]) => key === 'blob')[1];
 	assert.deepStrictEqual(explicit, new Map([[null, 'b']]), 'with a "?" an empty key is null to Archipelago too');
 	for (const text of [`${creatorYaml()}  blob:\n    ?   \n    : b\n`, creatorYaml({ blob: '{?   : b}' }), `${creatorYaml()}  blob:\n    ?${' '.repeat(45)}\n    : b\n`, creatorYaml({ blob: `{?${'\t'.repeat(45)}: b}` })]) {
@@ -1603,13 +1606,13 @@ test('Archipelago\'s loader refuses an anchor named twice, a list or a mapping a
 	assert.strictEqual(readPlayerYaml(creatorYaml({ blob: '{"": b}' })).passthrough.find(([key]) => key === 'blob')[1].get(''), 'b', 'a quoted empty key is text');
 	// Tagged as text, << and = are text to Archipelago; the package merges at a key << anyway.
 	assert.deepStrictEqual(readPlayerYaml(creatorYaml({ blob: '!!str <<', blob2: '!!str =' })).passthrough.slice(-2), [['blob', '<<'], ['blob2', '=']]);
-	refuses(creatorYaml({ blob: '{!!str <<: x}' }), at52('it tags a << key, which the bot does not read: write "<<" in quotes instead'));
-	refuses(creatorYaml({ blob: '{!!merge <<: {a: 1}}' }), at52('it uses a << merge, which Archipelago cannot read: write the keys out instead'));
-	refuses(creatorYaml({ blob: '! <<' }), at52('it uses a << merge, which Archipelago cannot read: write the keys out instead'));
+	refuses(creatorYaml({ blob: '{!!str <<: x}' }), at53('it tags a << key, which the bot does not read: write "<<" in quotes instead'));
+	refuses(creatorYaml({ blob: '{!!merge <<: {a: 1}}' }), at53('it uses a << merge, which Archipelago cannot read: write the keys out instead'));
+	refuses(creatorYaml({ blob: '! <<' }), at53('it uses a << merge, which Archipelago cannot read: write the keys out instead'));
 	// In octal and in minutes and seconds, an int key is the number Python's str() writes.
-	refuses(creatorYaml({ blob: '{"+8": a, 010: b}' }), at52('it gives both `+8` and `010`, which Archipelago refuses together'));
-	refuses(creatorYaml({ blob: '{"+90": a, 1:30: b}' }), at52('it gives both `+90` and `1:30`, which Archipelago refuses together'));
-	refuses(creatorYaml({ blob: '{"+2001-01-31": a, 2001-01-31: b}' }), at52('it gives both `+2001-01-31` and `2001-01-31`, which Archipelago refuses together'));
+	refuses(creatorYaml({ blob: '{"+8": a, 010: b}' }), at53('it gives both `+8` and `010`, which Archipelago refuses together'));
+	refuses(creatorYaml({ blob: '{"+90": a, 1:30: b}' }), at53('it gives both `+90` and `1:30`, which Archipelago refuses together'));
+	refuses(creatorYaml({ blob: '{"+2001-01-31": a, 2001-01-31: b}' }), at53('it gives both `+2001-01-31` and `2001-01-31`, which Archipelago refuses together'));
 });
 
 test('a quote or a bracket left open is named at the line it opens, and an indented quote\'s next line is said to be the cause too', () => {
@@ -1618,13 +1621,13 @@ test('a quote or a bracket left open is named at the line it opens, and an inden
 	refuses(creatorYaml({ list_titles: '"Alien; Aliens' }), `The file could not be read at line 12: ${open}.`);
 	refuses(creatorYaml({ list_titles: '\'Alien; Aliens' }), `The file could not be read at line 12: ${open}.`);
 	refuses(creatorYaml({ list_titles: '"Alien;\nAliens"' }), `The file could not be read at line 12: ${open}.`);
-	refuses(`${creatorYaml()}  blob: {\n    "Sword": 1,\n    "Bow: 1\n  }\n`, `The file could not be read at line 54: ${open}.`);
+	refuses(`${creatorYaml()}  blob: {\n    "Sword": 1,\n    "Bow: 1\n  }\n`, `The file could not be read at line 55: ${open}.`);
 	// A bracket left open inside the file's mappings is noticed at the next line not indented past its key.
-	refuses(creatorYaml({ local_items: '[Sword, Bow' }), `The file could not be read at line 45: ${open}.`);
-	refuses(creatorYaml({ start_inventory: '{Sword: 1' }), `The file could not be read at line 47: ${open}.`);
-	refuses(creatorYaml({ exclude_locations: '[\n      "Cave",\n      "Tower"' }), `The file could not be read at line 50: ${open}.`);
-	refuses(creatorYaml({ start_hints: '[[a, b], [c' }), `The file could not be read at line 48: ${open}.`);
-	refuses(creatorYaml({ start_hints: '[\n      [a, b],\n      [c' }), `The file could not be read at line 48: ${open}.`, 'the outermost bracket left open');
+	refuses(creatorYaml({ local_items: '[Sword, Bow' }), `The file could not be read at line 46: ${open}.`);
+	refuses(creatorYaml({ start_inventory: '{Sword: 1' }), `The file could not be read at line 48: ${open}.`);
+	refuses(creatorYaml({ exclude_locations: '[\n      "Cave",\n      "Tower"' }), `The file could not be read at line 51: ${open}.`);
+	refuses(creatorYaml({ start_hints: '[[a, b], [c' }), `The file could not be read at line 49: ${open}.`);
+	refuses(creatorYaml({ start_hints: '[\n      [a, b],\n      [c' }), `The file could not be read at line 49: ${open}.`, 'the outermost bracket left open');
 });
 
 test('a file of millions of lines is refused or read about as fast as the fullest list the bot writes', () => {
@@ -1667,7 +1670,7 @@ test('a file of millions of lines is refused or read about as fast as the fulles
 		assert.ok(Math.min(ms, time(text)[0]) < realMs * 3 + 50, `${what}: ${Math.round(ms)} ms, the list the bot wrote ${Math.round(realMs)} ms`);
 	}
 	const crOnly = creatorYaml({ notes: '"a\u0001b"' }).replace(/\n/g, '\r');
-	assert.throws(() => readPlayerYaml(crOnly), (err) => /^The file could not be read at line 52: /.test(err.message), 'a lone CR counts as a line');
+	assert.throws(() => readPlayerYaml(crOnly), (err) => /^The file could not be read at line 53: /.test(err.message), 'a lone CR counts as a line');
 });
 
 test('a list the bot built before it saved its list settings is refused until the command says what to pick, and keeps its label', () => {
@@ -1675,7 +1678,7 @@ test('a list the bot built before it saved its list settings is refused until th
 	const movie = (rk) => ({ k: 'movie', id: `rk:${rk}`, rk, t: `Film ${rk}`, y: 2000, d: 6000000 });
 	// The layout of a 0.1.0 list: the game options, list_info and the entries, and no list settings.
 	const old = (label) => renderYaml({ name: 'Zack', label, createdAt: 1794398400, options: { goal_percent: 60 }, entries: [movie(1), movie(2), movie(3)] })
-		.replace(/^ {2}list_(?!info).*\n/gm, '').replace(`${contracts.GAME}: ${contracts.WORLD_VERSION}`, `${contracts.GAME}: 0.1.0`);
+		.replace(/^ {2}(?:list_(?!info)|songs_per_unlock:).*\n/gm, '').replace(`${contracts.GAME}: ${contracts.WORLD_VERSION}`, `${contracts.GAME}: 0.1.0`);
 	const text = old('Album club');
 	assert.ok(!/^ {2}list_(?!info)/m.test(text) && /^ {2}list_info: .*"label":"Album club"/m.test(text) && /^ {4}- /m.test(text), text);
 	const noInfo = text.replace(/^ {2}list_info: .*\n/m, '');
@@ -1694,7 +1697,7 @@ test('a list the bot built before it saved its list settings is refused until th
 	assert.deepStrictEqual(music.params, {
 		name: 'Zack', preset: 'music', unwatched: true, maxEpisodes: 24, label: 'Album club', startingUnlocks: 3, goalPercent: 60, tvUnlock: 'episodes',
 		episodesPerUnlock: 3, lockedWatches: 'bank', checkpointItems: 'filler_only', strict: false, timeMovies: 15, timeEpisodes: 10, timeAlbums: 0, timeBooks: 30,
-		wildTickets: 2, ...ITEM_PARAMS, passthrough: [],
+		wildTickets: 2, ...ITEM_PARAMS, songsPerUnlock: 0, passthrough: [],
 	});
 	assert.deepStrictEqual([music.name, music.label, music.entriesCount, music.random], ['Zack', 'Album club', 3, []]);
 	const p = validateParams(music.params);
@@ -1857,6 +1860,7 @@ test('renderYaml writes the list settings it is given, then the copied settings 
 		'  rewind_weight: 1',
 		'  intermission_weight: 1',
 		'  slow_motion_weight: 1',
+		'  songs_per_unlock: 0',
 		'  list_preset: none',
 		'  list_movies: 3',
 		'  list_shows: preset',
@@ -2139,14 +2143,14 @@ test('a timer the file leaves random is planned at its lowest roll too, so a lon
 
 	// 300 episodes and 40 mixes of 50 minutes: each timer at its lowest alone fits, both together do not.
 	const both = setup({ library: { hugeShowEpisodes: 300, bigAudioPlaylist: 5000 } }).builder.build({
-		name: 'Zack', titles: 'show: Huge Show S1', playlist: 'Everything Ever', passthrough: [['timesanity_episodes', 'random'], ['timesanity_albums', 'random']],
+		name: 'Zack', titles: 'show: Huge Show S1', playlist: 'Everything Ever', songsPerUnlock: 0, passthrough: [['timesanity_episodes', 'random'], ['timesanity_albums', 'random']],
 	});
 	await assert.rejects(both, (err) => err.message === 'Timesanity: Episodes (`timesanity_episodes`) and Timesanity: Albums (`timesanity_albums`) are random in your file, and if they all roll their lowest '
 		+ 'the list makes 10460 locations (at most 10000): set a number for one of them.');
 	const episodesTrigger = [new Map([['option_category', 'Plex Media'], ['option_name', 'tv_unlock'], ['option_result', 'episodes'],
 		['options', new Map([['Plex Media', new Map([['timesanity_episodes', 'random']])]])]])];
 	const mixed = setup({ library: { hugeShowEpisodes: 300, bigAudioPlaylist: 5000 } }).builder.build({
-		name: 'Zack', titles: 'show: Huge Show S1', playlist: 'Everything Ever', passthrough: [['timesanity_albums', 'random'], ['triggers', episodesTrigger]],
+		name: 'Zack', titles: 'show: Huge Show S1', playlist: 'Everything Ever', songsPerUnlock: 0, passthrough: [['timesanity_albums', 'random'], ['triggers', episodesTrigger]],
 	});
 	const together = 'Timesanity: Albums (`timesanity_albums`) and Timesanity: Episodes (`timesanity_episodes`) are random in your file or set by a trigger in it, '
 		+ 'and if they all take their lowest the list makes 10460 locations (at most 10000): raise one of them.';
@@ -2155,7 +2159,7 @@ test('a timer the file leaves random is planned at its lowest roll too, so a lon
 	const higher = [new Map([['option_category', 'Plex Media'], ['option_name', 'tv_unlock'], ['option_result', 'episodes'],
 		['options', new Map([['Plex Media', new Map([['timesanity_episodes', 200]])]])]])];
 	const lowerOfTwo = setup({ library: { hugeShowEpisodes: 300, bigAudioPlaylist: 5000 } }).builder.build({
-		name: 'Zack', titles: 'show: Huge Show S1', playlist: 'Everything Ever', passthrough: [['timesanity_albums', 'random'], ['timesanity_episodes', 'random'], ['triggers', higher]],
+		name: 'Zack', titles: 'show: Huge Show S1', playlist: 'Everything Ever', songsPerUnlock: 0, passthrough: [['timesanity_albums', 'random'], ['timesanity_episodes', 'random'], ['triggers', higher]],
 	});
 	await assert.rejects(lowerOfTwo, (err) => err.message === together);
 

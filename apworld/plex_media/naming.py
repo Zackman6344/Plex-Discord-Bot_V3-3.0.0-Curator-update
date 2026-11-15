@@ -63,7 +63,8 @@ def _album(entry):
 	return f"{clip(entry['ar'])} - {clip(entry['t'])}"
 
 
-def unit_name(unit_key, entry):
+def unit_name(unit_key, entry, steps=1):
+	"""steps: the unit's step count, which for a playlist's shared unit is its number of parts."""
 	kind = entry["k"]
 	if kind == "movie":
 		return _movie(entry)
@@ -76,8 +77,20 @@ def unit_name(unit_key, entry):
 	if kind == "album":
 		return _album(entry)
 	if kind == "mix":
-		return f"{clip(entry['t'])} (playlist)"
+		if not unit_key.startswith("mix-songs"):
+			return f"{clip(entry['t'])} (playlist)"
+		songs = int(unit_key[len("mix-songs"):unit_key.index("|")])
+		playlist = clip(playlist_title(entry, steps))
+		return f"{playlist}: Next Song" if songs == 1 else f"{playlist}: Next {songs} Songs"
 	return f"{clip(entry['t'])} by {clip(entry['au'])}"
+
+
+def playlist_title(entry, parts):
+	"""A mix's playlist title. The bot titles each part "<playlist> Part <part>" only when the
+	playlist has several, so one part keeps a title of its own that ends that way ("Summer Part 1")."""
+	suffix = f" Part {entry['part']}"
+	title = entry["t"]
+	return title[:-len(suffix)] if parts > 1 and title.endswith(suffix) else title
 
 
 def main_location_name(entry, n):

@@ -3,7 +3,7 @@
 ## What the game is
 
 Plex Media turns a list of titles from a Plex server into an Archipelago slot. The list can hold
-movies, TV episodes, music albums, chunks of an audio playlist (up to 15 tracks each) and
+movies, TV episodes, music albums, parts of an audio playlist (up to 15 songs each) and
 audiobooks. Every title starts locked except a few opening ones, and the multiworld sends the
 unlocks. Watching or listening sends checks.
 
@@ -17,7 +17,8 @@ runs it.
 |---|---|
 | A title's unlock, named after the title (`The Matrix (1999)`, `Daft Punk - Discovery`, `Pride and Prejudice by Jane Austen`) | Unlocks that movie, album, playlist part or book |
 | `<Show>: Next 3 Episodes` (or `Next Episode`, `Next Season`) | Unlocks the next episodes of a show, in season and episode order; a show has as many copies as it has steps |
-| Wild Ticket | Unlocks any locked title of your choice (one step of a show) through `/apmedia redeem` |
+| `<Playlist>: Next 3 Songs` (or `Next Song`), with `songs_per_unlock` above 0 | Unlocks one part of a playlist, up to that many songs: the first copy part 1, the second part 2, in the playlist's order; a playlist has as many copies as it has parts |
+| Wild Ticket | Unlocks any locked title of your choice (one step of a show, one part of a playlist) through `/apmedia redeem` |
 | Fast Forward | `/apmedia ff` spends one on a title: it earns the title's next checkpoint without playing it (with `timesanity_strict` on, the 10 minutes after where you got to count as heard instead, and the checkpoints they complete are earned). Never a watch, track or finish, so the goal still needs playing. On a locked title it banks, as a watch does, or is refused under `locked_watches: ignore` |
 | Remote Control | Ends the trap at work on your list when it arrives; otherwise it is kept and blocks the next trap |
 | Popcorn, Nachos, Large Soda, Candy Bar, Hot Dog, Soft Pretzel, Ice Cream Sandwich | Filler: the snacks. The Snack Bar trades them for a Fast Forward or a Remote Control |
@@ -34,6 +35,9 @@ Commercial Break, Shuffle Mode, Rewind, Intermission and Slow Motion need you li
 bot, in its voice channel while it plays music or in an audiobook of your own; until you are, the
 trap waits, for up to 12 hours. The bot's owner can turn traps off, and a trap then only says so.
 
+Through the bot, in its voice channel, a song of a playlist part still locked for someone listening
+is skipped, as Locations says.
+
 The Snack Bar (`/apmedia snackbar`) trades `snack_bar_price` snacks you have received for a Fast
 Forward or a Remote Control, `snack_bar_trades` times a slot. Every snack counts the same, Popcorn
 included.
@@ -44,6 +48,7 @@ included.
 |---|---|
 | `Watch <title>` | A movie or episode is watched to the end (Plex counts a watch at 90%) |
 | `<artist> - <album> #03 <track>` | That track is played through. Tracks under 30 seconds have no location |
+| `<playlist> Part 2 #01 <artist> - <song>` | That song of a playlist part is played through; the number is its place in the part |
 | `Finish <book>` | The audiobook is finished |
 | `<title> @ 1h30m` | Playback passes that point of the title (timesanity) |
 
@@ -57,10 +62,16 @@ one waits on another player reaching the middle of a film for a key item.
 A title watched before its unlock arrives keeps its checks banked, and they are sent when the unlock
 comes (`locked_watches: bank`). With `ignore`, the watch counts for nothing.
 
+Through the bot, in its voice channel, a song of a playlist part still locked for someone listening
+is skipped before it plays, unless someone there has it open on their own list, so it banks
+nothing. Played in Plexamp or another Plex app, it counts as above. An album never locks a song: a
+song in no locked part plays and counts as any title does.
+
 ## Goal
 
 Finish `goal_percent` of the list (default 80%, rounded down, at least one title). The bot sends the
-goal once that many titles are done.
+goal once that many titles are done. Each part of a playlist is a title, so a 60-song playlist
+counts as 4 titles in parts of 15 and as 20 at 3 songs per unlock.
 
 ## Names everyone sees
 
@@ -73,8 +84,9 @@ Two slots that list the same title share its unlock name and its locations. A na
 with another title, a fixed name or a group name gets a tag in brackets, such as
 `Halloween (2018) [2003]`. The tag is the Plex rating key of the movie, episode or album. A show's
 unlock uses the show's rating key. A playlist part uses its playlist's rating key and part number
-(`[2500:2]`). An audiobook uses the bot's catalog id (`[jane-austen/emma]`). An all-number title
-such as `1917` gets `(movie)`.
+(`[2500:2]`), and an unlock that opens a playlist part by part (`Road Trip: Next 3 Songs`) uses the
+playlist's rating key (`[2500]`). An audiobook uses the bot's catalog id (`[jane-austen/emma]`). An
+all-number title such as `1917` gets `(movie)`.
 
 World 0.3.0 added the snacks, Fast Forward, Remote Control, the traps and the item groups Snacks,
 Useful and Traps to the fixed names. Of a list's names only a movie without a year can be spelled
@@ -116,16 +128,17 @@ that counts nothing and names nothing is refused.
 
 In `list_titles`, `movie:`, `show:`, `album:` or `book:` in front of a title says what it is, a
 year picks one film (`Halloween (2018)`), and a show takes a range of seasons
-(`show: Lost S1-2`). A playlist goes on the list in its own order, a music playlist in parts of 15
-tracks. `list_genre` and `list_years` narrow only the random picks, and audiobooks ignore
-`list_years`. `list_unwatched` leaves the movies and episodes you have watched and the audiobooks
-you finished out of the random picks, a collection, a video playlist and the shows you name without
-seasons, and starts each show at your first unwatched episode; a show you named and have watched to
-the end is left out. The movies, audiobooks and seasons you name in `list_titles` stay on the list
-whole. Leaving out what you watched needs your Plex account, linked by the server owner with your
-consent; finished audiobooks come from the bot's own bookmarks. `list_max_episodes` is the most
-episodes the bot takes from one show, for random shows, the shows of a collection and shows named
-without seasons. An empty `list_label` names the list "<your name>'s list".
+(`show: Lost S1-2`). A playlist goes on the list in its own order, a music playlist in parts of
+`songs_per_unlock` songs, or of up to 15 while that is off. `list_genre` and `list_years` narrow
+only the random picks, and audiobooks ignore `list_years`. `list_unwatched` leaves the movies and
+episodes you have watched and the audiobooks you finished out of the random picks, a collection, a
+video playlist and the shows you name without seasons, and starts each show at your first
+unwatched episode; a show you named and have watched to the end is left out. The movies,
+audiobooks and seasons you name in `list_titles` stay on the list whole. Leaving out what you
+watched needs your Plex account, linked by the server owner with your consent; finished audiobooks
+come from the bot's own bookmarks. `list_max_episodes` is the most episodes the bot takes from one
+show, for random shows, the shows of a collection and shows named without seasons. An empty
+`list_label` names the list "<your name>'s list".
 
 These settings cannot be random, and a trigger cannot set them. A weighted setting with one choice
 above 0, as every one in a file from the Launcher's Generate Template Options, is that choice.
@@ -138,8 +151,27 @@ above 0, as every one in a file from the Launcher's Generate Template Options, i
 | `goal_percent` | 80 | 1–100 |
 | `tv_unlock` | `episodes` | `episodes` or `season` |
 | `episodes_per_unlock` | 3 | 1–12 |
+| `songs_per_unlock` | `off` | 1–15: how many songs of the list's music playlist one unlock opens, in its order; `off` (0): parts of up to 15 songs, each its own unlock |
 | `locked_watches` | `bank` | `bank` or `ignore` |
 | `wild_tickets` | 2 | 0–20, fewer when the list is short |
+
+The bot cuts the playlist into parts of `songs_per_unlock` songs when it writes the list, 3 for a
+list built from `/apmedia yaml`'s options alone, so a change needs the YAML attached to
+`/apmedia yaml` again. It cannot be random, and a trigger cannot set it. Edited by hand in a
+finished list, a lower number leaves parts longer than `songs_per_unlock`, which stops generation,
+naming the player; `off` gives each part an unlock of its own, opened in any order, and a higher
+number only renames the unlock.
+
+The first copy of the unlock opens part 1, the second part 2, and so on. A Wild Ticket opens the
+one part you name and leaves the copies counting from part 1, so a ticket spent on the next locked
+part saves only the wait for the next copy. Through the bot, in its voice channel, the songs of a
+part still locked for someone listening are skipped, as Locations says. `timesanity_albums` counts
+its checkpoints inside each part, so a 10-minute part of 3 songs gets 1 checkpoint at a 5-minute
+timer and none at 10. Rights Expired holds the checks of one part. A part of only songs under 30
+seconds leaves the list, and the parts after it are numbered on.
+
+A YAML without `songs_per_unlock`, such as one written for world 0.3.0, keeps its playlist in parts
+of up to 15 songs, each its own unlock, and plans as it did before.
 
 ### Timesanity
 
@@ -149,7 +181,7 @@ above 0, as every one in a file from the Launcher's Generate Template Options, i
 | `timesanity_strict` | `false` | |
 | `timesanity_movies` | 15 | 0–240 minutes, `off` = 0 |
 | `timesanity_episodes` | 10 | 0–240 minutes |
-| `timesanity_albums` | 0 | 0–240 minutes, covers playlists too |
+| `timesanity_albums` | 0 | 0–240 minutes, covers each playlist part too |
 | `timesanity_books` | 30 | 0–1440 minutes |
 
 ### Items and traps

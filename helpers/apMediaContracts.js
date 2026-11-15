@@ -11,7 +11,7 @@
 
 const GAME = 'Plex Media';
 const APWORLD_NAME = 'plex_media';
-const WORLD_VERSION = '0.3.0';
+const WORLD_VERSION = '0.4.0';
 const MIN_AP_VERSION = '0.6.8';
 const BUILDER_VERSION = 1;
 const SLOT_DATA_SCHEMA = 1;
@@ -98,7 +98,8 @@ const LIMITS = Object.freeze({
 });
 
 // The YAML option table, in the order the YAML writes it. OptionList and OptionDict values
-// (entries, list_info) are written after these.
+// (entries, list_info) are written after these. songs_per_unlock (world 0.4.0) must default to 0:
+// a YAML without it then plans as world 0.3.0 did.
 const OPTIONS = Object.freeze({
 	starting_unlocks: Object.freeze({ type: 'range', min: 1, max: 50, default: 3 }),
 	goal_percent: Object.freeze({ type: 'range', min: 1, max: 100, default: 80 }),
@@ -125,6 +126,7 @@ const OPTIONS = Object.freeze({
 	rewind_weight: Object.freeze({ type: 'range', min: 0, max: 10, default: 1 }),
 	intermission_weight: Object.freeze({ type: 'range', min: 0, max: 10, default: 1 }),
 	slow_motion_weight: Object.freeze({ type: 'range', min: 0, max: 10, default: 1 }),
+	songs_per_unlock: Object.freeze({ type: 'range', min: 0, max: LIMITS.mixTracks, default: 0 }),
 });
 
 // The list settings, written after OPTIONS: what /apmedia yaml picks from the Plex library when it
@@ -153,6 +155,7 @@ const SETTING_NAMES = Object.freeze({
 	goal_percent: 'Goal Percent',
 	tv_unlock: 'TV Unlock',
 	episodes_per_unlock: 'Episodes per Unlock',
+	songs_per_unlock: 'Songs per Unlock',
 	locked_watches: 'Locked Watches',
 	checkpoint_items: 'Checkpoint Items',
 	timesanity_strict: 'Timesanity Strict',
@@ -237,7 +240,12 @@ function entryKey(entry) {
 	return `${entry.k}|${entry.id}`;
 }
 
-function unitKey(entry, { tvUnlock = OPTIONS.tv_unlock.default, episodesPerUnlock = OPTIONS.episodes_per_unlock.default } = {}) {
+function unitKey(entry, {
+	tvUnlock = OPTIONS.tv_unlock.default,
+	episodesPerUnlock = OPTIONS.episodes_per_unlock.default,
+	songsPerUnlock = OPTIONS.songs_per_unlock.default,
+} = {}) {
+	if (entry.k === 'mix' && songsPerUnlock > 0) return `mix-songs${songsPerUnlock}|${entry.pl}`;
 	if (entry.k !== 'episode') return `${entry.k}|${entry.id}`;
 	return tvUnlock === 'season' ? `show-season|${entry.sid}` : `show-ep${episodesPerUnlock}|${entry.sid}`;
 }
@@ -309,6 +317,9 @@ function slotNameProblem(name) {
  *   archipelago.gg's tracker API, gets slot_data; those stay in the YAML's list_info)
  * @property {number} goal_percent @property {number} goal_count @property {number} entry_count
  * @property {'episodes'|'season'} tv_unlock @property {number} episodes_per_unlock
+ * @property {number} [songs_per_unlock]  world 0.4.0: songs one unlock opens of the list's playlist,
+ *   whose parts then share one unit, each part's s its place in the playlist; 0 or missing: every
+ *   part is its own unit
  * @property {'bank'|'ignore'} locked_watches @property {'filler_only'|'anything'} checkpoint_items
  * @property {boolean} timesanity_strict
  * @property {{movie: number, episode: number, album: number, book: number}} timesanity  minutes, 0 = off

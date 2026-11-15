@@ -11,6 +11,9 @@
 # items.snacks holds Popcorn too, so the bot counts snacks from it alone. pool is what the slot's item
 # pool holds after exclude_locations took its share of the useful items, which only generation knows:
 # the bot reads what a list holds from it instead of planning it again.
+#
+# World 0.4.0 added songs_per_unlock, also without a new schema: a playlist's parts then share one
+# unit and each part's s is its place in the playlist, which the bot already reads per entry.
 
 from .constants import GAME, POPCORN_ID, SLOT_DATA_SCHEMA, SNACKS, TRAPS, USEFUL, WILD_TICKET_ID
 
@@ -78,6 +81,7 @@ def build_slot_data(plan, registry, info, world_version, generated_at):
 		"entry_count": len(plan.entries),
 		"tv_unlock": opts["tv_unlock"],
 		"episodes_per_unlock": opts["episodes_per_unlock"],
+		"songs_per_unlock": opts["songs_per_unlock"],
 		"locked_watches": opts["locked_watches"],
 		"checkpoint_items": opts["checkpoint_items"],
 		"timesanity_strict": bool(opts["timesanity_strict"]),

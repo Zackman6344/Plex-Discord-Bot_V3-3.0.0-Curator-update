@@ -65,6 +65,7 @@ const KEYS = Object.freeze({
 	goalpercent: 'goalPercent',
 	goal: 'goalPercent',
 	episodesperunlock: 'episodesPerUnlock',
+	songsperunlock: 'songsPerUnlock',
 	tvunlock: 'tvUnlock',
 	startingunlocks: 'startingUnlocks',
 	wildtickets: 'wildTickets',
@@ -115,7 +116,7 @@ const SLASH = Object.freeze({
 	'episodes-per-unlock': 'episodesPerUnlock',
 });
 const KEY_LIST = 'name, preset, movies, shows, albums, books, titles, playlist, collection, genre, years, unwatched, max_episodes, '
-	+ 'time_movies, time_episodes, time_albums, time_books, goal_percent, tv_unlock, episodes_per_unlock, label, '
+	+ 'time_movies, time_episodes, time_albums, time_books, goal_percent, tv_unlock, episodes_per_unlock, songs_per_unlock, label, '
 	+ 'starting_unlocks, wild_tickets, strict, locked_watches, checkpoint_items, snack_variety, fast_forwards, remote_controls, '
 	+ 'snack_bar_trades, snack_bar_price, trap_percentage, buffering_weight, rights_expired_weight, commercial_break_weight, '
 	+ 'shuffle_mode_weight, rewind_weight, intermission_weight, slow_motion_weight, for';
@@ -417,7 +418,7 @@ async function run(ctx) {
 	const name = fromFile ? fromFile.name : params.name;
 	const head = [
 		`\u{1F4DD} ${common.slot(name)}: ${forOther ? `a list for <@${target}>` : 'your list'}, attached as \`${out.fileName}\`.`,
-		...yamlModule.summaryLines(summary, name).slice(0, 3),
+		...yamlModule.summaryHead(summary),
 	];
 	const fromLines = fromFile ? fileLines(fromFile, file, params) : { head: [], middle: [] };
 	head.push(...fromLines.head);
@@ -426,7 +427,14 @@ async function run(ctx) {
 			? `\u26A0\uFE0F <@${target}> has not accepted the link to their Plex account yet: until they do, the bot knows nothing they watched.`
 			: '\u26A0\uFE0F Your Plex account link waits for you to accept it in the bot\'s DM: until you do, the bot knows nothing you watched.');
 	}
-	const middle = [...fromLines.middle, ...(summary.warnings || []).map((w) => `\u26A0\uFE0F ${common.esc(w)}`)];
+	// Only a typed number: every list the bot writes holds songs_per_unlock, so one attached again
+	// without a playlist would say this each time.
+	const typedSongs = params.songsPerUnlock !== undefined && String(params.songsPerUnlock).trim() !== '';
+	const middle = [
+		...fromLines.middle,
+		...(typedSongs && !summary.playlist ? [`\u26A0\uFE0F ${settingName('songs_per_unlock')} cuts a music playlist into parts, and this list has none.`] : []),
+		...(summary.warnings || []).map((w) => `\u26A0\uFE0F ${common.esc(w)}`),
+	];
 	for (const miss of summary.misses || []) {
 		const near = miss.didYouMean && miss.didYouMean.length ? ` (did you mean ${miss.didYouMean.map(common.bold).join(', ')}?)` : '';
 		middle.push(`\u2753 Not found: ${common.esc(miss.query)}${near}`);

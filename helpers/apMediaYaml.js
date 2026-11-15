@@ -32,7 +32,7 @@ const PARAMS = new Set([
 	'timeBooks', 'goalPercent', 'episodesPerUnlock', 'tvUnlock', 'startingUnlocks', 'wildTickets',
 	'strict', 'lockedWatches', 'checkpointItems', 'snackVariety', 'fastForwards', 'remoteControls', 'snackBarTrades',
 	'snackBarPrice', 'trapPercentage', 'bufferingWeight', 'rightsExpiredWeight', 'commercialBreakWeight',
-	'shuffleModeWeight', 'rewindWeight', 'intermissionWeight', 'slowMotionWeight', 'accountId', 'discordUserId',
+	'shuffleModeWeight', 'rewindWeight', 'intermissionWeight', 'slowMotionWeight', 'songsPerUnlock', 'accountId', 'discordUserId',
 	'passthrough', 'asWritten', 'plando',
 ]);
 const NO_PRESET = 'none';
@@ -84,8 +84,19 @@ const OPTION_PARAMS = Object.freeze({
 	rewindWeight: 'rewind_weight',
 	intermissionWeight: 'intermission_weight',
 	slowMotionWeight: 'slow_motion_weight',
+	songsPerUnlock: 'songs_per_unlock',
 });
 const OPTION_KEYS = Object.freeze(Object.fromEntries(Object.entries(OPTION_PARAMS).map(([param, key]) => [key, param])));
+// The world's NamedRanges whose 0 is named off (OffRange in apworld/plex_media/options.py); the
+// option table does not list the name.
+const OFF_OPTIONS = new Set(['timesanity_movies', 'timesanity_episodes', 'timesanity_albums', 'timesanity_books', 'songs_per_unlock']);
+// The world's default is off, so a YAML without songs_per_unlock plans as world 0.3.0 did. A list
+// built from the command alone gets this instead; a file keeps its own, off when it has none.
+const NEW_LIST_SONGS = 3;
+// The playlist is cut when the bot writes the list, so the number cannot be left for Archipelago to
+// roll, and a file is refused for it whether or not its list has a playlist.
+const SONGS_NAME = settingName('songs_per_unlock');
+const RANDOM_SONGS = `${SONGS_NAME} is random: set a number or off, the bot cuts a music playlist at it when it writes the list.`;
 const COUNT_KEYS = Object.freeze(['movies', 'shows', 'albums', 'books']);
 const ENTRY_ORDER = Object.freeze({
 	movie: ['k', 'id', 'rk', 'g', 't', 'y', 'd'],
@@ -109,12 +120,12 @@ const MAX_ALBUM_TRACKS = 40;
 const MAX_PICKED_ALBUM_TRACKS = 100;
 const MIN_ALBUM_TRACKS = 3;
 const MAX_ALBUM_COPIES = 4;
-// A smart playlist can hold the whole library (All Music: 14,174 tracks here); 40 parts of 15 is
-// plenty, and reading all of it to keep the start is megabytes of JSON parsed on the main thread.
-// Audio reads twice what 40 parts use, since book parts and short tracks drop out only after the
-// read; video reads at most what one slot can hold.
-const MAX_MIX_PARTS = 40;
-const MIX_READ_MAX = MAX_MIX_PARTS * contracts.LIMITS.mixTracks * 2;
+// A smart playlist can hold the whole library (All Music: 14,174 tracks here); its first 600 tracks
+// are plenty (40 parts of 15, or 600 parts at songs_per_unlock 1), and reading all of it to keep the
+// start is megabytes of JSON parsed on the main thread. Audio reads twice that, since book parts drop
+// out only after the read; video reads at most what one slot can hold.
+const MAX_MIX_TRACKS = 40 * contracts.LIMITS.mixTracks;
+const MIX_READ_MAX = MAX_MIX_TRACKS * 2;
 const VIDEO_READ_MAX = contracts.LIMITS.maxEntries;
 const MAX_SOURCE_SHOWS = contracts.COUNT_RANGES.shows.max;
 const MAX_SOURCE_MOVIES = contracts.COUNT_RANGES.movies.max;
@@ -147,9 +158,9 @@ function given(value) {
 	return value !== undefined && value !== null && !(typeof value === 'string' && value.trim() === '');
 }
 
-function intParam(name, raw, min, max) {
+function intParam(name, raw, min, max, orWord = '') {
 	const n = typeof raw === 'number' ? raw : (/^\s*-?\d+\s*$/.test(String(raw)) ? Number(raw) : NaN);
-	if (!Number.isInteger(n) || n < min || n > max) throw new Error(`${name} must be a whole number from ${min} to ${max}.`);
+	if (!Number.isInteger(n) || n < min || n > max) throw new Error(`${name} must be a whole number from ${min} to ${max}${orWord ? ` or ${orWord}` : ''}.`);
 	return n;
 }
 
@@ -177,8 +188,8 @@ function textParam(name, raw, max) {
 function optionParam(param, key, raw) {
 	const spec = contracts.OPTIONS[key];
 	if (spec.type === 'range') {
-		const value = /^timesanity_/.test(key) && /^\s*off\s*$/i.test(String(raw)) ? 0 : raw;
-		return intParam(param, value, spec.min, spec.max);
+		if (!OFF_OPTIONS.has(key)) return intParam(param, raw, spec.min, spec.max);
+		return /^\s*off\s*$/i.test(String(raw)) ? 0 : intParam(param, raw, spec.min, spec.max, 'off');
 	}
 	if (spec.type === 'choice') return choiceParam(param, raw, spec.values);
 	return boolParam(param, raw);
@@ -433,6 +444,7 @@ function copiedSettings(raw, options) {
 		if (tag) throw new Error(tag);
 		if (seen.has(key)) throw new Error(`${where} is given twice.`);
 		seen.add(key);
+		if (key === 'songs_per_unlock') throw new Error(RANDOM_SONGS);
 		if (has(contracts.OPTIONS, key) && has(options, key)) continue;
 		out.push({ key, value, line: copiedLine(key, value, room) });
 	}
@@ -508,6 +520,7 @@ function validateParams(params) {
 	for (const [param, key] of Object.entries(OPTION_PARAMS)) {
 		if (given(params[param])) options[key] = optionParam(param, key, params[param]);
 	}
+	if (!has(options, 'songs_per_unlock')) options.songs_per_unlock = NEW_LIST_SONGS;
 	p.options = resolveOptions(options);
 	p.passthrough = passthroughParam(params.passthrough, options);
 	asWrittenLines(params.asWritten);
@@ -884,18 +897,39 @@ function itemsText(summary) {
 }
 
 /**
- * Human lines for the reply: the counts, the start and the goal, what the pool holds, then warnings,
- * misses and the next steps. The command shows the first three as they are.
+ * "`Road Trip` opens 3 songs per unlock, in 20 parts.", the title in a code span: it is library text.
+ * @param {{title: string, parts: number, songs: number, tracks: number}} cut songs: songs_per_unlock
+ *   (0 off); tracks: the songs the parts hold
+ */
+function playlistText({ title, parts, songs, tracks }) {
+	if (parts === 1) return `${codeSpan(title)} is in 1 part of ${plural(tracks, ['song', 'songs'])}, with one unlock.`;
+	if (songs > 0) return `${codeSpan(title)} opens ${plural(songs, ['song', 'songs'])} per unlock, in ${parts} parts.`;
+	return `${codeSpan(title)} is in ${parts} parts of up to ${contracts.LIMITS.mixTracks} songs, one unlock each.`;
+}
+
+/**
+ * The reply's first lines, which the command shows as they are: the counts, how a music playlist
+ * went on, the start and the goal, and what the pool holds.
+ * @param {object} summary build().summary
+ * @returns {string[]}
+ */
+function summaryHead(summary) {
+	return [
+		`${sizeText(summary.entries, summary.counts, summary.locations, summary.hours)}.`,
+		...(summary.playlist ? [playlistText(summary.playlist)] : []),
+		`Starts with ${summary.startOpen} open; goal: finish ${summary.goalCount} of ${summary.entries} (about ${hoursText(summary.hoursToGoal)} h).`,
+		itemsText(summary),
+	];
+}
+
+/**
+ * Human lines for the reply: summaryHead's, then warnings, misses and the next steps.
  * @param {object} summary build().summary
  * @param {string} name the slot name
  * @returns {string[]}
  */
 function summaryLines(summary, name) {
-	const lines = [
-		`${sizeText(summary.entries, summary.counts, summary.locations, summary.hours)}.`,
-		`Starts with ${summary.startOpen} open; goal: finish ${summary.goalCount} of ${summary.entries} (about ${hoursText(summary.hoursToGoal)} h).`,
-		itemsText(summary),
-	];
+	const lines = summaryHead(summary);
 	for (const w of summary.warnings) lines.push(`Warning: ${w}`);
 	for (const miss of summary.misses) {
 		lines.push(`Not found: ${miss.query}${miss.didYouMean.length ? ` (did you mean ${miss.didYouMean.join(', ')}?)` : ''}`);
@@ -1450,8 +1484,7 @@ const LIST_FIX = Object.freeze({
 
 function specialsOf(key, spec) {
 	if (spec.special) return spec.special;
-	// The world's timesanity options are NamedRanges with off = 0; the table does not list it.
-	return /^timesanity_/.test(key) ? { off: 0 } : {};
+	return OFF_OPTIONS.has(key) ? { off: 0 } : {};
 }
 
 /**
@@ -1468,10 +1501,10 @@ function rangeValue(key, spec, value, name = key) {
 	};
 	const special = (n) => words.some((w) => specials[w] === n);
 	// Archipelago reads true as the default and false as 0 when the range starts at 0 and the
-	// default is not 0. The world's timers read false as 0 whatever their default, so an unquoted
-	// "off" (false in YAML 1.1) turns even the albums timer off.
+	// default is not 0. The world's OffRanges read false as 0 whatever their default, so an unquoted
+	// "off" (false in YAML 1.1) turns even the albums timer and songs_per_unlock off.
 	const bool = (on) => {
-		if (!on && /^timesanity_/.test(key)) return 0;
+		if (!on && OFF_OPTIONS.has(key)) return 0;
 		const fallback = typeof spec.default === 'string' ? specials[spec.default] : spec.default;
 		if (spec.min !== 0 || fallback === 0) throw bad();
 		return on ? named(fallback) : 0;
@@ -1683,10 +1716,12 @@ function fileName(data, overrides) {
  * A player's YAML (from the Archipelago Launcher's Options Creator, or one the bot wrote) as
  * build() params. The list settings say what to pick; each game option becomes its param; every
  * other setting under "Plex Media:" is kept as it is, in file order, in passthrough. A random or
- * weighted game option is kept that way too and listed in `random`, and the plan uses its default.
- * The file's entries and list_info are dropped: the titles are picked fresh, and list_info is the
- * bot's to fill in. A list with entries or list_info but no list settings (the bot's before 0.2.0)
- * is refused unless the command says what to pick, and keeps the label its list_info names.
+ * weighted game option is kept that way too and listed in `random`, and the plan uses its default,
+ * but for songs_per_unlock, which is refused random like a list setting and is off (0) when the
+ * file has none. The file's entries and list_info are dropped: the titles are picked fresh, and
+ * list_info is the bot's to fill in. A list with entries or list_info but no list settings (the
+ * bot's before 0.2.0) is refused unless the command says what to pick, and keeps the label its
+ * list_info names.
  * A setting a trigger in the file checks keeps the file's own spelling too (asWritten), since
  * Archipelago compares that spelling with the trigger's option_result.
  * @param {string} text the file, decoded
@@ -1793,6 +1828,10 @@ function readPlayerYaml(text, overrides = {}) {
 		const game = has(contracts.OPTIONS, key);
 		if (game && replaced(key, value)) continue;
 		const v = game ? fileOption(key, value) : RANDOM;
+		if (v === RANDOM && key === 'songs_per_unlock') {
+			randomLists.push(new RandomListSetting(RANDOM_SONGS, settingName(key)));
+			continue;
+		}
 		if (v === RANDOM) {
 			copiedLine(key, value, room);
 			kept.push([key, value]);
@@ -1805,7 +1844,10 @@ function readPlayerYaml(text, overrides = {}) {
 		}
 	}
 	if (randomLists.length === 1) throw new Error(randomLists[0].message);
-	if (randomLists.length > 1) throw new Error(`${andList(randomLists.map((err) => err.setting))} are random: the bot needs a value in each to pick titles.`);
+	if (randomLists.length > 1) {
+		const need = randomLists.some((err) => err.setting === SONGS_NAME) ? 'build the list' : 'pick titles';
+		throw new Error(`${andList(randomLists.map((err) => err.setting))} are random: the bot needs a value in each to ${need}.`);
+	}
 
 	// A list the bot built before 0.2.0 has its titles and list_info but no list settings, and the
 	// defaults would quietly turn it into 15 movies.
@@ -1843,6 +1885,8 @@ function readPlayerYaml(text, overrides = {}) {
 		params.label = oldLabel;
 	}
 	for (const [key, value] of Object.entries(options)) params[OPTION_KEYS[key]] = value;
+	// Not NEW_LIST_SONGS: a file written for world 0.3.0 or earlier keeps the parts it had.
+	if (!has(options, 'songs_per_unlock')) params.songsPerUnlock = 0;
 	for (const [param, value] of Object.entries(overrides)) {
 		if (param !== 'preset' && given(value)) params[param] = value;
 	}
@@ -1902,7 +1946,8 @@ function* triggerSettings(trigger) {
  * naming the trigger: what Generate.roll_triggers refuses on every roll (triggers that are not a
  * list of mappings, an option_category the file does not have, an option_name that cannot roll), a
  * trigger on description or requires, which the bot writes, a trigger that sets a list setting,
- * entries or list_info, which the picks would not follow, and a value Archipelago refuses.
+ * songs_per_unlock, entries or list_info, which the picks would not follow, and a value Archipelago
+ * refuses.
  * @param {boolean} present the file has a triggers line, even an empty one
  */
 function triggerChecked(triggers, present) {
@@ -1936,7 +1981,10 @@ function triggerChecked(triggers, present) {
 			for (const n of names) if (typeof n === 'string' && (has(contracts.OPTIONS, n) || has(contracts.LIST_OPTIONS, n))) out.add(n);
 		}
 		for (const [setting, value, prefix] of triggerSettings(trigger)) {
-			if (has(contracts.LIST_OPTIONS, setting)) throw refuse(`sets ${settingName(setting)}, which the bot does not follow: set it in the file itself.`);
+			// The playlist is cut at songs_per_unlock when the bot writes the list, before any trigger rolls.
+			if (has(contracts.LIST_OPTIONS, setting) || setting === 'songs_per_unlock') {
+				throw refuse(`sets ${settingName(setting)}, which the bot does not follow: set it in the file itself.`);
+			}
 			if (setting === 'entries' || setting === 'list_info') throw refuse(`sets \`${setting}\`, which the bot writes: take it out of the trigger.`);
 			if (!prefix && has(contracts.OPTIONS, setting)) {
 				try {
@@ -2503,6 +2551,7 @@ function createBuilder(deps = {}) {
 		const loose = [];
 		const lib = library(p, warnings);
 		const list = new EntryList();
+		let playlistCut = null;
 		const norms = new Map();
 		const normOf = (text) => {
 			const key = String(text ?? '');
@@ -2727,22 +2776,24 @@ function createBuilder(deps = {}) {
 			const cut = wasCut(read, MIX_READ_MAX, pl.items);
 			const rows = read.filter((r) => !r.type || r.type === 'track');
 			const { music, books } = lib.splitBooks(rows);
-			if (books.length) warnings.push(`${plural(books.length, ['audiobook part', 'audiobook parts'])} in ${pl.title} were left out.`);
+			if (books.length) warnings.push(`${plural(books.length, ['audiobook part', 'audiobook parts'])} in ${pl.title} ${books.length === 1 ? 'was' : 'were'} left out.`);
 			let tracks = music.map((row, i) => lib.trackOf(row, i + 1)).filter(Boolean).map((t, i) => ({ ...t, index: i + 1 }));
-			const max = MAX_MIX_PARTS * contracts.LIMITS.mixTracks;
+			const max = MAX_MIX_TRACKS;
 			if (tracks.length > max || cut) {
 				const total = cut ? Math.max(pl.items, read.length) : tracks.length;
 				tracks = tracks.slice(0, max);
 				warnings.push(`${pl.title} has ${total} tracks; only the first ${tracks.length} were used.`);
 			}
-			const size = contracts.LIMITS.mixTracks;
+			const songs = p.options.songs_per_unlock;
+			// plan.py refuses a part longer than songs_per_unlock, so the parts are cut at it exactly.
+			const size = songs > 0 ? songs : contracts.LIMITS.mixTracks;
 			const chunks = [];
 			for (let i = 0; i < tracks.length; i += size) chunks.push(tracks.slice(i, i + size));
 			// entries.py refuses a part with no track of 30 s or more, and that stops the whole seed.
 			const usable = chunks.filter((chunk) => chunk.some((t) => t.d >= contracts.LIMITS.minTrackMs));
 			if (usable.length < chunks.length) {
 				const left = chunks.filter((chunk) => !usable.includes(chunk)).reduce((n, chunk) => n + chunk.length, 0);
-				warnings.push(`${plural(left, ['short track', 'short tracks'])} of ${pl.title} were left out: a part needs one track of 30 s or more.`);
+				warnings.push(`${plural(left, ['short track', 'short tracks'])} of ${pl.title} ${left === 1 ? 'was' : 'were'} left out: a part needs one track of 30 s or more.`);
 			}
 			if (!usable.length) {
 				warnings.push(`${pl.title} has no music tracks to check.`);
@@ -2761,6 +2812,7 @@ function createBuilder(deps = {}) {
 					tr: chunk.map((t) => [t.rk, t.index, t.title, t.d, t.partId, t.artist]),
 				});
 			}
+			playlistCut = { title: pl.title, parts, songs, tracks: usable.reduce((n, chunk) => n + chunk.length, 0) };
 		}
 
 		async function addCollection() {
@@ -2911,9 +2963,11 @@ function createBuilder(deps = {}) {
 		const plan = planSlot(entries, plannedOptions(p.options, p.passthrough));
 		const L = contracts.LIMITS;
 		if (plan.entryCount > L.maxEntries || plan.C > L.maxCopies || plan.locations > L.maxLocations) {
+			// A playlist cut at 15 songs, or off, has its parts as big as they get.
+			const songs = playlistCut && playlistCut.songs > 0 && playlistCut.songs < L.mixTracks;
 			throw new Error(`That list is too big for one slot: ${plan.entryCount} entries (at most ${L.maxEntries}), `
 				+ `${plan.C} unlock copies (at most ${L.maxCopies}), ${plan.locations} locations (at most ${L.maxLocations}). `
-				+ 'Lower the counts or the episodes per show, raise the episodes per unlock, or turn the timers down.');
+				+ `Lower the counts or the episodes per show, raise the episodes ${songs ? 'or songs ' : ''}per unlock, or turn the timers down.`);
 		}
 		const risky = await randomTimerProblem(entries, p);
 		if (risky) throw new Error(risky);
@@ -2945,6 +2999,7 @@ function createBuilder(deps = {}) {
 			goalCount: plan.goal_count,
 			hours: plan.hours,
 			hoursToGoal: plan.hoursToGoal,
+			playlist: playlistCut,
 			warnings: [...new Set(warnings)],
 			misses,
 		};
@@ -2958,6 +3013,7 @@ module.exports = {
 	createBuilder,
 	renderYaml,
 	readPlayerYaml,
+	summaryHead,
 	summaryLines,
 	validateParams,
 	listDoc,

@@ -12,6 +12,7 @@
 //
 // Episodes of one show that share a (season, episode) pair keep their list order, as plan.py's
 // sort by (season, episode, list index) does. Any other tie rule moves steps between the two sides.
+// A playlist's parts sort by part the same way, though entries.py never lets two of them share one.
 //
 // The pool counts are the ones before exclude_locations: the world takes the useful items' room
 // for a list's own excluded watches, tracks and finishes only at generation (plan.exclude_main),
@@ -179,6 +180,19 @@ function showSteps(members, entries, rows, tvUnlock, perUnlock) {
 	return { steps, prefix };
 }
 
+function mixSteps(members, entries, rows, songs) {
+	const parts = members.map((i) => ({ i, part: entries[i].part })).sort((a, b) => a.part - b.part);
+	parts.forEach(({ i }, pos) => {
+		const count = entries[i].tr.length;
+		if (count > songs) {
+			throw new Error(`entry ${i + 1} (${entries[i].t}) holds ${count} tracks, more than songs_per_unlock ${songs} `
+				+ `(the YAML attached to /apmedia yaml again, which cuts the playlist at ${songs}, or songs_per_unlock 0 would help)`);
+		}
+		rows[i].step = pos + 1;
+	});
+	return { steps: parts.length, prefix: parts.map((_, pos) => pos).concat(parts.length) };
+}
+
 /**
  * Plans one slot exactly as plan.py does.
  * @param {object[]} entries the list, in YAML order (contracts Entry shape)
@@ -199,6 +213,7 @@ function planSlot(entries, options = {}) {
 	const o = resolveOptions(options);
 	const tvUnlock = o.tv_unlock;
 	const perUnlock = o.episodes_per_unlock;
+	const songs = o.songs_per_unlock;
 	const timers = {
 		movie: o.timesanity_movies,
 		episode: o.timesanity_episodes,
@@ -213,7 +228,7 @@ function planSlot(entries, options = {}) {
 		const key = contracts.entryKey(entry);
 		if (keys.has(key)) throw new Error(`Entry ${index}: ${key} is on the list twice.`);
 		keys.add(key);
-		const unit = contracts.unitKey(entry, { tvUnlock, episodesPerUnlock: perUnlock });
+		const unit = contracts.unitKey(entry, { tvUnlock, episodesPerUnlock: perUnlock, songsPerUnlock: songs });
 		if (!units.has(unit)) units.set(unit, { key: unit, kind: entry.k, members: [] });
 		units.get(unit).members.push(index);
 		const durationMs = durationOf(entry);
@@ -229,9 +244,9 @@ function planSlot(entries, options = {}) {
 	});
 
 	const unitList = [...units.values()].map((u) => {
-		const shape = u.kind === 'episode'
-			? showSteps(u.members, entries, rows, tvUnlock, perUnlock)
-			: { steps: 1, prefix: [0, 1] };
+		let shape = { steps: 1, prefix: [0, 1] };
+		if (u.kind === 'episode') shape = showSteps(u.members, entries, rows, tvUnlock, perUnlock);
+		else if (u.kind === 'mix' && songs > 0) shape = mixSteps(u.members, entries, rows, songs);
 		return { key: u.key, kind: u.kind, steps: shape.steps, start: 0, prefix: shape.prefix };
 	});
 
