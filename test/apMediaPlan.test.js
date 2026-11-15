@@ -131,6 +131,49 @@ test('two shows are two units; the unit key follows contracts.unitKey', () => {
 	}
 });
 
+// A playlist cut into parts of `size` songs, as /apmedia yaml cuts it, listed in the order of `order`.
+function playlistParts(pl, count, size, order = null) {
+	const parts = [];
+	for (let n = 1, part = 1; n <= count; n += size, part++) {
+		const tr = Array.from({ length: Math.min(size, count - n + 1) }, (_, i) => [pl * 1000 + n + i, n + i, `Song ${n + i}`, 180000, pl * 2000 + n + i, 'Band']);
+		parts.push({ k: 'mix', id: `pl:${pl}:${part}`, pl, part, t: `Mix ${pl} Part ${part}`, d: tr.length * 180000, tr });
+	}
+	return order ? order.map((part) => parts[part - 1]) : parts;
+}
+
+test('songs per unlock: a playlist\'s parts share one unit, each copy opens the next part by number, prefix[c] = c', () => {
+	const parts = playlistParts(5, 12, 3, [3, 1, 4, 2]);
+	const plan = planSlot([...parts, movie('m1')], { songs_per_unlock: 3, starting_unlocks: 2 });
+	assert.deepStrictEqual(plan.units, [
+		{ key: 'mix-songs3|5', steps: 4, start: 1, prefix: [0, 1, 2, 3, 4] },
+		{ key: 'movie|m1', steps: 1, start: 1, prefix: [0, 1] },
+	]);
+	assert.deepStrictEqual(plan.entries.map((e) => e.step), [3, 1, 4, 2, 1], 'the part number, not the YAML order');
+	assert.deepStrictEqual([plan.C, plan.S, plan.startOpen, plan.goal_count], [5, 2, 2, 4], 'each part is a title');
+	for (let i = 0; i < parts.length; i++) {
+		assert.strictEqual(plan.entries[i].unit, contracts.unitKey(parts[i], { songsPerUnlock: 3 }));
+	}
+});
+
+test('songs per unlock 1 and 15; two playlists are two units; off keeps each part a unit of its own', () => {
+	const one = planSlot(playlistParts(5, 4, 1), { songs_per_unlock: 1 });
+	assert.deepStrictEqual(one.units[0], { key: 'mix-songs1|5', steps: 4, start: 3, prefix: [0, 1, 2, 3, 4] });
+	const two = planSlot([...playlistParts(5, 30, 15), ...playlistParts(6, 15, 15)], { songs_per_unlock: 15, starting_unlocks: 1 });
+	assert.deepStrictEqual(two.units.map((u) => [u.key, u.steps, u.start]), [['mix-songs15|5', 2, 1], ['mix-songs15|6', 1, 0]]);
+	const off = planSlot(playlistParts(5, 30, 15));
+	assert.deepStrictEqual(off.units.map((u) => [u.key, u.steps, u.prefix]), [['mix|pl:5:1', 1, [0, 1]], ['mix|pl:5:2', 1, [0, 1]]]);
+	assert.deepStrictEqual(off.units.map((u) => u.key), playlistParts(5, 30, 15).map((e) => contracts.unitKey(e)), 'the unit key at the default');
+});
+
+test('a part longer than songs per unlock is refused in plan.py\'s words, and the option takes 0 to 15', () => {
+	assert.throws(() => planSlot([movie('m1'), ...playlistParts(5, 15, 15)], { songs_per_unlock: 3 }),
+		/^Error: entry 2 \(Mix 5 Part 1\) holds 15 tracks, more than songs_per_unlock 3 \(the YAML attached to \/apmedia yaml again, which cuts the playlist at 3, or songs_per_unlock 0 would help\)$/);
+	assert.throws(() => planSlot(playlistParts(5, 6, 3, [2, 1]), { songs_per_unlock: 2 }), /^Error: entry 2 \(Mix 5 Part 1\) holds 3 tracks/, 'the first part by number');
+	assert.strictEqual(planSlot(playlistParts(5, 7, 3), { songs_per_unlock: 3 }).C, 3, 'a shorter last part is fine');
+	assert.strictEqual(resolveOptions({}).songs_per_unlock, 0);
+	for (const bad of [-1, 16, 2.5, '3']) assert.throws(() => resolveOptions({ songs_per_unlock: bad }), /^RangeError: songs_per_unlock must be a whole number from 0 to 15\.$/, String(bad));
+});
+
 test('worked example: 3 books with starting_unlocks 1 open 1 and leave 2 locked', () => {
 	const plan = planSlot([book('a', [3600000]), book('b', [3600000]), book('c', [3600000])], { starting_unlocks: 1 });
 	assert.strictEqual(plan.C, 3);

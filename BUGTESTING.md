@@ -17,7 +17,8 @@ Archipelago game made from the Plex library, with its accounts and consent, list
 Archipelago Options Creator, every way a play is counted, and an upload to archipelago.gg. Phase
 18 is the first live pass of that world's items and traps (world 0.3.0): snacks and the Snack
 Bar, Fast Forward, Remote Control, the holds, and the traps that act on the bot's music and
-audiobooks.
+audiobooks. Phase 19 is the first live pass of world 0.4.0's songs per unlock, a playlist opened 1
+to 15 songs at a time, and of the bot skipping a locked playlist part's songs in voice.
 
 The bot now persists its own logs to `data/logs/`, so a failure you didn't happen to be watching
 is still there afterwards:
@@ -1264,20 +1265,20 @@ names keeps relaying your real game.
       it back on: `!diag` is ✓ again.
 - [ ] Other runs `/apmedia apworld`: "⛔ Only the bot owner can hand out the apworld.", in public,
       as every `apworld` reply is. You run it: `plex_media.apworld` attached, "the Plex Media world
-      0.3.0 (N KB), for Archipelago 0.6.8 or later.", the install steps, and "This PC has no
+      0.4.0 (N KB), for Archipelago 0.6.8 or later.", the install steps, and "This PC has no
       plex_media.apworld installed yet (Archipelago's custom_worlds folder)." Where an earlier
-      pass installed world 0.2.0 (the 2026-11-13 rehearsal did), the last line is "⚠️ This PC has
-      world 0.2.0 installed, and this file is 0.3.0: install it to bring the PC up to date."
-      instead.
+      version is installed (the 2026-11-13 rehearsal installed 0.2.0), the last line names it
+      instead, as in "⚠️ This PC has world 0.3.0 installed, and this file is 0.4.0: install it to
+      bring the PC up to date."
 - [ ] Install it (Archipelago Launcher → **Install APWorld**, then restart the Launcher).
-      `/apmedia apworld` again: "This PC already has world 0.3.0 installed."
+      `/apmedia apworld` again: "This PC already has world 0.4.0 installed."
 - [ ] An older version: close every Archipelago program, then from the bot's folder run
-      `node -e "require('./helpers/apworldBuild.js').writeApworld('C:/ProgramData/Archipelago/custom_worlds/plex_media.apworld', { worldVersion: '0.2.0' })"`.
-      `/apmedia apworld`: "⚠️ This PC has world 0.2.0 installed, and this file is 0.3.0: install
+      `node -e "require('./helpers/apworldBuild.js').writeApworld('C:/ProgramData/Archipelago/custom_worlds/plex_media.apworld', { worldVersion: '0.3.0' })"`.
+      `/apmedia apworld`: "⚠️ This PC has world 0.3.0 installed, and this file is 0.4.0: install
       it to bring the PC up to date." `/apmedia yaml name:VersionCheck`, and generate a folder
       holding only `VersionCheck.yaml`. Generation stops, and its error holds
-      `Settings reports required version of world "Plex Media" is at least 0.3.0`. Install the
-      attached apworld over it: the next `/apmedia apworld` says 0.3.0 again, and the same folder
+      `Settings reports required version of world "Plex Media" is at least 0.4.0`. Install the
+      attached apworld over it: the next `/apmedia apworld` says 0.4.0 again, and the same folder
       generates.
 
 **Accounts and consent**
@@ -1348,8 +1349,8 @@ names keeps relaying your real game.
       in Discord, and the bot picks them from the Plex library."
 - [ ] `/apmedia yaml file:CreatorFan.yaml`: a private reply, "📝 `CreatorFan`: your list, attached
       as `CreatorFan.yaml`.", 15 movies, "📄 Settings from `CreatorFan.yaml`.", and no line about a
-      random option. In the returned file, `requires` names `Plex Media: 0.3.0`, the 13 list
-      settings follow the 25 game options (`list_preset: movies`, each count `preset`), then come
+      random option. In the returned file, `requires` names `Plex Media: 0.4.0`, the 13 list
+      settings follow the 26 game options (`list_preset: movies`, each count `preset`), then come
       `progression_balancing: "normal"`, `accessibility: "items"` and the empty item and location
       options, then `list_info` and 15 entries. Generated alone in a folder of its own, it gives no
       Plex Media error. The reply's "N entries (…), N locations, about N h" is word for word the
@@ -1729,8 +1730,8 @@ location left in that slot's world and sends everything there to its owners in o
 The watch's relay posts the room's own lines for each send; the lines below are the Plex Media
 ones.
 
-Run Phase 17 first, to its end: world 0.3.0 installed on this PC (`/apmedia apworld`: "This PC
-already has world 0.3.0 installed."), and none of its links and no watch N left. You need Friend
+Run Phase 17 first, to its end: world 0.4.0 installed on this PC (`/apmedia apworld`: "This PC
+already has world 0.4.0 installed."), and none of its links and no watch N left. You need Friend
 (the second Discord account, with no Plex account linked after Phase 17's last step), a voice
 channel, `audiobooksEnabled` on with an audiobook in the catalog, and for the clip steps a Plex
 playlist of your own. Steps marked **Friend** need the second account, and **Book** an audiobook
@@ -1747,8 +1748,8 @@ the Remote Controls on hand. In the trap steps "…" stands for the start of the
       The reply's third line is "Items: 3 Fast Forwards, 2 Remote Controls, N snacks.", with no
       trap, since `trap_percentage` is 0 unless asked. In the file the game options end
       `snack_variety: true`, `fast_forwards: 3`, `remote_controls: 2`, `snack_bar_trades: 3`,
-      `snack_bar_price: 5`, `trap_percentage: 0` and the seven `*_weight` options at 2, 2, 1, 1,
-      1, 1 and 1, before the 13 list settings.
+      `snack_bar_price: 5`, `trap_percentage: 0`, the seven `*_weight` options at 2, 2, 1, 1, 1, 1
+      and 1, and world 0.4.0's `songs_per_unlock: 3`, before the 13 list settings.
 - [ ] **Friend.** `/apmedia yaml name:FriendTraps preset:movies unwatched:False more:strict=true trap_percentage=50 commercial_break_weight=4 slow_motion_weight=0`.
       Its third line is "Items: 1 Fast Forward, N traps (…), N snacks.": 15 movies leave room for
       3 useful items, two Wild Tickets and one Fast Forward. The traps in brackets give Commercial
@@ -2131,6 +2132,179 @@ three or more tracks after the current one. You are listening, so each `/send` h
       it." when any were held or waiting. Friend unlinks FriendTraps. `!ap unwatch T`. In
       `/config` → AP Media, "Trap clips playlist" blank and "Traps" and "Voice and book traps" on.
       Close the server window and delete the seed's folder.
+
+---
+
+## Phase 19: Plex Media songs per unlock and locked songs in voice (live)
+
+World 0.4.0 (2026-11-14) cuts a list's music playlist into parts of `songs_per_unlock` songs, 3
+for a list built from the command's options alone, and one unlock opens the parts in turn: its
+first copy part 1, its second part 2. In the bot's voice channel, a song of a part still locked
+for someone listening is skipped before it plays, unless someone there has it open. It is tested
+offline only. `npm run test:apworld` generates a playlist at 3 songs per unlock beside the same
+playlist in one whole part, and one 600-song playlist at 1 song per unlock, and the `!ap next`
+worker rebuilds and verifies both. `test/apMediaSongsPerUnlock.test.js` (14 tests) holds the
+builder and the reader, and `test/apMediaSongsGame.test.js` (5 tests) plays a songs list through
+the real game and a stand-in room. The skipping runs over the real `app/bot.js` and a FakePlayer
+in `test/playbackAutoskip.test.js` (25 tests), over the real voice library's connection code in
+`test/playbackAutoskipJoin.test.js` (3 tests), and through the real game and three slots in the
+14 tests of `test/apMediaGame.test.js`'s autoskip section. **Nothing below has met a live room, a
+Plex playlist or Discord voice yet.**
+
+Like Phase 18, this phase is written for a room hosted on this PC, whose `ArchipelagoServer.exe`
+window takes `/send`; on archipelago.gg the room page's command box takes it instead.
+
+Accepted, and no bug when seen: `!viewqueue` still lists locked songs, and each is skipped only
+when it reaches the head of the queue; another recording with a locked song's artist and title is
+skipped as that song; a song in a locked part that is also on a locked album is skipped with its
+part; when locked songs end playback while an earlier song's voice join is still under way, the
+bot joins and leaves at once; a finished YAML edited by hand to a higher `songs_per_unlock` is
+taken, each copy still opening one part as cut, and only the unlock's name says the higher number;
+and location names number a part's songs inside the part, so every part has a `#01`.
+
+You need world 0.4.0 installed on this PC (Phase 17's "Turning it on, and the apworld" steps:
+`/apmedia apworld` answers "This PC already has world 0.4.0 installed."), and no link or watch
+left from Phases 17 and 18. You need Friend (the second Discord account), a voice channel,
+Plexamp signed in to your Plex account, a ChecksFinder YAML named `Finder`, and `<Mix>`: a Plex
+music playlist of exactly 12 songs of 30 s or more, none of them on an album these lists hold,
+which makes 4 parts at 3 songs per unlock, as the counts below need. S1 to S12 below are its songs
+in the playlist's order. Steps marked **Friend** need the second account. Set "Announcements" to
+"Every check" for this phase, so a banked song gets a line of its own.
+
+**An older seed (only while one is in use)**
+
+- [ ] Only while a watched room's seed was made with world 0.2.0 or 0.3.0 and holds a Plex Media
+      slot: after installing 0.4.0, stop and start the bot (`!restart` keeps the logic worker,
+      which loaded the world it started with). The bot log's `logic worker ready in N s: M/M slots
+      verified against the multidata` line for that room has no `answers sphere 1 only` line after
+      it, and `/ap next slot:<its Plex Media slot>` answers from the seed's logic.
+
+**Lists from the command**
+
+- [ ] `/apmedia yaml name:SongsPlex preset:none playlist:<Mix> more:starting_unlocks=1 wild_tickets=0`.
+      The line after the counts reads "`<Mix>` opens 3 songs per unlock, in 4 parts." In the file
+      the game options end `songs_per_unlock: 3`, `wild_tickets` is 0, and the entries are
+      `<Mix> Part 1` to `<Mix> Part 4`, each holding 3 of the playlist's songs in its order. Keep
+      this file.
+- [ ] `/apmedia yaml name:SongsOne preset:none playlist:<Mix> more:songs_per_unlock=1`: "`<Mix>`
+      opens 1 song per unlock, in 12 parts." With `more:songs_per_unlock=off` instead: "`<Mix>` is
+      in 1 part of 12 songs, with one unlock." With `more:songs_per_unlock=16`: "❌ songsPerUnlock
+      must be a whole number from 0 to 15 or off.", and no file. Throw the files away.
+- [ ] `/apmedia yaml name:SongsNone more:songs_per_unlock=1`: 15 movies, and "⚠️ Songs per Unlock
+      (`songs_per_unlock`) cuts a music playlist into parts, and this list has none." In a channel,
+      `!apmedia yaml name=SongsBang preset=none playlist="<Mix>" songs=3`: "I do not know the
+      option songs. The options are: …", with `songs_per_unlock` among them. Throw the file away.
+- [ ] `!apmedia ?` lists `songs_per_unlock` among the yaml keys, and its PLAYING section has "In
+      the bot's voice channel, a song of a playlist part still locked for someone listening is
+      skipped, unless someone there has it open; an album never locks a song."
+
+**From the Options Creator**
+
+- [ ] Options Creator, Plex Media: Unlocks and goal has Songs per Unlock right after Episodes per
+      Unlock, at Off, and its tooltip starts "How many songs of the music playlist in List:
+      Playlist one unlock opens". Locked Watches' tooltip ends "played in Plexamp or another Plex
+      app it is banked or ignored as above, and an album never locks a song."
+- [ ] Player Name `SongsFile`, List: Preset `none`, List: Playlist `<Mix>`, Songs per Unlock left
+      at Off. Export it and attach it to `/apmedia yaml`: "`<Mix>` is in 1 part of 12 songs, with
+      one unlock." Set Songs per Unlock to 1, export and attach again: "`<Mix>` opens 1 song per
+      unlock, in 12 parts."
+- [ ] Random? on for Songs per Unlock: "❌ Songs per Unlock (`songs_per_unlock`) is random: set a
+      number or off, the bot cuts a music playlist at it when it writes the list." With Random? on
+      for List: Movies too: "❌ List: Movies (`list_movies`) and Songs per Unlock
+      (`songs_per_unlock`) are random: the bot needs a value in each to build the list."
+- [ ] A Creator file with a trigger under `Plex Media:` that sets `songs_per_unlock: 1`: "❌
+      Trigger 1 in your file sets Songs per Unlock (`songs_per_unlock`), which the bot does not
+      follow: set it in the file itself."
+
+**A file attached again, and a hand edit**
+
+- [ ] Attach `SongsPlex.yaml` to `/apmedia yaml` with nothing typed: "`<Mix>` opens 3 songs per
+      unlock, in 4 parts." again. With `more:songs_per_unlock=1` typed: "`<Mix>` opens 1 song per
+      unlock, in 12 parts." Keep the first `SongsPlex.yaml`, at 3.
+- [ ] In a copy of `SongsPlex.yaml`, change `songs_per_unlock: 3` to `songs_per_unlock: 1`, and
+      generate the copy with `Finder.yaml` in a folder of their own. Generation stops, and its
+      error holds "Plex Media list of SongsPlex: entry 1 (<Mix> Part 1) holds 3 tracks, more than
+      songs_per_unlock 1 (the YAML attached to /apmedia yaml again, which cuts the playlist at 1,
+      or songs_per_unlock 0 would help)". Delete the copy.
+
+**The seed**
+
+- [ ] **Friend.** `/apmedia yaml name:FriendSongs preset:none playlist:<Mix> movies:2 unwatched:False more:songs_per_unlock=off`:
+      "`<Mix>` is in 1 part of 12 songs, with one unlock."
+- [ ] Put `SongsPlex.yaml`, `FriendSongs.yaml` and `Finder.yaml` in a folder of their own and
+      generate it: no Plex Media error. A check you earn sends the item at its location, and the
+      counts below hold only while SongsPlex's copies of `<Mix>: Next 3 Songs` past its starting
+      one, and its one Wild Ticket, come from `/send`. In the spoiler log (`AP_*_Spoiler.txt` in
+      the output zip), no SongsPlex location of `<Mix> Part 1` or `<Mix> Part 2`, whose songs this
+      phase sends before its last `/send`, holds `<Mix>: Next 3 Songs (SongsPlex)`. Generate again
+      until none does. Host it: `ArchipelagoServer.exe --port 38281 <its AP_*.zip>`.
+- [ ] `!ap watch localhost:38281 Finder` (its id is W below), `!ap claim W SongsPlex`, then
+      `/apmedia link slot:SongsPlex`. The welcome has "1 of 4 titles open: <Mix> Part 1". Friend
+      runs `!ap claim W FriendSongs` and `/apmedia link slot:FriendSongs`.
+- [ ] `/apmedia list` has "• <Mix> Part 1 (S1, S2 and S3) · Nm". `/apmedia list show:locked` has
+      "• <Mix> Part 2 (S4, S5 and S6) · Nm · opened by <Mix>: Next 3 Songs (the 2nd)", then part
+      3 "(the 3rd)" and part 4 "(the 4th)".
+- [ ] **Friend.** Friend's `/apmedia list show:locked`: when it lists `<Mix>`, `/send FriendSongs
+      <the unlock it names>` (`<Mix> (playlist)`) in the server window, and it moves to ready.
+
+**Locked songs in voice.** Join a voice channel; Friend stays out of it unless a step says so.
+
+- [ ] `!playlist plex-play <Mix>`: "The playlist "<Mix>" has been loaded." S1 to S3 play (`!skip`
+      moves on sooner). Before anything more plays: "⏭️ Skipped 9 songs still locked in <Mix> on
+      `SongsPlex`'s list: **S4**, **S5**, **S6** and 6 more.", and playback ends as after a last
+      track. `npm run logs -- --raw` has one `track-locked` event, `count` 9, `songs` naming the
+      nine as `Artist - Title`, `slots` `SongsPlex` and `playlists` `<Mix>`, and no `apmedia-credit`
+      event for them.
+- [ ] With the bot out of the channel, `!play <S7's title>` (choose S7 if a list comes): the bot
+      never joins, and the line is "⏭️ Skipped 1 song still locked in <Mix> on `SongsPlex`'s
+      list: **S7**."
+- [ ] Deafen yourself, then `!play <S4's title>`: S4 plays, since nobody in the channel can hear
+      it, and nothing counts for SongsPlex. `!stop`, and undeafen.
+- [ ] **Friend.** Friend joins the channel. `!play <S4's title>`: S4 plays with no skip line,
+      since FriendSongs has `<Mix>` open. `!loop` while it plays, and Friend leaves the channel:
+      S4 plays to its end and starts again, never skipped, and "🔒 `SongsPlex` **<Mix> Part 2**: 1
+      check waiting for its unlock" posts for your listen. `!seek 0:30`: it plays on from 0:30.
+      `!loop` again, then `!stop`.
+- [ ] Leave the voice channel and `!play <S7's title>`: the bot asks you to join a voice channel
+      and keeps S7 in the queue. `!loop`, then join the channel and `!play` with nothing after it:
+      S7 is skipped with its line all the same.
+- [ ] Optional: `!youtube <a video of S7>` plays: a YouTube entry is never checked.
+- [ ] Close the server window. Once `/apmedia status` no longer shows SongsPlex connected,
+      `!play <S6's title>`: S6 plays, since the bot cannot read SongsPlex's items. `!stop` while
+      it plays, then host the seed again with the same command: both slots reconnect.
+- [ ] Stop the bot, add `"apMediaAutoskip": false` to `data/config.overrides.json`, and start it.
+      `!play <S6's title>`: S6 plays, with no skip line. `!stop` while it plays. Stop the bot,
+      take the key out, and start it again. A `!restart` instead of the stop and start keeps the
+      value the process read when it started.
+- [ ] Optional, and hard to hit by hand, since the window is under a second on a healthy
+      connection: `!play <S1's title>`, and while the bot is still joining, `!removesong 1` and
+      `!play <S7's title>`. The bot leaves the channel as its join lands, and `/book play` works at
+      once.
+
+**Copies, a Wild Ticket, and parts named by their songs**
+
+- [ ] In Plexamp, play S5 to its end, locked as it is. Within about 2 minutes: "🔒 `SongsPlex`
+      **<Mix> Part 2**: 1 check waiting for its unlock", and `/apmedia status` counts 2 banked,
+      S4's and S5's.
+- [ ] `/send SongsPlex <Mix>: Next 3 Songs`: "🔓 `SongsPlex` **<Mix> Part 2** unlocked, 2 checks
+      sent". `/apmedia list` has part 2 ready, and `show:locked` has part 3 "(the 3rd)".
+- [ ] In voice, `!playlist plex-play <Mix>`: S1 to S6 play (`!skip` moves on), then "⏭️ Skipped 6
+      songs still locked in <Mix> on `SongsPlex`'s list: **S7**, **S8**, **S9** and 3 more."
+- [ ] `/send SongsPlex Wild Ticket`. In `/apmedia redeem`, type a few letters of S10's title into
+      `title:`: the choice reads "<Mix> Part 4 (S10, S11 and 1 more)". Pick it: "🎟️ Spent a Wild
+      Ticket on **<Mix> Part 4**. 0 tickets left." `/apmedia list show:locked` now lists part 3
+      of `<Mix>` alone.
+- [ ] `/send SongsPlex <Mix>: Next 3 Songs`: part 3 opens, and nothing of `<Mix>` is locked. A
+      fourth copy would open nothing new, part 4 being open already.
+- [ ] `!apmedia check <S7's title in lower case>`: "✅ **<Mix> Part 3**: 3 checks sent.", in one
+      step, with no "Did you mean". `!apmedia check <S8's title less its last letter>` counts
+      nothing.
+
+**Cleanup**
+
+- [ ] `/apmedia unlink slot:SongsPlex`; Friend unlinks FriendSongs. `!ap unwatch W`. Close the
+      server window, delete the seed's folder, and set "Announcements" back to "Completions and
+      unlocks".
 
 ---
 

@@ -1,10 +1,13 @@
 // helpers/configStore.js and config/config.js: the Plex Media world's settings, the AP Media group.
 //
-// What has to hold: every apMedia* setting has a default (a setting without one reads undefined
-// until somebody saves it) and a row in its own /config group; none is named archipelago*, which
-// would make every save re-apply the Archipelago monitor; the rows enforce the ranges the watcher
-// relies on; and the /config panel, one embed listing every setting, stays inside Discord's
-// 6,000-character embed total, past which Discord refuses the whole panel.
+// What has to hold: every apMedia* setting in contracts.SETTINGS has a default (a setting without
+// one reads undefined until somebody saves it) and a row in its own /config group; none is named
+// archipelago*, which would make every save re-apply the Archipelago monitor; the rows enforce the
+// ranges the watcher relies on; and the /config panel, one embed listing every setting, stays
+// inside Discord's 6,000-character embed total, past which Discord refuses the whole panel.
+// apMediaAutoskip is the one apMedia* key with no row, on purpose: the panel's worst case is 14
+// characters under that total, so the key lives in config/config.js alone, outside
+// contracts.SETTINGS, and is set in data/config.overrides.json.
 //
 // Harness: the real configStore and config.js. The default values are compared only when there is
 // no data/config.overrides.json (as test/configStore.test.js does), since a real one overrides them.

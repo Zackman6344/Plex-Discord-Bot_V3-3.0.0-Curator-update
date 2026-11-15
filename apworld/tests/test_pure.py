@@ -9,8 +9,11 @@
 # world 0.3.0's items (fixed ids appended after every old one, the pool filling every location, the
 # useful items' room and what excluded watches, tracks and finishes take of it, the trap split and
 # its error, the snack deal, the item and trap options, the new slot_data keys and the reserved
-# names), that constants.py and sanitize_text still mirror
-# helpers/apMediaContracts.js, and that run.py loads and runs every test file that holds scenarios.
+# names), world 0.4.0's songs per unlock (a playlist's parts on one unit, opened in part order, its
+# names, tags and slot_data key, the part too long for it, lists without it planning exactly as
+# world 0.3.0 planned them, and the bot's songs-mode game fixture being the slot_data it writes), that
+# constants.py and sanitize_text still mirror helpers/apMediaContracts.js, and that run.py loads and
+# runs every test file that holds scenarios.
 # The option classes themselves import AP, so test_generate.py's A0 and A1 check them against these
 # tables.
 #
@@ -393,7 +396,9 @@ class PlanTest(unittest.TestCase):
 		try:
 			with self.assertRaises(P.plan.PlanError) as caught:
 				plan_of([movie(n, "F") for n in range(6)])
-			self.assertIn("6 unlock copies", str(caught.exception))
+			self.assertEqual(str(caught.exception), "the list needs 6 unlock copies; at most 5 fit in one slot (fewer "
+			                                        "episodes, a higher episodes_per_unlock, tv_unlock: season, or the "
+			                                        "list built again at a higher songs_per_unlock would help)")
 		finally:
 			P.plan.MAX_COPIES = saved
 
@@ -407,6 +412,182 @@ class PlanTest(unittest.TestCase):
 		# render() spells out the summary's keys, so one it leaves out would vanish from the file unseen.
 		built = make_plan_cases.build_cases()
 		self.assertEqual(json.loads(make_plan_cases.render(built)), built)
+
+
+def songs(count, start=1):
+	return [(f"Song {n}", f"Artist {n % 4}", 150000 + n * 1000) for n in range(start, start + count)]
+
+
+def playlist(size, tracks, pl=40, title="Road Trip"):
+	"""tracks cut as /apmedia yaml cuts them: parts of size, or of 15 while songs_per_unlock is off."""
+	return make_plan_cases.parts_of(pl, title, tracks, size or C.MIX_TRACKS)
+
+
+class SongsPerUnlockTest(unittest.TestCase):
+	def test_a_playlist_opens_part_by_part_at_1_3_and_15_songs(self):
+		for size, parts in ((1, 15), (3, 5), (15, 1)):
+			with self.subTest(songs_per_unlock=size):
+				plan = plan_of(playlist(size, songs(15)), songs_per_unlock=size)
+				self.assertEqual([(u.key, u.kind, u.steps, u.prefix) for u in plan.units],
+				                 [(f"mix-songs{size}|40", "mix", parts, list(range(parts + 1)))])
+				self.assertEqual([pe.step for pe in plan.entries], list(range(1, parts + 1)))
+				self.assertEqual([len(pe.entry["tr"]) for pe in plan.entries], [size] * parts)
+				self.assertEqual((plan.copies, plan.main_count), (parts, 15))
+		self.assertEqual(P.plan.unit_key(GOOD["mix"], False, 3, 3), "mix-songs3|4")
+		self.assertEqual(P.plan.unit_key(GOOD["mix"], True, 3, 1), "mix-songs1|4")
+		self.assertEqual(P.rules.opened_by(5, list(range(6)), 5), 1)
+
+	def test_parts_open_in_part_order_whatever_the_yaml_order(self):
+		parts = playlist(3, songs(15))
+		plan = plan_of([parts[3], parts[0], parts[4], parts[2], parts[1], movie(1, "Film")], songs_per_unlock=3,
+		               starting_unlocks=2)
+		self.assertEqual([pe.step for pe in plan.entries], [4, 1, 5, 3, 2, 1])
+		self.assertEqual([(u.key, u.start) for u in plan.units], [("mix-songs3|40", 1), ("movie|rk:1", 1)])
+		self.assertEqual(open_entries(plan), ["mix|pl:40:1", "movie|rk:1"])
+
+	def test_off_keeps_each_part_a_title_of_its_own_as_world_0_3_0_did(self):
+		parts = playlist(0, songs(30))
+		for options in ({}, {"songs_per_unlock": 0}):
+			with self.subTest(options=options):
+				plan = plan_of(parts, **options)
+				self.assertEqual([(u.key, u.steps, u.prefix) for u in plan.units],
+				                 [("mix|pl:40:1", 1, [0, 1]), ("mix|pl:40:2", 1, [0, 1])])
+				self.assertEqual([pe.step for pe in plan.entries], [1, 1])
+				self.assertEqual(registry_of(plan).unit_name, {"mix|pl:40:1": "Road Trip Part 1 (playlist)",
+				                                               "mix|pl:40:2": "Road Trip Part 2 (playlist)"})
+		together = plan_of(parts, songs_per_unlock=15)
+		self.assertEqual([(u.key, u.steps) for u in together.units], [("mix-songs15|40", 2)])
+		self.assertEqual(registry_of(together).unit_name, {"mix-songs15|40": "Road Trip: Next 15 Songs"})
+
+	def test_a_part_longer_than_songs_per_unlock_stops_the_list(self):
+		whole = playlist(0, songs(30))
+		with self.assertRaises(P.plan.PlanError) as caught:
+			plan_of([movie(1, "Film"), whole[1], whole[0]], songs_per_unlock=3)
+		self.assertEqual(str(caught.exception), "entry 3 (Road Trip Part 1) holds 15 tracks, more than songs_per_unlock 3 "
+		                                        "(the YAML attached to /apmedia yaml again, which cuts the playlist at 3, "
+		                                        "or songs_per_unlock 0 would help)")
+		# A part of exactly that many and a shorter last part are what the bot writes.
+		plan = plan_of(playlist(3, songs(7)), songs_per_unlock=3)
+		self.assertEqual([len(pe.entry["tr"]) for pe in plan.entries], [3, 3, 1])
+		self.assertEqual(plan.units[0].steps, 3)
+
+	def test_the_goal_and_the_pool_count_parts(self):
+		# One 60-song playlist at the defaults: the parts are the titles, so the goal grows with them,
+		# and the copies take the room the useful items and snacks had.
+		sixty = songs(60)
+		for size, parts, open_songs, wild, ff, rc, snacks in ((0, 4, 45, 2, 2, 1, 54), (3, 20, 9, 2, 2, 1, 38),
+		                                                       (1, 60, 3, 2, 1, 0, 0)):
+			with self.subTest(songs_per_unlock=size):
+				plan = plan_of(playlist(size, sixty), songs_per_unlock=size)
+				self.assertEqual((plan.copies, plan.start, plan.goal_count), (parts, 3, parts * 80 // 100))
+				self.assertEqual(sum(len(pe.entry["tr"]) for pe in plan.entries if pe.key in open_entries(plan)),
+				                 open_songs)
+				self.assertEqual((plan.wild, plan.fast_forwards, plan.remote_controls, sum(plan.snacks.values())),
+				                 (wild, ff, rc, snacks))
+				self.assertEqual(sum(pool_of(plan).values()), plan.main_count + plan.checkpoint_count)
+
+	def test_unit_names_and_tags(self):
+		road, party = playlist(3, songs(5)), playlist(3, songs(2, 20), pl=41, title="Party")
+		twin = playlist(3, songs(4, 30), pl=42)
+		alone = make_plan_cases.mix(43, 1, "Mix Part 2", songs(2, 40))
+		registry = registry_of(plan_of(road + party + twin + [alone], songs_per_unlock=3))
+		self.assertEqual(registry.unit_name, {"mix-songs3|40": "Road Trip: Next 3 Songs", "mix-songs3|41": "Party: Next 3 Songs",
+		                                      "mix-songs3|42": "Road Trip: Next 3 Songs [42]",
+		                                      "mix-songs3|43": "Mix Part 2: Next 3 Songs"})
+		self.assertEqual(registry.location_name["mix|pl:42:2|t1|song33"], "Road Trip Part 2 #01 Artist 1 - Song 33")
+		one = registry_of(plan_of(playlist(1, songs(2)), songs_per_unlock=1))
+		self.assertEqual(one.unit_name, {"mix-songs1|40": "Road Trip: Next Song"})
+		# The name comes from the first part the YAML lists, whichever part that is.
+		later = registry_of(plan_of(list(reversed(road)), songs_per_unlock=3))
+		self.assertEqual(later.unit_name, {"mix-songs3|40": "Road Trip: Next 3 Songs"})
+		# The bot adds " Part <k>" only to a playlist of several parts, so a title's own "Part 1" stays.
+		summer = make_plan_cases.parts_of(44, "Summer Part 1", songs(2, 50), 3)
+		summer_cut = make_plan_cases.parts_of(45, "Summer Part 1", songs(5, 60), 3)
+		self.assertEqual([entry["t"] for entry in summer + summer_cut],
+		                 ["Summer Part 1", "Summer Part 1 Part 1", "Summer Part 1 Part 2"])
+		titled = registry_of(plan_of(summer + summer_cut, songs_per_unlock=3))
+		self.assertEqual(titled.unit_name, {"mix-songs3|44": "Summer Part 1: Next 3 Songs",
+		                                    "mix-songs3|45": "Summer Part 1: Next 3 Songs [45]"})
+
+	def test_two_lists_with_one_playlist_at_two_sizes(self):
+		thirty = songs(30)
+		a = plan_of(playlist(3, thirty), songs_per_unlock=3, timesanity_albums=5)
+		b = plan_of(playlist(0, thirty), timesanity_albums=5)
+		registry = registry_of(a, b)
+		self.assertEqual(registry.unit_keys, ["mix-songs3|40", "mix|pl:40:1", "mix|pl:40:2"])
+		info = P.entries.parse_list_info({})
+		data_a = P.slotdata.build_slot_data(a, registry, info, C.WORLD_VERSION, 0)
+		data_b = P.slotdata.build_slot_data(b, registry, info, C.WORLD_VERSION, 0)
+		# The first part's first 3 tracks and its 5-minute checkpoint are one location in both lists;
+		# the second parts hold other songs, so their tracks are not.
+		shared = {"mix|pl:40:1|t1|song1", "mix|pl:40:1|t3|song3", "mix|pl:40:1|@5"}
+		ids_a = {i for e in data_a["entries"] for i in [t[-1] for t in e["tr"]] + [c[1] for c in e["cp"]]}
+		ids_b = {i for e in data_b["entries"] for i in [t[-1] for t in e["tr"]] + [c[1] for c in e["cp"]]}
+		self.assertTrue({registry.location_id[key] for key in shared} <= ids_a & ids_b)
+		self.assertIn(registry.location_id["mix|pl:40:2|t1|song4"], ids_a - ids_b)
+		self.assertIn(registry.location_id["mix|pl:40:2|t1|song16"], ids_b - ids_a)
+		# Named from the list that comes first, as any shared location is.
+		self.assertEqual(registry.location_name["mix|pl:40:1|@5"], "Road Trip Part 1 @ 5m")
+
+	def test_slot_data_says_songs_per_unlock_and_each_parts_step(self):
+		parts = playlist(3, songs(15))
+		plan = plan_of([parts[2], movie(1, "Film"), *parts[:2], *parts[3:]], songs_per_unlock=3)
+		registry = registry_of(plan)
+		data = P.slotdata.build_slot_data(plan, registry, P.entries.parse_list_info({}), C.WORLD_VERSION, 0)
+		keys = list(data)
+		self.assertEqual((data["songs_per_unlock"], keys.index("songs_per_unlock")), (3, keys.index("episodes_per_unlock") + 1))
+		unit = registry.unit_id["mix-songs3|40"]
+		self.assertEqual([(e["id"], e["u"], e["s"]) for e in data["entries"] if e["k"] == "mix"],
+		                 [("pl:40:3", unit, 3), ("pl:40:1", unit, 1), ("pl:40:2", unit, 2), ("pl:40:4", unit, 4),
+		                  ("pl:40:5", unit, 5)])
+		self.assertEqual(data["units"][0], {"id": unit, "name": "Road Trip: Next 3 Songs", "kind": "mix", "steps": 5,
+		                                    "start": 2})
+		off = P.slotdata.build_slot_data(plan_of(parts[:1]), registry_of(plan_of(parts[:1])), P.entries.parse_list_info({}),
+		                                 C.WORLD_VERSION, 0)
+		self.assertEqual(off["songs_per_unlock"], 0)
+
+	def test_the_bots_songs_fixture_is_what_the_world_writes(self):
+		# test/fixtures/apmedia/songsSlotData.js hands the bot's game tests scenario (b)'s list at 3 songs per
+		# unlock, rebuilt from slot_data_mixed.json in JS; it has to be the slot_data this world writes for it.
+		import test_generate
+
+		plan = plan_of(test_generate.mixed_entries(), **dict(test_generate.MIXED_OPTIONS, songs_per_unlock=3))
+		info = P.entries.parse_list_info({"builder": 1, "created_at": 1731200000, "label": "Mixed list", "account": 1,
+		                                  "discord": "1234"})
+		mine = _lists(P.slotdata.build_slot_data(plan, registry_of(plan), info, C.WORLD_VERSION,
+		                                         test_generate.FIXED_GENERATED_AT))
+		js = run_node("const { songsSlotData } = require('./test/fixtures/apmedia/songsSlotData.js');\n"
+		              "process.stdout.write(JSON.stringify(songsSlotData()));\n")
+		self.assertEqual([unit for unit in mine["units"] if unit["kind"] == "mix"],
+		                 [{"id": C.unlock_id(5), "name": "Road Trip: Next 3 Songs", "kind": "mix", "steps": 2, "start": 0}])
+		self.assertEqual(js, mine, "songsSlotData.js no longer matches the world: rerun run.py --update-golden if "
+		                           "slot_data_mixed.json is behind, otherwise change the fixture to match")
+
+	def test_lists_without_songs_per_unlock_plan_exactly_as_world_0_3_0_did(self):
+		# world_0_3_0_plans.json was written by world 0.3.0's own modules (986cd74) before 0.4.0 changed
+		# any of them: each seed's plans, names, ids, data package and slot_data, as sha256 digests.
+		with open(os.path.join(purelib.HERE, "fixtures", "world_0_3_0_plans.json"), encoding="utf-8") as handle:
+			frozen = json.load(handle)["seeds"]
+		self.assertEqual(len(frozen), 5)
+		info = P.entries.parse_list_info({"created_at": 1731200000, "label": "Frozen list"})
+		for seed in frozen:
+			plans = [P.plan.plan_slot(P.entries.parse_entries(slot["entries"]), P.plan.plan_options(slot["options"]))
+			         for slot in seed["slots"]]
+			registry = P.registry.Registry(list(enumerate(plans, 1)))
+			slot_data = []
+			for plan in plans:
+				data = P.slotdata.build_slot_data(plan, registry, info, "0.3.0", 1731300000)
+				self.assertEqual(data.pop("songs_per_unlock"), 0, seed["name"])
+				slot_data.append(data)
+			now = {"plans": [P.plan.summary(plan) for plan in plans], "unit_id": registry.unit_id,
+			       "location_name": registry.location_name, "location_id": registry.location_id,
+			       "package": P.datapackage.build_package(registry), "slot_data": slot_data}
+			with self.subTest(seed=seed["name"]):
+				self.assertEqual(registry.unit_name, seed["unit_name"])
+				for part, digest in seed["sha256"].items():
+					text = json.dumps(now[part], sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+					self.assertEqual(hashlib.sha256(text.encode("ascii")).hexdigest(), digest,
+					                 f"{part} differs from world 0.3.0's")
 
 
 # Every item that is not an unlock, with its id as an offset from BASE_ID. Popcorn and Wild Ticket
@@ -440,6 +621,8 @@ DESIGNED_ITEM_OPTIONS = {
 	"intermission_weight": dict(WEIGHT, default=1),
 	"slow_motion_weight": dict(WEIGHT, default=1),
 }
+# World 0.4.0 appended songs per unlock. Off by default, so a YAML without it plans as 0.3.0 did.
+OPTIONS_0_4 = {"songs_per_unlock": {"type": "range", "min": 0, "max": 15, "default": 0}}
 # 6 watches and 30 checkpoints; at the defaults 3 unlocks, 2 Wild Tickets and 1 Fast Forward leave 30 filler slots.
 SIX_FILMS = make_plan_cases.SIX_FILMS
 NO_TRAPS = make_plan_cases.NO_TRAPS
@@ -485,8 +668,10 @@ class PoolTest(unittest.TestCase):
 	def test_the_item_and_trap_options_are_the_designed_table(self):
 		keys = list(C.OPTIONS)
 		self.assertEqual(keys[:len(OPTIONS_0_2)], OPTIONS_0_2)
-		self.assertEqual(keys[len(OPTIONS_0_2):], list(DESIGNED_ITEM_OPTIONS))
+		self.assertEqual(keys[len(OPTIONS_0_2):], list(DESIGNED_ITEM_OPTIONS) + list(OPTIONS_0_4))
 		self.assertEqual({key: C.OPTIONS[key] for key in DESIGNED_ITEM_OPTIONS}, DESIGNED_ITEM_OPTIONS)
+		self.assertEqual({key: C.OPTIONS[key] for key in OPTIONS_0_4}, OPTIONS_0_4)
+		self.assertEqual(C.OPTIONS["songs_per_unlock"]["max"], C.MIX_TRACKS)
 		self.assertEqual([key for key in keys if key.endswith("_weight")], [f"{key}_weight" for key in TRAP_KEYS])
 		defaults = P.plan.plan_options({})
 		self.assertEqual({key: defaults[key] for key in DESIGNED_ITEM_OPTIONS},
@@ -997,7 +1182,7 @@ SAMPLES = [
 class MirrorTest(unittest.TestCase):
 	def test_constants_and_sanitiser_match_the_js_contracts(self):
 		payload = json.dumps(json.dumps(SAMPLES))
-		units = [episode(1, 1, 1), movie(2, "M"), album(3, [("S", 60000)])]
+		units = [episode(1, 1, 1), movie(2, "M"), album(3, [("S", 60000)]), mix(4, 2, [("S", 60000)])]
 		js = run_node(
 			"const c = require('./helpers/apMediaContracts.js');\n"
 			f"const samples = JSON.parse({payload});\n"
@@ -1013,7 +1198,8 @@ class MirrorTest(unittest.TestCase):
 			"  ids: [c.unlockId(1), c.unlockId(20000), c.checkId(1), c.checkId(60000), c.unlockName(7), c.checkName(9)],\n"
 			"  sanitized: samples.map(c.sanitizeText),\n"
 			"  units: units.map((e) => [c.entryKey(e), c.unitKey(e), c.unitKey(e, {tvUnlock: 'season'}),\n"
-			"    c.unitKey(e, {episodesPerUnlock: 5})])};\n"
+			"    c.unitKey(e, {episodesPerUnlock: 5}), c.unitKey(e, {songsPerUnlock: 3}), c.unitKey(e, {songsPerUnlock: 1}),\n"
+			"    c.unitKey(e, {tvUnlock: 'season', songsPerUnlock: 0})])};\n"
 			"process.stdout.write(JSON.stringify(out));\n"
 		)
 		mine = {
@@ -1043,7 +1229,8 @@ class MirrorTest(unittest.TestCase):
 			        C.check_name(9)],
 			"sanitized": [P.naming.sanitize_text(sample) for sample in SAMPLES],
 			"units": [[P.entries.entry_key(e), P.plan.unit_key(e, False, 3), P.plan.unit_key(e, True, 3),
-			           P.plan.unit_key(e, False, 5)] for e in units],
+			           P.plan.unit_key(e, False, 5), P.plan.unit_key(e, False, 3, 3), P.plan.unit_key(e, False, 3, 1),
+			           P.plan.unit_key(e, True, 3, 0)] for e in units],
 		}
 		mine = _lists(mine)
 		for key in mine:

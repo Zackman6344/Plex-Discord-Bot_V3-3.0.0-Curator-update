@@ -109,7 +109,10 @@ class EpisodesPerUnlock(Range):
 
 class LockedWatches(Choice):
 	"""What happens to a title you finish before it is unlocked. bank: its checks wait and are sent when the
-	unlock arrives. ignore: nothing is sent, so watch it again later."""
+	unlock arrives. ignore: nothing is sent, so watch it again later. In the bot's Discord voice channel, a
+	song of a playlist part still locked for someone listening is skipped unless someone there has it open,
+	so it earns nothing; played in Plexamp or another Plex app it is banked or ignored as above, and an
+	album never locks a song."""
 	display_name = "Locked Watches"
 	option_bank = 0
 	option_ignore = 1
@@ -133,46 +136,57 @@ class TimesanityStrict(Toggle):
 	default = 0
 
 
-class TimesanityTimer(NamedRange):
+class OffRange(NamedRange):
 	special_range_names = {"off": 0}
 
 	@classmethod
 	def from_text(cls, text):
 		# YAML 1.1 reads an unquoted off as false, and Range.from_text takes false as 0 only when the
 		# default is not 0, so timesanity_albums (default off) refused the Launcher's own template,
-		# which writes "off: 50" for it.
+		# which writes "off: 50" for it. songs_per_unlock defaults to off as well.
 		if text.lower() == "false":
 			return cls(0)
 		return super().from_text(text)
 
 
-class TimesanityMovies(TimesanityTimer):
+class SongsPerUnlock(OffRange):
+	"""How many songs of the music playlist in List: Playlist one unlock opens, in the playlist's order.
+	The bot cuts the playlist into parts of this many songs when it fills in your titles
+	(/apmedia yaml), so a change needs the YAML attached there again. Each part counts as one title
+	toward your goal. off: parts of up to 15 songs, each a title with an unlock of its own."""
+	display_name = "Songs per Unlock"
+	range_start, range_end, default = _span("songs_per_unlock")
+
+
+class TimesanityMovies(OffRange):
 	"""Minutes between checkpoints inside each movie (off: none). None fall in the last 10% of a title."""
 	display_name = "Timesanity: Movies"
 	range_start, range_end, default = _span("timesanity_movies")
 
 
-class TimesanityEpisodes(TimesanityTimer):
+class TimesanityEpisodes(OffRange):
 	"""Minutes between checkpoints inside each episode (off: none)."""
 	display_name = "Timesanity: Episodes"
 	range_start, range_end, default = _span("timesanity_episodes")
 
 
-class TimesanityAlbums(TimesanityTimer):
-	"""Minutes between checkpoints inside each album or playlist (off: none). Every track of 30 s or more
-	already has a check of its own."""
+class TimesanityAlbums(OffRange):
+	"""Minutes between checkpoints inside each album and each part of a playlist (off: none), so a
+	10-minute part of 3 songs gets 1 checkpoint at 5 and none at 10. Every track of 30 s or more already
+	has a check of its own."""
 	display_name = "Timesanity: Albums"
 	range_start, range_end, default = _span("timesanity_albums")
 
 
-class TimesanityBooks(TimesanityTimer):
+class TimesanityBooks(OffRange):
 	"""Minutes between checkpoints inside each audiobook (off: none)."""
 	display_name = "Timesanity: Books"
 	range_start, range_end, default = _span("timesanity_books")
 
 
 class WildTickets(Range):
-	"""Wild Tickets in the pool. Each one unlocks any locked title of your choice (one step of a show)."""
+	"""Wild Tickets in the pool. Each one unlocks any locked title of your choice (one step of a show,
+	one part of a playlist)."""
 	display_name = "Wild Tickets"
 	range_start, range_end, default = _span("wild_tickets")
 
@@ -333,7 +347,8 @@ class ListTitles(FreeText):
 
 class ListPlaylist(FreeText):
 	"""The bot reads this when it fills in your titles (/apmedia yaml): a Plex playlist, by name, whose
-	titles go on the list in the playlist's order. A music playlist goes on in parts of 15 tracks."""
+	titles go on the list in the playlist's order. A music playlist goes on in parts of Songs per Unlock
+	songs that open in order, or in parts of up to 15 songs with an unlock each while that is off."""
 	display_name = "List: Playlist"
 	default = LIST_OPTIONS["list_playlist"]["default"]
 
@@ -391,6 +406,7 @@ class PlexMediaOptions(PerGameCommonOptions):
 	goal_percent: GoalPercent
 	tv_unlock: TvUnlock
 	episodes_per_unlock: EpisodesPerUnlock
+	songs_per_unlock: SongsPerUnlock
 	locked_watches: LockedWatches
 	checkpoint_items: CheckpointItems
 	timesanity_strict: TimesanityStrict
@@ -439,7 +455,7 @@ option_groups = [
 		ListYears, ListUnwatched, ListMaxEpisodes, ListLabel,
 	]),
 	OptionGroup("Unlocks and goal", [
-		StartingUnlocks, GoalPercent, TvUnlock, EpisodesPerUnlock, LockedWatches, WildTickets,
+		StartingUnlocks, GoalPercent, TvUnlock, EpisodesPerUnlock, SongsPerUnlock, LockedWatches, WildTickets,
 	]),
 	OptionGroup("Timesanity", [
 		CheckpointItems, TimesanityStrict, TimesanityMovies, TimesanityEpisodes, TimesanityAlbums, TimesanityBooks,

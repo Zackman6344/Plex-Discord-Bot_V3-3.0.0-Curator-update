@@ -395,6 +395,31 @@ test('a Wild Ticket on a show opens one step, never the steps after it', () => {
 	assert.deepStrictEqual(credit.redeemKeys(index, episodes[0], one, []), []);
 });
 
+// World 0.4.0's songs_per_unlock: a playlist's parts share one unit, each part's s its place in the
+// playlist, as plan.py writes them. The credit code reads u and s per entry, as it does for a show.
+test('a playlist at songs per unlock opens one part per copy in part order, and a Wild Ticket opens only the part it names', () => {
+	const unit = BASE + 1001;
+	const parts = [1, 2, 3, 4].map((part) => ({
+		k: 'mix', id: `pl:77:${part}`, pl: 77, part, t: `Road Trip Part ${part}`, d: 3 * 180000,
+		tr: [1, 2, 3].map((n) => [7700 + part * 10 + n, (part - 1) * 3 + n, `Song ${(part - 1) * 3 + n}`, 180000, 7800 + part * 10 + n, 'Band', BASE + part * 10 + n]),
+		u: unit, s: part, cp: [],
+	}));
+	const index = credit.indexSlot(slot(parts, {
+		songs_per_unlock: 3, units: [{ id: unit, name: 'Road Trip: Next 3 Songs', kind: 'mix', steps: 4, start: 1 }],
+	}));
+	const status = (counts, redeemed = []) => parts.map((e) => credit.entryStatus(e, counts, redeemed, []));
+	const one = credit.unitCounts([{ item: unit }], index);
+	assert.deepStrictEqual(status(one), ['ready', 'locked', 'locked', 'locked']);
+	assert.deepStrictEqual(status(credit.unitCounts([{ item: unit }, { item: unit }], index)), ['ready', 'ready', 'locked', 'locked']);
+	assert.deepStrictEqual(credit.redeemKeys(index, parts[2], one, []), ['mix|pl:77:3'], 'only the part named, not the part before it');
+	assert.deepStrictEqual(status(one, ['mix|pl:77:3']), ['ready', 'locked', 'ready', 'locked']);
+	assert.deepStrictEqual(credit.redeemKeys(index, parts[0], one, []), [], 'an open part needs no ticket');
+	const hit = only(index.byRk.get(7732));
+	assert.deepStrictEqual([hit.entry.id, hit.role, hit.index, hit.startMs, hit.endMs], ['pl:77:3', 'track', 2, 180000, 360000]);
+	assert.deepStrictEqual(credit.locationsFor(hit, COMPLETE, false), [BASE + 32], 'a song earns its own track');
+	assert.strictEqual(index.units.get(unit).steps, 4);
+});
+
 test('an album is done when every track with a location is checked; the short ones do not count', () => {
 	assert.strictEqual(credit.entryDone(ALBUM, [BASE + 1, BASE + 2, BASE + 3]), true);
 	assert.strictEqual(credit.entryDone(ALBUM, new Set([BASE + 1, BASE + 3])), false);

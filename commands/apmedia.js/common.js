@@ -343,9 +343,10 @@ function bare(text) {
 }
 
 /**
- * Whether the text names the game's hit in full: its code (`#n` or the entry key), or its whole
- * title with or without the year, a leading article, and an album's artist or a book's author.
- * The game also takes any part of a title, and "Alien" is a part of "Aliens (1986)".
+ * Whether the text names the game's hit in full: its code (`#n` or the entry key), its whole title
+ * with or without the year, a leading article, and an album's artist or a book's author, or for a
+ * playlist part one of its songs, by the game's own rule (apMediaGame namesSong). The game also
+ * takes any part of a title, and "Alien" is a part of "Aliens (1986)".
  */
 function namesInFull(text, found) {
 	const raw = String(text ?? '').trim();
@@ -355,7 +356,8 @@ function namesInFull(text, found) {
 	const names = [found.title];
 	// An episode's own title ("Pilot") names no episode in particular; the game skips it too.
 	if (found.entry && found.entry.k !== 'episode') names.push(found.entry.t);
-	return names.some((name) => typeof name === 'string' && bare(name) === want);
+	if (names.some((name) => typeof name === 'string' && bare(name) === want)) return true;
+	return require('../../helpers/apMediaGame.js').namesSong(found.entry, raw);
 }
 
 /** The list title a text names in full, or null: no near misses, so it is cheap to try first. */
@@ -393,6 +395,17 @@ function ordinal(n) {
 
 function plural(n, word, many = `${word}s`) {
 	return `${n} ${n === 1 ? word : many}`;
+}
+
+/**
+ * "A", "A and B", "A, B and C", or with fewer named than there are, "A, B and 13 more".
+ * @param {string[]} names the ones to name, as they should read
+ * @param {number} [total] how many there are in all
+ */
+function named(names, total = names.length) {
+	const more = total - names.length;
+	if (more > 0) return `${names.join(', ')} and ${more} more`;
+	return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names.join('');
 }
 
 /**
@@ -489,6 +502,7 @@ module.exports = {
 	findTitle,
 	ordinal,
 	plural,
+	named,
 	paginate,
 	sendPages,
 };

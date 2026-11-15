@@ -17,8 +17,9 @@
 3. Restart the Launcher and any other Archipelago program that was open.
 
 Every YAML the bot writes requires the world version it ships with (`requires:` names Plex Media
-0.3.0), and Archipelago refuses the file while an older version is installed. Install the file
-again whenever `/apmedia apworld` says the PC has another version.
+0.4.0), and Archipelago refuses the file while an older version is installed. Install the file
+again whenever `/apmedia apworld` says the PC has another version. A YAML written for 0.3.0 or
+earlier generates under 0.4.0 as it did before.
 
 **Keep the world installed for as long as a Plex Media seed's room is in use.** The bot's `!ap next`
 rebuilds the seed with it, and answers every slot of the room from sphere 1 when it cannot.
@@ -43,7 +44,9 @@ not. `/apmedia account plex:none` takes your consent back at any time.
    random picks with List: Genre and List: Years, and give the list a name if you like. Pointing
    at a setting's name shows what it does, and the game page lists every setting.
 5. Change the game options in the other groups if you like. The bot copies them into the finished
-   file as they are.
+   file as they are. Songs per Unlock, under Unlocks and goal, sets how many songs of your
+   playlist one unlock opens, in the playlist's order; left at off, the playlist goes on in parts
+   of up to 15 songs, each its own unlock.
 6. Choose **Export Options** and save the file.
 7. In Discord, run `/apmedia yaml` with the file in `file:`, or attach it to a `!apmedia yaml`
    message. The bot picks the titles from the Plex library and replies with the finished YAML and a
@@ -62,9 +65,9 @@ Preset from the count's button to go back.
 
 A game option with Random? turned on stays random in the finished file, and Archipelago rolls it
 when the seed is generated; the bot's summary uses the option's default and says so. The list
-settings cannot be random: the bot names each one that is and asks for a value. Its messages name
-a setting as the Creator shows it, with the file's key after it: List: Episodes per Show
-(`list_max_episodes`).
+settings and Songs per Unlock cannot be random: the bot names each one that is and asks for a
+value. Its messages name a setting as the Creator shows it, with the file's key after it: List:
+Episodes per Show (`list_max_episodes`).
 
 Options typed with the command replace the file's: `/apmedia yaml file:<your file> movies:20` picks
 20 movies and keeps every other setting, and `name:` renames the slot. The finished file records
@@ -75,10 +78,10 @@ old titles. A list the bot built for someone else is theirs under its slot name:
 
 Triggers go under `Plex Media:`. A trigger that checks one of these settings sees it as your file
 writes it: the bot writes that setting back in your spelling, unless you type the option with a
-different value. A trigger cannot set a list setting, and the bot refuses one that does. A timer a
-trigger sets is checked as a random one is: a list that would pass 10,000 locations at that value
-is refused. If your file asks for a plando module in `requires`, such as `plando: items`, the
-finished file asks for it too.
+different value. A trigger cannot set a list setting or Songs per Unlock, and the bot refuses one
+that does. A timer a trigger sets is checked as a random one is: a list that would pass 10,000
+locations at that value is refused. If your file asks for a plando module in `requires`, such as
+`plando: items`, the finished file asks for it too.
 
 The Item & Location Options group offers only the world's fixed names, such as `Unlock 12` and
 `Check 40`. Leave those options empty, or use Everything and Everywhere, which mean your own list's
@@ -97,14 +100,20 @@ is that choice, as Archipelago rolls it, so an unedited template reads as an unt
 ## Or build a list with the command's options
 
 1. Run `/apmedia yaml` with a slot name and a preset (`movies`, `tv`, `music`, `books` or `mixed`),
-   or pick titles, a collection or a playlist; `preset:none` takes only what you count or name.
-2. The bot replies with a YAML file and the same summary. Send the file to whoever generates the
-   seed.
+   or pick titles, a collection or a playlist; `preset:none` takes only what you count or name. A
+   music playlist opens 3 songs per unlock, in its order: `more:songs_per_unlock=1` opens one song
+   at a time, and `more:songs_per_unlock=0` puts it in parts of up to 15 songs, each its own
+   unlock (`songs_per_unlock=1` on `!apmedia yaml`).
+2. The bot replies with a YAML file and the same summary, which says how the playlist opens. Send
+   the file to whoever generates the seed.
 
 The YAML's `entries` and `list_info` are written by the bot. Edit the game options if you like; a
-change to a list setting takes effect only when the file is attached to `/apmedia yaml` again. A
-shorter timer adds checks, and a slot past 10,000 locations stops the whole seed from generating,
-so attach the file again after you shorten one. The game page lists every option.
+change to a list setting takes effect only when the file is attached to `/apmedia yaml` again.
+Change `songs_per_unlock` only that way, which cuts the playlist again: edited by hand, a lower
+number stops the whole seed from generating, `off` gives each part an unlock of its own, opened in
+any order, and a higher number only renames the unlock. A shorter timer adds checks, and a slot
+past 10,000 locations stops the whole seed from generating, so attach the file again after you
+shorten one. The game page lists every option.
 
 ## Play
 
@@ -114,7 +123,10 @@ so attach the file again after you shorten one. The game page lists every option
 2. `/apmedia list` shows what is open, locked or done; `/apmedia status` shows progress, banked
    checks, Wild Tickets, snacks, Fast Forwards and Remote Controls, and any trap at work.
 3. Watch in Plex, or play music and audiobooks through the bot. Checks are sent as you go. Only
-   playback after the seed was generated counts.
+   playback after the seed was generated counts. Through the bot, in its voice channel, a song of a
+   playlist part still locked for someone listening is skipped before it plays, unless someone
+   there has it open, so it banks nothing; played in Plexamp or another Plex app it counts as any
+   locked title does: banked under `locked_watches: bank`, the default. An album never locks a song.
 4. `/apmedia redeem` spends a Wild Ticket on a locked title, and `/apmedia ff` a Fast Forward on a
    title. `/apmedia snackbar` trades snacks for a Fast Forward or a Remote Control.
 5. `!ap hintpings <slot> dm` sends you hints for your titles in a direct message.

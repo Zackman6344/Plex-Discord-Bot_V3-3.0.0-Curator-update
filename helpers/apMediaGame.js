@@ -33,6 +33,7 @@ const crypto = require('crypto');
 const { escapeMarkdown } = require('discord.js');
 const contracts = require('./apMediaContracts.js');
 const credit = require('./apMediaCredit.js');
+const autoskip = require('./apMediaAutoskip.js');
 
 const HOLD_MS = 5 * 60 * 1000;
 // 1900 keeps a chunk inside Discord's 2000-character message limit, as the relay does.
@@ -50,6 +51,11 @@ const LIST_STATES = Object.freeze(['ready', 'locked', 'done']);
 // A refused slot keeps earning: a changed room password refuses the game client, and a retry with
 // the new one sends what was earned meanwhile. An orphaned or stale slot has no room left to send to.
 const CREDITED = new Set(['active', 'refused']);
+// The same slot of a seed linked again through a second watch of its room: refused while another
+// link of it holds the seed, and only that link counts.
+function isDuplicate(b) {
+	return b.state === 'refused' && !!b.stateDetail && b.stateDetail.reason === 'duplicate';
+}
 // Under timesanity_strict what a slot has heard waits in memory this long at most, unless a credit
 // writes it sooner: a durable write on every 10 to 15 s step, beside voice playback, is the
 // synchronous disk work that makes this PC's voice stutter.
@@ -209,6 +215,28 @@ function entryLabel(entry) {
 	}
 }
 
+// The normalised titles of an album's or a playlist part's tracks (slot_data `tr`: title third).
+function songTitles(entry) {
+	return (Array.isArray(entry.tr) ? entry.tr : []).map((t) => (Array.isArray(t) ? credit.normTitle(t[2]) : ''));
+}
+
+function songsOf(entry) {
+	return (Array.isArray(entry.tr) ? entry.tr : []).map((t) => (Array.isArray(t) ? String(t[2] ?? '') : '')).filter(Boolean);
+}
+
+// A playlist part is titled for its playlist alone, and at a few songs per unlock a player knows it
+// by its songs, so one of them named in full names the part. findEntry finds a part this way, and the
+// /apmedia commands (commands/apmedia.js/common.js namesInFull) take it as the part named in full:
+// one rule for both, or a song the game finds would be asked about as a guess.
+function songNamed(entry, wanted) {
+	return !!wanted && !!entry && entry.k === 'mix' && songTitles(entry).includes(wanted);
+}
+
+/** Whether text, as typed, names one of a playlist part's songs in full. */
+function namesSong(entry, text) {
+	return songNamed(entry, credit.normTitle(text));
+}
+
 function discordIdOf(value) {
 	if (typeof value === 'number' && !Number.isSafeInteger(value)) return null;
 	if (typeof value !== 'string' && typeof value !== 'number') return null;
@@ -249,11 +277,37 @@ function signature(watch) {
 	return crypto.createHash('sha256').update(JSON.stringify([watch.target || null, watch.password || null])).digest('hex');
 }
 
-function groupOf(entry) {
+// Playlist ratingKey -> how many parts of it a slot index holds, per index.
+const mixParts = new WeakMap();
+
+function partsOf(index, pl) {
+	let counts = mixParts.get(index);
+	if (!counts) {
+		counts = new Map();
+		for (const e of index.entries) if (e.k === 'mix') counts.set(e.pl, (counts.get(e.pl) || 0) + 1);
+		mixParts.set(index, counts);
+	}
+	return counts.get(pl) || 0;
+}
+
+// A playlist cut into several parts titles each '<playlist> Part <k>', and one that fits in a single
+// part keeps its own title (helpers/apMediaYaml.js), which can end in ' Part 2' as well.
+function playlistName(entry, index) {
+	const t = String(entry.t ?? '');
+	return index && partsOf(index, entry.pl) === 1 ? t : t.replace(/ Part \d+$/, '');
+}
+
+/**
+ * The heading a list title goes under: its show, its playlist, or its kind.
+ * @param {object} entry a slot_data entry
+ * @param {object} [index] the slot index holding it, which tells a playlist in one part from one in
+ *   several
+ */
+function groupOf(entry, index = null) {
 	switch (entry.k) {
 		case 'episode': return { key: `show|${entry.sid}`, name: String(entry.sh ?? ''), kind: 'show' };
 		case 'album': return { key: 'albums', name: 'Albums', kind: 'album' };
-		case 'mix': return { key: `mix|${entry.pl}`, name: String(entry.t ?? '').replace(/ Part \d+$/, ''), kind: 'mix' };
+		case 'mix': return { key: `mix|${entry.pl}`, name: playlistName(entry, index), kind: 'mix' };
 		case 'book': return { key: 'books', name: 'Books', kind: 'book' };
 		default: return { key: 'movies', name: 'Movies', kind: 'movie' };
 	}
@@ -390,6 +444,7 @@ function createGame(options = {}) {
 	const backfilling = new Set();
 	let runnerMade = null;
 	let runnerFailed = false;
+	let autoskipWarned = false;
 	let tickTimer = null;
 	const trackTimers = new Set();
 	// Binding key -> the armed-trap pass running for it, so two passes never apply one trap twice.
@@ -1071,8 +1126,7 @@ function createGame(options = {}) {
 		// twice would credit one list with two people's watching and spend its Wild Tickets twice.
 		// The binding that holds the seed first keeps it.
 		const twin = bindings().find((o) => o.key !== b.key && o.seedName === seed && CREDITED.has(o.state)
-			&& o.slot.toLowerCase() === b.slot.toLowerCase()
-			&& !(o.state === 'refused' && o.stateDetail && o.stateDetail.reason === 'duplicate'));
+			&& o.slot.toLowerCase() === b.slot.toLowerCase() && !isDuplicate(o));
 		if (twin) {
 			refuse(b, rt, 'duplicate', [`watch #${twin.watchId}`]);
 			return;
@@ -2599,6 +2653,75 @@ function createGame(options = {}) {
 		await Promise.all([...channels.keys()].map((id) => flush(id)));
 	}
 
+	// --- the autoskip: locked playlist songs in voice ------------------------------------------
+
+	// Bot.skipLocked's stretch object -> the bindings read for it. The store copies every binding on
+	// each read, heard maps and all, and a stretch of skips is one synchronous loop that writes no
+	// binding. Read once a song, the copies alone held the bot up for 3 s over 600 songs and 400 KB of
+	// bindings.
+	const stretchReads = new WeakMap();
+
+	// The bindings whose slots count toward a lock: earning, and not a duplicate link.
+	function countingBindings(stretch) {
+		const token = stretch !== null && typeof stretch === 'object' ? stretch : null;
+		let list = token ? stretchReads.get(token) : undefined;
+		if (!list) {
+			list = bindings().filter((b) => CREDITED.has(b.state) && !isDuplicate(b));
+			if (token) stretchReads.set(token, list);
+		}
+		return list;
+	}
+
+	/**
+	 * bot.autoskip while the game runs (attachPlayers): whether the song the bot is about to play in
+	 * voice sits in a playlist part locked on the list of someone listening, while nobody listening
+	 * has it open on any entry. A song's entries are found the way voice credit finds them. Only a
+	 * slot whose client is connected and has reported its inventory can lock a song. A slot that
+	 * earns but cannot be read that far (items not known yet, reconnecting, refused) keeps the song
+	 * playing, since its credit may still count once the items come; a stale or orphaned one earns
+	 * nothing and plays no part, and neither does a duplicate link, which never connects while the
+	 * link that counts holds the seed. Synchronous, and never throws: on an error the song plays.
+	 * @param {object} entry a Bot queue entry
+	 * @param {string[]} userIds who would hear it (Bot.voiceListeners)
+	 * @param {object} [stretch] the object Bot.skipLocked hands every check of one stretch of skips:
+	 *   the bindings are read once for it
+	 * @returns {{slots: string[], playlists: string[]}|null} the slots it is locked on and the names
+	 *   of those playlists, or null: play it
+	 */
+	function lockedFor(entry, userIds, stretch = null) {
+		try {
+			if (!cfg().apMediaEnabled || cfg().apMediaAutoskip === false) return null;
+			if (!autoskip.skippable(entry)) return null;
+			const users = new Set(userIds.map(String));
+			const ident = voiceModule().identify(entry);
+			const slots = [];
+			const playlists = [];
+			for (const b of countingBindings(stretch)) {
+				if (!users.has(b.userId)) continue;
+				const index = indexFor(b);
+				const hits = credit.hitsFor(index, ident);
+				if (!hits.length) continue;
+				const rt = runtimeOf(b.key);
+				const counts = rt.client && rt.client.isReady ? rt.counts : null;
+				if (!counts || hits.some((hit) => credit.isUnlocked(hit.entry, counts, b.redeemed))) return null;
+				const parts = hits.filter((hit) => hit.entry.k === 'mix');
+				if (!parts.length) continue;
+				slots.push(b.slot);
+				for (const hit of parts) {
+					const name = groupOf(hit.entry, index).name;
+					if (!playlists.includes(name)) playlists.push(name);
+				}
+			}
+			return slots.length ? { slots, playlists } : null;
+		} catch (err) {
+			if (!autoskipWarned) {
+				autoskipWarned = true;
+				log().warn('Plex Media: could not tell whether a song is locked, so it plays:', errText(err));
+			}
+			return null;
+		}
+	}
+
 	// --- lifecycle -------------------------------------------------------------------------
 
 	function ensureWatcher() {
@@ -2624,6 +2747,7 @@ function createGame(options = {}) {
 		detachPlayers();
 		if (!bot) return;
 		attachedBot = bot;
+		bot.autoskip = lockedFor;
 		try {
 			const voice = voiceModule();
 			voiceDetach = voice.attach({
@@ -2659,6 +2783,8 @@ function createGame(options = {}) {
 	}
 
 	function detachPlayers() {
+		// Only its own: another game attached to the same bot since then keeps its check.
+		if (attachedBot && attachedBot.autoskip === lockedFor) attachedBot.autoskip = null;
 		for (const off of [voiceDetach, booksDetach, trapsDetach]) {
 			if (!off) continue;
 			try {
@@ -3014,7 +3140,7 @@ function createGame(options = {}) {
 		for (const entry of index.entries) {
 			const status = credit.entryStatus(entry, counts, b.redeemed, checked);
 			totals[status] += 1;
-			const g = groupOf(entry);
+			const g = groupOf(entry, index);
 			let group = groups.get(g.key);
 			if (!group) {
 				group = { key: g.key, name: g.name, kind: g.kind, total: 0, ready: 0, locked: 0, done: 0, next: null, rows: [] };
@@ -3044,6 +3170,7 @@ function createGame(options = {}) {
 				const main = credit.entryLocations(entry).main;
 				row.tracks = { done: main.filter((id) => checked.has(id)).length, total: main.length };
 			}
+			if (entry.k === 'mix') row.songs = songsOf(entry);
 			group.rows.push(row);
 		}
 		const shown = [...groups.values()].filter((g) => g.rows.length);
@@ -3085,6 +3212,7 @@ function createGame(options = {}) {
 		const pick = (test) => index.entries.filter(test);
 		let matches = pick((e) => credit.normTitle(entryLabel(e)) === wanted);
 		if (!matches.length) matches = pick((e) => e.k !== 'episode' && credit.normTitle(e.t) === wanted);
+		if (!matches.length) matches = pick((e) => songNamed(e, wanted));
 		if (!matches.length) matches = pick((e) => credit.normTitle(entryLabel(e)).includes(wanted));
 		if (matches.length === 1) return found(matches[0]);
 		if (!matches.length) return { ok: false, message: `Nothing on ${code(b.slot)}'s list matches ${bold(raw)}.` };
@@ -3140,7 +3268,11 @@ function createGame(options = {}) {
 		}));
 	}
 
-	/** Autocomplete choices for one slot's titles: [{name, value}] (value: entry key or `#n`), at most 25. */
+	/**
+	 * Autocomplete choices for one slot's titles: [{name, value}] (value: entry key or `#n`), at most
+	 * 25. A playlist part is also found by its songs, and carries them as `songs` for the command to
+	 * show after its title.
+	 */
 	function titles(key, prefix = '') {
 		const b = bindingByKey(key);
 		const index = b ? indexFor(b) : null;
@@ -3150,8 +3282,11 @@ function createGame(options = {}) {
 		const out = [];
 		for (const entry of index.entries) {
 			const label = entryLabel(entry);
-			if (wanted && !credit.normTitle(label).includes(wanted)) continue;
-			out.push({ name: label.length > 100 ? `${label.slice(0, 99)}${ELLIPSIS}` : label, value: refOf(entry, positions) });
+			const part = entry.k === 'mix';
+			if (wanted && !credit.normTitle(label).includes(wanted) && !(part && songTitles(entry).some((song) => song.includes(wanted)))) continue;
+			const choice = { name: label.length > 100 ? `${label.slice(0, 99)}${ELLIPSIS}` : label, value: refOf(entry, positions) };
+			if (part) choice.songs = songsOf(entry);
+			out.push(choice);
 			if (out.length >= 25) break;
 		}
 		return out;
@@ -3719,5 +3854,6 @@ module.exports = {
 	formatDuration,
 	commandCode,
 	escapeText: md,
+	namesSong,
 	HOLD_MS,
 };

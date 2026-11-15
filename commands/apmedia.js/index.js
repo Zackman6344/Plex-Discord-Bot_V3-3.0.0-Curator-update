@@ -104,7 +104,7 @@ const SUBCOMMANDS = [
 			{ name: 'albums', type: 'INTEGER', description: 'Music albums in all (0-200)' },
 			{ name: 'books', type: 'INTEGER', description: 'Audiobooks in all (0-50)' },
 			{ name: 'titles', type: 'STRING', description: 'Hand-picks split by ; (prefix movie:, show:, album: or book:; show: X S1-2)' },
-			{ name: 'playlist', type: 'STRING', description: 'A Plex playlist to add, in its order', autocomplete: true },
+			{ name: 'playlist', type: 'STRING', description: 'A Plex playlist, in its order (songs per unlock: more:songs_per_unlock=N, default 3 or the file\'s)', autocomplete: true },
 			{ name: 'collection', type: 'STRING', description: 'A Plex collection to add' },
 			{ name: 'genre', type: 'STRING', description: 'Random picks of this genre only' },
 			{ name: 'years', type: 'STRING', description: 'Random picks from these years only: 1990 or 1990-1999' },
@@ -220,14 +220,15 @@ function helpEmbed(bot) {
 		.setDescription(
 			'Your Plex to-watch list as an Archipelago game: items from the multiworld unlock its titles, and watching or listening sends the checks. Everything works as `/apmedia ...` too.\n\n' +
 			'**\u{1F4DD} JOINING A SEED**\n' +
-			`> \`${p}apmedia yaml name=You [movies=10] [titles="Alien; Aliens"] [unwatched=false]\`: Build your list and send the file to the owner. Keys: preset, movies, shows, albums, books, titles, playlist, collection, genre, years, unwatched, max_episodes, time_movies, time_episodes, time_albums, time_books, goal_percent, tv_unlock, episodes_per_unlock, label, starting_unlocks, wild_tickets, strict, locked_watches, checkpoint_items, snack_variety, fast_forwards, remote_controls, snack_bar_trades, snack_bar_price, trap_percentage, buffering_weight, rights_expired_weight, commercial_break_weight, shuffle_mode_weight, rewind_weight, intermission_weight, slow_motion_weight.\n` +
+			`> \`${p}apmedia yaml name=You [movies=10] [titles="Alien; Aliens"] [unwatched=false]\`: Build your list and send the file to the owner. Keys: preset, movies, shows, albums, books, titles, playlist, collection, genre, years, unwatched, max_episodes, time_movies, time_episodes, time_albums, time_books, goal_percent, tv_unlock, episodes_per_unlock, songs_per_unlock, label, starting_unlocks, wild_tickets, strict, locked_watches, checkpoint_items, snack_variety, fast_forwards, remote_controls, snack_bar_trades, snack_bar_price, trap_percentage, buffering_weight, rights_expired_weight, commercial_break_weight, shuffle_mode_weight, rewind_weight, intermission_weight, slow_motion_weight.\n` +
 			`> Or make the YAML in the Archipelago Launcher's Options Creator and attach it to \`${p}apmedia yaml\` (\`/apmedia yaml file:\`): the bot picks the titles its list settings ask for and keeps every other setting. Keys you type replace the file's.\n` +
 			`> \`${p}ap claim <slot>\`, then \`${p}apmedia link <slot> [watch=n]\`: Once the seed is up, tie your slot to you.\n\n` +
 			'**\u{1F37F} PLAYING**\n' +
 			`> \`${p}apmedia list [ready|locked|done] [slot]\`: Your titles by show and album; \u{1F4A1} marks one somebody hinted.\n` +
+			'> In the bot\'s voice channel, a song of a playlist part still locked for someone listening is skipped, unless someone there has it open; an album never locks a song.\n' +
 			`> \`${p}apmedia status [slot]\`: Progress, goal, connection, Plex account and how far your last Plex session got.\n` +
 			`> \`${p}apmedia check <title> [at 1h30m] [slot=x]\`: Count a title by hand: finished, or up to a time.\n` +
-			`> \`${p}apmedia redeem <title> [slot=x]\`: Spend a Wild Ticket on a locked title (a show: its next few episodes).\n` +
+			`> \`${p}apmedia redeem <title> [slot=x]\`: Spend a Wild Ticket on a locked title (a show: its next few episodes; a playlist part: its songs).\n` +
 			`> \`${p}apmedia ff <title> [slot=x]\`: Spend a Fast Forward: earn a title's next checkpoint without playing it (with Timesanity Strict on, the 10 minutes after where you got to count as heard instead).\n` +
 			`> \`${p}apmedia snackbar [buy fast-forward|remote-control] [slot=x]\`: Your snacks, and a trade at the Snack Bar. A Remote Control blocks the next trap or ends the one on you.\n` +
 			`> \`${p}apmedia announce on|off [slot]\`: Your slot's lines in the channel.\n` +
@@ -248,7 +249,20 @@ function helpEmbed(bot) {
 
 function choice(name, value) {
 	const text = String(name);
-	return { name: text.length > CHOICE_MAX ? `${text.slice(0, CHOICE_MAX - 1)}\u2026` : text, value };
+	if (text.length <= CHOICE_MAX) return { name: text, value };
+	// A cut between the halves of a surrogate pair would leave half an emoji.
+	const cut = text.slice(0, CHOICE_MAX - 1).replace(/[\uD800-\uDBFF]$/, '');
+	return { name: `${cut}\u2026`, value };
+}
+
+// A playlist part is titled for its playlist alone, and at a few songs per unlock a player knows it
+// by its songs.
+function partName(title, songs) {
+	const label = String(title);
+	const names = Array.isArray(songs) ? songs : [];
+	if (!names.length) return label;
+	const two = `${label} (${common.named(names.slice(0, 2), names.length)})`;
+	return two.length <= CHOICE_MAX ? two : `${label} (${common.named(names.slice(0, 1), names.length)})`;
 }
 
 function slotChoices(sub, userId, typed) {
@@ -265,8 +279,9 @@ function lockedChoices(key, typed) {
 	const out = [];
 	for (const group of res.groups) {
 		for (const row of group.rows) {
-			if (want && !normTitle(row.title).includes(want)) continue;
-			if (row.ref && row.ref.length <= CHOICE_MAX) out.push(choice(row.title, row.ref));
+			const songs = Array.isArray(row.songs) ? row.songs : [];
+			if (want && !normTitle(row.title).includes(want) && !songs.some((song) => normTitle(song).includes(want))) continue;
+			if (row.ref && row.ref.length <= CHOICE_MAX) out.push(choice(partName(row.title, songs), row.ref));
 			if (out.length >= MAX_CHOICES) return out;
 		}
 	}
@@ -279,7 +294,9 @@ function titleChoices(sub, userId, interaction, typed) {
 	const all = !!text && OTHERS.has(sub) && common.isOwner(userId);
 	const r = game().resolveBinding(text, { userId, all });
 	if (!r.ok) return [];
-	return sub === 'redeem' ? lockedChoices(r.key, typed) : game().titles(r.key, typed || '');
+	if (sub === 'redeem') return lockedChoices(r.key, typed);
+	// Only name and value go to Discord.
+	return game().titles(r.key, typed || '').map((c) => choice(partName(c.name, c.songs), c.value));
 }
 
 function playlistChoices(typed) {

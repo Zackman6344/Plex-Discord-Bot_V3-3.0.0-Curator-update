@@ -139,7 +139,7 @@ module.exports = {
   'archipelagoShowMisc'   : true,
   'archipelagoShowDeaths' : false,         // DeathLink; reconnects the room to add the tag
 
-  // Plex Media world (see below). All editable from /config → AP Media, all live.
+  // Plex Media world (see below). All but apMediaAutoskip editable from /config → AP Media, and those apply live.
   'apMediaEnabled'        : false,         // /apmedia and the world; needs archipelagoEnabled too
   'apMediaChannelId'      : '',            // where its lines post; blank = each watch's own channel
   'apMediaHistorySeconds' : 120,           // how often the linked accounts' Plex history is read (30-86400)
@@ -149,6 +149,7 @@ module.exports = {
   'apMediaTraps'          : true,          // traps a world 0.3.0 seed sends; off = each one only fizzles
   'apMediaVoiceTraps'     : true,          // the five that pause, rewind or shuffle what the bot plays
   'apMediaTrapClips'      : '',            // Plex playlist (name or ratingKey) of Commercial Break clips; blank = a 30 s pause
+  'apMediaAutoskip'       : true,          // skip a locked playlist part's songs in voice; no /config row (see below)
 
   // Audiobooks and podcasts (see below). All editable from /config → Audiobooks, all live.
   'audiobooksEnabled'            : false,  // turn /book on; off = no library reads, no proxy port
@@ -1333,14 +1334,35 @@ YAML options, and its [setup guide](apworld/plex_media/docs/setup_en.md) walks a
 joining.
 
 **What a list holds.** Movies, TV episodes, music and audiobooks. Music comes as whole albums, or
-as a Plex audio playlist cut into parts of up to 15 tracks, and audiobooks come from `/book`'s
-catalog. A list mixes random picks (narrowed by genre, years, and what that person has not watched
-yet), hand-picked titles, and a Plex playlist or collection. A few titles start open
+as a Plex audio playlist cut into parts (**Songs per unlock**, below), and audiobooks come from
+`/book`'s catalog. A list mixes random picks (narrowed by genre, years, and what that person has
+not watched yet), hand-picked titles, and a Plex playlist or collection. A few titles start open
 (`starting_unlocks`: 3 unlock copies by default, more on a long list), and the multiworld sends the
-rest: one unlock per movie, album, playlist part or book, and one per 3 episodes of a show
-(`episodes_per_unlock`, or a season at a time with `tv_unlock: season`). A Wild Ticket (2 by
-default, fewer on a short list) opens a locked title of the player's choosing. The goal is to
-finish 80% of the list (`goal_percent`), and the bot sends it once that many titles are done.
+rest: one unlock per movie, album or book, one per 3 episodes of a show (`episodes_per_unlock`, or
+a season at a time with `tv_unlock: season`), and one per part of a playlist. A Wild Ticket (2 by
+default, fewer on a short list) opens a locked title of the player's choosing (one step of a show,
+one part of a playlist). The goal is to finish 80% of the list (`goal_percent`), and the bot sends
+it once that many titles are done.
+
+**Songs per unlock.** World 0.4.0 cuts a music playlist into parts of `songs_per_unlock` songs (1
+to 15), in the playlist's order, and gives the whole playlist one unlock, `Road Trip: Next 3 Songs`
+(`Road Trip: Next Song` at 1), with one copy per part: the first copy opens part 1, the second part
+2, and so on. A Wild Ticket opens the one part it names and leaves the copies counting from part 1,
+so a ticket on the next locked part saves only the wait for the next copy. `off` (0) keeps the
+parts world 0.3.0 made, up to 15 songs each, each with an unlock of its own, opened in any order.
+Each part is a title toward the goal: a 60-song playlist counts as 20 titles at 3 songs per unlock,
+60 at 1 and 4 at `off`. A list built from `/apmedia yaml`'s options alone gets 3, and an attached
+file keeps its own number, `off` when it has none. The world's default is `off`, so a YAML without
+the setting, such as one written for 0.3.0, plans as it did. `timesanity_albums` counts its
+checkpoints inside each part, so a 10-minute part of 3 songs gets 1 checkpoint at a 5-minute timer
+and none at 10, and a Rights Expired holds the checks of one part. The bot cuts the playlist when
+it writes the list, so a new number needs the file attached to `/apmedia yaml` again, with
+`more:songs_per_unlock=N` typed or the number edited in it, which also picks its titles afresh. A
+number edited into a finished YAML that goes straight to the owner cuts nothing: a lower one leaves
+parts longer than the setting, and generation stops for the whole seed, naming the player ("Plex
+Media list of Zack: entry 1 (Road Trip Part 1) holds 3 tracks, more than songs_per_unlock 1 (the
+YAML attached to /apmedia yaml again, which cuts the playlist at 1, or songs_per_unlock 0 would
+help)"); `off` gives each part an unlock of its own, and a higher number only renames the unlock.
 
 **Timesanity.** Every title also has checkpoints at fixed times into it: every 15 minutes of a
 movie, every 10 of an episode and every 30 of an audiobook by default, and none in albums and
@@ -1378,6 +1400,31 @@ five places:
 A title played before its unlock arrives keeps its checks banked (`locked_watches: bank`, the
 default), and they go out with a 🔓 line when the unlock comes. With `ignore`, it counts for
 nothing.
+
+**Locked playlist songs in voice.** Before the bot plays a song in its voice channel, it looks for
+the song in the playlist parts still locked on the lists of the people listening (in the channel,
+not deafened), and skips it when it finds it there, unless someone listening has it open on any
+title of their own list (a part, a part a Wild Ticket opened, or an album). **One listener's lock
+skips the song for everyone in the channel.** The bot asks before it joins voice or reads the song
+from Plex, so a queue locked from its first song never joins. Each stretch of skipped songs gets
+one line, which names three songs, three playlists and three slots at most and counts the rest:
+"⏭️ Skipped 4 songs still locked in Road Trip on `ZackPlex`'s list: **Song A**, **Song B**,
+**Song C** and 1 more." It says where the songs are locked, which need not be where they were
+queued from. The command log gets one `track-locked` event per stretch, with `count`, the first 20
+songs as `Artist - Title`, and the slots and playlists. Only a slot whose game client is
+connected, with its items reported by the room, can lock a song: a listener's slot that lists the
+song but cannot be read that far (items not known yet, reconnecting, refused) keeps it playing for
+everyone, and a stale, orphaned or duplicate link plays no part. A song in a locked part that is
+also on a locked album is skipped with its part. Album tracks otherwise play and bank as before,
+and nothing is skipped for a Hitster or Commercial Break clip, a YouTube entry, a song a `!seek`
+or a Rewind replays, a `!loop` replay once the song has played, a song nobody is there to hear, or
+anything while Plex Media is off. The rule covers the 15-song parts of seeds made before 0.4.0
+too, and reads neither `apMediaVoiceCredit` nor `locked_watches`. Plexamp and other Plex apps
+cannot be held back: a locked song played there banks as above. Its switch, `apMediaAutoskip`
+(true by default), has no `/config` row, since the panel's worst case is 14 characters under
+Discord's 6,000: set `"apMediaAutoskip": false` in `data/config.overrides.json`, then stop and
+start the bot. `config/config.js` reads that file when the process starts, and a `!restart` keeps
+the process.
 
 **Items and traps.** A seed made with world 0.3.0 or later deals each list more than its unlocks
 and Wild Tickets. The [game page's Items table](apworld/plex_media/docs/en_Plex%20Media.md#items)
@@ -1485,9 +1532,11 @@ account goes, the history rows already read for it go too.
    restart the Launcher. **Keep it installed for as long as any Plex Media seed's room is in
    use**: `!ap next` rebuilds the seed with it, and without it answers every slot in that room
    from sphere 1. Every YAML the bot writes requires the world version it ships with
-   (`requires:` names Plex Media 0.3.0), and Archipelago refuses those files while an older
+   (`requires:` names Plex Media 0.4.0), and Archipelago refuses those files while an older
    version is installed, so install the file again whenever `/apmedia apworld` says the PC has
-   another version. A YAML written for 0.2.0 still generates under 0.3.0, with the new item
+   another version, before the new YAMLs are generated. A YAML written for 0.2.0 or 0.3.0 still
+   generates under 0.4.0, its playlist in parts of up to 15 songs, each an unlock of its own, and
+   `!ap next` rebuilds a seed made with 0.3.0 the same way. One written for 0.2.0 gets the item
    options at their defaults: 2 Fast Forwards and 1 Remote Control where the list has room,
    snacks for the rest of the filler, and no traps.
 3. Link your friends' Plex accounts with `/apmedia account user:@them plex:<their Plex name>`, and
@@ -1587,6 +1636,13 @@ DM.
 - None of world 0.3.0's items and traps has met a live room, the bot's voice playback, a Plex
   clip playlist or an audiobook session yet. Phase 18 of [BUGTESTING.md](BUGTESTING.md) is their
   checklist.
+- Songs per unlock and the skipping of locked playlist songs have met no live room, Plex server or
+  voice channel yet. Phase 19 of [BUGTESTING.md](BUGTESTING.md) is their checklist.
+- `!viewqueue` still lists locked songs: each is skipped when it reaches the head of the queue. A
+  song is matched as voice credit matches it, by rating key, then part id, then artist and title,
+  so another recording with a locked song's artist and title is skipped as that song.
+- When locked songs end playback while an earlier song's voice join is still under way, the bot
+  joins and leaves at once as that join lands.
 
 **What it posts.** `apMediaAnnounce` decides: `completions` (the default) posts a title finished,
 banked or unlocked, `all` adds a line for every credit that finishes nothing (a checkpoint, an
@@ -1612,13 +1668,13 @@ warns while `archipelagoEnabled` is off, shows an error for a refused slot, a sl
 gone (naming 5 slots at most), or 3 failed Plex history reads in a row, and otherwise reads like
 `2 slots, 2 connected, Plex history read 1m ago`. The command log (`npm run logs -- --raw`) gains
 `apmedia-credit`, `apmedia-refused`, `apmedia-stale`, `apmedia-orphaned`, `apmedia-goal`,
-`apmedia-fastforward` and `apmedia-snackbar` lines, and an `apmedia-trap` line for each trap with
+`apmedia-fastforward` and `apmedia-snackbar` lines, an `apmedia-trap` line for each trap with
 its `outcome`: `hit`, `armed` (waiting to hit), `blocked` (by a Remote Control), `dodged` or
-`fizzled`. Slot links are kept in `data/apmedia_slots.json`, with their unsent and held checks,
-the item cursor, the holds and traps at work, and the items spent and bought. Plex account
-links and consent are in `data/apmedia_accounts.json`, the Plex history rows already read in
-`data/apmedia_marks.json`, and each slot's slot_data under `data/archipelago/apmedia/`. All of
-them are gitignored.
+`fizzled`, and a `track-locked` line for each stretch of locked songs skipped in voice. Slot links
+are kept in `data/apmedia_slots.json`, with their unsent and held checks, the item cursor, the
+holds and traps at work, and the items spent and bought. Plex account links and consent are in
+`data/apmedia_accounts.json`, the Plex history rows already read in `data/apmedia_marks.json`, and
+each slot's slot_data under `data/archipelago/apmedia/`. All of them are gitignored.
 
 **Building and testing the world.** `npm run build:apworld` writes `dist/plex_media.apworld`
 (gitignored), the same file `/apmedia apworld` attaches. `npm run test:apworld` runs
@@ -1627,14 +1683,17 @@ with the frozen Archipelago at `C:\ProgramData\Archipelago` when it is installed
 into it, and one run of the bot's side against a real MultiServer room. `--pure` stops after the
 pure tests, and `--only A0,F` runs scenarios by the class name's part before its first underscore:
 `A0` the built file, `A1` the Options Creator's rules, `A` both solo lists, `F` the item-link seed
-with the `!ap next` worker's checks, `G` that run against MultiServer, and `H` the list settings
+with the `!ap next` worker's checks, `G` that run against MultiServer, `H` the list settings
 and three Options Creator exports, two of which the bot fills in and Archipelago generates
-together. `--update-golden` rewrites the golden files: builder 1's ids and names, one seed's
-slot_data for the bot's tests, and the three Options Creator exports. Use it only for a deliberate
-change. A change of ids or names also needs `BUILDER_VERSION` raised in
-`helpers/apMediaContracts.js` and `apworld/plex_media/constants.py`: a seed that is already
-running keeps the names and ids it was generated with. Scenario H and the bot's tests of a
-player's own file need the `yaml` package in `node_modules`.
+together, and `I` a playlist at 3 songs per unlock beside the same playlist in whole parts.
+`--update-golden` rewrites the golden files: builder 1's ids and names, one seed's slot_data for
+the bot's tests, and the three Options Creator exports. Use it only for a deliberate change. A
+change to slot_data fails `test_pure.py`'s check of the bot's songs fixture on that run, since the
+pure tests run before the goldens are written; the next run passes. A change of ids or names also
+needs `BUILDER_VERSION` raised in `helpers/apMediaContracts.js` and
+`apworld/plex_media/constants.py`: a seed that is already running keeps the names and ids it was
+generated with. Scenario H and the bot's tests of a player's own file need the `yaml` package in
+`node_modules`.
 
 ### 🎬 Plex Media world commands
 
@@ -1646,16 +1705,16 @@ unlike `/config`'s first-run bootstrap.
 
 | Command | Who | What it does |
 | ------- | --- | ------------ |
-| `/apmedia yaml [name] [file] [options]` | Anyone; with `for:`, the owner | Builds a list from the library and attaches it as a YAML for the next seed, with its counts, how many titles start open, what the goal needs, and the Fast Forwards, Remote Controls, traps and snacks its pool holds. With `file:`, it fills in a YAML made in the Archipelago Options Creator, or one it wrote before, and keeps the file's settings. It needs a name or a file. See **Building a list** and **Filling in a YAML** below. |
+| `/apmedia yaml [name] [file] [options]` | Anyone; with `for:`, the owner | Builds a list from the library and attaches it as a YAML for the next seed, with its counts, how its music playlist opens, how many titles start open, what the goal needs, and the Fast Forwards, Remote Controls, traps and snacks its pool holds. With `file:`, it fills in a YAML made in the Archipelago Options Creator, or one it wrote before, and keeps the file's settings. It needs a name or a file. See **Building a list** and **Filling in a YAML** below. |
 | `/apmedia apworld` | Owner | Attaches `plex_media.apworld`, built in memory, with the install steps, and compares it with `<archipelagoInstallDir>\custom_worlds\plex_media.apworld`, which it only reads. The reply is public. |
 | `/apmedia account [user] [plex] [shared]` | Owner; anyone, for `plex:none` on themselves | No user: the server's Plex accounts. A user alone: who they are linked to. A user and a Plex name (in full) or id: links them, and they get an Accept button. An account already linked to someone else needs `shared:True`. `plex:none` unlinks them, and on its own takes back your own link. |
 | `/apmedia link <slot> [user] [watch]` | The player holding the `!ap claim` on that slot; the owner, for anyone | Ties a Plex Media slot of a watched room to a Discord user. Without `watch:` the room is the one where they claimed the slot, unless another watched room has a slot of that name too, or the only room watched; anything else is asked back with the watches' ids. |
 | `/apmedia unlink <slot>` | The bound player, or the owner | Drops the link. Its unsent checks go with it, and the reply says how many. |
 | `/apmedia retry [slot]` | The bound player, or the owner | Reconnects a refused, stale or orphaned slot. A stale one takes on the room's new seed and starts over. |
 | `/apmedia status [slot] [user]` | Anyone, for their own slots; the owner, for anyone's, and for every slot when nothing is named | Per slot: titles done, the goal, ready and locked counts, checks waiting or banked, Wild Tickets, Fast Forwards and Remote Controls on hand, the snacks and the Snack Bar's trades left, a Buffering or Rights Expired hold with the checks it holds, a trap at work, traps waiting to hit, the connection, the Plex account, how far the last Plex session got, and the last credit. |
-| `/apmedia list [show] [slot]` | The bound player, or the owner | `ready` (the default), `locked` or `done` titles, grouped by show, album, playlist and kind, each with its runtime. A locked title names the item that opens it, 💡 marks one somebody hinted, and ⛔ one whose rights Rights Expired took, until when. While Buffering runs, every page has a ⏳ line under the counts with the checks it holds. A long list gets ◀ ▶ buttons that only the asker can use, for 30 minutes after their last use. |
+| `/apmedia list [show] [slot]` | The bound player, or the owner | `ready` (the default), `locked` or `done` titles, grouped by show, album, playlist and kind, each with its runtime. A playlist part's row names its first three songs and counts the rest: "• Road Trip Part 2 (Song D, Song E and Song F) · 9m". A locked title names the item that opens it, and which copy when it is not the first ("opened by Road Trip: Next 3 Songs (the 2nd)"), 💡 marks one somebody hinted, and ⛔ one whose rights Rights Expired took, until when. While Buffering runs, every page has a ⏳ line under the counts with the checks it holds. A long list gets ◀ ▶ buttons that only the asker can use, for 30 minutes after their last use. |
 | `/apmedia check <title> [at] [slot]` | The bound player, or the owner | Counts a title by hand: finished, or with `at:` (`45m`, `1h30m`, `1:30:00`) its checkpoints up to that time. |
-| `/apmedia redeem <title> [slot]` | The bound player | Spends a Wild Ticket on a locked title. On a show it opens the episodes of that title's step. |
+| `/apmedia redeem <title> [slot]` | The bound player | Spends a Wild Ticket on a locked title. On a show it opens the episodes of that title's step, and on a playlist that one part, while its unlock's copies go on counting from part 1. |
 | `/apmedia ff <title> [slot]` | The bound player | Spends a Fast Forward on a title: its first checkpoint not earned yet, at any distance, or under `timesanity_strict` the next 10 minutes counted as heard. Never a watch, a track or a finish. |
 | `/apmedia snackbar [buy] [slot]` | The bound player | The slot's snacks, the Snack Bar's price and the trades left; with `buy:`, one trade for a Fast Forward or a Remote Control. A Remote Control bought while a trap is at work goes straight to it. |
 | `/apmedia announce <on\|off> [slot]` | The bound player | Turns the slot's lines in the channel on or off. Refusals and other problems are posted either way. |
@@ -1727,11 +1786,15 @@ types. A single-quoted `slot=` placed first gets it too when a later word closes
 **Naming a title for `check`, `redeem` and `ff`.** A title counts only when it is named in full
 or by its code, which is what the slash autocomplete fills in (`#n`, its place in the list, works
 too). The year, a leading The, A or An, an album's artist and a book's author may be left out, so
-`the matrix` names The Matrix (1999). A part of a title, or a typo, gets "Did you mean **Aliens
-(1986)**?" and **nothing is credited or spent on a guess**. A text over 200 characters is matched
-exactly or not at all, with no suggestions. In `!apmedia check <title> at <time>`
-a bare number is minutes (`The Matrix at 90`), and a text that is a whole list title is that title:
-`Murder at 1600` is the film.
+`the matrix` names The Matrix (1999). A playlist part is also named in full by any one of its
+songs, in any case, so `!apmedia redeem Song D` spends the ticket on the part that holds Song D;
+only the song's whole title finds its part. The autocomplete finds a part by a song typed into
+`title:` too, and shows its first two songs after its title, "Road Trip Part 1 (Song A, Song B and
+1 more)", or one when two would pass Discord's 100 characters. A part of a title, or a typo, gets
+"Did you mean **Aliens (1986)**?" and **nothing is credited or spent on a guess**. A text over 200
+characters is matched exactly or not at all, with no suggestions. In
+`!apmedia check <title> at <time>` a bare number is minutes (`The Matrix at 90`), and a text that
+is a whole list title is that title: `Murder at 1600` is the film.
 
 **Building a list: `/apmedia yaml`.** The slot name is 1 to 16 characters, with no `{`, `}` or
 `%`. With nothing else given it picks 15 random movies; `preset:` also takes `tv` (3 shows),
@@ -1739,39 +1802,47 @@ a bare number is minutes (`The Matrix at 90`), and a text that is a whole list t
 `none`, which takes only what is counted or named. `movies`, `shows`, `albums` and `books` set
 totals, hand-picks included. `titles:` takes hand-picks split by `;`, each with an optional
 `movie:`, `show:` (with a season range such as `S1-2`), `album:` or `book:` in front.
-`playlist:` and `collection:` add a Plex playlist or collection in
-its own order, and `genre:` and `years:` (`1990` or `1990-1999`) narrow the random picks. A name
-that matches only the start of a title takes the nearest one, and the reply says what it took:
-"Nearest matches taken: "Alie" as Alien (1979)." A name that is just `random`, or starts with
-`random-`, takes only a title of that name. A list that comes out empty says so, with the
-warnings that name the filter that emptied it, such as "Movies has no Polka genre.", and the first
-ten titles not found. `unwatched` (on by default) leaves out what the list's player has watched,
-read from their own linked Plex account. A show named without seasons starts at their first
-unwatched episode, and one they have watched to the end is left out, with a warning that says to
-name its seasons or turn `unwatched` off to keep it. Without a linked account, random movies or
-shows, a collection and a video playlist need `unwatched:false` or a link from the owner; named
-titles do not. A link still waiting for their consent gets a reply asking them to accept it in the
-bot's DM, and a list built meanwhile says that nothing they watched is known yet. The timers are
-`time-movies`, `time-episodes`, `time-albums` and `time-books`, in minutes, 0 for off.
-`goal-percent`, `tv-unlock`, `episodes-per-unlock` and `max-episodes` (the most episodes from one
-show: random shows, a collection's shows and shows named without seasons; 24 by default) are
-options of their own, and the rarer settings go in `more:` as key=value, the way
-the prefix form writes them: `label`, `starting_unlocks`, `wild_tickets`, `strict`,
-`locked_watches`, `checkpoint_items`, `snack_variety`, `fast_forwards`, `remote_controls`,
-`snack_bar_trades`, `snack_bar_price`, `trap_percentage` and the seven trap weights
-(`buffering_weight`, `rights_expired_weight`, `commercial_break_weight`, `shuffle_mode_weight`,
-`rewind_weight`, `intermission_weight`, `slow_motion_weight`), as in
+`playlist:` and `collection:` add a Plex playlist or collection in its own order, a music playlist
+in parts of 3 songs (**Songs per unlock**, above), and `genre:` and `years:` (`1990` or
+`1990-1999`) narrow the random picks. A name that matches only the start of a title takes the
+nearest one, and the reply says what it took: "Nearest matches taken: "Alie" as Alien (1979)." A
+name that is just `random`, or starts with `random-`, takes only a title of that name. A list that
+comes out empty says so, with the warnings that name the filter that emptied it, such as "Movies
+has no Polka genre.", and the first ten titles not found. `unwatched` (on by default) leaves out
+what the list's player has watched, read from their own linked Plex account. A show named without
+seasons starts at their first unwatched episode, and one they have watched to the end is left
+out, with a warning that says to name its seasons or turn `unwatched` off to keep it. Without a
+linked account, random movies or shows, a collection and a video playlist need `unwatched:false`
+or a link from the owner; named titles do not. A link still waiting for their consent gets a reply
+asking them to accept it in the bot's DM, and a list built meanwhile says that nothing they
+watched is known yet. The timers are `time-movies`, `time-episodes`, `time-albums` and
+`time-books`, in minutes, 0 for off. `goal-percent`, `tv-unlock`, `episodes-per-unlock` and
+`max-episodes` (the most episodes from one show: random shows, a collection's shows and shows
+named without seasons; 24 by default) are options of their own, and the rarer settings go in
+`more:` as key=value, the way the prefix form writes them: `songs_per_unlock` (0 to 15, or
+`off`), `label`, `starting_unlocks`, `wild_tickets`, `strict`, `locked_watches`,
+`checkpoint_items`, `snack_variety`, `fast_forwards`, `remote_controls`, `snack_bar_trades`,
+`snack_bar_price`, `trap_percentage` and the seven trap weights (`buffering_weight`,
+`rights_expired_weight`, `commercial_break_weight`, `shuffle_mode_weight`, `rewind_weight`,
+`intermission_weight`, `slow_motion_weight`), as in
 `more:wild_tickets=3 strict=true trap_percentage=20`. A `trap_percentage` above 0 with every
 weight at 0 is refused: "trap_percentage 50 makes 34 of the list's 69 filler items traps, but
-every trap weight is 0 (a trap weight above 0, or trap_percentage 0, would help)". The file is
-named after the slot, accents and other scripts included, and gains a short hash when a character
-had to change: `Zack M.` becomes `Zack_M-cd58afdb.yaml`. A list is refused above 2,000 titles, 2,000
-unlock copies or 10,000 locations, and warned about above 600 copies, 1,500 locations or 50 hours
-to the goal; a finished YAML over 8 MB, the most the bot sends through Discord, is refused too.
-A person builds one list at a time, an attached file's download included, and the bot two at once
-in all; another ask meanwhile is told to wait. Every file records, after the game options, the
-list settings it was built with (`list_preset`, `list_movies` and the rest). Attached again, it
-gets a fresh pick with them.
+every trap weight is 0 (a trap weight above 0, or trap_percentage 0, would help)". The reply says
+how a music playlist went on, on the line after the counts: "`Road Trip` opens 3 songs per unlock,
+in 20 parts.", "`Road Trip` is in 3 parts of up to 15 songs, one unlock each." while
+`songs_per_unlock` is off, or "`Lofi` is in 1 part of 2 songs, with one unlock." for a playlist
+that fits in one part. A `songs_per_unlock` typed for a list with no music playlist adds
+"⚠️ Songs per Unlock (`songs_per_unlock`) cuts a music playlist into parts, and this list has
+none.", and one outside 0 to 15 is refused: "songsPerUnlock must be a whole number from 0 to 15 or
+off." The file is named after the slot, accents and other scripts included, and gains a short hash
+when a character had to change: `Zack M.` becomes `Zack_M-cd58afdb.yaml`. A list is refused above
+2,000 titles, 2,000 unlock copies or 10,000 locations (with a playlist cut at 1 to 14 songs, the
+refusal says to raise the songs per unlock too), and warned about above 600 copies, 1,500
+locations or 50 hours to the goal; a finished YAML over 8 MB, the most the bot sends through
+Discord, is refused too. A person builds one list at a time, an attached file's download
+included, and the bot two at once in all; another ask meanwhile is told to wait. Every file
+records, after the game options, the list settings it was built with (`list_preset`,
+`list_movies` and the rest). Attached again, it gets a fresh pick with them.
 
 **Filling in a YAML: `/apmedia yaml file:`.** The file is a YAML from the Archipelago Options
 Creator, or one the bot wrote. On `!` it is the message's first attachment named `.yaml` or
@@ -1797,13 +1868,17 @@ is not read, and the reply asks for the file.
 - **The list settings say what to pick.** A count at `preset` takes the preset's number, and a
   kind the preset leaves out gets 0. A list setting left random is refused, naming each one as the
   Options Creator shows it: "List: Movies (`list_movies`) is random: set a number, the bot needs
-  it to pick titles." A trigger that sets one is refused too. A text setting is read as written,
-  as Archipelago reads it, so a playlist named Random is that playlist, and one written as a number
-  is that number as Python writes it (`0.00001` is `1e-05`). An empty `list_preset` is `none`, as
-  Archipelago reads it, and an empty text is no text; an empty count, `list_max_episodes` or
-  `list_unwatched` is refused. A file whose settings count nothing and name nothing gets "Your
-  list settings pick nothing: choose a preset, set a count, or name titles, a playlist or a
-  collection."
+  it to pick titles." A trigger that sets one is refused too. Songs per Unlock is read the same
+  way, since the bot cuts the playlist as it writes the file: left random it gets "Songs per Unlock
+  (`songs_per_unlock`) is random: set a number or off, the bot cuts a music playlist at it when it
+  writes the list.", beside random list settings the one reply ends "the bot needs a value in each
+  to build the list", and a file without it keeps its playlist in parts of up to 15 songs. A text
+  setting is read as written, as Archipelago reads it, so a playlist named Random is that
+  playlist, and one written as a number is that number as Python writes it (`0.00001` is
+  `1e-05`). An empty `list_preset` is `none`, as Archipelago reads it, and an empty text is no
+  text; an empty count, `list_max_episodes` or `list_unwatched` is refused. A file whose settings
+  count nothing and name nothing gets "Your list settings pick nothing: choose a preset, set a
+  count, or name titles, a playlist or a collection."
 - **Weights are read as Archipelago rolls them.** A weighted setting with one choice above 0, as
   every one in the Launcher's Generate Template Options file, is that choice. Every choice a
   weighted or listed game option can roll has to be a value Archipelago reads, and a mapping whose
@@ -1838,9 +1913,9 @@ is not read, and the reply asks for the file.
 - **A trigger is refused, by its number,** when Archipelago would refuse it on every roll (triggers
   that are not a list of mappings, an `option_category` other than `Plex Media` or `requires`, an
   `option_name` that cannot roll), when it checks `description` or `requires` at the top, which the
-  bot writes, when it sets a list setting, `entries` or `list_info`, and when a value it sets is one
-  Archipelago refuses: "Trigger 1 in your file: Goal Percent (`goal_percent`) must be a whole
-  number from 1 to 100."
+  bot writes, when it sets a list setting, `songs_per_unlock`, `entries` or `list_info`, and when a
+  value it sets is one Archipelago refuses: "Trigger 1 in your file: Goal Percent (`goal_percent`)
+  must be a whole number from 1 to 100."
 - **Everything else is copied as it is**, in the file's order: `progression_balancing`,
   `accessibility`, `local_items`, `triggers` and the rest, up to 32 KB of them in the new file. A
   setting whose name starts with `+` or `-` is refused outside `triggers`. The file's `entries`

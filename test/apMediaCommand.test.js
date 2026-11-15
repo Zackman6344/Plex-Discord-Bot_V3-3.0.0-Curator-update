@@ -11,19 +11,23 @@
 // per person covers the download; what a file names that the library lacks comes back escaped or as code, and
 // a finished YAML over 8 MB is refused rather than sent; a check's time reads as 1h30m, @1h30m or 1:30:00, and a whole list title
 // is never split at its "at"; a check, a Wild Ticket or a Fast Forward goes only to a title named in
-// full; words after an unquoted slot= that the command does not read spend and count nothing, in ff,
+// full, and one of a playlist part's songs names the part in full by the game's own rule; a part's
+// list row names its first three songs and its title choice its first one or two, inside Discord's
+// limits; words after an unquoted slot= that the command does not read spend and count nothing, in ff,
 // snackbar, redeem and check alike, and a lone slot= may come first (a single quote it opens, curly
 // too, gives the slot the words up to the one that closes it, unless the value already names a
 // slot the command would take); the Snack Bar sells what its
 // menu names, by the items' own two-word names too, a slot named like an item is that slot, and
 // "remote" before one of your slot names is the item alone; an empty list view keeps
 // the Buffering line; status shows no Snack Bar for a seed that allows no trades; a file left all
-// random still fits its reply; a self-link needs the !ap claim; the owner may name anybody's slot
+// random still fits its reply; the reply says how a music playlist opens, and a songs_per_unlock
+// typed for a list with none says so; a self-link needs the !ap claim; the owner may name anybody's slot
 // only where the spec lets them, and nobody may while ownerId is blank; the account list stays
 // private; the Accept button reaches
 // the friend by DM, or in the channel without a ping; a failure shows Plex's error code, never its
 // host or the bot's folders; the installed apworld is read from the install dir's custom_worlds;
-// autocomplete answers from memory and never waits on Plex.
+// autocomplete answers from memory and never waits on Plex; the help says that a song of a locked
+// playlist part is skipped in voice.
 //
 // Harness: the real command module driven through slashRegistry.buildQueryString and
 // interactionAdapter.adaptInteraction as app/music.js does (the slash()/prefix() fakes of
@@ -32,9 +36,9 @@
 // YAML builder, the apworld builder and the file download's fetch swapped in through the command's
 // _internal.use (a fetch stand-in answers with a Response, so nothing leaves the machine); the real
 // helpers/apMediaButtons.js; the real config module, its fields saved and restored; one test writes
-// a real apworld under os.tmpdir() and removes it. The reply to a file naming what the library lacks
-// runs the real YAML builder over the fake Plex of test/fixtures/apmediaPlex, as
-// test/apMediaYaml.test.js does.
+// a real apworld under os.tmpdir() and removes it. The reply to a file naming what the library lacks,
+// and the replies about a playlist's songs per unlock, run the real YAML builder over the fake Plex of
+// test/fixtures/apmediaPlex, as test/apMediaYaml.test.js does.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -857,7 +861,9 @@ test('a reply with many warnings keeps its head, the next step and the tracker l
 test('a file with every game option random names six of them and counts the rest, in a line the reply may leave out', async () => {
 	const { RANDOM_SHOWN, CONTENT_MAX } = yamlCommand;
 	const warn = String.fromCharCode(0x26a0, 0xfe0f);
-	const random = Object.fromEntries(Object.keys(contracts.OPTIONS).map((key) => [key, 'random']));
+	// Songs per Unlock is the one game option a file cannot leave random: the bot cuts the playlist by it.
+	const random = Object.fromEntries(Object.keys(contracts.OPTIONS).filter((key) => key !== 'songs_per_unlock').map((key) => [key, 'random']));
+	assert.strictEqual(Object.keys(random).length, 25);
 	const text = creatorYaml(random, { name: 'ABCDEFGHIJKLMNOP' });
 	const file = attachment(`${'a-long-file-name-'.repeat(5)}.yaml`, text);
 	const { game, builder } = use({ fetch: fileFetch(text) });
@@ -915,6 +921,69 @@ test('a playlist, collection or title from a file that the library lacks comes b
 		assert.ok(r.content.startsWith(`\u274C ${start}`) && r.content.includes('Free Nitro'), r.content);
 		assert.doesNotMatch(r.content.replace(/`[^`]*`/g, ''), /Free Nitro|\]\(|\*\*|<@&|@everyone/, `${key}: the library's names in code spans`);
 	}
+});
+
+test('songs per unlock: songs_per_unlock= on !, more: on slash, named by the help and a wrong key, and no slash option of its own', async () => {
+	const { builder } = use();
+	await runPrefix(ana(), 'yaml name=Zack playlist=Road songs_per_unlock=1');
+	assert.deepStrictEqual(builder.calls[0][1], { name: 'Zack', playlist: 'Road', songsPerUnlock: '1', accountId: null, discordUserId: ANA });
+	await runPrefix(ana(), 'yaml name=Zack SongsPerUnlock=off');
+	assert.strictEqual(builder.calls[1][1].songsPerUnlock, 'off');
+	await runSlash(ana(), 'yaml', { name: 'Zack', playlist: '501', more: 'songs-per-unlock=15' });
+	assert.deepStrictEqual(builder.calls[2][1], { name: 'Zack', playlist: '501', songsPerUnlock: '15', accountId: null, discordUserId: ANA });
+	assert.match(first(await runSlash(ana(), 'yaml', { name: 'Zack', more: 'songz=3' })).content, /The options are: .*, episodes_per_unlock, songs_per_unlock, label, /);
+	// Beside movies=10 and albums=10, songs=10 would read as ten songs.
+	assert.match(first(await runPrefix(ana(), 'yaml name=Zack songs=10')).content, /^I do not know the option songs\. The options are: /);
+	assert.strictEqual(builder.calls.length, 3);
+	const spec = apmedia._internal.SUBCOMMANDS.find((s) => s.name === 'yaml');
+	assert.ok(!spec.options.some((o) => /songs/.test(o.name)), 'set through more:, as Discord allows 25 options and yaml has 23');
+	assert.match(spec.options.find((o) => o.name === 'playlist').description, /\(songs per unlock: more:songs_per_unlock=N, default 3 or the file's\)$/,
+		'a file keeps its own, off when it has none');
+	const help = apmedia._internal.helpEmbed(BOT).data.description;
+	assert.match(help, /episodes_per_unlock, songs_per_unlock, label/);
+	assert.match(help, /Spend a Wild Ticket on a locked title \(a show: its next few episodes; a playlist part: its songs\)/);
+});
+
+test('the reply says how the playlist opens: 3 songs per unlock from the command, a file\'s own number, off for a file without one', async () => {
+	// Boardwalk Bumps in the fake library holds 32 songs and an audiobook part.
+	use({ builder: realBuilder() });
+	const made = first(await runSlash(ana(), 'yaml', { name: 'Zack', preset: 'none', playlist: 'Boardwalk Bumps' })).content.split('\n');
+	assert.match(made[1], /^11 entries \(11 playlist parts\), 32 locations, about 1\.5 h\.$/);
+	assert.strictEqual(made[2], '`Boardwalk Bumps` opens 3 songs per unlock, in 11 parts.');
+	assert.match(made[3], /^Starts with 3 open; goal: finish 8 of 11 /);
+	assert.match(made[4], /^Items: /, 'the head keeps what the pool holds');
+	let body = '';
+	use({ builder: realBuilder(), fetch: async () => new Response(body) });
+	const fromFile = async (songs) => {
+		body = creatorYaml({ list_preset: 'none', list_shows: 'preset', list_titles: '\'\'', list_playlist: '\'Boardwalk Bumps\'', songs_per_unlock: songs });
+		return first(await runPrefix(ana(), 'yaml', { attachments: [attachment('Zack.yaml', body)] })).content.split('\n');
+	};
+	assert.strictEqual((await fromFile('\'off\''))[2], '`Boardwalk Bumps` is in 3 parts of up to 15 songs, one unlock each.');
+	assert.strictEqual((await fromFile(undefined))[2], '`Boardwalk Bumps` is in 3 parts of up to 15 songs, one unlock each.', 'a file from before world 0.4.0');
+	assert.strictEqual((await fromFile('1'))[2], '`Boardwalk Bumps` opens 1 song per unlock, in 32 parts.');
+	assert.match((await fromFile('random')).join('\n'),
+		/^\u274C Songs per Unlock \(`songs_per_unlock`\) is random: set a number or off, the bot cuts a music playlist at it when it writes the list\.$/);
+});
+
+test('songs_per_unlock typed for a list with no music playlist says it cuts nothing; one a file brings back says nothing', async () => {
+	const idle = '\u26A0\uFE0F Songs per Unlock (`songs_per_unlock`) cuts a music playlist into parts, and this list has none.';
+	use({ builder: realBuilder() });
+	const typed = first(await runPrefix(ana(), 'yaml name=Zack preset=none movies=2 unwatched=false songs_per_unlock=10')).content.split('\n');
+	assert.ok(typed.includes(idle), typed.join('\n'));
+	const slash = first(await runSlash(ana(), 'yaml', { name: 'Zack', preset: 'none', playlist: 'MCU Timeline', unwatched: false, more: 'songs_per_unlock=1' }));
+	assert.ok(slash.content.split('\n').includes(idle), 'a video playlist is not cut into songs');
+	const music = first(await runPrefix(ana(), 'yaml name=Zack preset=none playlist="Boardwalk Bumps" songs_per_unlock=1')).content.split('\n');
+	assert.ok(!music.includes(idle) && music[2] === '`Boardwalk Bumps` opens 1 song per unlock, in 32 parts.', music.join('\n'));
+	const plain = first(await runPrefix(ana(), 'yaml name=Zack preset=none movies=2 unwatched=false')).content.split('\n');
+	assert.ok(!plain.includes(idle), 'the 3 a list gets from the command alone');
+	// Every list the bot writes holds songs_per_unlock, so a list attached again brings its 3 back.
+	const again = realBuilder();
+	const written = await again.build({ name: 'Zack', preset: 'none', movies: 2, unwatched: false, accountId: null, discordUserId: ANA });
+	assert.ok(written.yaml.includes('\n  songs_per_unlock: 3\n'));
+	use({ builder: realBuilder(), fetch: async () => new Response(written.yaml) });
+	const back = first(await runPrefix(ana(), 'yaml', { attachments: [attachment('Zack.yaml', written.yaml)] })).content.split('\n');
+	assert.ok(back[0].startsWith('\u{1F4DD} '), back.join('\n'));
+	assert.ok(!back.includes(idle), back.join('\n'));
 });
 
 test('a list the filters leave empty is refused with the warnings that say which filter emptied it', async () => {
@@ -1615,6 +1684,22 @@ test('a title is named in full by its code, or its title with or without the yea
 	assert.ok(common.namesInFull('An Unearthly Child', hit('An Unearthly Child', null)), 'the title alone, with no entry to read');
 });
 
+// The bug: at 1 to 3 songs a part a player knows a playlist part by its songs, and the game found
+// Road Trip Part 2 by "Song D", yet the command asked "Did you mean **Road Trip Part 2**?" first.
+test('a playlist part is named in full by one of its songs, by the game\'s own rule, and never by a piece of one', () => {
+	const game = require('../helpers/apMediaGame.js');
+	const tr = [[25006, 1, 'Song A', 200000, 250011, 'Artist A', 1], [25007, 2, 'The Long Way', 180000, 250012, 'Artist B', 2], [25008, 3, '\u6771\u4eac', 20000, 250013, 'Artist C', null]];
+	const part = { ok: true, entryKey: 'mix|pl:2500:1', title: 'Road Trip Part 1', entry: { k: 'mix', id: 'pl:2500:1', t: 'Road Trip Part 1', tr } };
+	const songs = ['Song A', 'song a', '  SONG A! ', 'The Long Way', '\u6771\u4eac'];
+	const pieces = ['Song', 'Long Way', 'Artist A', 'Artist A - Song A', 'Song A The Long Way', 'Song D'];
+	for (const typed of songs) assert.ok(common.namesInFull(typed, part), typed);
+	for (const typed of pieces) assert.ok(!common.namesInFull(typed, part), typed);
+	for (const typed of [...songs, ...pieces]) assert.strictEqual(common.namesInFull(typed, part), game.namesSong(part.entry, typed), `one rule: ${typed}`);
+	assert.ok(common.namesInFull('Road Trip Part 1', part) && common.namesInFull('mix|pl:2500:1', part), 'its title and its code still name it');
+	const album = { ok: true, entryKey: 'album|plex://album/2300', title: 'Daft Punk - Discovery', entry: { k: 'album', t: 'Discovery', ar: 'Daft Punk', tr: [[23001, 1, 'One More Time', 320000, 230001, 1]] } };
+	assert.ok(!common.namesInFull('One More Time', album) && !game.namesSong(album.entry, 'One More Time'), 'an album goes by its own title');
+});
+
 // The bug: the game takes any part of a title, so "Alien" on a list holding only Aliens (1986)
 // sent Aliens' checks, and a Wild Ticket went on it; neither can be taken back.
 test('a title typed only in part is asked about, never credited or redeemed on a guess', async () => {
@@ -1701,7 +1786,23 @@ test('ff\'s description and help say what a Fast Forward earns, with strict and 
 	const help = apmedia._internal.helpEmbed(BOT).data.description;
 	assert.ok(help.includes('`!apmedia ff <title> [slot=x]`: Spend a Fast Forward: earn a title\'s next checkpoint without playing it '
 		+ '(with Timesanity Strict on, the 10 minutes after where you got to count as heard instead).\n'), help);
-	assert.ok(!/skip|within 10 minutes/i.test(`${spec.description}\n${help}`), 'nothing says it skips, or reaches only 10 minutes');
+	// The autoskip's line says "skipped" of locked songs in voice, which is no Fast Forward.
+	const forward = help.split('\n').filter((line) => /fast[ -]forward|apmedia ff /i.test(line));
+	assert.strictEqual(forward.length, 2, 'the ff line and the Snack Bar\'s');
+	assert.ok(!/skip|within 10 minutes/i.test(`${spec.description}\n${forward.join('\n')}`), 'nothing says it skips, or reaches only 10 minutes');
+});
+
+// The bug: no player text said that the bot skips the songs of a locked playlist part in voice.
+test('the help says in one line, under PLAYING, that a locked playlist song is skipped in voice, and still fits an embed', () => {
+	const help = apmedia._internal.helpEmbed(BOT).data.description;
+	// An album's song in a locked part is skipped too (lockedFor), so the line promises no album a play.
+	const line = '> In the bot\'s voice channel, a song of a playlist part still locked for someone listening is skipped, unless someone there has it open; an album never locks a song.';
+	const lines = help.split('\n');
+	assert.strictEqual(lines.filter((l) => /skip/i.test(l)).length, 1);
+	assert.ok(!/always play/i.test(help), help);
+	const at = lines.indexOf(line);
+	assert.ok(at > lines.indexOf('**\u{1F37F} PLAYING**') && at < lines.indexOf('**\u{1F527} OWNER**'), help);
+	assert.ok(help.length <= 4096, `${help.length} characters`);
 });
 
 // The bug: slot= takes one word, so `slot=Zack 2` named the slot `Zack` and handed the `2` to the rest
@@ -2009,6 +2110,35 @@ test('no page runs past 2,000 characters or loses its footer, however long a hea
 	assert.deepStrictEqual(longRow, [`h\n${'x'.repeat(1807)}\u2026`], 'a long row is cut before an emoji, not through it');
 });
 
+// The bug: at 1 to 3 songs a part, a playlist part was only "Road Trip Part 2" everywhere a player
+// looked, so nobody could tell which songs a copy or a Wild Ticket would open.
+test('a playlist part\'s row names its first three songs after its title, escaped and cut, and counts the rest', () => {
+	const list = require('../commands/apmedia.js/list.js');
+	const group = { name: 'Road Trip', kind: 'mix' };
+	const part = (songs, extra = {}) => ({ title: 'Road Trip Part 2', kind: 'mix', runtime: '4m', songs, ...extra });
+	const line = (songs, extra, which = 'ready') => list.rowLine(part(songs, extra), group, which);
+	assert.strictEqual(line(['Song D']), '\u2022 Road Trip Part 2 (Song D) \u00B7 4m');
+	assert.strictEqual(line(['A', 'B']), '\u2022 Road Trip Part 2 (A and B) \u00B7 4m');
+	assert.strictEqual(line(['A', 'B', 'C']), '\u2022 Road Trip Part 2 (A, B and C) \u00B7 4m');
+	assert.strictEqual(line(Array.from({ length: 15 }, (_, i) => `S${i + 1}`)), '\u2022 Road Trip Part 2 (S1, S2, S3 and 12 more) \u00B7 4m');
+	assert.strictEqual(line(['Song D'], { unit: 'Road Trip: Next 3 Songs', step: 2, tracks: { done: 1, total: 1 } }, 'locked'),
+		'\u2022 Road Trip Part 2 (Song D) \u00B7 4m \u00B7 1 of 1 tracks \u00B7 opened by Road Trip: Next 3 Songs (the 2nd)');
+	assert.strictEqual(line(['*Hit* <@&123> [x](https://e.x) @everyone']), '\u2022 Road Trip Part 2 (\\*Hit\\* \\<@&123> \\[x](https://e.x) \\@everyone) \u00B7 4m',
+		'a song reads as typed: no Markdown, masked link, mention or ping');
+	assert.strictEqual(line([`${'x'.repeat(98)}yz`, `${'x'.repeat(99)}yz`]), `\u2022 Road Trip Part 2 (${'x'.repeat(98)}yz and ${'x'.repeat(99)}\u2026) \u00B7 4m`, 'a song is cut at 100 characters');
+	assert.strictEqual(line(['\u{1F37F}'.repeat(101)]), `\u2022 Road Trip Part 2 (${'\u{1F37F}'.repeat(99)}\u2026) \u00B7 4m`, 'between emoji, never through one');
+	assert.strictEqual(line([]), '\u2022 Road Trip Part 2 \u00B7 4m');
+	assert.strictEqual(list.rowLine({ title: 'Heat (1995)', kind: 'movie', runtime: '2h' }, { name: 'Movies', kind: 'movie' }, 'ready'), '\u2022 Heat (1995) \u00B7 2h');
+
+	// Three songs of 100 characters on each of 40 locked parts: every row whole, every page inside 2,000.
+	const rows = Array.from({ length: 40 }, (_, i) => part(['a', 'b', 'c'].map((c) => `${c}${i} ${'y'.repeat(120)}`), { title: `Road Trip Part ${i + 1}`, unit: 'Road Trip: Next 3 Songs', step: i + 1 }));
+	const pages = list.listPages({ message: '`Zack`: 0 ready, 40 locked, 0 done of 40.', which: 'locked', groups: [{ name: 'Road Trip', kind: 'mix', done: 0, total: 40, rows }] });
+	assert.ok(pages.length > 1 && pages.every((p) => p.length <= 2000), pages.map((p) => p.length).join(', '));
+	const all = pages.join('\n');
+	for (const row of rows) assert.ok(all.includes(`${list.rowLine(row, group, 'locked')}\n`), row.title);
+	assert.match(all, /\u2022 Road Trip Part 40 \(a39 y+\u2026, b39 y+\u2026 and c39 y+\u2026\) \u00B7 4m \u00B7 opened by Road Trip: Next 3 Songs \(the 40th\)\n/);
+});
+
 test('status: a player sees their own slots, the owner anyone\'s, all of them with nothing named', async () => {
 	const { game } = use();
 	game.bindings.push({ key: '0::zack', slot: 'Zack', userId: ANA, watchId: 0 });
@@ -2115,6 +2245,61 @@ test('autocomplete answers from memory: slots from the bindings, titles from the
 	await auto(off);
 	assert.deepStrictEqual(off.responded, [[]]);
 	assert.deepStrictEqual(game.calls, []);
+});
+
+// The bug: redeem, check and ff offered "Road Trip Part 1", "Road Trip Part 2" and so on, and a song
+// typed into the title found nothing.
+test('a playlist part\'s choice shows its first song or two after its title, inside 100 characters, and a song typed finds it', async () => {
+	const { game } = use();
+	game.bindings.push({ key: '0::zack', slot: 'Zack', userId: ANA, watchId: 0 });
+	const ask = async (sub, typed) => {
+		const f = focus(ana(), sub, 'title', typed);
+		await apmedia.command.slash.autocomplete(f);
+		return f.responded[0];
+	};
+	game.lists.locked = {
+		ok: true, message: '', which: 'locked',
+		groups: [
+			{ name: 'Road Trip', kind: 'mix', done: 0, total: 2, rows: [
+				{ title: 'Road Trip Part 1', ref: 'mix|pl:2500:1', kind: 'mix', songs: ['Song A', '\u6771\u4eac', 'Short One'] },
+				{ title: 'Road Trip Part 2', ref: 'mix|pl:2500:2', kind: 'mix', songs: ['Song D'] }
+			] },
+			{ name: 'Movies', kind: 'movie', done: 0, total: 1, rows: [{ title: 'Heat (1995)', ref: 'movie|rk:7', kind: 'movie' }] }
+		]
+	};
+	assert.deepStrictEqual(await ask('redeem', ''), [
+		{ name: 'Road Trip Part 1 (Song A, \u6771\u4eac and 1 more)', value: 'mix|pl:2500:1' },
+		{ name: 'Road Trip Part 2 (Song D)', value: 'mix|pl:2500:2' },
+		{ name: 'Heat (1995)', value: 'movie|rk:7' }
+	]);
+	assert.deepStrictEqual(await ask('redeem', 'song d'), [{ name: 'Road Trip Part 2 (Song D)', value: 'mix|pl:2500:2' }], 'a song typed finds its part');
+	assert.deepStrictEqual((await ask('redeem', '\u6771')).map((c) => c.value), ['mix|pl:2500:1']);
+	assert.deepStrictEqual((await ask('redeem', 'part')).map((c) => c.value), ['mix|pl:2500:1', 'mix|pl:2500:2'], 'and its title still does');
+
+	game.titles = (key, prefix) => {
+		game.calls.push(['titles', key, prefix]);
+		return [{ name: 'Road Trip Part 2', value: 'mix|pl:2500:2', songs: ['Song D', 'Song E'] }, { name: 'Heat (1995)', value: 'movie|rk:7' }];
+	};
+	for (const sub of ['check', 'ff']) {
+		assert.deepStrictEqual(await ask(sub, 'e'), [{ name: 'Road Trip Part 2 (Song D and Song E)', value: 'mix|pl:2500:2' }, { name: 'Heat (1995)', value: 'movie|rk:7' }],
+			`${sub}: the songs in the name, and only a name and a value to Discord`);
+	}
+
+	const sixty = 'L'.repeat(60);
+	game.titles = () => [
+		{ name: 'Road Trip Part 1', value: 'a', songs: [sixty, sixty, 'x'] },
+		{ name: 'Road Trip Part 2', value: 'b', songs: ['M'.repeat(120)] },
+		{ name: 'Road Trip Part 3', value: 'c', songs: ['\u{1F37F}'.repeat(60)] },
+		{ name: 'R'.repeat(100), value: 'd', songs: ['Song'] }
+	];
+	const cut = await ask('check', 'road');
+	assert.deepStrictEqual(cut.slice(0, 2), [
+		{ name: `Road Trip Part 1 (${sixty} and 2 more)`, value: 'a' },
+		{ name: `Road Trip Part 2 (${'M'.repeat(81)}\u2026`, value: 'b' }
+	], 'one song where two do not fit, cut where one does not');
+	assert.strictEqual(cut[2].name, `Road Trip Part 3 (${'\u{1F37F}'.repeat(40)}\u2026`, 'never half an emoji');
+	assert.strictEqual(cut[3].name, `${'R'.repeat(99)}\u2026`);
+	assert.ok(cut.every((c) => c.name.length <= 100 && Object.keys(c).join() === 'name,value'));
 });
 
 test('the playlist autocomplete reads the game\'s builder, the one whose cache the game warms', async () => {

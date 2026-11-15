@@ -248,7 +248,7 @@ Three files in `config/`. The two with secrets are **gitignored**; templates are
 
 | File                   | Tracked? | What it holds                                                              |
 | ---------------------- | -------- | -------------------------------------------------------------------------- |
-| `config/config.js`     | yes      | Feature flags + display strings: `commandPrefix`, `listenChannel`, `playlistsDir`, `serverName`, `ownerId`, `launchRoleId`, `playniteEnabled`, `tautulliEnabled` + `tautulliApiKey` + `tautulliUrl`, `language`, `youtube_quality`, the broadcast block (`broadcastChannelId`, `eventServerEnabled`, `eventServerPort`, `eventServerToken`, `broadcastKometa`, `broadcastGameLaunch`), `archipelagoEnabled` + `archipelagoBatchSeconds`, `archipelagoInstallDir` + `archipelagoPython` for `!ap next`, the audiobook settings (online lookup and `audiobookCalibreSort` included), the nine read-along settings (five of them for Calibre), the two voice settings and the nine Plex Media settings (tables below). |
+| `config/config.js`     | yes      | Feature flags + display strings: `commandPrefix`, `listenChannel`, `playlistsDir`, `serverName`, `ownerId`, `launchRoleId`, `playniteEnabled`, `tautulliEnabled` + `tautulliApiKey` + `tautulliUrl`, `language`, `youtube_quality`, the broadcast block (`broadcastChannelId`, `eventServerEnabled`, `eventServerPort`, `eventServerToken`, `broadcastKometa`, `broadcastGameLaunch`), `archipelagoEnabled` + `archipelagoBatchSeconds`, `archipelagoInstallDir` + `archipelagoPython` for `!ap next`, the audiobook settings (online lookup and `audiobookCalibreSort` included), the nine read-along settings (five of them for Calibre), the two voice settings and the ten Plex Media settings (tables below; `apMediaAutoskip` has no `/config` row). |
 | `config/keys.js`       | **no**   | `botToken` (Discord) + `geminiApiKey` (Gemini). Copy from `keys.example.js`. |
 | `config/plex.js`       | **no**   | Plex `hostname`, `port`, `https`, `token` (the bot's default user), `homeOwnerToken` (optional, only for cross-account playlist features), `managedUser`, `options`. Copy from `plex.example.js`. |
 
@@ -329,6 +329,14 @@ of one of those.
 | `apMediaTraps` | bool | `true` | The traps a world 0.3.0 seed sends. Off: each one that arrives fizzles with a line naming the switch, and the sweep ends every hold (its checks sent), fizzles the traps waiting for a listen (the one the runner has in hand waits for its answer) and puts a Slow Motion speed back. |
 | `apMediaVoiceTraps` | bool | `true` | The five voice and book traps, which everyone in the bot's voice channel hears. Off: the same for those five alone; Buffering and Rights Expired still hold. |
 | `apMediaTrapClips` | string, at most 200 characters | `''` | The Plex playlist, by title or ratingKey, whose audio tracks of 3 minutes or less Commercial Break splices after the current track. Blank: a 30 s pause instead. |
+
+`apMediaAutoskip` (bool, `true`) is the tenth, in `config/config.js` alone: the autoskip of
+locked playlist songs in voice ("Locked playlist songs in voice"). It has no `/config` row, since
+the panel's worst case measures 5,986 of Discord's 6,000 characters, and it stays out of
+`contracts.SETTINGS`, whose every key `test/apMediaConfig.test.js` holds to a row. `lockedFor`
+reads it at each check, but only `data/config.overrides.json` changes it, read when the process
+starts. False: nothing is skipped, and a locked song plays and counts as any locked title's play
+does.
 
 The watcher clamps both intervals to a day too (`MAX_POLL_S`), because Node runs a timer set past
 about 24.8 days after 1 ms. The constants are code: the 7-day history window, 10 tries before a
@@ -1800,18 +1808,27 @@ the room's creator types server commands in the room page's command box instead.
 worked once, when the 2026-11-13 rehearsal sent E4's book with it; `/send_multiple`, `/release`
 and `/collect` were not tried there.
 
+World 0.4.0, of 2026-11-14, added `songs_per_unlock`: a music playlist cut into parts of that many
+songs that one unlock opens in turn ("World 0.4.0: songs per unlock", under "Lists from the
+Options Creator"). The bot gained the autoskip with it: a song of a playlist part still locked for
+someone listening is skipped before it plays in voice ("Locked playlist songs in voice"). Both
+were tested offline in the same way, the autoskip over the real `app/bot.js` with a FakePlayer and
+over the real voice library's connection code with a fake adapter. **Neither has met a live room,
+Plex server or voice channel yet.** Phase 19 of `BUGTESTING.md` is their checklist.
+
 ### Module map
 
 | File | Role |
 | ---- | ---- |
 | `apworld/plex_media/__init__.py` | `PlexMediaWorld`: builds the seed's registry in `stage_generate_early`, puts the real names on the Item and Location objects, keeps the goal counter in `collect` and `remove`, takes `Unlock i` in `create_item`, writes slot_data, and swaps the seed's data package into the multidata in `stage_modify_multidata`. |
-| `apworld/plex_media/options.py` | The 25 game options (twelve, and the thirteen of world 0.3.0's items and traps), the thirteen list settings the bot reads (`list_*`), the four option groups the Options Creator shows, and `entries` and `list_info`, which the bot writes and the options page hides. |
+| `apworld/plex_media/options.py` | The 26 game options (twelve, the thirteen of world 0.3.0's items and traps, and world 0.4.0's `songs_per_unlock`), the thirteen list settings the bot reads (`list_*`), the four option groups the Options Creator shows, and `entries` and `list_info`, which the bot writes and the options page hides. |
 | `apworld/plex_media/entries.py`, `plan.py` | Each entry validated (an `EntryError` names its index), then one slot's plan: units, steps, starting copies dealt round-robin, checkpoint minutes, the goal count, the caps, and the pool (`_pool`: Wild Tickets, Fast Forwards, Remote Controls, traps and snacks; `exclude_main` deals it again for excluded main locations). |
 | `apworld/plex_media/registry.py`, `naming.py` | The seed's one table of units and locations across every Plex slot, with ids and unique names; display names and the text sanitiser. |
 | `apworld/plex_media/slotdata.py`, `datapackage.py`, `rules.py`, `constants.py` | slot_data schema 1; the seed's data package and its checksum; access rules; the ids, names and limits that `helpers/apMediaContracts.js` mirrors. |
 | `apworld/tests/` | `run.py` (`npm run test:apworld`), `test_pure.py`, `test_generate.py`, `test_e2e.py` with its Node half `e2e_bot.test.js`, `test_creator.py` with its Node half `fill_creator.js`, `ap_harness.py`, `ap_child.py`, `purelib.py`, `make_plan_cases.py` and `fixtures/`. See "Testing it" below. |
 | `helpers/apMediaGame.js` | The orchestrator: one game client per binding, the queue, notices and announcements, what the items and traps do, `health()`, and the data API `/apmedia` calls. |
 | `helpers/apMediaTraps.js` | The trap runner (`createTrapRunner`): the five voice and book traps on the bot's music or the listener's own audiobook, and their undoing. The game reaches what the bot plays only through it. |
+| `helpers/apMediaAutoskip.js` | Which queue entries the autoskip may offer to the game's check (`skippable`), and the line and the `track-locked` event for a stretch of skipped songs (`lineFor`, `eventFor`). Whether a song is locked is the game's to say (`apMediaGame.js` `lockedFor`). |
 | `helpers/apMediaClient.js` | `ApMediaClient`, the game client. |
 | `helpers/apMediaCredit.js` | Pure credit logic over a slot's index. |
 | `helpers/apMediaWatch.js`, `apMediaVoice.js`, `apMediaBooks.js` | The automatic credit sources: Plex history and sessions, the bot's music in voice, the bot's audiobooks. |
@@ -1839,7 +1856,9 @@ World 0.3.0 changed `commands/pause.js` (each pause it makes adds one to `bot.pa
 `helpers/bookEngine.js` (`handlers.pause` adds one to the session's `pauseCount` for every pause
 request, the already-paused no-op included, with no notify) and `helpers/bookmarks.js` (`setSpeed`)
 for the trap runner, and `helpers/configStore.js` and `config/config.js` for the three trap
-settings.
+settings. World 0.4.0 changed `app/bot.js` (the `autoskip` hook, `skipLocked` and `reportLocked`,
+and a voice join that lands after a newer run took over) and `config/config.js`
+(`apMediaAutoskip`, with no `configStore` row).
 
 ### How a play becomes a check
 
@@ -1950,7 +1969,9 @@ also releases the banked ids whose titles are open now.
   does. A queue entry marked `secret` (`commands/hitster.js`'s clip) earns nothing: its credit line
   and the relay's send line would name the album before anyone had guessed. Credit goes to the
   people present at both ends, minus the deafened. The work waits for `setImmediate`, because the event fires inside the
-  AudioPlayer's state setter. Off while `apMediaVoiceCredit` is false.
+  AudioPlayer's state setter. Off while `apMediaVoiceCredit` is false. A song the autoskip takes
+  off the queue never plays, so it never reaches `track-heard` ("Locked playlist songs in voice"
+  below).
 - **Books** (`apMediaBooks.js`). Every 10 s while a book session exists, the step each playing
   session moved, bounded by the wall time at 1.5 times its speed plus 5 s; the engine's pause, stop,
   start and move notifications close and open steps where they happen, so the seconds before a pause
@@ -1979,7 +2000,8 @@ lists holding the same movie share its unlock and its locations; ids come from s
 the first player to list a key names it. A name that clashes, ignoring case, with another or with a
 reserved name (every fixed item, Victory, the goal counter, Plex Media Goal, every group name,
 and the placeholder spellings) gains a tag in brackets: the rating key, the show's rating key for a
-show's unlock, `<playlist>:<part>` for a playlist part, or the catalog id for a book. A name that
+show's unlock, `<playlist>:<part>` for a playlist part, the playlist's rating key alone for the
+unlock a playlist's parts share under `songs_per_unlock`, or the catalog id for a book. A name that
 would be all digits (a movie with no year, such as 1917) gains its kind: `1917 (movie)`. The real
 names go on the Item and Location objects, so the fill, the rules and the spoiler see titles. Of a
 list's names only a movie without a year can spell one of world 0.3.0's fixed names, so from 0.3.0
@@ -2030,13 +2052,13 @@ titles.
 **The bot never derives an id: every location and item id it sends or counts is read from
 slot_data.** Its top level holds `schema`, `game`, `world_version`, `builder`, `generated_at`,
 `created_at`, `label`, `goal_percent`, `goal_count`, `entry_count`, `tv_unlock`,
-`episodes_per_unlock`, `locked_watches`, `checkpoint_items`, `timesanity_strict`, `timesanity`
-(minutes per kind; the album timer covers playlist parts), `items` (the Popcorn and Wild Ticket
-ids), `units` (`{id, name, kind, steps, start}`, `start` being the copies given at the start) and
-`entries`, in list order. Each entry repeats its YAML fields and adds `u` (its unit's item id), `s`
-(the copies of that unit it needs), its main location ids (`w` for a movie or an episode, `f` for a
-book, and a last element on each album or playlist track, `null` under 30 s) and `cp`, its
-checkpoints as `[minute, location id]`.
+`episodes_per_unlock`, `songs_per_unlock`, `locked_watches`, `checkpoint_items`,
+`timesanity_strict`, `timesanity` (minutes per kind; the album timer covers playlist parts),
+`items` (the Popcorn and Wild Ticket ids), `units` (`{id, name, kind, steps, start}`, `start` being
+the copies given at the start) and `entries`, in list order. Each entry repeats its YAML fields
+and adds `u` (its unit's item id), `s` (the copies of that unit it needs), its main location ids
+(`w` for a movie or an episode, `f` for a book, and a last element on each album or playlist
+track, `null` under 30 s) and `cp`, its checkpoints as `[minute, location id]`.
 
 World 0.3.0 added keys without a new schema: `items.snacks` (name to id, Popcorn included),
 `items.useful` (`{fast_forward, remote_control}`), `items.traps` (keyed as `contracts.TRAPS`:
@@ -2047,6 +2069,13 @@ after `exclude_locations` took its share, which only generation knows). **A seed
 gets none of the new behaviour**: `apMediaCredit.itemIds` reads a snack, useful or trap id only
 when slot_data names it, and `snackBarOf` and `poolOf` give null, so a 0.2.0 seed counts as it
 did, has no Snack Bar, and its welcome has no pool line.
+
+World 0.4.0 added `songs_per_unlock`, also without a new schema: 0 in a 0.4.0 file without the
+setting, and missing in every 0.2.0 and 0.3.0 seed. Above 0, every part of the list's playlist
+carries one unit's `u`, that unit's `steps` is the number of parts, and each part's `s` is its
+place in part order; at 0 each part is a unit of its own with `s` 1. The bot reads no
+`songs_per_unlock`: `credit.isUnlocked` judges each part by its own `u` and `s`, as it judges an
+episode, so both kinds of seed count the same way.
 
 **slot_data names no person.** The room hands it to any client joined as the slot, and
 archipelago.gg's tracker API (`/api/slot_data_tracker/<tracker>`) serves it to anyone, so the
@@ -2528,6 +2557,100 @@ known gaps under "Testing it").
 | ⏩ `ZackPlex` spent a Fast Forward on **The Matrix (1999)**: 1 check sent. 1 Fast Forward left. | the reply to `/apmedia ff`; under `timesanity_strict` the span comes first ("…: From 45m to 55m counts as heard. 1 check sent. …") |
 | 🍿 `ZackPlex` bought a Fast Forward for 10 snacks: 5 snacks and 2 trades left. `/apmedia ff <title>` spends it. | the reply to a Snack Bar trade; "🍿 `ZackPlex` bought a Remote Control for 10 snacks: …" for the other item |
 
+### Locked playlist songs in voice
+
+Before the bot plays a song in voice, it asks the game whether the song is locked for the people
+listening, and takes it off the queue if so. The rule is the owner's: a song in a playlist part
+still locked on a listener's list is skipped, unless someone listening has it open on any entry of
+their own list. It covers the 15-song parts of 0.2.0 and 0.3.0 seeds too, since `lockedFor` never
+reads `songs_per_unlock`. Plexamp and the other Plex apps cannot be held back: a locked song heard
+there banks as before.
+
+**The hook.** `Bot.autoskip` is null unless the game runs. `attachPlayers` sets it to `lockedFor`,
+and `detachPlayers` (a stop, a `!restart`, `apMediaEnabled` going off) clears it only while it is
+still the game's own, so another game attached to the same bot since keeps its check.
+`bot.autoskip(entry, listenerIds, stretch)` gives `{slots, playlists}`, the slots the song is
+locked on and their playlists' names, or null to play it. The bot reads the listeners itself
+(`voiceListeners` on the channel `pickVoiceChannel` chose: the people in it who are not deafened,
+bots left out), so the game never handles a guild.
+
+**The rule** (`lockedFor`, `apMediaGame.js`). Null while `apMediaEnabled` is off or
+`apMediaAutoskip` is false, and for any entry `apMediaAutoskip.skippable` turns down: a `secret`
+clip (Hitster's, a Commercial Break's), an entry with no Plex `key` (YouTube), one with
+`isSeeking` (a `!seek`, a Rewind), and one with `replay` once it is `played` (a `!loop` of a song
+that has played; one set on a song still waiting at the head of an idle queue gets no pass). The
+bot calls `skippable` so it never asks, and the game calls it again so it refuses on its own. For
+each counting binding of a listener (`active` or `refused`, and not a duplicate, `isDuplicate`),
+the song's hits come from `credit.hitsFor(index, voice.identify(entry))`, the way voice credit
+finds a track: rating key, then part id, then `artist|title`. A binding with no hit changes
+nothing. One with a hit but no inventory (its client not ready, or no counts yet: items not known,
+reconnecting, refused) plays the song for everyone, since its credit may still count once the
+items come, and so does one with any hit open (`credit.isUnlocked`, a Wild Ticket's redeemed key
+included), an album's or a part's. Otherwise its locked `mix` hits lock the song: its slot and
+each part's playlist name (`groupOf(hit.entry, index).name`) join the answer, and locked album
+hits alone lock nothing. A stale or orphaned binding earns nothing and is never read, and a
+duplicate never connects while the link that counts holds the seed. `lockedFor` is synchronous and
+never throws: an error warns once per game and plays the song.
+
+**Where the bot asks** (`Bot.skipLocked`, `app/bot.js`). In `runPlayback`, after the book gate,
+the channel pick and `will play`, and before the run takes its `playRun`, its `stopGeneration` and
+its head track, which `superseded()` reads, and before `openConnection`. A skipped song costs no
+voice join and no Plex download, and a queue locked from its first song never joins. Nothing is
+asked with no hook or nobody listening. One loop takes a whole stretch: a run per skipped song
+nested on the stack, and 1,700 skips in a row overflowed it on Node 24 (measured with a mutant:
+"Playback could not start: RangeError"). The check is synchronous, so only a command run inside it
+lands mid-check, and the loop keeps `superseded()`'s rules: a newer run (`playRun` moved) makes
+this one report what it skipped and stand down; a stop (`stopGeneration` moved) takes its
+`stoppedEntry` off the queue while that is still the head, and checking goes on, so `!skip 2`
+takes both songs; a queue change has the new head checked. When skips empty the queue,
+`skipLocked` reports the stretch, moves `playRun` on and ends playback as `dispatcherFunc`'s finish
+branch does (`isPlaying` false, `reportUnplayable`, `finish`, `playbackCompletion`), so an older
+run still loading its song stands down instead of emitting a second `finish`.
+
+**The join release.** A newer run's `openConnection` destroys an older run's unfinished join, but a
+run whose skips ended playback joined nothing, so the older run's join could land and hold the bot
+in voice with nothing to play: `/book play` refused, and `!stop` answering "Nothing currently
+playing." `runPlayback` keeps the join in `joined` until it adopts it. One that lands after a newer
+run took over (`playRun` moved) is destroyed, unless it is the connection the bot already holds
+(`joinVoiceChannel` hands every run the guild's live connection), and the run returns. The bot is
+seen joining and leaving, and the command log has a `voice-joined` event for that join; a join
+that never lands ends quietly at `openConnection`'s 30 s timeout, with one `voice-join-failed`.
+Destroying the guild's pending join in `skipLocked`'s end path was the other option, and was not
+taken: `destroy()` emits neither `ready` nor `error`, so that run would wait out its 30 s with
+`loadingRuns` above 0, `musicBusy()` true and `/book play` refused, while `!stop` said nothing was
+playing.
+
+**One read a stretch.** `skipLocked` hands every check of a stretch one object, and `lockedFor`
+keeps the bindings it read for that object in a `WeakMap` (`countingBindings`): `apMediaStore`'s
+`bindings.list()` JSON-clones every binding, heard maps included, on each read. A check without
+the object reads afresh, and nothing is kept from one stretch to the next, so a binding written
+between two checks is seen. A stretch runs inside the previous track's Idle, in the AudioPlayer's
+state setter, as `dispatcherFunc` and `playSong` already do, so its time holds up the whole bot.
+Measured over a 600-song stretch with the real `Bot`, game and store against the loopback room,
+three runs a shape, before (a binding read and a command-log event per song) and after: one
+binding of 673 bytes took 514 to 783 ms before and 3.9 to 9.8 ms after; three bindings of 163 KB
+in all, 2,354 to 3,724 ms before and 8.0 to 10.4 ms after; five of 402 KB, 4,380 to 8,113 ms
+before and 14.4 to 20.7 ms after. With one event a stretch, the per-song reads alone took 12 to
+33 ms, 1,297 to 1,649 ms and 2,823 to 3,440 ms. After the change each measured stretch read the
+bindings twice: once for its checks, and once in the game's own `will play` listener.
+
+**The line and the event** (`reportLocked`; `apMediaAutoskip.js`). One line a stretch, sent when
+the loop ends (before the next song's join or download, or as playback ends) to the channel
+playback talks in, with `allowedMentions: { parse: [] }`, and one `logger.info` line. `lineFor`
+counts the songs, names three ("**Song A**, **Song B**, **Song C** and 1 more"), says where they
+are locked ("in Road Trip on `ZackPlex`'s list", or "on the lists of `A` and `B`"), names each slot
+and playlist once and three of each at most ("and 2 more playlists"), escapes a title as the game's
+lines do, every `[` included, cuts it at 100 code points, and puts a slot in inline code that a
+backtick cannot end. `eventFor` makes the stretch's one `track-locked` command-log event,
+`{count, songs, slots, playlists}`, `songs` being the first 20 as `Artist - Title` joined by `; `,
+since the command log cuts a value at 300 characters. An event per song held the bot up 0.5 to 1 s
+over a 600-song stretch on its disk appends alone.
+
+**Gaps.** `!viewqueue` still lists locked songs: each is checked only at the head. The
+`artist|title` fallback skips another recording with a locked track's artist and title as that
+track. A song in a locked part and on a locked album too is skipped with its part, and the album
+checks it would have banked are lost: the rule followed to the letter.
+
 ### `/apmedia` and its buttons
 
 `commands/apmedia.js/index.js` gates every subcommand on `apMediaEnabled`, read on each call (the
@@ -2565,17 +2688,24 @@ Creator"); a subcommand takes at most 25, so `label`, `starting_unlocks`, `wild_
 `locked_watches`, `checkpoint_items` and world 0.3.0's thirteen (`snack_variety`, `fast_forwards`,
 `remote_controls`, `snack_bar_trades`, `snack_bar_price`, `trap_percentage`, `buffering_weight`,
 `rights_expired_weight`, `commercial_break_weight`, `shuffle_mode_weight`, `rewind_weight`,
-`intermission_weight`, `slow_motion_weight`) arrive through one `more` option in the prefix's
-key=value form, read without case, dashes or underscores (`yaml.js` `KEYS`). Anyone may build,
-and one build reads every movie, show and album listing and then the tracks or episodes of each
-pick (286 Plex requests for a large list on a library the owner's size), so `yaml` runs one build
-per caller and two at once in all, kept in module memory, and answers the rest with a wait; the
-builder gives the event loop a turn before each hand-pick and builds each query's bigrams once.
-`check`, `redeem` and `ff` take a title only when it is named in full or by its code: the game's
-`findEntry` also matches any part of a title, and "Alien" is a part of "Aliens (1986)". A miss
-gets up to three suggestions from an edit distance against every title on the list,
-on the main thread, so a text over 200 characters once normalised gets none, and a pair whose lengths
-differ by more than the closeness allows is never scored. `check`'s prefix text is tried whole as a
+`intermission_weight`, `slow_motion_weight`) and world 0.4.0's `songs_per_unlock` arrive through
+one `more` option in the prefix's key=value form, read without case, dashes or underscores
+(`yaml.js` `KEYS`). The `playlist` option's description names `more:songs_per_unlock=N`, at 98 of
+Discord's 100 characters. Anyone may build, and one build reads every movie, show and album
+listing and then the tracks or episodes of each pick (286 Plex requests for a large list on a
+library the owner's size), so `yaml` runs one build per caller and two at once in all, kept in
+module memory, and answers the rest with a wait; the builder gives the event loop a turn before
+each hand-pick and builds each query's bigrams once. `check`, `redeem` and `ff` take a title only
+when it is named in full or by its code: the game's `findEntry` also matches any part of a title,
+and "Alien" is a part of "Aliens (1986)". A playlist part is named in full by one of its songs
+too. `findEntry` tries the list's labels exactly, then its titles, then a part's songs
+(`songNamed`, an exact `normTitle` match of a track's title in a `mix` entry's `tr`), and only
+then any part of a label; `common.namesInFull` takes a song through the same rule
+(`apMediaGame.namesSong`), so the command never asks "Did you mean" about a song the game would
+find, and "Long Way" names no part holding "The Long Way". A miss gets up to three suggestions
+from an edit distance against every title on the list, on the main thread, so a text over 200
+characters once normalised gets none, and a pair whose lengths differ by more than the closeness
+allows is never scored. `check`'s prefix text is tried whole as a
 title before it is split at its last `at` or `@`. `account` takes a Plex name in full (its letters
 and digits in order, so case, spaces and punctuation do not count) or an id: a
 link reads that account's whole history, so part of a name gets "Did you mean", sent by DM on the
@@ -2614,7 +2744,24 @@ the caller's own slots, so a slot called RC, FF or Remote shows its Snack Bar. W
 Autocomplete answers from memory: slots from the bindings, titles from the slot indexes (`redeem`
 offers locked titles only), and playlists from the game's YAML builder (`apMediaGame.builder()`, one
 per process). The game warms that playlist cache when it starts, and a cache 10 minutes old starts
-one background refresh, never awaited.
+one background refresh, never awaited. A playlist part is found by any song holding the typed text
+too, and `game.titles()` and the `list()` rows carry its titled songs as `songs`; `index.js`
+`partName` puts the first two after the title ("Road Trip Part 1 (Song A, Song B and 1 more)", the
+list read by `common.named`), or the first alone when two would pass 100 characters;
+`titleChoices` maps each check and ff choice to `name` and `value` alone before Discord sees it,
+and `lockedChoices` builds redeem's the same way. The value stays the part's code, and `choice()`
+never cuts between the halves of a surrogate pair.
+
+**Playlist headings and rows.** `/apmedia list` groups its rows under `groupOf(entry, index)`: a
+show, a playlist, or a kind. A playlist in several parts drops " Part <k>" from its heading, and
+one in a single part keeps its whole title ("Summer Part 2" stays so), as the builder titles parts
+and `naming.playlist_title` names the unit; the part counts per playlist are kept per index in a
+`WeakMap`. The autoskip's line and event take their playlist names from the same heading.
+`list.js` `rowLine` names a part's first three songs after its title (`songsText`: `SONGS_SHOWN` 3,
+each cut at `SONG_MAX` 100 code points, so never through a surrogate pair, and escaped) and counts
+the rest, so a 15-song part of an older seed reads "(S1, S2, S3 and 12 more)". Rows run longer for
+it: a page of 15-song parts holds about 12 to 15 rows, where `paginate`'s cap is 22 rows in 1,850
+characters.
 
 | Custom id | Kept | Who |
 | --------- | ---- | --- |
@@ -2657,7 +2804,8 @@ file. The Creator's file therefore carries what to pick, and the bot writes the 
 and goal" and "Timesanity", and world 0.3.0's thirteen item and trap options are a group of their
 own, "Items and traps", so the Creator shows six panels: Game Options (`progression_balancing`
 and `accessibility`), the list group, Unlocks and goal, Timesanity, Items and traps, and Item &
-Location Options.
+Location Options. World 0.4.0's Songs per Unlock sits in Unlocks and goal, after Episodes per
+Unlock.
 
 | Key | Class | Values | Default | Builder param |
 | --- | ----- | ------ | ------- | ------------- |
@@ -2709,8 +2857,9 @@ is unchanged.
 `timesanity_albums`, whose default 0 is its special `off`. YAML 1.1 reads that `off` as false, and
 `Range.from_text` takes false as 0 only when the default is not 0, so every unedited Plex Media
 template failed with "Error generating option timesanity_albums in Plex Media". The four timers
-now share `TimesanityTimer`, whose `from_text` reads false as 0, and A1 rolls the whole template.
-The Creator was never affected: it writes `'off'` quoted.
+now share `OffRange` (named `TimesanityTimer` until world 0.4.0's `SongsPerUnlock` joined them,
+also off by default), whose `from_text` reads false as 0, and A1 rolls the whole template. The
+Creator was never affected: it writes `'off'` quoted.
 
 **Not done: moving `progression_balancing` and `accessibility` into a group**, so that the list
 group would open the form. Every group is a collapsed panel, so the list group is already the
@@ -2838,20 +2987,22 @@ for the player.
 - **Game options.** One with a plain value becomes its builder param, read the way its
   Archipelago class reads it: a Toggle's words in any case but untrimmed, and numbers through
   `int()` (`0.5` is off), a Choice by name or by number, a Range's `default`, `high`, `low` and
-  booleans, where a timer takes false (an unquoted `off`, `no` or `false`, or the text `false`) as
-  0 whatever its default, as the world's `TimesanityTimer` does. A float is refused by a Range or a
-  Choice. A value Archipelago would refuse is refused, naming the setting, and so is any choice a
-  weighted or listed option can roll that Archipelago would refuse ("Goal Percent
-  (`goal_percent`) can roll `150`: it must be a whole number from 1 to 100."). A random value the
-  bot reads (`random`, `random-low`, `random-middle`, `random-high`, a `random-range-…` inside the
-  option's own range, and for a Toggle only the exact lowercase `random`), or a mapping or list
-  that can roll more than one value, is kept verbatim in `passthrough`, listed in `random`, and
-  planned with the option's default; the finished file's header names it with the value the plan
-  used. Archipelago reads a few more `random-range-` spellings, which the bot refuses as ones it
-  does not read. Every other key (`progression_balancing`, `accessibility`, `local_items`,
-  `start_inventory`, `triggers` and the rest) goes into `passthrough` verbatim, in file order. The
-  copied lines may take 32 KB in the new file (`COPY_MAX_BYTES`), counted while each value is
-  written, so a few aliased lines cannot grow into a reply of megabytes.
+  booleans, where a timer or `songs_per_unlock` takes false (an unquoted `off`, `no` or `false`,
+  or the text `false`) as 0 whatever its default, as the world's `OffRange` does (`OFF_OPTIONS`
+  holds the five). A float is refused by a Range or a Choice. A value Archipelago would refuse is
+  refused, naming the setting, and so is any choice a weighted or listed option can roll that
+  Archipelago would refuse ("Goal Percent (`goal_percent`) can roll `150`: it must be a whole
+  number from 1 to 100."). A random value the bot reads (`random`, `random-low`, `random-middle`,
+  `random-high`, a `random-range-…` inside the option's own range, and for a Toggle only the exact
+  lowercase `random`), or a mapping or list that can roll more than one value, is kept verbatim in
+  `passthrough`, listed in `random`, and planned with the option's default; the finished file's
+  header names it with the value the plan used. `songs_per_unlock` is the one game option refused
+  instead, as a list setting is ("World 0.4.0: songs per unlock" below). Archipelago reads a few
+  more `random-range-` spellings, which the bot refuses as ones it does not read. Every other key
+  (`progression_balancing`, `accessibility`, `local_items`, `start_inventory`, `triggers` and the
+  rest) goes into `passthrough` verbatim, in file order. The copied lines may take 32 KB in the new
+  file (`COPY_MAX_BYTES`), counted while each value is written, so a few aliased lines cannot grow
+  into a reply of megabytes.
 - **Settings a trigger checks** (`triggerChecked`): `Generate.roll_triggers` compares the value a
   setting has in the file with the trigger's `option_result`, so a game option or list setting
   that a trigger under `Plex Media` with `option_category: Plex Media` names (any name a weighted
@@ -2867,10 +3018,10 @@ for the player.
   file (it holds `Plex Media` and `requires`), and an `option_name` that cannot roll (an empty
   list, a weight `int()` cannot read, or weights summing to 0 or less); a trigger without a
   category on `description` or `requires`, which the bot writes itself; a trigger whose options set
-  a list setting, `entries` or `list_info` under `Plex Media` (keys stripped of their `+` and `-`
-  as `update_weights` strips them), which the picks would not follow; and a game option a trigger
-  sets plainly to a value `fileOption` refuses. What Archipelago reads only when a trigger fires
-  (`percentage`, `option_result`, a malformed `options`) is left to it.
+  a list setting, `songs_per_unlock`, `entries` or `list_info` under `Plex Media` (keys stripped
+  of their `+` and `-` as `update_weights` strips them), which the picks would not follow; and a
+  game option a trigger sets plainly to a value `fileOption` refuses. What Archipelago reads only
+  when a trigger fires (`percentage`, `option_result`, a malformed `options`) is left to it.
 - **A timer kept random** could roll as low as 1 minute, and a trigger may set one lower, so the
   build plans the list again at each random timer's lowest roll above 0 and at the lowest value a
   trigger's options set under `Plex Media` (`triggerTimers`, whatever the trigger compares and
@@ -2938,14 +3089,14 @@ for the player.
   and the file is then refused; neither the Options Creator nor the bot writes one.
 
 **Writing it back.** `validateParams` records `p.list`, the list settings the titles were picked
-with, and `renderYaml` writes them after the 25 game options in every file the bot builds,
+with, and `renderYaml` writes them after the 26 game options in every file the bot builds,
 with a file or without: `list_preset` by name, each count as a number or `preset`, the texts as
 JSON strings, `list_unwatched` as true or false, `list_max_episodes`, and `list_label` empty unless
 a label was given, so a copy under another name gets its own. A count equal to what the active
 preset gives is written as `preset`, also when it was given as a number, so it follows a preset
 given later. Built from options alone, counts, titles, a playlist or a collection given without
 `preset:` record `list_preset: none`. The `passthrough` keys come next, each value as one line of
-JSON flow, with a random game option in that option's own place among the 25. A key stays
+JSON flow, with a random game option in that option's own place among the 26. A key stays
 plain when it is an identifier YAML 1.1 does not read as a boolean or null, and is quoted
 otherwise. A setting in `asWritten` is written as its copied line in its own place, among the
 game options or the list settings. `requires` gains `plando:` after `version:` when the file asked
@@ -2981,22 +3132,24 @@ your own list.", and a new name builds it for them. The reply adds "📄 Setting
 with "the options you typed replace the file's" when any were typed, a ♻️ line with how many of
 the file's titles a fresh pick replaced when it had any, and one ⚠️ line naming the game options
 left random by their Creator names and keys, with their defaults: the first six (`RANDOM_SHOWN`),
-then "; and N more", since a file can leave all 25 random. The summary's three lines are the
-counts, the start and the goal, and "Items: …", the Fast Forwards, Remote Controls, traps (by
-name) and snacks the plan deals (`itemsText`). A list built while the person's account link waits
-for consent says that nothing they watched is known yet. The ⚠️ random line, warnings and misses
-go between the summary and the two closing lines, and `fitLines` keeps the whole reply within
-Discord's 2,000 characters by leaving out a line too long to fit and counting the lines it leaves
-out ("… and 6 more lines not shown."), so the next step and the line about the public tracker are
-never clipped. The "Nearest matches taken" warning names pairs up to 10 and about 900 characters
-(`LOOSE_CHARS`). A list the filters leave empty is refused with the warnings that say which
-filter emptied it and the first ten titles not found (`MISSES_SHOWN`), and the account fix says
-when a link waits for the player's consent, with the `unwatched` option spelled as the path takes
-it. Text from a file or the library reaches a warning through `common.esc`, which escapes Markdown
-and masked links and turns `@everyone`/`@here` and the `<` of a mention, a channel (`<#`), a
-command (`</`), a timestamp (`<t:`) or a custom emoji (`<:`, `<a:`) into text. A refusal goes out
-as written, so the library's playlist and collection names it lists are code spans. A finished YAML over 8 MB
-(`REPLY_FILE_MAX`), with a file or without, is refused instead of sent.
+then "; and N more", since a file can leave 25 of the 26 random, all but `songs_per_unlock`. The
+summary's first lines (`summaryHead`) are the counts, how a music playlist went on when the list
+has one (`playlistText`), the start and the goal, and "Items: …", the Fast Forwards, Remote
+Controls, traps (by name) and snacks the plan deals (`itemsText`). A list built while the
+person's account link waits for consent says that nothing they watched is known yet. The ⚠️ random
+line, warnings and misses go between the summary and the two closing lines, and `fitLines` keeps
+the whole reply within Discord's 2,000 characters by leaving out a line too long to fit and
+counting the lines it leaves out ("… and 6 more lines not shown."), so the next step and the line
+about the public tracker are never clipped. The "Nearest matches taken" warning names pairs up to
+10 and about 900 characters (`LOOSE_CHARS`). A list the filters leave empty is refused with the
+warnings that say which filter emptied it and the first ten titles not found (`MISSES_SHOWN`), and
+the account fix says when a link waits for the player's consent, with the `unwatched` option
+spelled as the path takes it. Text from a file or the library reaches a warning through
+`common.esc`, which escapes Markdown and masked links and turns `@everyone`/`@here` and the `<` of
+a mention, a channel (`<#`), a command (`</`), a timestamp (`<t:`) or a custom emoji (`<:`, `<a:`)
+into text. A refusal goes out as written, so the library's playlist and collection names it lists
+are code spans. A finished YAML over 8 MB (`REPLY_FILE_MAX`), with a file or without, is refused
+instead of sent.
 
 **The `yaml` dependency.** `package.json` pins `"yaml": "2.9.1"`, which has no dependencies and no
 install scripts. `npm install --package-lock-only` re-resolved the stale `package-lock.json`, 617
@@ -3022,9 +3175,77 @@ appended, so `BUILDER_VERSION` and the slot_data schema stay 1 and the slot_data
 additive. A YAML written for 0.2.0 has none of the thirteen new options and gets their defaults:
 2 Fast Forwards and 1 Remote Control where the room allows, snacks for the other filler, no
 traps. A seed generated under 0.2.0 rebuilds the same under 0.3.0, since the item options move no
-id, name or location (`test_the_item_options_move_no_id_name_or_location`). **Every YAML the bot
-writes now carries `Plex Media: 0.3.0`**, so the generating PC and the `!ap next` worker need
-0.3.0.
+id, name or location (`test_the_item_options_move_no_id_name_or_location`). From then every YAML
+the bot wrote carried `Plex Media: 0.3.0`.
+
+World 0.4.0 (2026-11-14) went the same way, `world_version` 0.4.0 in the same four places. Unit
+keys were only added, so `BUILDER_VERSION` and the slot_data schema stay 1: a list without
+`songs_per_unlock` keeps every key, id and name it had, and the two goldens changed only
+`world_version` and the new key, at 0. **Every YAML the bot writes now carries
+`Plex Media: 0.4.0`**, so the generating PC needs 0.4.0 before any of them is generated, and the
+`!ap next` worker rebuilds older seeds with it.
+
+**World 0.4.0: songs per unlock.** `songs_per_unlock` (`SongsPerUnlock`, 0 to 15, `off` being 0)
+cuts the list's music playlist into parts of that many songs, and every part of one playlist
+shares one unit, keyed `mix-songs{N}|<pl>` (`plan.unit_key`, `contracts.unitKey`); at 0 each part
+stays a unit of its own, keyed by its entry (`mix|pl:<pl>:<part>`). `plan.py` `_playlists`, and
+its twin `apMediaPlan.js` `mixSteps`, sort a unit's parts by part number, make each part's place
+its step, and give the unit as many steps as parts with the prefix `0..n`, so copy n opens part n.
+A part holding more tracks than `songs_per_unlock` is a `PlanError` at the first such part in part
+order, which generation turns into an `OptionError` naming the player, and the twin throws the
+same text: "entry 1 (Road Trip Part 1) holds 3 tracks, more than songs_per_unlock 1 (the YAML
+attached to /apmedia yaml again, which cuts the playlist at 1, or songs_per_unlock 0 would help)".
+Only a hand edit makes one, since the bot cuts the parts at the number it writes, and a part
+shorter than the number is never refused, as a playlist's last part often is. The unit is named
+`<playlist>: Next N Songs`, or `Next Song` at 1 (`naming.unit_name`, which now takes the unit's
+step count from the registry, read from the first list that names the unit). `playlist_title`
+strips " Part <k>" from the first listed part's title only when the playlist has several parts,
+so one that fits in a single part keeps a title of its own that ends that way ("Summer Part 1:
+Next 3 Songs"). A clash tags the unit with the playlist's rating key alone, while its parts'
+locations keep `<pl>:<part>`, so the bot's hint matching (`entryTags`) is unchanged. The four
+timers' class, `TimesanityTimer`, became `OffRange`, which `SongsPerUnlock` shares, so an unquoted
+`off`, read as false, is 0 there too. `MAX_COPIES`'s refusal names a list built again at a higher
+`songs_per_unlock`.
+
+**The default stays 0** in `constants.OPTIONS` and `contracts.OPTIONS`: a YAML without the key then
+plans as world 0.3.0 did, and the `!ap next` worker rebuilds every seed made before 0.4.0 with this
+apworld. `test_pure.py`'s `test_lists_without_songs_per_unlock_plan_exactly_as_world_0_3_0_did`
+holds it to `apworld/tests/fixtures/world_0_3_0_plans.json`, written by the world modules of
+986cd74 before any 0.4.0 edit: 5 seeds' plans, ids, names, data package and slot_data, kept as
+sha256 digests (17 KB, where the plain JSON was 121 KB).
+
+**The bot's side** (`helpers/apMediaYaml.js`). `readPlayerYaml` refuses a random or weighted
+`songs_per_unlock` through the list settings' path (`RandomListSetting`), with words that hold with
+or without a playlist: "Songs per Unlock (`songs_per_unlock`) is random: set a number or off, the
+bot cuts a music playlist at it when it writes the list." Beside random list settings the one reply
+ends "the bot needs a value in each to build the list"; list settings alone keep "to pick titles".
+A trigger that sets it, with or without `+` or `-`, gets the list settings' refusal, and one that
+only checks it is taken and keeps the file's spelling (`asWritten`). `copiedSettings` refuses it
+too, which covers a direct `build()` or `renderYaml` caller. `OFF_OPTIONS` holds the five ranges
+whose 0 is named off, the four timers and `songs_per_unlock`: `off` reads as 0, typed or in a
+file, and so does false in a file. A file without the key reads as 0, so a 0.3.0 file keeps its
+parts, while `validateParams` gives a list built from params alone `NEW_LIST_SONGS` (3), and a
+typed number replaces a file's. The builder cuts the playlist at the number (at 15 while it is 0),
+drops a part of only tracks under 30 s and numbers the parts after it on, and keeps a playlist's
+first `MAX_MIX_TRACKS` (600) tracks, reading up to `MIX_READ_MAX` (1,200) of an audio playlist,
+since book parts drop out only after the read (a part of only short tracks is dropped after the 600
+are kept). `summaryHead(summary)` gives the reply's first lines, the playlist's (`playlistText`)
+after the counts, and `yaml.js` shows them as they are; it adds "⚠️ Songs per Unlock
+(`songs_per_unlock`) cuts a music playlist into parts, and this list has none." only for a typed
+number, since every list the bot writes holds the key. With the playlist cut at 1 to 14 songs, the
+"too big for one slot" refusal says "raise the episodes or songs per unlock".
+
+**Known, and left.** No committed test generates with the 0.3.0 apworld and rebuilds with 0.4.0's
+worker. One scratch run did (`B_Mixed` with 2 playlist parts, the C lists and ChecksFinder: 4 of 4
+slots verified, 161 placements), and in the suite the goldens and the frozen plans stand for it. A
+finished YAML hand-edited to a higher number is taken: each copy still opens one part as cut, and
+only the unit's name says the higher number. At 1 song per unlock a 60-song playlist alone leaves
+room for 3 useful items (60 tracks, 57 copies in the pool), and an `exclude_locations` naming more
+of the list's own tracks than that can leave an excluded track without a filler of its own, as
+`episodes_per_unlock: 1` can. Location names number a part's songs inside the part
+(`Road Trip Part 17 #01 …`), and `/apmedia redeem`'s 25 autocomplete choices fill with parts on a
+long playlist. A `songs_per_unlock` added by hand to a YAML that still requires 0.3.0 is only a
+warning on a 0.3.0 install, and that seed gets whole parts.
 
 **Known limits.** The Creator's Item & Location Options pickers offer the class tables' names,
 `Unlock 1` to `Unlock 20000`, `Check 1` to `Check 60000`, the seventeen fixed items (Popcorn,
@@ -3086,7 +3307,9 @@ hidden by the tag. Held lines go out through the next Discord client if it comes
 (`{slot, trap, from, outcome}`, `outcome` being `hit`, `armed`, `blocked`, `dodged` or
 `fizzled`; a trap that waited is logged `armed`, then again as `hit`, `blocked` or `fizzled`),
 `apmedia-fastforward` (`{slot, title, sent, held, banked}`) and `apmedia-snackbar`
-(`{slot, buy, price}`). Its bot-log lines start with `Plex Media`.
+(`{slot, buy, price}`). Its bot-log lines start with `Plex Media`. `app/bot.js` writes
+`track-locked` (`{count, songs, slots, playlists}`), one per stretch of locked songs skipped in
+voice, beside one bot-log line holding the stretch's channel line.
 
 ### Files and stores
 
@@ -3125,8 +3348,8 @@ name before its first underscore across the three files (`--only A` runs the two
 neither `A0` nor `A1`):
 
 - `A0`: Archipelago loaded the built file, which passes the Launcher's Install APWorld check; its
-  game options and list settings match the tables, each timer reads an unquoted `off` as off, and
-  no tooltip names an option by its YAML key.
+  game options and list settings match the tables, each timer and `songs_per_unlock` read an
+  unquoted `off` as off, and no tooltip names an option by its YAML key.
 - `A1`: the Options Creator's rules, copied from `OptionsCreator.py` and `optionscreator.kv` of
   the 0.6.8 build: the groups and a widget for every game option and list setting, with `entries`
   and `list_info` hidden; what an untouched form exports; the counts taken by name and by number;
@@ -3139,7 +3362,10 @@ neither `A0` nor `A1`):
   under another `PYTHONHASHSEED`, and rebuilt by the real `!ap next` worker, which must verify every
   slot.
 - `D`: season mode, with checkpoints open to any item.
-- `E`: 600 unlock copies solo at spoiler level 3, inside 90 s.
+- `E`: 600 unlock copies solo at spoiler level 3, inside 90 s, and `E_PlaylistChain`: one 600-song
+  playlist at 1 song per unlock, a single unit of 600 steps, the longest chain `/apmedia yaml` can
+  write, through the fill, the spoiler playthrough and the `!ap next` worker, inside 120 s (3 to
+  5 s in the runs so far, generation and worker together).
 - `F`: two Plex lists naming one item link, which must generate with the link left empty, and the
   worker's rebuild and its `select_players`, which must keep only the seed's own YAMLs.
 - `G` (`test_e2e.py`): the bot's side end to end. One list as `renderYaml` writes it is generated
@@ -3173,6 +3399,13 @@ neither `A0` nor `A1`):
   file as in the player's own under `Generate.roll_settings`, and a file whose `requires` asks for
   `plando: items` stops both files on a host without item plando and rolls the same
   `plando_items` in both with it.
+- `I` (`I_PlaylistSongs`): world 0.4.0's songs per unlock, one playlist at 3 songs per unlock on
+  one list beside the same playlist in whole parts on another. The first list's 4 parts share
+  `Road Trip: Next 3 Songs` (4 steps, 1 at the start) and need their place in part order whatever
+  the YAML order; the second list holds the same songs as one part with an unlock of its own,
+  `Road Trip (playlist)`; and the first 3 songs are one location on both lists. A part longer than
+  `songs_per_unlock` stops generation naming the player, and the worker rebuilds and verifies
+  every slot.
 
 Every seed of A to F must ship a data package of real names that passes the copy of
 archipelago.gg's upload check, let MultiServer resolve a title by name, keep every slot_data id
@@ -3182,7 +3415,13 @@ through `collect` and `remove`, and so must H's seeds. `--pure` stops after `tes
 `--update-golden` rewrites the golden files instead of comparing them: `builder1_mixed.expect.json`,
 scenario B's slot_data and the three Options Creator exports. `make_plan_cases.py` regenerates
 `test/fixtures/apmedia/plan_cases.json`, which `test/apMediaPlan.test.js` checks the JavaScript plan
-against.
+against. **A change to slot_data fails `test_pure.py` on the `--update-golden` run that writes it**:
+`SongsPerUnlockTest.test_the_bots_songs_fixture_is_what_the_world_writes` compares
+`test/fixtures/apmedia/songsSlotData.js`, built from scenario B's slot_data, with what the world
+writes, and `run.py` runs the pure tests before the goldens are rewritten. The next run passes;
+the failure's own text says to rerun `--update-golden` when `slot_data_mixed.json` is behind. The
+full run of 2026-11-14 counted 68 tests in `test_pure.py`, 105 in `test_generate.py`, 6 in
+`test_e2e.py` and 21 in `test_creator.py`, all passing, in 41 s.
 
 **The Node side** (`test/apMedia*.test.js`, `test/apworldBuild.test.js`). The orchestrator tests run
 the real `apMediaGame` and the real `ApMediaClient` against `test/helpers/apMediaServer.js`, a
@@ -3230,6 +3469,47 @@ On the world's side `test_pure.py` holds the appended ids, the pool, the trap sp
 and the groups, and scenario C generates a list with half its filler traps beside one whose
 excluded tracks take room from its useful items.
 
+Songs per unlock has its own files on both sides. `test_pure.py`'s `SongsPerUnlockTest` (10 tests)
+plans playlists at 1, 3 and 15 songs, parts out of order, off as world 0.3.0 planned it, the
+part-too-long refusal, the goal and the pool, names and tags with the "Summer Part 1" pair, two
+lists cutting one playlist at two sizes, and slot_data; it holds the lists without the key to
+`world_0_3_0_plans.json`, and `test/fixtures/apmedia/songsSlotData.js` to the world's own output.
+Scenarios E and I generate it (above). `test/apMediaSongsPerUnlock.test.js` (14 tests) holds the
+builder and the reader: the command's 3 in playlist order, 1 and 15 and `off` typed, nothing
+outside 0 to 15, a part of only short tracks, 600 parts from one playlist, the too-big refusal
+that names songs per unlock, the reply's lines (one part, one short song, the playlist as code
+after the size line), a file's own number in its four spellings, the random, weighted, trigger
+and copied refusals, parts longer than the number refused in `plan.py`'s words, a list attached
+again, and two tests that read the world's pages and `options.py` from disk and pin what they say
+of hand edits, copies, tickets, the albums timer and the skipping of locked songs.
+`test/apMediaSongsGame.test.js` (5 tests) plays a songs list through the real game, game client
+and stand-in room on `songsSlotData.js` (Road Trip's 2 parts on one unit of 2 steps): the list
+rows and "(the 2nd)", a song of part 2 banked until the second copy, a Wild Ticket that opens only
+the part it names while the first copy still opens part 1, and the autoskip deciding by
+copy count. `test/apMediaGame.test.js`'s own tests all run on `slot_data_mixed.json`, where each
+part is a unit of its own, so they cannot tell a part's step; this file does.
+
+The autoskip has four. `test/playbackAutoskip.test.js` (25 tests) runs the real `app/bot.js` over
+the FakePlayer harness: a locked song never fetched, played or announced, a queue locked from its
+first song never joining, one line and one `track-locked` event a stretch, one stretch object for
+all its checks, commands landing inside a check (`during()` runs one there: a `!skip`, a `!skip 2`,
+a `!stop`, a removal, a newer run), a join held open (`holdNextJoin`) and let go as it lands, the
+`!seek`, `!loop` and clip exceptions, nobody listening, a check that throws, and 3,000 locked songs
+in one loop. `test/playbackAutoskipJoin.test.js` (3 tests) runs the join release on
+`test/voiceJoinRace.test.js`'s harness, the real `openConnection`, connection registry,
+`joinVoiceChannel`, `entersState` and `VoiceConnection` with only Discord's adapter faked, on mock
+timers: the join leaves as it lands, one that never lands times out without a word, and a `!play`
+meanwhile joins afresh. `test/apMediaAutoskip.test.js` (6 tests) holds `skippable`, `lineFor` and
+`eventFor`. `test/apMediaGame.test.js`'s autoskip section (14 tests) runs `lockedFor` through the
+real game and three Plex Media slots on one stand-in room: the rule, a song also on an album, one
+listener's open copy, every slot it cannot read (the items not read yet reached from inside a new
+client's first `items` event), the switches and exceptions, the hook's attach and detach, the
+bindings read once a stretch, a 600-song stretch through the real `Bot` with its join and download
+stubbed to throw, the duplicate link, the one-part playlist's name, and a part found and named by
+its songs. Every mutant run against these tests was killed: 100 for the autoskip over three rounds
+(66, 10 and 24), 93 for songs per unlock (52, 11 and 30), and 38 for parts named by their songs
+and the pages that tell players about the skipping (29 in code, 9 in the pages).
+
 **Known gaps**, each accepted or waiting on Phase 17: a `!seek` splits a voice listen and each part
 is judged against the 85% alone for the track (the checkpoints each part played past count either
 way); the seconds between a session's last poll and its stop, and before its first sight, cannot be
@@ -3266,6 +3546,10 @@ waiting on Phase 18 or accepted:
   "📺 `ZackPlex` got a Remote Control from `Watcher`: Intermission was over already, so it blocks the next trap."
 - A book whose Slow Motion restore `apMediaEnabled` off had to put off, its session still
   starting, plays at 0.75x until Plex Media is on again and the trap's 10 minutes are over.
+
+World 0.4.0 adds its own, written where they arise: "Known, and left." under "World 0.4.0: songs
+per unlock", and "Gaps." under "Locked playlist songs in voice". Neither feature has met a live
+room, Plex server or voice channel; Phase 19 of `BUGTESTING.md` is their checklist.
 
 ---
 
@@ -5882,4 +6166,5 @@ them as a transcript, with `--errors`, `--command=`, `--user=`, `--since=`, `--n
 | Plex Media world (the apworld)   | `apworld/plex_media/`, `npm run build:apworld`, `/apmedia apworld` | `helpers/apworldBuild.js`; `apworld/tests/` (`npm run test:apworld`) |
 | Plex Media world (in the bot)    | `commands/apmedia.js/`, the `apmedia:*` buttons, `apMediaGame.start()` in `app/music.js` | `helpers/apMediaGame.js` (orchestrator), `apMediaClient.js`, `apMediaCredit.js`, `apMediaStore.js`, `apMediaButtons.js`; `apMediaContracts.js` |
 | Plex Media credit sources        | Plex history and sessions, `track-heard` in `app/bot.js`, the book engine | `helpers/apMediaWatch.js` (with `apMediaPlex.js`), `apMediaVoice.js`, `apMediaBooks.js` |
+| Locked playlist songs in voice   | `app/bot.js` `skipLocked`, asked in `runPlayback` before the join | `helpers/apMediaGame.js` `lockedFor` (as `bot.autoskip`), `helpers/apMediaAutoskip.js`; `apMediaAutoskip` in `config/config.js` |
 | Plex Media lists                 | `/apmedia yaml` (`commands/apmedia.js/yaml.js`), with or without an Options Creator file | `helpers/apMediaYaml.js` (`readPlayerYaml` for a file, through the `yaml` package), `apMediaPlan.js`, `apMediaPlex.js` |

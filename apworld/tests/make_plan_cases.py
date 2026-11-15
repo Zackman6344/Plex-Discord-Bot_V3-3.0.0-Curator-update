@@ -48,6 +48,12 @@ def mix(pl, part, title, tracks):
 	        "d": sum(d for _name, _artist, d in tracks), "tr": tr}
 
 
+def parts_of(pl, title, tracks, size):
+	"""A playlist cut as /apmedia yaml cuts it: parts of size tracks, "<title> Part <k>" when there are several."""
+	chunks = [tracks[i:i + size] for i in range(0, len(tracks), size)]
+	return [mix(pl, k, f"{title} Part {k}" if len(chunks) > 1 else title, chunk) for k, chunk in enumerate(chunks, 1)]
+
+
 def book(work, title, author, parts):
 	pa = [[7000 + n, 8000 + n, d] for n, d in enumerate(parts, 1)]
 	return {"k": "book", "id": f"book:{work}", "w": work, "t": title, "au": author, "d": sum(parts), "pa": pa}
@@ -60,6 +66,8 @@ def show(sid, srk, name, episodes, rk=1000):
 
 SEVEN = [(2, 3), (1, 1), (1, 2), (2, 1), (1, 3), (1, 4), (2, 2)]
 MIX_TRACKS = [(f"Song {n}", f"Artist {n % 4}", 150000 + n * 1000) for n in range(1, 16)]
+# Eight songs and an interlude under 30 s, cut at 3: parts of 3, 3 and 3, the last ending in the interlude.
+ROAD_AT_3 = parts_of(40, "Road Trip", MIX_TRACKS[:8] + [("Interlude", "Artist 0", 20000)], 3)
 # Six 100-minute films at 15 minutes: 6 watches and 30 checkpoints, 3 unlocks in the pool.
 SIX_FILMS = [movie(n, f"Film {n}", 6000000) for n in range(1, 7)]
 NO_TRAPS = {"buffering_weight": 0, "rights_expired_weight": 0, "commercial_break_weight": 0,
@@ -140,6 +148,14 @@ def cases():
 		("useful items clamped by the room the unlocks leave", {"starting_unlocks": 5, "wild_tickets": 1,
 		                                                        "fast_forwards": 3, "remote_controls": 10},
 		 [movie(n, f"Film {n}", 6000000) for n in range(1, 11)]),
+		("a playlist at 1 song per unlock", {"songs_per_unlock": 1, "starting_unlocks": 2},
+		 parts_of(40, "Road Trip", MIX_TRACKS[:5], 1)),
+		("a playlist at 3 songs per unlock, its parts out of order, beside a show",
+		 {"songs_per_unlock": 3, "timesanity_albums": 2, "episodes_per_unlock": 2, "starting_unlocks": 2},
+		 [ROAD_AT_3[2], movie(9, "A Film", 7200000), ROAD_AT_3[0], *show("rk:96", 96, "Show I", [(1, 1), (1, 2), (1, 3)]),
+		  ROAD_AT_3[1]]),
+		("two playlists at 15 songs per unlock", {"songs_per_unlock": 15, "starting_unlocks": 1, "trap_percentage": 20},
+		 parts_of(40, "Road Trip", MIX_TRACKS * 3, 15) + parts_of(41, "Party", MIX_TRACKS[:4], 15)),
 	]
 
 

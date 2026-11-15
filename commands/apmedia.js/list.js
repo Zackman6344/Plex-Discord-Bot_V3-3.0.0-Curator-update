@@ -1,6 +1,7 @@
 // /apmedia list: one slot's titles that are ready, locked or done, grouped by show, album,
-// playlist and kind, with the titles somebody hinted marked, and those whose rights a trap took.
-// Long lists are paged behind buttons only the asker can turn.
+// playlist and kind, with the titles somebody hinted marked, and those whose rights a trap took. A
+// playlist part's row names its first three songs and counts the rest. Long lists are paged behind
+// buttons only the asker can turn.
 
 const common = require('./common.js');
 
@@ -15,6 +16,10 @@ const EMPTY = Object.freeze({
 	locked: 'Nothing is locked.',
 	done: 'Nothing is done yet.',
 });
+const SONGS_SHOWN = 3;
+// The world lets a title run to 1,000 characters, and three of those would push the row's unlock off
+// the page when paginate cuts it.
+const SONG_MAX = 100;
 
 function readInput(ctx) {
 	if (common.isSlash(ctx)) {
@@ -27,11 +32,24 @@ function readInput(ctx) {
 	return { which, slot: values.slot !== undefined ? values.slot : words.join(' ') };
 }
 
+function clip(text, max) {
+	const chars = [...String(text ?? '')];
+	return chars.length > max ? `${chars.slice(0, max - 1).join('')}\u2026` : chars.join('');
+}
+
+// A playlist part is titled for its playlist alone, and at a few songs per unlock a player knows it
+// by its songs.
+function songsText(songs) {
+	if (!Array.isArray(songs) || !songs.length) return '';
+	const shown = songs.slice(0, SONGS_SHOWN).map((song) => common.esc(clip(song, SONG_MAX)));
+	return ` (${common.named(shown, songs.length)})`;
+}
+
 function rowLine(row, group, which) {
 	let label = row.title;
 	// The heading names the show already.
 	if (row.kind === 'episode' && group.kind === 'show' && label.startsWith(`${group.name} `)) label = label.slice(group.name.length + 1);
-	let line = `\u2022 ${common.esc(label)} \u00B7 ${row.runtime}`;
+	let line = `\u2022 ${common.esc(label)}${songsText(row.songs)} \u00B7 ${row.runtime}`;
 	if (row.tracks && row.tracks.done > 0) line += ` \u00B7 ${row.tracks.done} of ${row.tracks.total} tracks`;
 	if (which === 'locked' && row.unit) line += ` \u00B7 opened by ${common.esc(row.unit)}${row.step > 1 ? ` (the ${common.ordinal(row.step)})` : ''}`;
 	if (row.hinted) {

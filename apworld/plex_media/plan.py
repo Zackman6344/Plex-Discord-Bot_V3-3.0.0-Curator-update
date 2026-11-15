@@ -82,7 +82,9 @@ def plan_options(options=None):
 	return merged
 
 
-def unit_key(entry, season, per):
+def unit_key(entry, season, per, songs=0):
+	if entry["k"] == "mix" and songs:
+		return f"mix-songs{songs}|{entry['pl']}"
 	if entry["k"] != "episode":
 		return entry_key(entry)
 	return f"show-season|{entry['sid']}" if season else f"show-ep{per}|{entry['sid']}"
@@ -126,6 +128,27 @@ def _shows(plan, season, per):
 			count = len(ordered)
 			unit.steps = _ceil_div(count, per)
 			unit.prefix = [min(c * per, count) for c in range(unit.steps + 1)]
+
+
+def _playlists(plan, songs):
+	parts = {}
+	for pe in plan.entries:
+		if pe.kind == "mix":
+			parts.setdefault(pe.unit, []).append(pe)
+	for key, members in parts.items():
+		ordered = sorted(members, key=lambda pe: (pe.entry["part"], pe.index))
+		for position, pe in enumerate(ordered, 1):
+			# The bot cuts the parts when it writes the YAML, so a part longer than songs_per_unlock
+			# comes from a list built at another size and edited by hand.
+			count = len(pe.entry["tr"])
+			if count > songs:
+				raise PlanError(f"entry {pe.index + 1} ({pe.entry['t']}) holds {count} tracks, more than "
+				                f"songs_per_unlock {songs} (the YAML attached to /apmedia yaml again, which cuts "
+				                f"the playlist at {songs}, or songs_per_unlock 0 would help)")
+			pe.step = position
+		unit = plan.unit_by_key[key]
+		unit.steps = len(ordered)
+		unit.prefix = list(range(len(ordered) + 1))
 
 
 def _locations(pe, timers):
@@ -217,6 +240,7 @@ def plan_slot(entries, options=None):
 	opts = plan_options(options)
 	season = opts["tv_unlock"] == "season"
 	per = opts["episodes_per_unlock"]
+	songs = opts["songs_per_unlock"]
 	timers = {kind: opts[TIMER_OPTION[kind]] for kind in ("movie", "episode", "album", "book")}
 	if len(entries) > MAX_ENTRIES:
 		raise PlanError(f"the list has {len(entries)} entries; at most {MAX_ENTRIES} fit in one slot")
@@ -226,16 +250,19 @@ def plan_slot(entries, options=None):
 	plan.entries = [PlanEntry(index, entry) for index, entry in enumerate(entries)]
 	plan.unit_by_key = {}
 	for pe in plan.entries:
-		pe.unit = unit_key(pe.entry, season, per)
+		pe.unit = unit_key(pe.entry, season, per, songs)
 		if pe.unit not in plan.unit_by_key:
 			plan.unit_by_key[pe.unit] = Unit(pe.unit, UNIT_KIND[pe.kind], pe.index)
 	plan.units = list(plan.unit_by_key.values())
 	_shows(plan, season, per)
+	if songs:
+		_playlists(plan, songs)
 
 	plan.copies = sum(unit.steps for unit in plan.units)
 	if plan.copies > MAX_COPIES:
 		raise PlanError(f"the list needs {plan.copies} unlock copies; at most {MAX_COPIES} fit in one slot "
-		                "(fewer episodes, a higher episodes_per_unlock or tv_unlock: season would help)")
+		                "(fewer episodes, a higher episodes_per_unlock, tv_unlock: season, or the list built "
+		                "again at a higher songs_per_unlock would help)")
 	cut_counts = [_locations(pe, timers) for pe in plan.entries]
 	plan.main_count = sum(len(pe.main) for pe in plan.entries)
 	plan.checkpoint_count = sum(cut_counts)

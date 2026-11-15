@@ -34,7 +34,7 @@ game: Plex Media
 requires:
   version: 0.6.8 # Version of Archipelago required for this yaml to work as expected.
   game:
-    Plex Media: 0.3.0 # Version of the world required for this yaml to work as expected.
+    Plex Media: 0.4.0 # Version of the world required for this yaml to work as expected.
 
 Plex Media:
   ################
@@ -152,7 +152,8 @@ Plex Media:
 
   list_playlist:
     # The bot reads this when it fills in your titles (/apmedia yaml): a Plex playlist, by name, whose
-    # titles go on the list in the playlist's order. A music playlist goes on in parts of 15 tracks.
+    # titles go on the list in the playlist's order. A music playlist goes on in parts of Songs per Unlock
+    # songs that open in order, or in parts of up to 15 songs with an unlock each while that is off.
     '': 50
 
   list_collection:
@@ -245,14 +246,33 @@ Plex Media:
     random-high: 0 # random value weighted towards higher values
     random-range-1-12: 0 # random value between 1 and 12
 
+  songs_per_unlock:
+    # How many songs of the music playlist in List: Playlist one unlock opens, in the playlist's order.
+    # The bot cuts the playlist into parts of this many songs when it fills in your titles
+    # (/apmedia yaml), so a change needs the YAML attached there again. Each part counts as one title
+    # toward your goal. off: parts of up to 15 songs, each a title with an unlock of its own.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 15
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-15: 0 # random value between 0 and 15
+    off: 50 # equivalent to 0
+
   locked_watches:
     # What happens to a title you finish before it is unlocked. bank: its checks wait and are sent when the
-    # unlock arrives. ignore: nothing is sent, so watch it again later.
+    # unlock arrives. ignore: nothing is sent, so watch it again later. In the bot's Discord voice channel, a
+    # song of a playlist part still locked for someone listening is skipped unless someone there has it open,
+    # so it earns nothing; played in Plexamp or another Plex app it is banked or ignored as above, and an
+    # album never locks a song.
     bank: 50
     ignore: 0
 
   wild_tickets:
-    # Wild Tickets in the pool. Each one unlocks any locked title of your choice (one step of a show).
+    # Wild Tickets in the pool. Each one unlocks any locked title of your choice (one step of a show,
+    # one part of a playlist).
     #
     # You can define additional values between the minimum and maximum values.
     # Minimum value is 0
@@ -306,8 +326,9 @@ Plex Media:
     off: 0 # equivalent to 0
 
   timesanity_albums:
-    # Minutes between checkpoints inside each album or playlist (off: none). Every track of 30 s or more
-    # already has a check of its own.
+    # Minutes between checkpoints inside each album and each part of a playlist (off: none), so a
+    # 10-minute part of 3 songs gets 1 checkpoint at 5 and none at 10. Every track of 30 s or more already
+    # has a check of its own.
     #
     # You can define additional values between the minimum and maximum values.
     # Minimum value is 0

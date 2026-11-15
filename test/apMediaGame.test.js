@@ -12,6 +12,13 @@
 // a Remote Control ends or blocks a trap; Buffering and Rights Expired hold checks, never drop them,
 // and let them go on time, after a restart too; a voice or book trap waits for a listen, then fizzles
 // after 12 hours or with its switch off; a Fast Forward and the Snack Bar spend only what is there.
+// The autoskip check (bot.autoskip) calls a song locked only while a playlist part holding it is
+// locked on the list of a listener whose slot is connected with its items known, and nobody
+// listening has it open on any entry; a duplicate link of a slot plays no part, a playlist in one
+// part goes by its own title, and the bindings are read once for a whole stretch of checks; the game
+// puts it on the bot it plays through and takes it off when it stops. A playlist part is also found
+// by one of its songs, named in full, by the rule the /apmedia commands share (namesSong), and its
+// list row and title choice carry its songs, those with a title.
 //
 // Harness: the real orchestrator (createGame) with the real ApMediaClient against
 // test/helpers/apMediaServer.js on a loopback port, serving test/fixtures/apmedia/slot_data_mixed.json
@@ -22,7 +29,9 @@
 // Discord client that records every post; and injected timers fired by hand, so no poll or batch
 // runs on its own. Reconnects run the client's own reconnect at once (reconnectNow), never its 5 s
 // backoff. The trap tests hand the game a recording stand-in for helpers/apMediaTraps.js's runner,
-// except those that let the game build the real one over the fake bot's book engine.
+// except those that let the game build the real one over the fake bot's book engine. One autoskip
+// test plays a stretch of locked songs through the real app/bot.js Bot instead, its voice join and
+// its download stubbed to throw, since a song locked for everyone needs neither.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -3399,3 +3408,366 @@ test('a retry onto a new seed resets the item cursor, the holds, the armed traps
 		'the new seed\'s first inventory starts the cursor again',
 	);
 });
+
+// --- the autoskip: bot.autoskip, which app/bot.js asks before it plays a song in voice -----------
+
+const ROAD_TRIP = Object.freeze({ slots: [SLOT], playlists: ['Road Trip'] });
+const SONG_A = Object.freeze({ title: 'Song A', artist: 'Artist A', key: '/library/parts/250011/1600000000/file.flac', ratingKey: 25006, duration: 200000 });
+const SONG_D = Object.freeze({ title: 'Song D', artist: 'Artist D', key: '/library/parts/250021/1600000000/file.flac', ratingKey: 25011, duration: 240000 });
+const ONE_MORE_TIME = Object.freeze({ title: 'One More Time', artist: 'Daft Punk', key: '/library/parts/230001/1/file.mp3', ratingKey: 23001, duration: 320000 });
+const NOT_LISTED = Object.freeze({ title: 'Not On The List', artist: 'Nobody', key: '/library/parts/1/1/x.mp3', ratingKey: 999999, duration: 200000 });
+const PART_1 = unit(5);
+const BOBBY = '100000000000000002';
+const CAROL = '100000000000000004';
+
+test('the autoskip: a song in a playlist part locked for its listener is skipped, and one open, or opened by a Wild Ticket, plays', async (t) => {
+	const h = await setup(t);
+	const key = await linkSlot(h);
+	const check = h.bot.autoskip;
+	assert.deepStrictEqual(check(SONG_A, [OWNER]), ROAD_TRIP);
+	assert.deepStrictEqual(check(SONG_D, [OWNER]), ROAD_TRIP, 'Road Trip Part 2');
+	assert.deepStrictEqual(check({ ...SONG_A, ratingKey: 999999 }, [OWNER]), ROAD_TRIP, 'found as voice credit finds it: by its part id');
+	assert.deepStrictEqual(check({ title: 'Song A', artist: 'Artist A', key: '/library/parts/1/1/x.flac' }, [OWNER]), ROAD_TRIP, 'or by artist and title');
+	assert.strictEqual(check(ONE_MORE_TIME, [OWNER]), null, 'a locked album track plays, its checks banking');
+	assert.strictEqual(check(NOT_LISTED, [OWNER]), null);
+	assert.strictEqual(check(SONG_A, [FRIEND]), null, 'nobody listening has a slot');
+	assert.strictEqual(check(SONG_A, []), null);
+
+	await receive(h, key, PART_1);
+	assert.strictEqual(check(SONG_A, [OWNER]), null, 'Part 1 is open');
+	assert.deepStrictEqual(check(SONG_D, [OWNER]), ROAD_TRIP, 'Part 2 is still locked');
+
+	await receive(h, key, WILD);
+	const spent = await h.game.redeem(key, 'Road Trip Part 2');
+	assert.ok(spent.ok, spent.message);
+	assert.strictEqual(check(SONG_D, [OWNER]), null, 'the Wild Ticket opened Part 2');
+});
+
+test('the autoskip: a song also on an open album plays, and one also on a locked album goes with its part', async (t) => {
+	const sd = slotData();
+	const part = sd.entries.find((e) => e.k === 'mix' && e.part === 1);
+	part.tr[0] = [23001, 1, 'One More Time', 320000, 230001, 'Daft Punk', part.tr[0][6]];
+	const h = await setup(t, { sd });
+	const key = await linkSlot(h);
+	const check = h.bot.autoskip;
+	assert.deepStrictEqual(check(ONE_MORE_TIME, [OWNER]), ROAD_TRIP, 'locked on both');
+
+	await receive(h, key, unit(1));
+	assert.strictEqual(check(ONE_MORE_TIME, [OWNER]), null, 'Discovery is open, so its track counts');
+});
+
+test('the autoskip: one listener with the song open plays it for everyone, and a listener whose list lacks it changes nothing', async (t) => {
+	const noPlaylist = slotData({ entries: FIXTURE.entries.filter((e) => e.k !== 'mix') });
+	const h = await setup(t, {
+		room: { known: true, slots: { [SLOT]: 'Plex Media', FriendPlex: 'Plex Media', BobPlex: 'Plex Media', Watcher: 'ChecksFinder' } },
+		server: {
+			slots: [{ name: SLOT, game: 'Plex Media' }, { name: 'FriendPlex', game: 'Plex Media' }, { name: 'BobPlex', game: 'Plex Media' }, { name: 'Watcher', game: 'ChecksFinder' }],
+			slotData: { 1: slotData(), 2: slotData(), 3: noPlaylist },
+			locations: { 1: ALL_LOCATIONS, 2: ALL_LOCATIONS, 3: ALL_LOCATIONS },
+			startInventory: { 1: START, 2: [...START, { item: PART_1, flags: 1 }], 3: START },
+		},
+	});
+	await linkSlot(h);
+	await linkSlot(h, { user: FRIEND, slot: 'FriendPlex' });
+	await linkSlot(h, { user: BOBBY, slot: 'BobPlex' });
+	const check = h.bot.autoskip;
+	assert.strictEqual(check(SONG_A, [OWNER, FRIEND]), null, 'Part 1 is open on FriendPlex');
+	assert.deepStrictEqual(check(SONG_A, [OWNER]), ROAD_TRIP);
+	assert.deepStrictEqual(check(SONG_D, [FRIEND, OWNER]), { slots: [SLOT, 'FriendPlex'], playlists: ['Road Trip'] }, 'Part 2 is locked on both');
+	assert.deepStrictEqual(check(SONG_A, [OWNER, BOBBY]), ROAD_TRIP, 'BobPlex has no Song A');
+	assert.strictEqual(check(SONG_A, [BOBBY]), null);
+	assert.deepStrictEqual(check(SONG_A, [OWNER, '100000000000000003']), ROAD_TRIP, 'and neither has someone with no slot');
+});
+
+test('the autoskip never skips on account of a slot it cannot read: reconnecting, out of reach, refused or stale', async (t) => {
+	const h = await setup(t);
+	const key = await linkSlot(h);
+	const check = h.bot.autoskip;
+	assert.deepStrictEqual(check(SONG_A, [OWNER]), ROAD_TRIP);
+
+	const client = runtime(h, key).client;
+	for (const socket of h.server.wss.clients) socket.terminate();
+	await waitFor(() => !client.isReady, 'the dropped socket');
+	assert.ok(runtime(h, key).counts, 'the last inventory is still held');
+	assert.strictEqual(check(SONG_A, [OWNER]), null, 'reconnecting');
+	await reconnectNow(client);
+	await waitFor(() => client.isReady && row(h, key).inventoryKnown, 'the reconnect');
+	assert.deepStrictEqual(check(SONG_A, [OWNER]), ROAD_TRIP, 'back with its items');
+
+	await roomAway(h, key);
+	assert.strictEqual(check(SONG_A, [OWNER]), null, 'out of reach: a new client, never connected');
+	await roomBack(h, key);
+	assert.deepStrictEqual(check(SONG_A, [OWNER]), ROAD_TRIP);
+
+	h.store.cache.write(SEED, 'FriendPlex', slotData());
+	h.store.bindings.put({ watchId: 0, slot: 'FriendPlex', userId: FRIEND, seedName: SEED, state: 'refused', stateDetail: { reason: 'InvalidPassword', errors: [] } });
+	assert.strictEqual(check(SONG_A, [FRIEND]), null, 'refused');
+	assert.strictEqual(check(SONG_A, [OWNER, FRIEND]), null, 'what a refused slot hears still counts once it connects, so the song plays');
+	h.store.cache.write(SEED, 'CarolPlex', slotData({ entries: FIXTURE.entries.filter((e) => e.k !== 'mix') }));
+	h.store.bindings.put({ watchId: 0, slot: 'CarolPlex', userId: CAROL, seedName: SEED, state: 'refused', stateDetail: { reason: 'InvalidPassword', errors: [] } });
+	assert.deepStrictEqual(check(SONG_A, [OWNER, CAROL]), ROAD_TRIP, 'one whose list lacks the song keeps nothing playing');
+
+	h.store.cache.write(SEED, 'BobPlex', slotData());
+	h.store.bindings.put({ watchId: 0, slot: 'BobPlex', userId: BOBBY, seedName: SEED, state: 'stale', stateDetail: { reason: 'stale', errors: [] } });
+	assert.strictEqual(check(SONG_A, [BOBBY]), null, 'stale');
+	assert.deepStrictEqual(check(SONG_A, [OWNER, BOBBY]), ROAD_TRIP, 'a stale slot earns nothing, so it keeps no song playing');
+	assert.ok(!h.logger.lines.some((l) => l.text.includes('could not tell whether a song is locked')), 'none of that is an error');
+});
+
+test('the autoskip skips nothing for a slot connected with its items not read yet', async (t) => {
+	const h = await setup(t);
+	const key = await linkSlot(h);
+	const check = h.bot.autoskip;
+	await roomAway(h, key);
+	h.monitor.put(0, { target: h.server.target }, 'repointed');
+	await h.game._internal.idle();
+	const client = runtime(h, key).client;
+	// Asked in the event that hands the game a new client's first items: the client is connected and
+	// holds them, and the game has read none.
+	const seen = [];
+	client.on('items', () => seen.push({
+		ready: client.isReady,
+		seed: h.store.bindings.get(key).seedName,
+		counts: runtime(h, key).counts,
+		verdict: check(SONG_A, [OWNER]),
+	}));
+	await waitFor(() => row(h, key).inventoryKnown, 'the room back');
+	assert.deepStrictEqual(seen, [{ ready: true, seed: SEED, counts: null, verdict: null }], 'connected, its list in hand, no items read');
+	assert.deepStrictEqual(check(SONG_A, [OWNER]), ROAD_TRIP, 'locked once they are');
+	assert.ok(!h.logger.lines.some((l) => l.text.includes('could not tell whether a song is locked')));
+});
+
+test('the autoskip is off with its switch or with apMediaEnabled, and never takes a clip, a YouTube entry or a replay', async (t) => {
+	const h = await setup(t);
+	await linkSlot(h);
+	const check = h.bot.autoskip;
+	assert.strictEqual(h.config.apMediaAutoskip, undefined, 'on when the setting is missing');
+	assert.deepStrictEqual(check(SONG_A, [OWNER]), ROAD_TRIP);
+	const others = [
+		{ ...SONG_A, secret: true },
+		{ ...SONG_A, replay: true, played: true },
+		{ ...SONG_A, isSeeking: true, seekOffset: 0 },
+		{ title: 'Song A', artist: 'Artist A', url: 'https://www.youtube.com/watch?v=x' },
+	];
+	for (const entry of others) assert.strictEqual(check(entry, [OWNER]), null, JSON.stringify(entry));
+	assert.deepStrictEqual(check({ ...SONG_A, replay: true }, [OWNER]), ROAD_TRIP, 'a !loop set on a song that has not played yet');
+
+	h.config.apMediaAutoskip = false;
+	assert.strictEqual(check(SONG_A, [OWNER]), null);
+	h.config.apMediaAutoskip = true;
+	assert.deepStrictEqual(check(SONG_A, [OWNER]), ROAD_TRIP);
+	h.config.apMediaEnabled = false;
+	assert.strictEqual(check(SONG_A, [OWNER]), null, 'off before its change has reached the game');
+});
+
+test('an autoskip check that fails lets the song play, and warns once', async (t) => {
+	const voice = { ...require('../helpers/apMediaVoice.js'), identify: () => { throw new Error('identify broke'); } };
+	const h = await setup(t, { game: { voice } });
+	await linkSlot(h);
+	const check = h.bot.autoskip;
+	assert.strictEqual(check(SONG_A, [OWNER]), null);
+	assert.strictEqual(check(SONG_A, [OWNER]), null);
+	const warned = h.logger.lines.filter((l) => l.level === 'warn' && l.text.includes('could not tell whether a song is locked'));
+	assert.strictEqual(warned.length, 1);
+	assert.match(warned[0].text, /identify broke/);
+});
+
+test('the game puts its autoskip check on the bot it plays through, and takes it off at stop, at a !restart and with apMediaEnabled off', async (t) => {
+	const h = await setup(t);
+	const key = await linkSlot(h);
+	const check = h.bot.autoskip;
+	assert.strictEqual(typeof check, 'function');
+	assert.deepStrictEqual(check(SONG_A, [OWNER]), ROAD_TRIP);
+
+	h.game.stop();
+	assert.strictEqual(h.bot.autoskip, null);
+	assert.strictEqual(check(SONG_A, [OWNER]), null, 'a check kept from before skips nothing');
+	const bot2 = fakeBot();
+	h.game.start({ discord: h.discord, bot: bot2 });
+	assert.strictEqual(bot2.autoskip, check);
+	assert.strictEqual(h.bot.autoskip, null, 'the old bot gets none back');
+	await waitFor(() => row(h, key).inventoryKnown, 'the reconnect');
+	assert.deepStrictEqual(bot2.autoskip(SONG_A, [OWNER]), ROAD_TRIP);
+
+	h.config.apMediaEnabled = false;
+	h.configStore.fire('apMediaEnabled', false);
+	assert.strictEqual(bot2.autoskip, null);
+	h.config.apMediaEnabled = true;
+	h.configStore.fire('apMediaEnabled', true);
+	assert.strictEqual(bot2.autoskip, check);
+
+	const other = h.make();
+	other.start({ discord: h.discord, bot: bot2 });
+	const theirs = bot2.autoskip;
+	assert.notStrictEqual(theirs, check);
+	h.game.stop();
+	assert.strictEqual(bot2.autoskip, theirs, 'another game on the same bot keeps its own');
+	other.stop();
+	assert.strictEqual(bot2.autoskip, null);
+});
+
+test('the autoskip reads the bindings once for all the checks of a stretch, and afresh for each check outside one', async (t) => {
+	const h = await setup(t);
+	const key = await linkSlot(h);
+	const check = h.bot.autoskip;
+	const list = h.store.bindings.list;
+	let reads = 0;
+	h.store.bindings.list = (...args) => {
+		reads += 1;
+		return list(...args);
+	};
+	t.after(() => { h.store.bindings.list = list; });
+	const stretch = {};
+	for (let i = 0; i < 50; i++) {
+		assert.deepStrictEqual(check(SONG_A, [OWNER], stretch), ROAD_TRIP);
+		assert.deepStrictEqual(check(SONG_D, [OWNER], stretch), ROAD_TRIP);
+	}
+	assert.strictEqual(check(ONE_MORE_TIME, [OWNER], stretch), null);
+	assert.strictEqual(check(SONG_A, [FRIEND], stretch), null, 'who listens is the check\'s own');
+	assert.strictEqual(reads, 1, 'one read for 102 checks');
+
+	assert.deepStrictEqual(check(SONG_A, [OWNER], {}), ROAD_TRIP);
+	assert.strictEqual(reads, 2, 'a new stretch reads them again');
+	check(SONG_A, [OWNER]);
+	check(SONG_A, [OWNER]);
+	assert.strictEqual(reads, 4, 'and so does each check outside one');
+
+	await receive(h, key, PART_1);
+	assert.strictEqual(check(SONG_A, [OWNER], stretch), null, 'the items come from the slot\'s client, never from that read');
+});
+
+test('a stretch of 600 locked songs through the real Bot reads the bindings once, before playSong returns', async (t) => {
+	const Bot = require('../app/bot.js');
+	const h = await setup(t, { startGame: false });
+	const guild = { id: 'g1', voiceAdapterCreator: () => ({}), voiceStates: { cache: new Map([[OWNER, { channelId: 'c1' }]]) } };
+	const bot = new Bot({ user: { id: 'bot' }, guilds: { cache: new Map([['g1', guild]]) } });
+	bot.openConnection = async () => { throw new Error('every song is locked, so nothing joins'); };
+	bot.openPlexStream = async () => { throw new Error('every song is locked, so nothing downloads'); };
+	h.game.start({ discord: h.discord, bot });
+	await linkSlot(h);
+	const sent = [];
+	const message = { member: { voice: { channel: { id: 'c1', name: 'Music', guild } } }, channel: { async send(x) { sent.push(x); return {}; } } };
+	const finished = [];
+	bot.on('finish', () => finished.push(true));
+	for (let i = 0; i < 600; i++) bot.songQueue.push({ ...(i % 2 ? SONG_D : SONG_A) });
+
+	// Only the checks' reads count: the game's own 'will play' listener reads once a run.
+	const check = bot.autoskip;
+	let checking = false;
+	bot.autoskip = (...args) => {
+		checking = true;
+		try {
+			return check(...args);
+		} finally {
+			checking = false;
+		}
+	};
+	const list = h.store.bindings.list;
+	let reads = 0;
+	h.store.bindings.list = (...args) => {
+		if (checking) reads += 1;
+		return list(...args);
+	};
+	const done = bot.playSong(message);
+	h.store.bindings.list = list;
+	assert.strictEqual(bot.songQueue.length, 0, 'the whole stretch ran before playSong returned');
+	assert.strictEqual(reads, 1, 'one read of the bindings for it, not one a song');
+	await done;
+	assert.strictEqual(finished.length, 1);
+	assert.deepStrictEqual(sent.map((x) => x.content), [
+		'\u23ED\uFE0F Skipped 600 songs still locked in Road Trip on `ZackPlex`\'s list: **Song A**, **Song D**, **Song A** and 597 more.',
+	]);
+});
+
+test('the autoskip ignores a duplicate link of a slot, as it does a stale one: the link that counts decides', async (t) => {
+	const h = await setup(t);
+	h.monitor.set(1, { target: h.server.target });
+	const first = await linkSlot(h);
+	const second = await h.game.link({ watchId: 1, slot: SLOT, userId: OWNER, by: OWNER });
+	assert.ok(second.ok, second.message);
+	const twin = second.binding.key;
+	await waitFor(() => row(h, twin).state === 'refused', 'the link on watch #1 refused');
+	// Watch #0 goes, watch #1 takes the seed, and watch #0, back, is the duplicate now: one that holds
+	// the seed and its list, so nothing but its refusal keeps it out.
+	h.monitor.drop(0);
+	await waitFor(() => row(h, first).state === 'orphaned', 'watch #0 gone');
+	assert.ok((await h.game.retry(twin)).ok);
+	await waitFor(() => row(h, twin).inventoryKnown, 'watch #1 connected');
+	h.monitor.set(0, { target: h.server.target });
+	assert.ok((await h.game.retry(first)).ok);
+	await waitFor(() => row(h, first).state === 'refused' && !runtime(h, first).client, 'watch #0 refused');
+	const dup = h.store.bindings.get(first);
+	assert.deepStrictEqual([dup.stateDetail.reason, dup.seedName], ['duplicate', SEED]);
+
+	const check = h.bot.autoskip;
+	assert.deepStrictEqual(check(SONG_A, [OWNER]), ROAD_TRIP, 'locked on the link that counts');
+	assert.deepStrictEqual(check(SONG_A, [OWNER], {}), ROAD_TRIP);
+	await receive(h, twin, PART_1);
+	assert.strictEqual(check(SONG_A, [OWNER]), null, 'and open once that link has its unlock');
+	assert.ok(!h.logger.lines.some((l) => l.text.includes('could not tell whether a song is locked')));
+});
+
+test('a playlist in one part is named by its own title, " Part 2" and all, by the autoskip and the list', async (t) => {
+	const sd = slotData();
+	const part2 = sd.entries.find((e) => e.k === 'mix' && e.part === 2);
+	sd.entries.push({ ...part2, id: 'pl:2600:1', pl: 2600, part: 1, t: 'Summer Part 2', tr: [[26001, 1, 'Song S', 200000, 260011, 'Artist S', null]], cp: [] });
+	const h = await setup(t, { sd });
+	const key = await linkSlot(h);
+	const songS = { title: 'Song S', artist: 'Artist S', key: '/library/parts/260011/1600000000/file.flac', ratingKey: 26001, duration: 200000 };
+	assert.deepStrictEqual(h.bot.autoskip(songS, [OWNER]), { slots: [SLOT], playlists: ['Summer Part 2'] });
+	assert.deepStrictEqual(h.bot.autoskip(SONG_D, [OWNER]), ROAD_TRIP, 'a playlist in parts goes by its title without them');
+	const locked = h.game.list(key, 'locked');
+	assert.deepStrictEqual(locked.groups.filter((g) => g.kind === 'mix').map((g) => g.name), ['Road Trip', 'Summer Part 2']);
+});
+
+test('a playlist part is found by one of its songs, named in full, once no title of the list matches', async (t) => {
+	const h = await setup(t);
+	const key = await linkSlot(h);
+	const found = (text) => {
+		const f = h.game.findEntry(key, text);
+		return f.ok ? f.entryKey : f.message;
+	};
+	assert.strictEqual(found('Song D'), 'mix|pl:2500:2', 'Road Trip Part 2 is Song D alone');
+	assert.strictEqual(found('song a'), 'mix|pl:2500:1');
+	assert.strictEqual(found('Road Trip Part 2'), 'mix|pl:2500:2');
+	assert.strictEqual(found('Song'), 'Nothing on `ZackPlex`\'s list matches **Song**.', 'a song is named in full');
+	assert.strictEqual(found('One More Time'), 'Nothing on `ZackPlex`\'s list matches **One More Time**.', 'an album goes by its own title');
+	// The commands take a text as naming the part in full by namesSong: the rule this lookup uses.
+	const { namesSong } = require('../helpers/apMediaGame.js');
+	for (const entry of FIXTURE.entries.filter((e) => e.tr)) {
+		for (const song of entry.tr.map((t) => t[2])) {
+			const f = h.game.findEntry(key, ` ${song.toLowerCase()} `);
+			assert.strictEqual(f.ok && namesSong(f.entry, ` ${song.toLowerCase()} `), entry.k === 'mix', `${song}: ${f.message || f.entryKey}`);
+			if (entry.k === 'mix') assert.strictEqual(f.entryKey, contracts.entryKey(entry));
+			assert.ok(!namesSong(entry, song.slice(0, -1)), `${song}: a piece of it names nothing`);
+		}
+	}
+	// A part's list row and its title choice carry its songs, and a song typed finds its part.
+	const rows = h.game.list(key, 'locked').groups.find((g) => g.kind === 'mix').rows;
+	assert.deepStrictEqual(rows.map((r) => [r.title, r.songs]), [['Road Trip Part 1', ['Song A', '\u6771\u4eac', 'Short One']], ['Road Trip Part 2', ['Song D']]]);
+	assert.deepStrictEqual(h.game.titles(key, 'song d'), [{ name: 'Road Trip Part 2', value: 'mix|pl:2500:2', songs: ['Song D'] }]);
+	assert.deepStrictEqual(h.game.titles(key, 'short').map((c) => c.value), ['mix|pl:2500:1']);
+	assert.ok(!h.game.titles(key, 'the matrix')[0].songs, 'only a part carries songs');
+	assert.deepStrictEqual(h.game.titles(key, 'one more time'), [], 'an album is not found by its tracks');
+
+	await receive(h, key, WILD);
+	const spent = await h.game.redeem(key, 'Song D');
+	assert.ok(spent.ok, spent.message);
+	assert.deepStrictEqual(spent.opened, ['Road Trip Part 2']);
+	assert.strictEqual(h.bot.autoskip(SONG_D, [OWNER]), null);
+});
+
+// slot_data comes from the room, so a track the world would never write is read past, as the credit
+// index reads past it.
+test('a playlist part names only its songs that have a title, and a part with no tracks names none', async (t) => {
+	const sd = slotData();
+	const part2 = sd.entries.find((e) => e.k === 'mix' && e.part === 2);
+	const odd = [[26001, 1, 'Song S', 200000, 260011, 'Artist S', null], 'not a track', [26003, 3, '', 1000, 260013, 'Artist T', null], [26004, 4, 'Song U', 1000, 260014, 'Artist U', null]];
+	sd.entries.push({ ...part2, id: 'pl:2600:1', pl: 2600, part: 1, t: 'Odd Mix', tr: odd, cp: [] }, { ...part2, id: 'pl:2700:1', pl: 2700, part: 1, t: 'No Tracks', tr: null, cp: [] });
+	const h = await setup(t, { sd });
+	const key = await linkSlot(h);
+	const rows = h.game.list(key, 'locked').groups.filter((g) => g.kind === 'mix').flatMap((g) => g.rows);
+	assert.deepStrictEqual(rows.map((r) => [r.title, r.songs]).slice(2), [['Odd Mix', ['Song S', 'Song U']], ['No Tracks', []]]);
+	assert.deepStrictEqual(h.game.titles(key, 'mix').map((c) => [c.name, c.songs]), [['Odd Mix', ['Song S', 'Song U']]]);
+});
+

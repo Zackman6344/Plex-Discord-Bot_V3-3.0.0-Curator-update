@@ -12,6 +12,7 @@ const plexResolve = require('../helpers/plexResolve.js');
 const seek = require('../helpers/seek.js');
 const longForm = require('../helpers/longForm.js');
 const voiceHealth = require('../helpers/voiceHealth.js');
+const apMediaAutoskip = require('../helpers/apMediaAutoskip.js');
 const { FFmpeg } = require('prism-media');
 const { Readable, pipeline } = require('stream');
 const {
@@ -75,6 +76,10 @@ class Bot extends EventEmitter{
 				// Set by app/music.js to the book director. Null keeps the runPlayback gate a no-op,
 				// which is what every test Bot without books relies on.
 				this.books = null;
+				// Set by helpers/apMediaGame.js while the Plex Media game runs: (entry, listener ids, stretch)
+				// gives why a song is locked for everyone listening, or null to play it; stretch is one object
+				// shared by the checks of one stretch of skips. Null plays every song.
+				this.autoskip = null;
 				this.loadingRuns = 0;
 		}
 	/**
@@ -583,6 +588,78 @@ class Bot extends EventEmitter{
 	}
 
 	/**
+	 * Take the songs at the head of the queue that the Plex Media game calls locked for everyone
+	 * listening (this.autoskip) off the queue, and report them once (reportLocked).
+	 *
+	 * Called before a run takes its guards, joins or downloads, and loops over the whole stretch: a
+	 * run per skipped song would nest on the stack, which 1,700 in a row overflowed on Node 24. What a
+	 * check sets off stands, as superseded() lets it: a newer run plays on, and a stop takes the song
+	 * it was meant for off the queue as a stopped track goes.
+	 * @returns {boolean} true when this run is done: playback ended, or a newer run took over
+	 */
+	skipLocked(message, channel) {
+		const check = this.autoskip;
+		if (typeof check !== 'function') return false;
+		let listeners = [];
+		try {
+			listeners = this.voiceListeners(channel.guild, channel.id);
+		} catch (_) {}
+		if (listeners.length === 0) return false;
+		// Every check of this stretch gets the same object, so the game can read what it needs once for
+		// the stretch rather than once a song.
+		const stretch = {};
+		const skipped = [];
+		while (this.songQueue.length > 0) {
+			const head = this.songQueue[0];
+			if (!apMediaAutoskip.skippable(head)) break;
+			const run = this.playRun;
+			const stops = this.stopGeneration;
+			let why = null;
+			try {
+				why = check(head, listeners, stretch);
+			} catch (err) {
+				logger.warn('The locked-song check failed, so the song plays:', (err && err.message) || err);
+			}
+			if (this.playRun !== run) {
+				this.reportLocked(skipped, message);
+				return true;
+			}
+			if (this.stopGeneration !== stops) {
+				if (this.songQueue[0] === this.stoppedEntry) this.songQueue.shift();
+				continue;
+			}
+			if (this.songQueue[0] !== head) continue;
+			if (!why) break;
+			this.songQueue.shift();
+			skipped.push({ title: head.title, artist: head.artist, slots: why.slots, playlists: why.playlists });
+		}
+		this.reportLocked(skipped, message);
+		if (this.songQueue.length > 0) return false;
+		// An older run still loading its track stands down, rather than end playback a second time.
+		this.playRun++;
+		this.isPlaying = false;
+		this.reportUnplayable(message);
+		this.emit('finish', message);
+		this.playbackCompletion(message);
+		return true;
+	}
+
+	/**
+	 * One line in the channel playback talks in, and one 'track-locked' event, for a stretch of songs
+	 * skipped as locked. The stretch runs inside the previous track's Idle, so a disk write per song
+	 * would hold up the whole bot for as long as the stretch is long.
+	 */
+	reportLocked(skipped, message) {
+		if (skipped.length === 0) return;
+		const line = apMediaAutoskip.lineFor(skipped);
+		commandLog.recordEvent('track-locked', apMediaAutoskip.eventFor(skipped));
+		logger.info(line);
+		if (message.channel) {
+			message.channel.send({ content: line, allowedMentions: { parse: [] } }).catch(() => {});
+		}
+	}
+
+	/**
 	 * Where the next track should play.
 	 *
 	 * Stay in the channel we are already connected to — queueing a song shouldn't drag the bot
@@ -846,6 +923,8 @@ class Bot extends EventEmitter{
 				this.waitForStart = true;
 				this.waitForStartMessage = message;
 			} else {
+				// Before the join and the download, so a song locked for everyone here costs neither.
+				if (this.skipLocked(message, channel)) return;
 				// Read again after each await below. A skip or stop landing in one has no player of
 				// this run's to stop, and the queue or a newer run may have moved on meanwhile.
 				const run = ++this.playRun;
@@ -897,8 +976,9 @@ class Bot extends EventEmitter{
 					return true;
 				};
 
+				let joined;
 				try {
-					this.conn = await this.openConnection();
+					joined = await this.openConnection();
 				} catch (error) {
 					// A newer run's openConnection destroyed this run's unfinished join, which then
 					// only times out. Failing here would destroy that run's connection mid-track.
@@ -912,6 +992,16 @@ class Bot extends EventEmitter{
 					}
 					throw error;
 				}
+				if (this.playRun !== run) {
+					// A newer run's openConnection destroys a join still unfinished, but one whose locked
+					// songs ended playback (skipLocked) joined nothing, so this join lands holding voice
+					// for no one. A connection the bot already held is the newer run's as well.
+					if (joined !== this.conn) {
+						try { joined.destroy(); } catch (_) {}
+					}
+					return;
+				}
+				this.conn = joined;
 				if (superseded()) return;
 
 				let readstream;

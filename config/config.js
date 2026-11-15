@@ -214,6 +214,12 @@ const defaults = {
   // A Plex playlist (its name or ratingKey) of clips that Commercial Break plays after the current
   // track. Blank: the music pauses for 30 seconds instead.
   'apMediaTrapClips' : '',
+  // Skip a song the bot is about to play in voice when it is in a playlist part still locked on the
+  // Plex Media list of someone in the channel, and nobody there has it open on their list. Off: such
+  // songs play, and count as any locked title's plays do. It has no /config row: the panel has no
+  // room for one under Discord's 6,000-character embed limit (test/apMediaConfig.test.js measures
+  // it). Set it in data/config.overrides.json, which is read when the bot process starts.
+  'apMediaAutoskip' : true,
 
   // --- Audiobooks and podcasts (/book, or the Audiobooks page of /config) ---
   // Plays long-form audio from the music library with a saved place per listener. Off by default

@@ -6,10 +6,13 @@
 # YAML, (b) a mixed list with every kind and every timer, (c) two Plex lists sharing titles beside a
 # ChecksFinder slot, one with half its filler traps and Popcorn alone, the other excluding two of
 # its tracks, which take room from its useful items, (d) season mode with checkpoints open to
-# anything, (e) 600 unlock copies solo at spoiler 3 inside 90 s, and, beyond the SPEC's list, (f)
-# two Plex lists naming one item link, which the world must warn about and leave empty while the
-# multiworld still generates, and (h) a list with every list_* setting changed, which must give the
-# same seed as the list without them. A1 runs the Archipelago Options Creator's own rules
+# anything, (e) 600 unlock copies solo at spoiler 3 inside 90 s, and one 600-song playlist at 1 song
+# per unlock, a single unit of 600 steps, through generation and the !ap next worker inside 120 s,
+# and, beyond the SPEC's list, (f) two Plex lists naming one item link, which the world must warn
+# about and leave empty while the multiworld still generates, (h) a list with every list_* setting
+# changed, which must give the same seed as the list without them, and (i) a playlist at 3 songs per
+# unlock (world 0.4.0) beside the same playlist in whole parts on another list, which the !ap next
+# worker must rebuild and verify too. A1 runs the Archipelago Options Creator's own rules
 # (OptionsCreator.py in AP 0.6.8) on the world's options: its groups, a widget for every option,
 # what it exports for an untouched form, and that such a YAML, like the Launcher's own template,
 # stops at the "no titles yet" message until the bot fills it in. Every seed must ship a data
@@ -45,7 +48,7 @@ sys.path.insert(0, HERE)
 import ap_harness  # noqa: E402
 
 GAME = "Plex Media"
-WORLD_VERSION = "0.3.0"
+WORLD_VERSION = "0.4.0"
 CHILD = os.path.join(HERE, "ap_child.py")
 FIXTURE_YAML = os.path.join(HERE, "fixtures", "builder1_mixed.yaml")
 FIXTURE_EXPECT = os.path.join(HERE, "fixtures", "builder1_mixed.expect.json")
@@ -54,6 +57,8 @@ FIXED_GENERATED_AT = 1731300000
 PLACEHOLDER = re.compile(r"\b(?:Unlock|Check) [0-9]+\b")
 
 STATE = {"root": None, "apworld": None, "update": False, "warnings": None}
+# The NamedRanges whose 0 is named off; songs_per_unlock (world 0.4.0) defaults to it, as the albums timer does.
+OFF_OPTIONS = ("timesanity_movies", "timesanity_episodes", "timesanity_albums", "timesanity_books", "songs_per_unlock")
 
 
 def prepare(root, apworld, update_golden=False):
@@ -450,18 +455,18 @@ class A0_BuiltApworld(unittest.TestCase):
 		hints = world.options_dataclass.type_hints
 		for key in ("entries", "list_info"):
 			self.assertEqual(hints[key].visibility, Visibility.none, key)
-		for key in ("timesanity_movies", "timesanity_episodes", "timesanity_albums", "timesanity_books"):
+		for key in OFF_OPTIONS:
 			self.assertTrue(issubclass(hints[key], NamedRange), key)
 			self.assertEqual(hints[key].special_range_names, {"off": 0}, key)
 		self.assertIs(world.disable_ut, True)
 		self.assertEqual(tuple(world.required_client_version), (0, 5, 0))
 
-	def test_each_timer_reads_an_unquoted_off_as_off(self):
+	def test_each_timer_and_songs_per_unlock_read_an_unquoted_off_as_off(self):
 		import Utils
 		from worlds.AutoWorld import AutoWorldRegister
 
 		hints = AutoWorldRegister.world_types[GAME].options_dataclass.type_hints
-		for key in ("timesanity_movies", "timesanity_episodes", "timesanity_albums", "timesanity_books"):
+		for key in OFF_OPTIONS:
 			option = hints[key]
 			with self.subTest(option=key):
 				# Archipelago reads YAML 1.1, where unquoted off, no and false are all the boolean false.
@@ -648,7 +653,8 @@ class A1_OptionsCreator(unittest.TestCase):
 		self.assertEqual(names["Game Options"], ["progression_balancing", "accessibility"])
 		self.assertEqual(names[LIST_GROUP], list(constants.LIST_OPTIONS))
 		self.assertEqual(names["Unlocks and goal"], ["starting_unlocks", "goal_percent", "tv_unlock",
-		                                             "episodes_per_unlock", "locked_watches", "wild_tickets"])
+		                                             "episodes_per_unlock", "songs_per_unlock", "locked_watches",
+		                                             "wild_tickets"])
 		self.assertEqual(names["Timesanity"], ["checkpoint_items", "timesanity_strict", "timesanity_movies",
 		                                       "timesanity_episodes", "timesanity_albums", "timesanity_books"])
 		self.assertEqual(names[ITEMS_GROUP], ["snack_variety", "fast_forwards", "remote_controls", "snack_bar_trades",
@@ -756,6 +762,7 @@ class A1_OptionsCreator(unittest.TestCase):
 		# which YAML 1.1 reads as false.
 		self.assertIn("    off: 50 # equivalent to 0\n", text)
 		self.assertEqual(weights[GAME]["timesanity_albums"][False], 50)
+		self.assertEqual(weights[GAME]["songs_per_unlock"][False], 50)
 		with self.assertRaises(OptionError) as caught:
 			Generate.roll_settings(weights)
 		self.assertEqual(str(caught.exception), f"Plex Media list of {weights['name']}: {NO_TITLES}")
@@ -766,7 +773,7 @@ class A1_OptionsCreator(unittest.TestCase):
 		hints = world.options_dataclass.type_hints
 		for key in [*constants.OPTIONS, *constants.LIST_OPTIONS]:
 			self.assertEqual(getattr(rolled, key).value, hints[key].from_any(hints[key].default).value, key)
-		self.assertEqual(rolled.timesanity_albums.value, 0)
+		self.assertEqual((rolled.timesanity_albums.value, rolled.songs_per_unlock.value), (0, 0))
 
 
 class A_FixtureSolo(SeedChecks, unittest.TestCase):
@@ -1096,6 +1103,31 @@ class E_ScaleSolo(SeedChecks, unittest.TestCase):
 		                 f"{self.seed.seconds:.1f} s at spoiler 3\n")
 
 
+class E_PlaylistChain(SeedChecks, unittest.TestCase):
+	"""(e) one 600-song playlist at 1 song per unlock: a single unit of 600 steps, the longest chain
+	/apmedia yaml can write (600 songs at most), through the fill, the spoiler playthrough and the
+	!ap next worker's replay, which step through it one copy at a time."""
+
+	@classmethod
+	def setUpClass(cls):
+		songs = [(f"Song {n:03}", f"Artist {n % 40}", 180000 + (n % 60) * 1000) for n in range(1, 601)]
+		parts = playlist_parts(77, "Long Mix", songs, 1)
+		cls.seed = Seed("e_chain", 707, lambda folder: write_list(folder, "E_Chain.yaml", "Chain Fan", parts,
+		                                                          {"songs_per_unlock": 1}))
+
+	def test_generates_and_rebuilds_inside_120_seconds(self):
+		world = self.seed.worlds[0]
+		unit = world.plan.units[0]
+		self.assertEqual((len(world.plan.units), unit.key, unit.steps, unit.start), (1, "mix-songs1|77", 600, 12))
+		clock = time.perf_counter()
+		child = check_worker(self, self.seed, {"1": GAME})
+		worker = time.perf_counter() - clock
+		self.assertEqual([answer["now"] for answer in child["answers"]], [12], "the 12 starting parts are all that is open")
+		self.assertLess(self.seed.seconds + worker, 120.0)
+		sys.stderr.write(f"\n(e) one playlist of 600 steps: generation {self.seed.seconds:.1f} s at spoiler 3, "
+		                 f"!ap next worker {worker:.1f} s\n")
+
+
 PLEX_LINK = {"name": "PlexLink", "item_pool": ["Everything"], "replacement_item": None}
 
 
@@ -1165,6 +1197,88 @@ class F_ItemLinks(SeedChecks, unittest.TestCase):
 		write_list(folder, "D_Stranger.yaml", "Someone Else", [movie(6102, "Other Film", 5400000)])
 		child = run_child("select", folder, self.seed.zip)
 		self.assertEqual(child["kept"], ["A_LinkA.yaml", "B_LinkB.yaml"])
+
+
+def playlist_parts(pl, title, songs, size):
+	"""A playlist cut as /apmedia yaml cuts it, every song keeping its rating key and playlist index
+	in whichever part it lands. songs: [(name, artist, ms)]."""
+	tracks = [[pl * 100 + i, i, name, d, pl * 1000 + i, artist] for i, (name, artist, d) in enumerate(songs, 1)]
+	chunks = [tracks[i:i + size] for i in range(0, len(tracks), size)]
+	return [{"k": "mix", "id": f"pl:{pl}:{k}", "pl": pl, "part": k, "t": f"{title} Part {k}" if len(chunks) > 1 else title,
+	         "d": sum(track[3] for track in chunk), "tr": chunk} for k, chunk in enumerate(chunks, 1)]
+
+
+ROAD_SONGS = [(f"Song {n}", f"Artist {n % 3}", 150000 + n * 1000) for n in range(1, 13)]
+SONGS_NAME = "Songs Fan"
+PARTS_NAME = "Parts Fan"
+
+
+def songs_players(folder):
+	road = playlist_parts(91, "Road Trip", ROAD_SONGS, 3)
+	songs = [road[1], road[0], movie(9201, "Shared Film", 5400000), road[3],
+	         *[episode(9300 + n, "Song Show", "rk:9300", 9300, 1, n, 1320000) for n in (1, 2, 3)], road[2]]
+	write_list(folder, "A_Songs.yaml", SONGS_NAME, songs, {"songs_per_unlock": 3, "timesanity_albums": 5, "starting_unlocks": 2})
+	parts = [*playlist_parts(91, "Road Trip", ROAD_SONGS, 15), movie(9201, "Shared Film", 5400000),
+	         movie(9202, "Parts Film", 5400000)]
+	write_list(folder, "B_Parts.yaml", PARTS_NAME, parts, {"timesanity_albums": 5})
+
+
+class I_PlaylistSongs(SeedChecks, unittest.TestCase):
+	"""(i) world 0.4.0's songs per unlock: one playlist at 3 songs per unlock beside the same playlist in
+	whole parts on another list."""
+
+	@classmethod
+	def setUpClass(cls):
+		cls.seed = Seed("i_songs", 909, songs_players)
+
+	def worlds_by_name(self):
+		return {world.player_name: world for world in self.seed.worlds}
+
+	def test_a_playlist_at_songs_per_unlock_is_one_unlock_that_opens_its_parts_in_order(self):
+		md = self.seed.md
+		worlds = self.worlds_by_name()
+		songs, parts = worlds[SONGS_NAME], worlds[PARTS_NAME]
+		data = plain(md["slot_data"][songs.player])
+		self.assertEqual(data["songs_per_unlock"], 3)
+		units = {unit["name"]: (unit["kind"], unit["steps"], unit["start"]) for unit in data["units"]}
+		self.assertEqual(units["Road Trip: Next 3 Songs"], ("mix", 4, 1))
+		mixes = [entry for entry in data["entries"] if entry["k"] == "mix"]
+		self.assertEqual([(entry["id"], entry["s"]) for entry in mixes],
+		                 [("pl:91:2", 2), ("pl:91:1", 1), ("pl:91:4", 4), ("pl:91:3", 3)])
+		self.assertEqual({entry["u"] for entry in mixes}, {songs.registry.unit_id["mix-songs3|91"]})
+		other = plain(md["slot_data"][parts.player])
+		self.assertEqual(other["songs_per_unlock"], 0)
+		self.assertIn({"id": parts.registry.unit_id["mix|pl:91:1"], "name": "Road Trip (playlist)", "kind": "mix", "steps": 1,
+		               "start": 1}, other["units"])
+		# Part k's songs need k copies; the first 3 songs are one location in both lists.
+		for location, pe in songs.placed:
+			if pe.kind == "mix":
+				self.assertEqual((pe.unit, pe.step), ("mix-songs3|91", pe.entry["part"]), location.name)
+		shared = songs.registry.location_id["mix|pl:91:1|t1|song1"]
+		self.assertIn(shared, md["locations"][songs.player])
+		self.assertIn(shared, md["locations"][parts.player])
+		self.assertNotIn(songs.registry.location_id["mix|pl:91:1|t4|song4"], md["locations"][songs.player])
+
+	def test_a_part_longer_than_songs_per_unlock_stops_generation_naming_the_player(self):
+		from Options import OptionError
+
+		parts = self.worlds_by_name()[PARTS_NAME]
+		plan, option = parts.plan, parts.options.songs_per_unlock
+		option.value = 3
+		try:
+			with self.assertRaises(OptionError) as caught:
+				parts.generate_early()
+		finally:
+			option.value = 0
+		self.assertEqual(str(caught.exception), "Plex Media list of Parts Fan: entry 1 (Road Trip) holds 12 tracks, more than "
+		                                        "songs_per_unlock 3 (the YAML attached to /apmedia yaml again, which cuts the "
+		                                        "playlist at 3, or songs_per_unlock 0 would help)")
+		self.assertIs(parts.plan, plan)
+
+	def test_the_ap_next_worker_rebuilds_and_verifies_every_slot(self):
+		child = check_worker(self, self.seed, {"1": GAME, "2": GAME})
+		sys.stderr.write(f"\n(i) !ap next worker: {sum(ok for ok, _r in child['verified'].values())} of "
+		                 f"{len(child['verified'])} slots verified, placements {child['injected']}\n")
 
 
 # Every list setting at a value other than its default. list_label differs from the list_info label

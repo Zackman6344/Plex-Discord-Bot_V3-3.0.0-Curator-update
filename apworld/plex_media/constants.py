@@ -8,7 +8,7 @@
 
 GAME = "Plex Media"
 APWORLD_NAME = "plex_media"
-WORLD_VERSION = "0.3.0"
+WORLD_VERSION = "0.4.0"
 MIN_AP_VERSION = "0.6.8"
 BUILDER_VERSION = 1
 SLOT_DATA_SCHEMA = 1
@@ -91,6 +91,8 @@ WARN_LOCATIONS = 1500
 WARN_HOURS_TO_GOAL = 50
 
 # The YAML option table, in the order the YAML writes it. entries and list_info come after these.
+# songs_per_unlock (world 0.4.0) must default to 0: a YAML without it then plans as world 0.3.0 did,
+# and the !ap next worker rebuilds every seed made before it with this apworld.
 OPTIONS = {
 	"starting_unlocks": {"type": "range", "min": 1, "max": 50, "default": 3},
 	"goal_percent": {"type": "range", "min": 1, "max": 100, "default": 80},
@@ -117,6 +119,7 @@ OPTIONS = {
 	"rewind_weight": {"type": "range", "min": 0, "max": 10, "default": 1},
 	"intermission_weight": {"type": "range", "min": 0, "max": 10, "default": 1},
 	"slow_motion_weight": {"type": "range", "min": 0, "max": 10, "default": 1},
+	"songs_per_unlock": {"type": "range", "min": 0, "max": MIX_TRACKS, "default": 0},
 }
 
 # The list settings, in the order the YAML writes them (after OPTIONS): what the bot picks from the
