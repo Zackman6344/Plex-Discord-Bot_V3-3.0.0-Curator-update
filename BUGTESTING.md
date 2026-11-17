@@ -2194,6 +2194,23 @@ in the playlist's order. Steps marked **Friend** need the second account. Set "A
       (`songs_per_unlock`) cuts a music playlist into parts, and this list has none." In a channel,
       `!apmedia yaml name=SongsBang preset=none playlist="<Mix>" songs=3`: "I do not know the
       option songs. The options are: …", with `songs_per_unlock` among them. Throw the file away.
+- [ ] `/apmedia yaml name:SongsTwo preset:none`, and in `playlist:` pick `<Mix>` from the
+      suggestions, type `; ` after it, and pick `<Other>`, any other music playlist of yours, from
+      the suggestions that come up then, each starting `<Mix>; ` with no "(audio, …)" after
+      `<Mix>`. Type `; ` once more: the first suggestion is `<Mix>; <Other>` alone, and neither
+      playlist is offered again. Press Enter there, then send the command. The reply has "`<Mix>`
+      opens 3 songs per unlock, in 4 parts." and a line for `<Other>` under it, and the file's
+      `list_playlist` is `"<Mix>; <Other>"`. In a channel,
+      `!apmedia yaml name=SongsTwo preset=none playlist="<Mix>, <Other>"` gives the same two lines.
+      Throw the files away.
+- [ ] `/apmedia yaml name:SongsTen preset:none unwatched:False`, and in `playlist:` pick ten
+      playlists, typing `; ` and the start of the next name before each pick. Every step offers the
+      playlist typed; once the names no longer fit in 100 characters the earliest show as numbers
+      (their rating keys), and a long last name may end in "…". Type `; ` and an eleventh name by
+      hand and send: "❌ The playlist text names 11 playlists, and a list takes at most 10." Send
+      it again without the eleventh: the reply has a line for each music playlist, five at most and
+      then "And N more playlists.", and the file's `list_playlist` names all ten. Throw the file
+      away.
 - [ ] `!apmedia ?` lists `songs_per_unlock` among the yaml keys, and its PLAYING section has "In
       the bot's voice channel, a song of a playlist part still locked for someone listening is
       skipped, unless someone there has it open; an album never locks a song."
@@ -2201,7 +2218,7 @@ in the playlist's order. Steps marked **Friend** need the second account. Set "A
 **From the Options Creator**
 
 - [ ] Options Creator, Plex Media: Unlocks and goal has Songs per Unlock right after Episodes per
-      Unlock, at Off, and its tooltip starts "How many songs of the music playlist in List:
+      Unlock, at Off, and its tooltip starts "How many songs of each music playlist in List:
       Playlist one unlock opens". Locked Watches' tooltip ends "played in Plexamp or another Plex
       app it is banked or ignored as above, and an album never locks a song."
 - [ ] Player Name `SongsFile`, List: Preset `none`, List: Playlist `<Mix>`, Songs per Unlock left

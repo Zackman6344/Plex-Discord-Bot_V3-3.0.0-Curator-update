@@ -75,7 +75,7 @@ test('a list built from the command opens its playlist 3 songs per unlock, part 
 	assert.deepStrictEqual(plan.units, [{ key: 'mix-songs3|5001', steps: 11, start: 3, prefix: Array.from({ length: 12 }, (_, c) => c) }]);
 	assert.deepStrictEqual(plan.entries.map((e) => e.step), Array.from({ length: 11 }, (_, i) => i + 1));
 	assert.deepStrictEqual([out.summary.copies, out.summary.startOpen, out.summary.goalCount], [11, 3, 8], 'each part is a title toward the goal');
-	assert.deepStrictEqual(out.summary.playlist, { title: 'Boardwalk Bumps', parts: 11, songs: 3, tracks: 32 });
+	assert.deepStrictEqual(out.summary.playlists, [{ title: 'Boardwalk Bumps', parts: 11, songs: 3, tracks: 32 }]);
 	assert.strictEqual(summaryHead(out.summary)[1], '`Boardwalk Bumps` opens 3 songs per unlock, in 11 parts.');
 	assert.ok(out.summary.warnings.includes('1 audiobook part in Boardwalk Bumps was left out.'));
 });
@@ -106,7 +106,7 @@ test('at a small size a part of only short tracks still leaves the list, and the
 	assert.deepStrictEqual(entriesOf(three.yaml).map((m) => [m.part, m.tr.length]), [[1, 3], [2, 3], [3, 3], [4, 3], [5, 3]]);
 	assert.ok(three.summary.warnings.includes('3 short tracks of Interludes were left out: a part needs one track of 30 s or more.'));
 	// Cut into 6 parts, of which the last, 3 short tracks, left: the reply counts the 5 on the list.
-	assert.deepStrictEqual(three.summary.playlist, { title: 'Interludes', parts: 5, songs: 3, tracks: 15 });
+	assert.deepStrictEqual(three.summary.playlists, [{ title: 'Interludes', parts: 5, songs: 3, tracks: 15 }]);
 	assert.strictEqual(summaryHead(three.summary)[1], '`Interludes` opens 3 songs per unlock, in 5 parts.');
 
 	// Song 2 cut to 15 s: inside a part of 3 it stays, a part of 1 song it leaves.
@@ -149,7 +149,7 @@ test('the reply reads right for a playlist of one part and for one short song le
 		lib.playlists[1].leafCount = 2;
 	};
 	const small = await builderOf({ mutate: twoSongs }).build({ name: 'Ears', preset: 'none', playlist: 'Lofi' });
-	assert.deepStrictEqual(small.summary.playlist, { title: 'Lofi', parts: 1, songs: 3, tracks: 2 });
+	assert.deepStrictEqual(small.summary.playlists, [{ title: 'Lofi', parts: 1, songs: 3, tracks: 2 }]);
 	assert.strictEqual(summaryHead(small.summary)[1], '`Lofi` is in 1 part of 2 songs, with one unlock.', 'not 3 songs per unlock of a 2-song playlist');
 	const whole = await builderOf().build({ name: 'Ears', preset: 'none', playlist: 'Lofi', songsPerUnlock: 'off' });
 	assert.strictEqual(summaryHead(whole.summary)[1], '`Lofi` is in 1 part of 10 songs, with one unlock.');
@@ -229,14 +229,14 @@ test('a list attached again keeps its songs_per_unlock and cuts the playlist the
 
 test('the reply\'s head names the playlist as code, after the size line, in both modes', () => {
 	const base = { entries: 21, counts: { movie: 1, mix: 20 }, locations: 61, hours: 3.4, hoursToGoal: 2.7, startOpen: 3, goalCount: 16, warnings: ['W'], misses: [] };
-	const head = summaryHead({ ...base, playlist: { title: 'Road `Trip` **now**', parts: 20, songs: 3 } });
+	const head = summaryHead({ ...base, playlists: [{ title: 'Road `Trip` **now**', parts: 20, songs: 3 }] });
 	assert.deepStrictEqual(head.slice(0, 3), ['21 entries (1 movie, 20 playlist parts), 61 locations, about 3.4 h.', '`Road \'Trip\' **now**` opens 3 songs per unlock, in 20 parts.',
 		'Starts with 3 open; goal: finish 16 of 21 (about 2.7 h).']);
 	assert.strictEqual(head.length, 4);
-	assert.strictEqual(summaryHead({ ...base, playlist: { title: 'Road', parts: 4, songs: 0, tracks: 60 } })[1], '`Road` is in 4 parts of up to 15 songs, one unlock each.');
-	assert.strictEqual(summaryHead({ ...base, playlist: { title: 'Lofi', parts: 1, songs: 0, tracks: 1 } })[1], '`Lofi` is in 1 part of 1 song, with one unlock.');
-	assert.strictEqual(summaryHead({ ...base, playlist: null }).length, 3, 'no playlist, no line');
-	assert.deepStrictEqual(summaryLines({ ...base, playlist: null }, 'Zack').slice(0, 4), [...summaryHead({ ...base, playlist: null }), 'Warning: W']);
+	assert.strictEqual(summaryHead({ ...base, playlists: [{ title: 'Road', parts: 4, songs: 0, tracks: 60 }] })[1], '`Road` is in 4 parts of up to 15 songs, one unlock each.');
+	assert.strictEqual(summaryHead({ ...base, playlists: [{ title: 'Lofi', parts: 1, songs: 0, tracks: 1 }] })[1], '`Lofi` is in 1 part of 1 song, with one unlock.');
+	assert.strictEqual(summaryHead({ ...base, playlists: [] }).length, 3, 'no playlist, no line');
+	assert.deepStrictEqual(summaryLines({ ...base, playlists: [] }, 'Zack').slice(0, 4), [...summaryHead({ ...base, playlists: [] }), 'Warning: W']);
 });
 
 test('the world\'s pages say what a hand edit of songs_per_unlock does, how the copies and a Wild Ticket open parts, and that the albums timer counts per part', () => {
@@ -263,7 +263,7 @@ test('the world\'s pages say what a hand edit of songs_per_unlock does, how the 
 		+ 'gets 1 checkpoint at 5 and none at 10. Every track of 30 s or more already has a check of its own.');
 	assert.ok(!/[a-z]+_[a-z_]+/.test(albums), 'a tooltip names settings as the Options Creator shows them');
 	const songs = /class SongsPerUnlock\(OffRange\): """(.*?)"""/.exec(options)[1];
-	assert.ok(songs.startsWith('How many songs of the music playlist in List: Playlist one unlock opens, in the playlist\'s order.'), songs);
+	assert.ok(songs.startsWith('How many songs of each music playlist in List: Playlist one unlock opens, in the playlist\'s order.'), songs);
 });
 
 // The bug: no page a player reads said that the bot skips the songs of a locked playlist part in its

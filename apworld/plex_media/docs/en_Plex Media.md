@@ -3,7 +3,7 @@
 ## What the game is
 
 Plex Media turns a list of titles from a Plex server into an Archipelago slot. The list can hold
-movies, TV episodes, music albums, parts of an audio playlist (up to 15 songs each) and
+movies, TV episodes, music albums, parts of audio playlists (up to 15 songs each) and
 audiobooks. Every title starts locked except a few opening ones, and the multiworld sends the
 unlocks. Watching or listening sends checks.
 
@@ -113,7 +113,7 @@ comes out the same with or without them.
 | `list_albums` | List: Albums | `preset` | 0–200 |
 | `list_books` | List: Audiobooks | `preset` | 0–50 |
 | `list_titles` | List: Titles | empty | Titles split by `;`, at most 50 |
-| `list_playlist` | List: Playlist | empty | A Plex playlist, by name |
+| `list_playlist` | List: Playlist | empty | Plex playlists by name, split by `;`, at most 10 |
 | `list_collection` | List: Collection | empty | A Plex movie or TV collection, by name |
 | `list_genre` | List: Genre | empty | A genre, such as `Horror` or `Jazz` |
 | `list_years` | List: Years | empty | `1999` or `1990-1999` |
@@ -127,18 +127,19 @@ leaves out gets 0. `none` gives 0 of each, so the list holds only what you count
 that counts nothing and names nothing is refused.
 
 In `list_titles`, `movie:`, `show:`, `album:` or `book:` in front of a title says what it is, a
-year picks one film (`Halloween (2018)`), and a show takes a range of seasons
-(`show: Lost S1-2`). A playlist goes on the list in its own order, a music playlist in parts of
+year picks one film (`Halloween (2018)`), and a show takes a range of seasons (`show: Lost S1-2`).
+`list_playlist` names up to 10 playlists split by `;`, as in `Road Trip; Lofi`, each by its name or
+its rating key, and each goes on the list in its own order, a music playlist in parts of
 `songs_per_unlock` songs, or of up to 15 while that is off. `list_genre` and `list_years` narrow
 only the random picks, and audiobooks ignore `list_years`. `list_unwatched` leaves the movies and
 episodes you have watched and the audiobooks you finished out of the random picks, a collection, a
-video playlist and the shows you name without seasons, and starts each show at your first
-unwatched episode; a show you named and have watched to the end is left out. The movies,
-audiobooks and seasons you name in `list_titles` stay on the list whole. Leaving out what you
-watched needs your Plex account, linked by the server owner with your consent; finished audiobooks
-come from the bot's own bookmarks. `list_max_episodes` is the most episodes the bot takes from one
-show, for random shows, the shows of a collection and shows named without seasons. An empty
-`list_label` names the list "<your name>'s list".
+video playlist and the shows you name without seasons, and starts each show at your first unwatched
+episode; a show you named and have watched to the end is left out. The movies, audiobooks and
+seasons you name in `list_titles` stay on the list whole. Leaving out what you watched needs your
+Plex account, linked by the server owner with your consent; finished audiobooks come from the bot's
+own bookmarks. `list_max_episodes` is the most episodes the bot takes from one show, for random
+shows, the shows of a collection and shows named without seasons. An empty `list_label` names the
+list "<your name>'s list".
 
 These settings cannot be random, and a trigger cannot set them. A weighted setting with one choice
 above 0, as every one in a file from the Launcher's Generate Template Options, is that choice.
@@ -151,11 +152,11 @@ above 0, as every one in a file from the Launcher's Generate Template Options, i
 | `goal_percent` | 80 | 1–100 |
 | `tv_unlock` | `episodes` | `episodes` or `season` |
 | `episodes_per_unlock` | 3 | 1–12 |
-| `songs_per_unlock` | `off` | 1–15: how many songs of the list's music playlist one unlock opens, in its order; `off` (0): parts of up to 15 songs, each its own unlock |
+| `songs_per_unlock` | `off` | 1–15: how many songs of each music playlist on the list one unlock opens, in its order; `off` (0): parts of up to 15 songs, each its own unlock |
 | `locked_watches` | `bank` | `bank` or `ignore` |
 | `wild_tickets` | 2 | 0–20, fewer when the list is short |
 
-The bot cuts the playlist into parts of `songs_per_unlock` songs when it writes the list, 3 for a
+The bot cuts each music playlist into parts of `songs_per_unlock` songs when it writes the list, 3 for a
 list built from `/apmedia yaml`'s options alone, so a change needs the YAML attached to
 `/apmedia yaml` again. It cannot be random, and a trigger cannot set it. Edited by hand in a
 finished list, a lower number leaves parts longer than `songs_per_unlock`, which stops generation,

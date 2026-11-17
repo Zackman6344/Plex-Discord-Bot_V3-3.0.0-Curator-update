@@ -20,7 +20,9 @@
 // menu names, by the items' own two-word names too, a slot named like an item is that slot, and
 // "remote" before one of your slot names is the item alone; an empty list view keeps
 // the Buffering line; status shows no Snack Bar for a seed that allows no trades; a file left all
-// random still fits its reply; the reply says how a music playlist opens, and a songs_per_unlock
+// random still fits its reply; the reply says how each music playlist opens, several split by ;
+// build from both forms and from their file attached again, the playlist autocomplete completes the
+// piece after the last ; inside Discord's limits, and a songs_per_unlock
 // typed for a list with none says so; a self-link needs the !ap claim; the owner may name anybody's slot
 // only where the spec lets them, and nobody may while ownerId is blank; the account list stays
 // private; the Accept button reaches
@@ -248,9 +250,10 @@ function stubBuilder(over = {}) {
 			calls.push(['build', params]);
 			return { yaml: 'name: "Zack"\nPlex Media:\n  goal_percent: 80\n', fileName: 'Zack.yaml', summary: this.summary };
 		},
-		cachedPlaylists(prefix) {
-			calls.push(['cachedPlaylists', prefix]);
-			return [{ rk: 501, title: 'Road Trip', type: 'audio', smart: false, items: 30 }, { rk: 502, title: 'x'.repeat(120), type: 'video', smart: true, items: 0 }];
+		cachedPlaylistChoices(typed) {
+			calls.push(['cachedPlaylistChoices', typed]);
+			const lists = [{ rk: 501, title: 'Road Trip', type: 'audio', smart: false, items: 30 }, { rk: 502, title: 'x'.repeat(120), type: 'video', smart: true, items: 0 }];
+			return yamlModule._internal.playlistChoices(lists, typed);
 		},
 		async playlists() { throw new Error('autocomplete must not read Plex'); }
 	}, over);
@@ -910,15 +913,20 @@ test('a playlist, collection or title from a file that the library lacks comes b
 		assert.doesNotMatch(r.content.replace(/`[^`]*`/g, ''), /Free Nitro|\]\(|\*\*|<@&|@everyone/, `${key}: nothing of it outside a code span`);
 		assert.deepStrictEqual(r.allowedMentions, NO_PINGS);
 	}
-	// The library's own names, which those refusals list, stay text as well.
+	// The library's own names, which those refusals list, stay text as well: a playlist refusal names
+	// the closest playlists, so the file names one near the bait.
 	use({ builder: realBuilder((lib) => {
 		lib.playlists[1].title = bait;
 		lib.collections[3][0].title = bait;
 	}), fetch: async () => new Response(body) });
-	for (const [key, start] of [['list_playlist', 'No playlist called `Nothing Like It`. Playlists: '], ['list_collection', 'No movie or TV collection called `Nothing Like It`. Some collections: ']]) {
-		body = creatorYaml({ list_preset: 'none', list_shows: 'preset', list_titles: '\'\'', list_unwatched: 'false', [key]: '"Nothing Like It"' });
+	const near = 'Free Nitro https example invalid claim now and 123456789012345678 everyonx';
+	for (const [key, value, start, listed] of [
+		['list_playlist', JSON.stringify(near), `No playlist called \`${near.slice(0, 59)}`, 'Closest by name: `[Free Nitro](https://example.invalid/claim) **now** <@&1234'],
+		['list_collection', '"Nothing Like It"', 'No movie or TV collection called `Nothing Like It`. Some collections: ', 'Free Nitro'],
+	]) {
+		body = creatorYaml({ list_preset: 'none', list_shows: 'preset', list_titles: '\'\'', list_unwatched: 'false', [key]: value });
 		const r = first(await runPrefix(ana(), 'yaml', { attachments: [attachment('Zack.yaml', body)] }));
-		assert.ok(r.content.startsWith(`\u274C ${start}`) && r.content.includes('Free Nitro'), r.content);
+		assert.ok(r.content.startsWith(`\u274C ${start}`) && r.content.includes(listed), r.content);
 		assert.doesNotMatch(r.content.replace(/`[^`]*`/g, ''), /Free Nitro|\]\(|\*\*|<@&|@everyone/, `${key}: the library's names in code spans`);
 	}
 });
@@ -984,6 +992,39 @@ test('songs_per_unlock typed for a list with no music playlist says it cuts noth
 	const back = first(await runPrefix(ana(), 'yaml', { attachments: [attachment('Zack.yaml', written.yaml)] })).content.split('\n');
 	assert.ok(back[0].startsWith('\u{1F4DD} '), back.join('\n'));
 	assert.ok(!back.includes(idle), back.join('\n'));
+});
+
+// The bug: playlist took one playlist, so "Human Music; Lofi A.M." was refused as one name.
+test('several playlists split by ; build from the prefix form and the slash form alike, and the file attached again builds them again', async () => {
+	use({ builder: realBuilder() });
+	const lines = ['`Lofi` opens 3 songs per unlock, in 4 parts.', '`Boardwalk Bumps` opens 3 songs per unlock, in 11 parts.'];
+	const bang = first(await runPrefix(ana(), 'yaml name=Zack preset=none playlist="Lofi; Boardwalk Bumps"'));
+	assert.deepStrictEqual(bang.content.split('\n').slice(2, 4), lines, bang.content);
+	const yamlText = bang.files[0].attachment.toString('utf8');
+	assert.ok(yamlText.includes('\n  list_playlist: "Lofi; Boardwalk Bumps"\n'));
+	const slash = first(await runSlash(ana(), 'yaml', { name: 'Zack', preset: 'none', playlist: 'lofi (audio, 10 items); 5001;' }));
+	assert.deepStrictEqual(slash.content.split('\n').slice(2, 4), lines, slash.content);
+	assert.ok(slash.files[0].attachment.toString('utf8').includes('\n  list_playlist: "Lofi; Boardwalk Bumps"\n'), 'the names, whatever was typed');
+	use({ builder: realBuilder(), fetch: fileFetch(yamlText) });
+	const again = first(await runSlash(ana(), 'yaml', { file: attachment('Zack.yaml', yamlText) }));
+	assert.deepStrictEqual(again.content.split('\n').slice(2, 4), lines, again.content);
+	assert.ok(again.files[0].attachment.toString('utf8').includes('\n  list_playlist: "Lofi; Boardwalk Bumps"\n'));
+});
+
+test('the playlist option, the help and the list of keys say that several are split by ;, inside Discord\'s limits', async () => {
+	const spec = apmedia._internal.SUBCOMMANDS.find((s) => s.name === 'yaml');
+	const option = spec.options.find((o) => o.name === 'playlist');
+	assert.strictEqual(option.description, '1-10 Plex playlists split by ; (songs per unlock: more:songs_per_unlock=N, default 3 or the file\'s)');
+	assert.ok(option.description.length <= 100, `${option.description.length} characters`);
+	const help = apmedia._internal.helpEmbed(BOT).data.description;
+	assert.ok(help.includes(' titles, playlist (both take several, split by ;), collection, '), help);
+	assert.ok(help.length <= 4096, `${help.length} characters`);
+	use();
+	assert.match(first(await runPrefix(ana(), 'yaml name=Zack playlistz=Lofi')).content,
+		/^I do not know the option playlistz\. The options are: name, preset, movies, shows, albums, books, titles, playlist \(both take several, split by ;\), collection, /);
+	const { commandChars, COMMAND_CHAR_BUDGET } = require('../scripts/validate-slash.js');
+	const size = commandChars(slashRegistry.buildSpec('apmedia', apmedia.command.slash));
+	assert.ok(size <= COMMAND_CHAR_BUDGET, `${size} of ${COMMAND_CHAR_BUDGET} characters`);
 });
 
 test('a list the filters leave empty is refused with the warnings that say which filter emptied it', async () => {
@@ -2236,9 +2277,12 @@ test('autocomplete answers from memory: slots from the bindings, titles from the
 	assert.deepStrictEqual(locked.responded[0], [{ name: 'Alien (1979)', value: 'movie|rk:8' }], 'redeem offers the locked titles only');
 	const p = focus(ana(), 'yaml', 'playlist', 'road');
 	await auto(p);
-	assert.deepStrictEqual(builder.calls, [['cachedPlaylists', 'road']]);
-	assert.deepStrictEqual(p.responded[0][0], { name: 'Road Trip (audio, 30 items)', value: '501' });
-	assert.ok(p.responded[0].every((c) => c.name.length <= 100 && c.value.length <= 100));
+	assert.deepStrictEqual(builder.calls, [['cachedPlaylistChoices', 'road']]);
+	assert.deepStrictEqual(p.responded[0], [{ name: 'Road Trip (audio, 30 items)', value: '501' }]);
+	const every = focus(ana(), 'yaml', 'playlist', '');
+	await auto(every);
+	assert.deepStrictEqual(every.responded[0].map((c) => c.value), ['501', '502']);
+	assert.ok(every.responded[0].every((c) => c.name.length <= 100 && c.value.length <= 100));
 	config.apMediaEnabled = false;
 	game.calls.length = 0;
 	const off = focus(ana(), 'list', 'slot', 'za');
@@ -2307,8 +2351,47 @@ test('the playlist autocomplete reads the game\'s builder, the one whose cache t
 	use({ game: stubGame({ builder: () => shared }), builder: null });
 	const p = focus(ana(), 'yaml', 'playlist', 'road');
 	await apmedia.command.slash.autocomplete(p);
-	assert.deepStrictEqual(shared.calls, [['cachedPlaylists', 'road']]);
+	assert.deepStrictEqual(shared.calls, [['cachedPlaylistChoices', 'road']]);
 	assert.deepStrictEqual(p.responded[0][0], { name: 'Road Trip (audio, 30 items)', value: '501' });
+});
+
+// A pick puts the choice's name in the box, and Discord sends its value unless the player types on,
+// so the value carries the pieces before the last ";". What each name reads back to is held in
+// test/apMediaPlaylists.test.js, where the builder makes these choices.
+test('the playlist autocomplete completes the piece after the last ";", shows the ones before it by name and sends them as ratingKeys, inside Discord\'s limits', async () => {
+	const popcorn = `${String.fromCodePoint(0x1f37f).repeat(10)} Popcorn`;
+	const real = realBuilder((lib) => {
+		lib.playlists.push({ ratingKey: '5990', key: '/playlists/5990/items', type: 'playlist', title: popcorn, playlistType: 'audio', smart: false, leafCount: 3 });
+		for (let n = 1; n <= 25; n++) lib.playlists.push({ ratingKey: String(6100 + n), key: `/playlists/${6100 + n}/items`, type: 'playlist', title: `Mix ${n}`, playlistType: 'audio', smart: false, leafCount: 3 });
+	});
+	await real.playlists('');
+	use({ builder: real });
+	const ask = async (typed) => {
+		const f = focus(ana(), 'yaml', 'playlist', typed);
+		await apmedia.command.slash.autocomplete(f);
+		return f.responded[0];
+	};
+	const bumps = 'Boardwalk Bumps (audio, 33 items)';
+	assert.deepStrictEqual(await ask('bo'), [{ name: bumps, value: '5001' }], 'one piece: the ratingKey, as before');
+	assert.deepStrictEqual(await ask('; bo'), [{ name: bumps, value: '5001' }], 'nothing before the ";"');
+	assert.deepStrictEqual(await ask('Lofi (audio, 10 items); bo'), [{ name: `Lofi; ${bumps}`, value: '5002; 5001' }], 'an earlier pick by its name, sent as its ratingKey');
+	assert.deepStrictEqual((await ask(' Lofi ;; Interludes (audio, 18 items);')).slice(0, 3), [
+		{ name: 'Lofi; Interludes', value: '5002; 5006' },
+		{ name: `Lofi; Interludes; ${bumps}`, value: '5002; 5006; 5001' },
+		{ name: 'Lofi; Interludes; MCU Timeline (video, 4 items)', value: '5002; 5006; 5003' },
+	], 'after a ";" at the end: the text as it is first, the empty pieces dropped, then every playlist not named yet');
+	// A piece that names no playlist stays as typed; a name with no room left is cut where only its
+	// own label starts that way, never between the halves of an emoji, and a value too long dropped.
+	const ninety = 'x'.repeat(90);
+	assert.deepStrictEqual(await ask(`${ninety}; bo`), [{ name: `${ninety}; Boardwa${String.fromCharCode(0x2026)}`, value: `${ninety}; 5001` }]);
+	assert.deepStrictEqual(await ask(`${'x'.repeat(95)}; bo`), [], 'a value past 100 characters would lose a piece');
+	const popped = await ask(`${'x'.repeat(88)}; pop`);
+	assert.deepStrictEqual(popped, [{ name: `${'x'.repeat(88)}; ${String.fromCodePoint(0x1f37f).repeat(4)}${String.fromCharCode(0x2026)}`, value: `${'x'.repeat(88)}; 5990` }]);
+	for (const typed of ['', 'Lofi; ', 'mix']) {
+		const choices = await ask(typed);
+		assert.strictEqual(choices.length, 25, JSON.stringify(typed));
+		assert.ok(choices.every((c) => c.name.length <= 100 && c.value.length <= 100 && Object.keys(c).join() === 'name,value'), JSON.stringify(typed));
+	}
 });
 
 test('an autocomplete that throws still answers, with nothing', async () => {

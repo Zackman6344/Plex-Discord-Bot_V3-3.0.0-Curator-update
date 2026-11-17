@@ -115,7 +115,7 @@ const SLASH = Object.freeze({
 	'tv-unlock': 'tvUnlock',
 	'episodes-per-unlock': 'episodesPerUnlock',
 });
-const KEY_LIST = 'name, preset, movies, shows, albums, books, titles, playlist, collection, genre, years, unwatched, max_episodes, '
+const KEY_LIST = 'name, preset, movies, shows, albums, books, titles, playlist (both take several, split by ;), collection, genre, years, unwatched, max_episodes, '
 	+ 'time_movies, time_episodes, time_albums, time_books, goal_percent, tv_unlock, episodes_per_unlock, songs_per_unlock, label, '
 	+ 'starting_unlocks, wild_tickets, strict, locked_watches, checkpoint_items, snack_variety, fast_forwards, remote_controls, '
 	+ 'snack_bar_trades, snack_bar_price, trap_percentage, buffering_weight, rights_expired_weight, commercial_break_weight, '
@@ -432,7 +432,7 @@ async function run(ctx) {
 	const typedSongs = params.songsPerUnlock !== undefined && String(params.songsPerUnlock).trim() !== '';
 	const middle = [
 		...fromLines.middle,
-		...(typedSongs && !summary.playlist ? [`\u26A0\uFE0F ${settingName('songs_per_unlock')} cuts a music playlist into parts, and this list has none.`] : []),
+		...(typedSongs && !(summary.playlists || []).length ? [`\u26A0\uFE0F ${settingName('songs_per_unlock')} cuts a music playlist into parts, and this list has none.`] : []),
 		...(summary.warnings || []).map((w) => `\u26A0\uFE0F ${common.esc(w)}`),
 	];
 	for (const miss of summary.misses || []) {

@@ -511,7 +511,8 @@ test('an audio playlist with songs per unlock off becomes mixes of at most 15 tr
 	const lofi = await setup().builder.build({ name: 'Ears', playlist: '5002', songsPerUnlock: 'off' });
 	assert.deepStrictEqual(entriesOf(lofi.yaml).map((m) => [m.id, m.t]), [['pl:5002:1', 'Lofi']]);
 	assert.match(lofi.yaml, /\n {2}songs_per_unlock: 0\n/, 'typed off is 0');
-	await assert.rejects(setup().builder.build({ name: 'Ears', playlist: 'Beach Photos' }), /No playlist called `Beach Photos`\. Playlists: /);
+	await assert.rejects(setup().builder.build({ name: 'Ears', playlist: 'Beach Photos' }), /^Error: No playlist called `Beach Photos`\. Several playlists are separated with `;`\.$/,
+		'a photo playlist is none the list takes');
 });
 
 test('a playlist part of only short tracks, or a hand-picked album of them, is left out rather than breaking the seed', async () => {
@@ -837,7 +838,7 @@ test('a name that matched only the nearest title is said back; a name of random 
 	// Random Access Memories and a playlist called Random Hits start with the word, and are not taken for it.
 	const random = setup({ mutate: (lib) => { lib.playlists[1].title = 'Random Hits'; } }).builder;
 	await assert.rejects(random.build({ name: 'Zack', titles: 'random', unwatched: false }), /^Error: Nothing on the list: no title matched what was asked for\. Not found: `random`\.$/);
-	await assert.rejects(random.build({ name: 'Zack', preset: 'none', playlist: 'Random', unwatched: false }), /^Error: No playlist called `Random`\. Playlists: .*Random Hits/);
+	await assert.rejects(random.build({ name: 'Zack', preset: 'none', playlist: 'Random', unwatched: false }), /^Error: No playlist called `Random`\. Closest by name: `Random Hits`\./);
 	const near = await random.build({ name: 'Zack', preset: 'none', playlist: 'random h', unwatched: false });
 	assert.ok(near.summary.warnings.includes('Nearest matches taken: "random h" as the playlist Random Hits.'), 'more than the word is a name like any other');
 	const exact = await random.build({ name: 'Zack', preset: 'none', playlist: 'random hits', unwatched: false });
@@ -1118,12 +1119,12 @@ test('readPlayerYaml refuses what it cannot use, saying which setting and how to
 	refuses(creatorYaml({ list_preset: 'random' }), 'List: Preset (`list_preset`) is random: choose one, the bot needs it to pick titles.');
 	refuses(creatorYaml({ list_preset: '{movies: 1, tv: 1}' }), 'List: Preset (`list_preset`) is random: choose one, the bot needs it to pick titles.');
 	refuses(creatorYaml({ list_unwatched: 'random' }), 'List: Unwatched Only (`list_unwatched`) is random: set true or false, the bot needs it to pick titles.');
-	refuses(creatorYaml({ list_titles: '[Alien, Heat]' }), 'List: Titles (`list_titles`) is random: write it as one text, the bot needs it to pick titles.');
+	refuses(creatorYaml({ list_titles: '[Alien, Heat]' }), 'List: Titles (`list_titles`) is random: write it as one text, several names split by `;`, the bot needs it to pick titles.');
 	// Archipelago never rolls a plain text setting, so random there is a name, as it is on the command.
 	assert.strictEqual(readPlayerYaml(creatorYaml({ list_playlist: 'Random' })).params.playlist, 'Random');
 	assert.strictEqual(validateParams({ name: 'Z', playlist: 'Random' }).playlist, 'Random');
 	assert.strictEqual(readPlayerYaml(creatorYaml({ list_collection: '\'random-access memories\'' })).params.collection, 'random-access memories');
-	refuses(creatorYaml({ list_playlist: '{Rock: 1, Jazz: 1}' }), 'List: Playlist (`list_playlist`) is random: write it as one text, the bot needs it to pick titles.');
+	refuses(creatorYaml({ list_playlist: '{Rock: 1, Jazz: 1}' }), 'List: Playlist (`list_playlist`) is random: write it as one text, several names split by `;`, the bot needs it to pick titles.');
 	refuses(creatorYaml({ list_movies: '201' }), 'List: Movies (`list_movies`) must be a whole number from 0 to 200 or preset.');
 	refuses(creatorYaml({ list_movies: '2.5' }), 'List: Movies (`list_movies`) must be a whole number from 0 to 200 or preset.');
 	refuses(creatorYaml({ list_max_episodes: '0' }), 'List: Episodes per Show (`list_max_episodes`) must be a whole number from 1 to 500.');

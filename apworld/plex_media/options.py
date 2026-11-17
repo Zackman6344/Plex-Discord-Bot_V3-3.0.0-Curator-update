@@ -150,7 +150,7 @@ class OffRange(NamedRange):
 
 
 class SongsPerUnlock(OffRange):
-	"""How many songs of the music playlist in List: Playlist one unlock opens, in the playlist's order.
+	"""How many songs of each music playlist in List: Playlist one unlock opens, in the playlist's order.
 	The bot cuts the playlist into parts of this many songs when it fills in your titles
 	(/apmedia yaml), so a change needs the YAML attached there again. Each part counts as one title
 	toward your goal. off: parts of up to 15 songs, each a title with an unlock of its own."""
@@ -346,9 +346,10 @@ class ListTitles(FreeText):
 
 
 class ListPlaylist(FreeText):
-	"""The bot reads this when it fills in your titles (/apmedia yaml): a Plex playlist, by name, whose
-	titles go on the list in the playlist's order. A music playlist goes on in parts of Songs per Unlock
-	songs that open in order, or in parts of up to 15 songs with an unlock each while that is off."""
+	"""The bot reads this when it fills in your titles (/apmedia yaml): Plex playlists by name, at most
+	10, split by semicolons, as in Road Trip; Lofi. Each playlist's titles go on the list in its own
+	order. A music playlist goes on in parts of Songs per Unlock songs that open in order, or in parts
+	of up to 15 songs with an unlock each while that is off."""
 	display_name = "List: Playlist"
 	default = LIST_OPTIONS["list_playlist"]["default"]
 

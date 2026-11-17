@@ -151,9 +151,10 @@ Plex Media:
     '': 50
 
   list_playlist:
-    # The bot reads this when it fills in your titles (/apmedia yaml): a Plex playlist, by name, whose
-    # titles go on the list in the playlist's order. A music playlist goes on in parts of Songs per Unlock
-    # songs that open in order, or in parts of up to 15 songs with an unlock each while that is off.
+    # The bot reads this when it fills in your titles (/apmedia yaml): Plex playlists by name, at most
+    # 10, split by semicolons, as in Road Trip; Lofi. Each playlist's titles go on the list in its own
+    # order. A music playlist goes on in parts of Songs per Unlock songs that open in order, or in parts
+    # of up to 15 songs with an unlock each while that is off.
     '': 50
 
   list_collection:
@@ -247,7 +248,7 @@ Plex Media:
     random-range-1-12: 0 # random value between 1 and 12
 
   songs_per_unlock:
-    # How many songs of the music playlist in List: Playlist one unlock opens, in the playlist's order.
+    # How many songs of each music playlist in List: Playlist one unlock opens, in the playlist's order.
     # The bot cuts the playlist into parts of this many songs when it fills in your titles
     # (/apmedia yaml), so a change needs the YAML attached there again. Each part counts as one title
     # toward your goal. off: parts of up to 15 songs, each a title with an unlock of its own.

@@ -190,7 +190,7 @@ Two signature styles coexist in the codebase:
 | `apMediaBooks.js`          | The bot's audiobooks as credit: 10 s spans read from the book engine, and finished bookmarks every 60 s. |
 | `apMediaTraps.js`          | The trap runner: Commercial Break, Shuffle Mode, Rewind, Intermission and Slow Motion on the bot's music in voice or on the listener's own audiobook, one effect per guild, and the undoing of each (a pause lifted unless someone paused under it, a clip taken off, a book speed put back). Never reads or writes the game's store. |
 | `apMediaPlex.js`           | Read-only Plex client for the world: history, sessions, accounts, sections, listings and metadata (a 2,000-item cache). The token travels only in the `X-Plex-Token` header, and its `PmsError` carries a `code` and never the token. |
-| `apMediaYaml.js`           | The YAML builder behind `/apmedia yaml`: hand-picks, a playlist or collection, random picks, the unwatched rule, album curation and twin copies, caps and warnings, and `renderYaml`; and `readPlayerYaml`, which reads a player's own YAML (an Options Creator export, or a list the bot wrote) into build params. |
+| `apMediaYaml.js`           | The YAML builder behind `/apmedia yaml`: hand-picks, up to 10 playlists and a collection, random picks, the unwatched rule, album curation and twin copies, caps and warnings, and `renderYaml`; and `readPlayerYaml`, which reads a player's own YAML (an Options Creator export, or a list the bot wrote) into build params. |
 | `apMediaPlan.js`           | The JavaScript twin of the world's `plan.py` (units, steps, starting copies, checkpoint minutes, the goal count, and the pool's Wild Tickets, Fast Forwards, Remote Controls, traps and snacks), checked against `test/fixtures/apmedia/plan_cases.json`. |
 | `apMediaButtons.js`        | The `apmedia:page:` page buttons (asker only, 30 minutes) and the stateless `apmedia:consent:` Accept button. |
 | `apworldBuild.js`          | Packs `apworld/plex_media` into a reproducible, store-only `.apworld` zip in memory and checks its manifest; `readApworldManifest` reads an installed copy's manifest without writing anything. |
@@ -2690,8 +2690,9 @@ Creator"); a subcommand takes at most 25, so `label`, `starting_unlocks`, `wild_
 `rights_expired_weight`, `commercial_break_weight`, `shuffle_mode_weight`, `rewind_weight`,
 `intermission_weight`, `slow_motion_weight`) and world 0.4.0's `songs_per_unlock` arrive through
 one `more` option in the prefix's key=value form, read without case, dashes or underscores
-(`yaml.js` `KEYS`). The `playlist` option's description names `more:songs_per_unlock=N`, at 98 of
-Discord's 100 characters. Anyone may build, and one build reads every movie, show and album
+(`yaml.js` `KEYS`). The `playlist` option's description, "1-10 Plex playlists split by ; (songs
+per unlock: more:songs_per_unlock=N, default 3 or the file's)", is 99 of Discord's 100 characters,
+and `/apmedia` 3,430 of its 4,000. Anyone may build, and one build reads every movie, show and album
 listing and then the tracks or episodes of each pick (286 Plex requests for a large list on a
 library the owner's size), so `yaml` runs one build per caller and two at once in all, kept in
 module memory, and answers the rest with a wait; the builder gives the event loop a turn before
@@ -2750,7 +2751,9 @@ too, and `game.titles()` and the `list()` rows carry its titled songs as `songs`
 list read by `common.named`), or the first alone when two would pass 100 characters;
 `titleChoices` maps each check and ff choice to `name` and `value` alone before Discord sees it,
 and `lockedChoices` builds redeem's the same way. The value stays the part's code, and `choice()`
-never cuts between the halves of a surrogate pair.
+never cuts between the halves of a surrogate pair. The `playlist:` choices come from the builder
+(`cachedPlaylistChoices`, under **Several playlists** below), since their names come back to it as
+text once a player types on after a pick.
 
 **Playlist headings and rows.** `/apmedia list` groups its rows under `groupOf(entry, index)`: a
 show, a playlist, or a kind. A playlist in several parts drops " Part <k>" from its heading, and
@@ -2815,7 +2818,7 @@ Unlock.
 | `list_albums` | `NamedRange` | 0–200, special `preset` = -1 | `preset` | `albums` |
 | `list_books` | `NamedRange` | 0–50, special `preset` = -1 | `preset` | `books` |
 | `list_titles` | `FreeText` | `Alien; Aliens` | empty | `titles` |
-| `list_playlist` | `FreeText` | a Plex playlist's name | empty | `playlist` |
+| `list_playlist` | `FreeText` | up to 10 Plex playlists by name or rating key, split by `;` | empty | `playlist` |
 | `list_collection` | `FreeText` | a Plex collection's name | empty | `collection` |
 | `list_genre` | `FreeText` | a genre | empty | `genre` |
 | `list_years` | `FreeText` | `1999` or `1990-1999` | empty | `years` |
@@ -3186,7 +3189,7 @@ keys were only added, so `BUILDER_VERSION` and the slot_data schema stay 1: a li
 `!ap next` worker rebuilds older seeds with it.
 
 **World 0.4.0: songs per unlock.** `songs_per_unlock` (`SongsPerUnlock`, 0 to 15, `off` being 0)
-cuts the list's music playlist into parts of that many songs, and every part of one playlist
+cuts each music playlist on the list into parts of that many songs, and every part of one playlist
 shares one unit, keyed `mix-songs{N}|<pl>` (`plan.unit_key`, `contracts.unitKey`); at 0 each part
 stays a unit of its own, keyed by its entry (`mix|pl:<pl>:<part>`). `plan.py` `_playlists`, and
 its twin `apMediaPlan.js` `mixSteps`, sort a unit's parts by part number, make each part's place
@@ -3225,15 +3228,97 @@ too, which covers a direct `build()` or `renderYaml` caller. `OFF_OPTIONS` holds
 whose 0 is named off, the four timers and `songs_per_unlock`: `off` reads as 0, typed or in a
 file, and so does false in a file. A file without the key reads as 0, so a 0.3.0 file keeps its
 parts, while `validateParams` gives a list built from params alone `NEW_LIST_SONGS` (3), and a
-typed number replaces a file's. The builder cuts the playlist at the number (at 15 while it is 0),
+typed number replaces a file's. The builder cuts each playlist at the number (at 15 while it is 0),
 drops a part of only tracks under 30 s and numbers the parts after it on, and keeps a playlist's
 first `MAX_MIX_TRACKS` (600) tracks, reading up to `MIX_READ_MAX` (1,200) of an audio playlist,
 since book parts drop out only after the read (a part of only short tracks is dropped after the 600
-are kept). `summaryHead(summary)` gives the reply's first lines, the playlist's (`playlistText`)
+are kept). `summaryHead(summary)` gives the reply's first lines, each playlist's (`playlistText`)
 after the counts, and `yaml.js` shows them as they are; it adds "⚠️ Songs per Unlock
 (`songs_per_unlock`) cuts a music playlist into parts, and this list has none." only for a typed
-number, since every list the bot writes holds the key. With the playlist cut at 1 to 14 songs, the
+number, since every list the bot writes holds the key. With a playlist cut at 1 to 14 songs, the
 "too big for one slot" refusal says "raise the episodes or songs per unlock".
+
+**Several playlists** (2026-11-15, from the owner's "The bot isn't registering every playlist I put
+in"). The command log held three refused builds: `Human Music; Lofi A.M.; Boardwalk Bumps;`, the
+same names split by commas, and `Human Music (audio, 486 items)`, the label the autocomplete shows
+for a suggestion whose value is the rating key, which reached the builder as text. `playlist` took
+one playlist, `findByName` matched no label, and each refusal listed `all.slice(0, 10)`, Plex's
+first ten playlists, mostly smart and video ones, none of them a name the owner had typed. Now:
+
+- `playlistsParam` splits the text at `;` as `titlesParam` does: each piece trimmed, an empty one
+  dropped, a piece written twice kept once. More than `MAX_PLAYLIST_PIECES` (20) pieces, or a
+  piece past 200 characters, is refused, in `validateParams` and, by the setting's Creator name, in
+  `fileListValue` for `list_playlist`. In a text with no `;` each piece between its commas is held
+  to the 200 instead, and the refusal for one past it ends "Several playlists are separated with
+  `;`." `p.playlist` keeps the cleaned text, `p.playlists` the pieces. The cap of `MAX_PLAYLISTS`
+  (10) waits for Plex, since a playlist written two ways counts once.
+- `build()` reads the playlists once (`loadPlaylists(true)`) and finds every piece
+  (`resolvePlaylists`) before the hand-picks are matched, so a miss costs one Plex request; the
+  near-match notes wait in `playlistLoose` and follow the titles' in the reply, in the list's
+  order. `findPlaylist`, a module function the autocomplete shares, tries the rating key, the name
+  as written in any case, the name as `norm()` reads it (never when that reads as nothing), the
+  autocomplete's label (`PLAYLIST_LABEL`: `<name> (audio|video|photo[, N items])`), stripped only
+  once the whole piece names no playlist, the playlist of that name with the label's type and
+  count first, then its type alone, since a smart playlist's count moves; and last a piece cut
+  short, ending in "…" as a cut choice does (`cutPlaylists`), which names the one playlist whose
+  `playlistLabel` starts with the rest in any case. `nearestPlaylist` adds the fuzzy rules
+  `findByName` uses, on the name without its label, and never for a cut piece: "Rec…" read as the
+  nearest name took Plex's first "Recently", Recently Added in place of the Recently Played picked.
+  The names each lookup compares are worked out once per playlist read (`playlistKeys`, a
+  `WeakMap`), since the autocomplete runs them for every choice at every key.
+- A whole text that, its outer `;` and spaces dropped, names a playlist whose own name holds `;`
+  exactly is that playlist (`wholePlaylist`), as a list written before several were taken names
+  one; a name without `;` of its own (`Rock / Jazz`) never joins the pieces of `Rock; Jazz`.
+- A text with no `;` that names no playlist exactly is split at its commas outside parentheses
+  (`commaPieces`; a `)` with no `(` before it opens nothing), and read as those playlists only when
+  each piece names one by its rating key, its name, its label or its cut label. A name with commas
+  of its own is found whole first.
+- The playlists found are kept once each by rating key, and more than 10 then is refused: "The
+  playlist text names 11 playlists, and a list takes at most 10.", naming no option, since the
+  text may come from the command or a file. An account is asked for before any is read when one
+  is a video playlist and `unwatched` is on. Each is read and cut as a lone playlist was
+  (`addPlaylist(pl)`): a music one into parts and a unit of its own (`mix-songs{N}|<pl>`), a
+  video one into movies and episodes, each with its own caps and warnings.
+- A piece that names nothing throws `missingPlaylists`: every such piece, then up to
+  `PLAYLISTS_SUGGESTED` (5) playlists for each by bigram closeness of the `norm()` names without a
+  label, at `SUGGEST_MIN` (0.35) or above and a music one first on a tie, or for a cut piece the
+  playlists whose label it starts, a music one first and then in Plex's order. A line of them that
+  would take the message past `MISSING_CHARS` (1,500 characters of a 2,000-character reply) is
+  passed over and a shorter one after it still goes in, and the message ends "Several playlists
+  are separated with `;`."
+- `summary.playlists` (once `summary.playlist`) holds a cut per music playlist, and `summaryHead`
+  gives the first `PLAYLIST_LINES` (5) a line each and counts the rest: "And 2 more playlists."
+- `playlistsText` writes `list_playlist` as the names found, joined by `; `, and writes the rating
+  key for a name that holds `;`, is all digits, runs past 200 characters, or matches another
+  playlist's name lowercased or as `norm()` reads it, and every one as its rating key when the
+  names together would be read whole as a playlist holding `;` (Rock and Roll beside `Rock; Roll`
+  write `7001; 7002`), so a file attached again finds the same playlists. A caller without Plex
+  (`apworld/tests/fill_creator.js`) writes `validateParams`' pieces joined by `; `. A YAML list in
+  `list_titles` or `list_playlist`, which Archipelago reads as a random pick of one, is refused
+  with "write it as one text, several names split by `;`".
+- The slash autocomplete is `cachedPlaylistChoices(typed)`, `playlistChoices` over the cache. A
+  pick puts the choice's name in the box and Discord sends its value, unless the player types on
+  and the box's text is sent; the review of the first version found its names, the earlier pieces
+  as typed plus a label cut at 100 characters, coming back as pieces the builder refused or read
+  as the wrong playlist, two choices sharing a name, and nothing offered past the fourth pick. Now
+  every name reads back to the playlists its value names. An earlier piece that `findPlaylist`
+  resolves goes in the value as its rating key (`5109; 5002; 5001`, 10 of them within 100
+  characters) and in the name by its name, else its label, else its rating key, whichever
+  `findPlaylist` reads back to it (`earlierForm`); one it does not resolve stays as typed in both.
+  `choiceName` shows the new playlist by its label, else its name, each only where it reads back
+  to that playlist, and while neither fits turns the earlier names into rating keys from the first,
+  one at a time; last it cuts the label short where `cutPlaylists` finds that playlist alone, and
+  otherwise the choice is left out. A playlist an earlier piece names is not offered again, a
+  value past 100 characters is left out, and after a `;` at the end the first choice is the text
+  as it is (`5109; 5002; 5001` sent), so a player who presses Enter there keeps it. A `;` in a name
+  is shown as `,` (`playlistName`), which `norm()` reads the same, so the box's text is not split
+  there.
+
+`test/apMediaPlaylists.test.js` builds the three texts the log shows refused, on a library with the
+owner's first ten playlists in their order, and holds each rule above, with ten autocomplete picks
+in a row each built by its name and by its value; `test/apMediaCommand.test.js` holds both command
+forms, a file attached again, the autocomplete through the command and the option, help and key
+texts.
 
 **Known, and left.** No committed test generates with the 0.3.0 apworld and rebuilds with 0.4.0's
 worker. One scratch run did (`B_Mixed` with 2 playlist parts, the C lists and ChecksFinder: 4 of 4
