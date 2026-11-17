@@ -269,7 +269,11 @@ function persist() {
     return ok;
 }
 
-/** Drop every record for a watch, for when the watch itself goes. Watch ids are reused. */
+/**
+ * Drop every record for a watch, for when the watch itself goes. Its id can name another room
+ * later: #0 passes to whatever room /config names next, and a watch file moved aside as unreadable
+ * starts the ids over.
+ */
 function forgetWatch(watchId) {
     const all = store.load();
     const prefix = `${Number(watchId)}::`;

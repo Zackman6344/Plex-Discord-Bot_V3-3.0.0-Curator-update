@@ -8,8 +8,8 @@
 // filter. Read `client.goaled` when feeding this, never hasFinished().
 //
 // Records are keyed by seed and slot rather than by watch, because a count is meant to outlive
-// the room it was earned in: watches get removed, their ids get handed out again, and the tally
-// has to survive both. RoomInfo.seed_name is stable for the life of a multiworld and unique
+// the room it was earned in: watches get removed, watch #0 passes to whatever room /config names
+// next, and the tally has to survive both. RoomInfo.seed_name is stable for the life of a multiworld and unique
 // across them, which makes `<seed>::<slot>` the identity of one person's game.
 //
 // Recording is idempotent for that reason too. The goal set is rebuilt from the server on every

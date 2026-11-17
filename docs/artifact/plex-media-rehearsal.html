@@ -582,13 +582,12 @@
       <li><strong>Never exercised:</strong> banking on a locked title (E5: the file had Locked Watches on
         ignore), Friend's own checkpoints, by movie and in voice (F1, F2, F3), and putting it back
         (H1).</li>
-      <li><strong>Before a second run, undo the first one as H1 would.</strong> Its watch #1, both links
-        on it and Friend's claim are still live, and a second set beside them makes every slot-less
-        <code>/apmedia</code> reply “Several slots match”. Run <code>/apmedia unlink slot:ZackPlex</code>,
-        have Friend unlink their own slot, then run <code>!ap unwatch 1</code>: “🗑️ Stopped watching
-        <b>archipelago.gg</b> (#1). 1 slot claim(s) dropped with it.” Then delete
-        <code>PlexRehearsal\output</code>, and every file in <code>PlexRehearsal\Players</code> but
-        <code>Finder.yaml</code>.</li>
+      <li><strong>Before a second run, undo what is left of the first.</strong> Its watch #1 was
+        unwatched on 2026-11-14, which dropped Friend's claim, and #1 now names the room watched on
+        2026-11-17: leave that watch alone. Run <code>/apmedia unlink slot:ZackPlex</code> (the
+        rehearsal's link, on seed 68102935821108366332), and have Friend unlink FriendPlex if
+        <code>/apmedia status</code> still lists it. Then delete <code>PlexRehearsal\output</code>, and
+        every file in <code>PlexRehearsal\Players</code> but <code>Finder.yaml</code>.</li>
     </ul>
   </div>
 
@@ -979,7 +978,7 @@
           id: "H1",
           title: "The evening is undone",
           rev: true,
-          fromLog: { status: "skip", note: "Not run: watch #1, both links and apMediaAnnounce: all are still in place." },
+          fromLog: { status: "skip", note: "Not run: when the log was read, watch #1, both links and apMediaAnnounce were all still in place." },
           steps: [
             "<code>/apmedia unlink slot:ZackPlex</code>; Friend runs <code>/apmedia unlink slot:FriendPlex</code>.",
             "<code>!ap unwatch </code><i>N</i>, then close the server window.",

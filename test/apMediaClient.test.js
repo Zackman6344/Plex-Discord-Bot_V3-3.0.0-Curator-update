@@ -5,8 +5,9 @@
 // Tracker tag, slot_data only when it is not already held); the item list kept by index, with a
 // Sync when a frame was missed; checks and the goal going out only on a live connection, and
 // saying so; InvalidPacket surfaced instead of dropped; a refused connection stopping for good;
-// the room read again before every connection attempt; and a listener that throws, the base's
-// 'status' listeners included, breaking nothing.
+// the room read again before every connection attempt; no Connect at all to a room on another seed
+// than the slot's; and a listener that throws, the base's 'status' listeners included, breaking
+// nothing.
 //
 // Harness: the real client against test/helpers/apMediaServer.js on a loopback port, and, with no
 // socket at all, frames fed through the client's own packet queue the way its socket feeds them
@@ -21,6 +22,7 @@ const { ApMediaClient } = require('../helpers/apMediaClient.js');
 const { ArchipelagoClient, CLIENT_VERSION } = require('../helpers/archipelagoClient.js');
 const dataCache = require('../helpers/archipelagoData.js');
 const contracts = require('../helpers/apMediaContracts.js');
+const logger = require('../helpers/logger.js');
 const { startApMediaServer } = require('./helpers/apMediaServer.js');
 const { waitFor } = require('./helpers/apServer.js');
 
@@ -33,7 +35,7 @@ const item = (id, location = -2, player = 0, flags = 1) => ({ item: id, location
 // Every event the client can raise, in the order it raised them.
 function record(client) {
 	const events = [];
-	for (const name of ['connected', 'items', 'checked', 'invalid', 'fatal', 'orphaned']) {
+	for (const name of ['connected', 'items', 'checked', 'invalid', 'fatal', 'orphaned', 'stale']) {
 		client.on(name, (payload) => events.push({ name, payload }));
 	}
 	return events;
@@ -585,4 +587,58 @@ test('a watch that is gone stops the client before it dials anything', async (t)
 	assert.strictEqual(client.socket, null);
 	assert.strictEqual(client.reconnectTimer, null);
 	assert.deepStrictEqual(statuses, [], 'not even a connecting status');
+});
+
+// --- the seed -----------------------------------------------------------------------------
+
+const roomInfo = (seed) => ({ cmd: 'RoomInfo', games: [contracts.GAME], datapackage_checksums: {}, password: false, seed_name: seed });
+
+// The bug: a link from a removed room took a new room's reused watch id, sent its old slot name
+// there and was refused InvalidSlot at every start, which reads as a refusal and not as a new seed.
+test('a room on another seed than the slot\'s gets no Connect: the client stops and says which seed', async (t) => {
+	const server = await serve(t, { seedName: 'Seed_NEW', slots: [{ name: 'OtherPlex', game: contracts.GAME }] });
+	const { client, events } = connect(t, server, { expectedSeed: () => 'Seed_PLEX' });
+	await waitFor(() => named(events, 'stale').length === 1, 'the stale event');
+	assert.deepStrictEqual(named(events, 'stale'), [{ seedName: 'Seed_NEW', expected: 'Seed_PLEX' }]);
+	assert.deepStrictEqual(events.map(event => event.name), ['stale']);
+	assert.strictEqual(client.stopped, true);
+	assert.strictEqual(client.socket, null);
+	assert.strictEqual(client.reconnectTimer, null, 'and no retry is scheduled');
+	assert.deepStrictEqual(server.received, [], 'not even a Connect');
+});
+
+test('the slot\'s own seed, or none yet, connects as before, and the seed is read again for every room', async () => {
+	let expected = null;
+	const { client, sent, events } = offline({ expectedSeed: () => expected });
+	await feed(client, [roomInfo('Seed_PLEX')]);
+	assert.deepStrictEqual(sent.map(packet => packet.cmd), ['Connect'], 'a slot with no seed yet');
+
+	expected = 'Seed_PLEX';
+	await feed(client, [roomInfo('Seed_PLEX')]);
+	assert.deepStrictEqual(sent.map(packet => packet.cmd), ['Connect', 'Connect'], 'its own seed');
+
+	await feed(client, [roomInfo('Seed_NEW')]);
+	assert.strictEqual(sent.length, 2, 'another seed');
+	assert.deepStrictEqual(named(events, 'stale'), [{ seedName: 'Seed_NEW', expected: 'Seed_PLEX' }]);
+	assert.strictEqual(client.stopped, true);
+});
+
+// A room that names no seed is refused after Connected for that ('seed'), as before; calling it a new
+// seed would post a notice about a seed nobody named.
+test('a room that names no seed gets its Connect as before', async () => {
+	const { client, sent, events } = offline({ expectedSeed: () => 'Seed_PLEX' });
+	await feed(client, [roomInfo(undefined)]);
+	assert.deepStrictEqual(sent.map(packet => packet.cmd), ['Connect']);
+	assert.deepStrictEqual(named(events, 'stale'), []);
+	assert.strictEqual(client.stopped, false);
+});
+
+test('a seed reader that throws is logged, and the client connects as it did before', async (t) => {
+	const warnings = [];
+	t.mock.method(logger, 'warn', (...args) => { warnings.push(args.join(' ')); });
+	const { client, sent, events } = offline({ expectedSeed: () => { throw new Error('store unreadable'); } });
+	await feed(client, [roomInfo('Seed_NEW')]);
+	assert.deepStrictEqual(sent.map(packet => packet.cmd), ['Connect']);
+	assert.deepStrictEqual(named(events, 'stale'), []);
+	assert.ok(warnings.some(line => line.includes('store unreadable')), warnings.join('\n'));
 });

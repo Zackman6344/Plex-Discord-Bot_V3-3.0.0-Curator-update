@@ -26,6 +26,8 @@
 //   'checked'   {ids}            locations the server now reports checked
 //   'invalid'   {packet}         the server rejected something this client sent
 //   'orphaned'  {reason}         resolveWatch() found no watch; the client has stopped
+//   'stale'     {seedName, expected}  RoomInfo named another seed than expectedSeed(); the client
+//                                has stopped without sending Connect
 //   'fatal' {reason, errors} and 'status' {state, detail} come from ArchipelagoClient.
 
 const WebSocket = require('ws');
@@ -66,6 +68,8 @@ class ApMediaClient extends ArchipelagoClient {
 	 *   and emits 'orphaned'
 	 * @param {(seedName: string, slot: string) => boolean} [options.hasSlotData]  true when this seed's
 	 *   slot_data for the slot is already held, so Connect does not ask for it again
+	 * @param {() => (string|null)} [options.expectedSeed]  read at every RoomInfo: the seed the slot
+	 *   name belongs to, or null while it belongs to none yet
 	 * @param {object} [options.target]  a fixed room, for a client without resolveWatch
 	 * @param {string} [options.password]
 	 */
@@ -78,6 +82,7 @@ class ApMediaClient extends ArchipelagoClient {
 		});
 		this._resolveWatch = typeof options.resolveWatch === 'function' ? options.resolveWatch : null;
 		this._hasSlotData = typeof options.hasSlotData === 'function' ? options.hasSlotData : () => false;
+		this._expectedSeed = typeof options.expectedSeed === 'function' ? options.expectedSeed : () => null;
 		this.slotData = null;
 		this.items = [];
 		this.inventoryKnown = false;
@@ -143,6 +148,9 @@ class ApMediaClient extends ArchipelagoClient {
 	async _handlePacket(packet) {
 		if (!packet || !packet.cmd || this.stopped) return;
 		switch (packet.cmd) {
+			case 'RoomInfo':
+				if (this._onAnotherSeed(packet)) return;
+				return super._handlePacket(packet);
 			case 'Connected':
 				// The base first: until it has run, `connected` is still false and team, slotId and
 				// the slot maps describe the previous connection, so a check sent from a 'connected'
@@ -164,6 +172,25 @@ class ApMediaClient extends ArchipelagoClient {
 			default:
 				return super._handlePacket(packet);
 		}
+	}
+
+	// A slot name belongs to its seed. Sent to a room on another seed, the Connect is refused
+	// InvalidSlot when that seed has no slot by the name, or InvalidGame when its slot by the name
+	// plays another game, which reads as a refusal that every start tries again rather than as the
+	// new seed it is; when that seed has a Plex Media slot by the name, the bot joins as a slot this
+	// binding never held.
+	_onAnotherSeed(packet) {
+		const seed = packet.seed_name ? String(packet.seed_name) : null;
+		let expected = null;
+		try {
+			expected = this._expectedSeed();
+		} catch (err) {
+			logger.warn(`[AP:${this.label}] could not read the seed of its slot: ${err.message || err}`);
+		}
+		if (!seed || !expected || seed === expected) return false;
+		this.stop();
+		this.emit('stale', { seedName: seed, expected });
+		return true;
 	}
 
 	_afterConnected(packet) {
