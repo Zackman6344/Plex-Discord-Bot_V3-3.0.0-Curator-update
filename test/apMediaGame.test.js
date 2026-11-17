@@ -5,9 +5,10 @@
 // manual credit) earns exactly the slot's own location ids; a repeat writes and says nothing; credit
 // from before the seed counts for nothing; a locked title banks (or, under 'ignore', earns nothing),
 // and nothing is decided locked before the slot's inventory is known; the goal goes out at the
-// threshold and again on every Connected; a new seed, a refusal and a lost watch each stop the slot
-// with one notice that names the fix; announcements are batched, escaped and never ping; and start,
-// stop, the /config switch and the health check behave across a !restart. For world 0.3.0's items:
+// threshold and again on every Connected; a new seed (seen in RoomInfo, before the old slot name
+// goes to that room), a refusal and a lost watch each stop the slot with one notice that names the
+// fix; announcements are batched, escaped and never ping; and start, stop, the /config switch and
+// the health check behave across a !restart. For world 0.3.0's items:
 // each acts once, never as a backlog or again after a reconnect; a burst hits with two traps at most;
 // a Remote Control ends or blocks a trap; Buffering and Rights Expired hold checks, never drop them,
 // and let them go on time, after a restart too; a voice or book trap waits for a listen, then fizzles
@@ -918,6 +919,272 @@ test('a room on a new seed marks the slot stale, and retry takes the new seed fr
 	assert.match((await posts(h))[0], /is in the game/, 'welcomed again on the new seed');
 });
 
+const NEW_ROOM = {
+	seedName: 'Seed_NEW',
+	slots: [{ name: 'OtherPlex', game: 'Plex Media' }, { name: 'Watcher', game: 'ChecksFinder' }],
+	slotData: { 1: slotData() },
+	locations: { 1: ALL_LOCATIONS },
+	startInventory: { 1: START },
+};
+const NEW_ROOM_SLOTS = { known: true, slots: { OtherPlex: 'Plex Media', Watcher: 'ChecksFinder' } };
+const connectsTo = (server) => server.received.filter((p) => p.cmd === 'Connect');
+
+// The bug: watch ids came back, so a link from a removed room attached itself to the next room
+// watched, sent its old slot name there and was refused InvalidSlot at every start, a refusal that
+// asked for a fix nobody could make where the room had simply moved to another seed.
+const STALE_NOTICE = '\u{1F7E1} `ZackPlex`: the room is on another seed now, so this list from the old seed no longer counts. '
+	+ 'If the new seed has a Plex Media slot by this name, `/apmedia retry` takes that seed on (the old seed\'s progress does not carry over); '
+	+ 'if not, `/apmedia unlink` it. Should the room go back to the old seed, `/apmedia retry` picks that seed up again.';
+
+test('a room on a seed without the slot marks it stale before any Connect, and retry and link keep their meaning', async (t) => {
+	const h = await setup(t);
+	const key = await linkSlot(h);
+	await h.game._internal.handleEvent(historyEvent(N1917.rk));
+	await h.game._internal.idle();
+	assert.strictEqual(row(h, key).banked, 8);
+	await settledPosts(h);
+
+	const fresh = await startApMediaServer(NEW_ROOM);
+	t.after(() => fresh.close());
+	h.monitor.room = NEW_ROOM_SLOTS;
+	h.monitor.put(0, { target: fresh.target }, 'repointed');
+	await waitFor(() => row(h, key).state === 'stale', 'the stale state');
+	assert.deepStrictEqual(connectsTo(fresh), [], 'the old slot name never went to the new seed');
+	assert.deepStrictEqual(await settledPosts(h), [STALE_NOTICE]);
+	const detail = h.store.bindings.get(key).stateDetail;
+	assert.deepStrictEqual([detail.oldSeed, detail.newSeed], [SEED, 'Seed_NEW']);
+	assert.strictEqual(h.game.health().status, 'ok', 'a new seed, not a refusal');
+	assert.ok(h.events.some((e) => e.kind === 'apmedia-stale'));
+	assert.ok(!h.events.some((e) => e.kind === 'apmedia-refused'));
+	assert.strictEqual(runtime(h, key).client, null);
+
+	// Retry still tries the room's seed: this one has no ZackPlex, so the room refuses it and the
+	// refusal says where the slot went. Nothing is cleared before a seed is taken on.
+	const retried = await h.game.retry(key);
+	assert.ok(retried.ok, retried.message);
+	assert.strictEqual(retried.message, 'Reconnecting `ZackPlex`. If the room is still on another seed with this slot, it takes that seed on: the old seed\'s progress does not carry over.');
+	await waitFor(() => row(h, key).state === 'refused', 'the refusal on the new seed');
+	assert.strictEqual(connectsTo(fresh).length, 1);
+	assert.strictEqual(row(h, key).stateDetail.reason, 'InvalidSlot');
+	assert.match(row(h, key).stateDetail.fix, /probably on a new seed: link that seed's slot with `\/apmedia link`/);
+	assert.strictEqual(row(h, key).seedName, SEED, 'still its own seed');
+	assert.strictEqual(row(h, key).banked, 8, 'and its progress');
+
+	// And link still binds the new seed's own slot, which takes that seed.
+	const linked = await h.game.link({ watchId: 0, slot: 'otherplex', userId: OWNER, by: OWNER });
+	assert.ok(linked.ok, linked.message);
+	assert.strictEqual(linked.binding.slot, 'OtherPlex');
+	await waitFor(() => row(h, linked.binding.key).inventoryKnown, 'the new slot');
+	assert.strictEqual(row(h, linked.binding.key).seedName, 'Seed_NEW');
+	assert.strictEqual(row(h, linked.binding.key).state, 'active');
+});
+
+// The live case: the binding was refused InvalidSlot already, and every start tried it again.
+test('a slot refused by a room now on another seed goes stale at the next start, once', async (t) => {
+	const h = await setup(t, { startGame: false, server: NEW_ROOM, room: NEW_ROOM_SLOTS });
+	const fix = 'The room has no slot by that name, so it is probably on a new seed: link that seed\'s slot with `/apmedia link`.';
+	const b = h.store.bindings.put({
+		watchId: 0, slot: SLOT, userId: OWNER, seedName: '68102935821108366332', state: 'refused',
+		stateDetail: { reason: 'InvalidSlot', errors: ['InvalidSlot'], at: h.clock, fix },
+	});
+	h.game.start({ discord: h.discord, bot: h.bot });
+	await waitFor(() => row(h, b.key).state === 'stale', 'the stale state');
+	assert.deepStrictEqual(connectsTo(h.server), []);
+	const notices = await settledPosts(h);
+	assert.strictEqual(notices.length, 1);
+	assert.match(notices[0], /^\u{1F7E1} `ZackPlex`: the room is on another seed now/u);
+	assert.strictEqual(h.game.health().status, 'ok');
+
+	h.game.stop();
+	h.game = h.make();
+	h.game.start({ discord: h.discord, bot: h.bot });
+	await h.game._internal.idle();
+	assert.strictEqual(row(h, b.key).state, 'stale', 'a stale slot is not tried again');
+	assert.deepStrictEqual(connectsTo(h.server), []);
+	assert.deepStrictEqual(await settledPosts(h), []);
+});
+
+// A host:port room restarted on another seed: the watch is unchanged, the room behind it is not, and
+// the client reconnects on its own. The binding took its seed at its first Connected, after the
+// client was built.
+test('a room back on another seed under the same client marks the slot stale before any Connect', async (t) => {
+	const h = await setup(t);
+	const key = await linkSlot(h);
+	await settledPosts(h);
+	assert.strictEqual(row(h, key).seedName, SEED);
+	const client = runtime(h, key).client;
+
+	const fresh = await startApMediaServer(NEW_ROOM);
+	t.after(() => fresh.close());
+	h.monitor.set(0, { target: fresh.target });
+	for (const socket of h.server.clientsOn(1)) socket.socket.terminate();
+	await waitFor(() => !client.connected, 'the drop');
+	reconnectNow(client);
+	await waitFor(() => row(h, key).state === 'stale', 'the stale state');
+	assert.deepStrictEqual(connectsTo(fresh), []);
+	assert.strictEqual(runtime(h, key).client, null);
+});
+
+// The bug the review found: a retry cleared a stale slot's progress before it connected, so a room
+// that had only been on another seed for a while and came back cost the slot its own seed.
+test('a stale slot whose room is back on its own seed resumes on /apmedia retry with nothing lost, and takes no other seed on after that', async (t) => {
+	const h = await setup(t);
+	const key = await linkSlot(h);
+	await h.game._internal.handleEvent(historyEvent(N1917.rk));
+	await h.game._internal.idle();
+	assert.strictEqual(row(h, key).banked, 8);
+	await settledPosts(h);
+	const home = h.server.target;
+
+	const away = await startApMediaServer(NEW_ROOM);
+	t.after(() => away.close());
+	h.monitor.room = NEW_ROOM_SLOTS;
+	h.monitor.put(0, { target: away.target }, 'repointed');
+	await waitFor(() => row(h, key).state === 'stale', 'the stale state');
+	await settledPosts(h);
+
+	h.monitor.room = ROOM;
+	h.monitor.put(0, { target: home }, 'repointed');
+	await h.game._internal.idle();
+	assert.strictEqual(row(h, key).state, 'stale', 'a stale slot waits for /apmedia retry');
+
+	const res = await h.game.retry(key);
+	assert.ok(res.ok, res.message);
+	await waitFor(() => row(h, key).state === 'active' && row(h, key).inventoryKnown, 'the slot back on its own seed');
+	await h.game._internal.idle();
+	assert.strictEqual(row(h, key).seedName, SEED);
+	assert.strictEqual(row(h, key).banked, 8, 'its own seed\'s progress, kept');
+	assert.deepStrictEqual(await settledPosts(h), [], 'no second welcome');
+	assert.deepStrictEqual(connectsTo(away), []);
+
+	// The retry's leave to take another seed on ended with that Connected: a room that moves again
+	// makes the slot stale again rather than starting it over in silence.
+	const third = await startApMediaServer({ seedName: 'Seed_THIRD', slotData: { 1: slotData() }, locations: { 1: ALL_LOCATIONS }, startInventory: { 1: START } });
+	t.after(() => third.close());
+	h.monitor.put(0, { target: third.target }, 'repointed');
+	await waitFor(() => row(h, key).state === 'stale', 'stale again');
+	assert.deepStrictEqual(connectsTo(third), []);
+	assert.strictEqual(row(h, key).banked, 8);
+	assert.deepStrictEqual(await settledPosts(h), [STALE_NOTICE]);
+});
+
+const roomWithSlot = (seedName, sd = slotData()) => ({ seedName, slotData: { 1: sd }, locations: { 1: ALL_LOCATIONS }, startInventory: { 1: START } });
+// A target the client cannot resolve: it waits in its backoff and dials nothing, so a retry's
+// Connected stays to come for as long as a test needs.
+const NOWHERE = Object.freeze({ kind: 'nowhere' });
+
+/** A slot with 8 checks banked on its own seed, then its room moved to `room`, so the slot is stale. */
+async function staleWithBank(t, h, room) {
+	const key = await linkSlot(h);
+	await h.game._internal.handleEvent(historyEvent(N1917.rk));
+	await h.game._internal.idle();
+	assert.strictEqual(row(h, key).banked, 8);
+	const away = await startApMediaServer(room);
+	t.after(() => away.close());
+	h.monitor.put(0, { target: away.target }, 'repointed');
+	await waitFor(() => row(h, key).state === 'stale', 'the stale state');
+	await settledPosts(h);
+	return { key, away };
+}
+
+// The review's second round: a refused retry kept its leave to take a seed on, so whatever seed the
+// room moved to next was taken on, and the old seed cleared, with no notice and no retry asked.
+test('a retry the other seed refused leaves the next seed the room moves to for a retry of its own', async (t) => {
+	const h = await setup(t);
+	const { key } = await staleWithBank(t, h, NEW_ROOM);
+	assert.ok((await h.game.retry(key)).ok);
+	await waitFor(() => row(h, key).state === 'refused', 'the refusal');
+	await settledPosts(h);
+
+	const third = await startApMediaServer(roomWithSlot('Seed_THIRD'));
+	t.after(() => third.close());
+	h.monitor.put(0, { target: third.target }, 'repointed');
+	await waitFor(() => row(h, key).state === 'stale', 'stale on the third seed');
+	assert.deepStrictEqual(connectsTo(third), []);
+	assert.deepStrictEqual([row(h, key).seedName, row(h, key).banked], [SEED, 8]);
+	assert.deepStrictEqual(await settledPosts(h), [STALE_NOTICE]);
+});
+
+test('a watch lost between a retry and its Connected ends what the retry allowed', async (t) => {
+	const h = await setup(t);
+	const { key, away } = await staleWithBank(t, h, roomWithSlot('Seed_AWAY'));
+	h.monitor.set(0, { target: NOWHERE });
+	assert.ok((await h.game.retry(key)).ok);
+	h.monitor.drop(0);
+	await waitFor(() => row(h, key).state === 'orphaned', 'the orphaned state');
+	await settledPosts(h);
+
+	h.monitor.put(0, { target: away.target }, 'added');
+	assert.ok((await h.game.retry(key)).ok);
+	await waitFor(() => row(h, key).state === 'stale', 'stale: the first retry is spent');
+	assert.deepStrictEqual(connectsTo(away), []);
+	assert.deepStrictEqual([row(h, key).seedName, row(h, key).banked], [SEED, 8]);
+});
+
+test('a retried stale slot refused by the new seed keeps its old seed whole: a duplicate link, or slot_data it cannot read', async (t) => {
+	const BOB = '100000000000000002';
+	const h = await setup(t);
+	const key = await linkSlot(h);
+	await h.game._internal.handleEvent(historyEvent(N1917.rk));
+	await h.game._internal.idle();
+	const other = await startApMediaServer(roomWithSlot('Seed_OTHER'));
+	t.after(() => other.close());
+	h.monitor.set(1, { target: other.target });
+	const theirs = await h.game.link({ watchId: 1, slot: SLOT, userId: BOB, by: OWNER });
+	assert.ok(theirs.ok, theirs.message);
+	await waitFor(() => row(h, theirs.binding.key).inventoryKnown, 'the link on watch #1');
+	h.monitor.put(0, { target: other.target }, 'repointed');
+	await waitFor(() => row(h, key).state === 'stale', 'the stale state');
+	assert.ok((await h.game.retry(key)).ok);
+	await waitFor(() => row(h, key).state === 'refused', 'refused as a duplicate');
+	assert.strictEqual(row(h, key).stateDetail.reason, 'duplicate');
+	assert.deepStrictEqual([row(h, key).seedName, row(h, key).banked], [SEED, 8]);
+
+	const sd = slotData();
+	delete sd.generated_at;
+	const h2 = await setup(t);
+	const { key: key2 } = await staleWithBank(t, h2, roomWithSlot('Seed_BAD', sd));
+	assert.ok((await h2.game.retry(key2)).ok);
+	await waitFor(() => row(h2, key2).state === 'refused', 'refused for its slot_data');
+	assert.strictEqual(row(h2, key2).stateDetail.reason, 'slot_data');
+	assert.deepStrictEqual([row(h2, key2).seedName, row(h2, key2).banked], [SEED, 8]);
+});
+
+test('a new-seed report changes nothing for a slot that stopped counting or was unlinked meanwhile', async (t) => {
+	const h = await setup(t);
+	const key = await linkSlot(h);
+	await settledPosts(h);
+	h.store.bindings.patch(key, { state: 'orphaned' });
+	runtime(h, key).client.emit('stale', { seedName: 'Seed_NEW', expected: SEED });
+	await h.game._internal.idle();
+	assert.strictEqual(h.store.bindings.get(key).state, 'orphaned');
+	assert.strictEqual(runtime(h, key).client, null, 'its client is dropped all the same');
+	assert.deepStrictEqual(await settledPosts(h), []);
+
+	const h2 = await setup(t);
+	const key2 = await linkSlot(h2);
+	h2.store.bindings.remove(key2);
+	runtime(h2, key2).client.emit('stale', { seedName: 'Seed_NEW', expected: SEED });
+	await h2.game._internal.idle();
+	assert.strictEqual(runtime(h2, key2).client, null);
+	assert.ok(!h2.logger.lines.some((l) => l.level === 'error'), h2.logger.lines.map((l) => l.text).join('\n'));
+});
+
+test('a new-seed report from a client that /apmedia retry has replaced changes nothing', async (t) => {
+	const h = await setup(t);
+	const key = await linkSlot(h);
+	await settledPosts(h);
+	const old = runtime(h, key).client;
+	const retried = h.game.retry(key);
+	old.emit('stale', { seedName: 'Seed_NEW', expected: SEED });
+	assert.ok((await retried).ok);
+	await h.game._internal.idle();
+	assert.strictEqual(row(h, key).state, 'active');
+	assert.notStrictEqual(runtime(h, key).client, old);
+	await waitFor(() => runtime(h, key).client && runtime(h, key).client.isReady, 'the new connection');
+	assert.deepStrictEqual(await settledPosts(h), []);
+});
+
 test('slot_data the bot cannot index refuses the slot with one notice and keeps no copy, and a retry says so again', async (t) => {
 	const sd = slotData();
 	delete sd.generated_at;
@@ -1147,6 +1414,38 @@ test('a removed watch orphans its slot, and so does a watch the client cannot fi
 	await waitFor(() => !client.connected, 'the drop');
 	reconnectNow(client);
 	await waitFor(() => row(h2, key2).state === 'orphaned', 'the client finding no watch');
+});
+
+// A watch number is never handed out twice, so only the /config room's #0 can come back.
+test('a lost watch names the fix that can work: retry for the /config room, a new link for any other', async (t) => {
+	const h = await setup(t);
+	const key = await linkSlot(h);
+	await settledPosts(h);
+	h.monitor.drop(0);
+	await waitFor(() => row(h, key).state === 'orphaned', 'the orphaned state');
+	const configFix = 'Once the Archipelago settings in `/config` are complete again: `/apmedia retry`.';
+	assert.strictEqual(row(h, key).stateDetail.fix, configFix);
+	assert.ok((await settledPosts(h))[0].endsWith(configFix));
+	const early = await h.game.retry(key);
+	assert.strictEqual(early.ok, false);
+	assert.strictEqual(early.message, 'Watch #0 is the room `/config` sets up, and its Archipelago settings are not complete now: complete them in `/config`, then `/apmedia retry`.');
+
+	const h2 = await setup(t);
+	h2.monitor.set(3, { target: h2.server.target });
+	const res = await h2.game.link({ watchId: 3, slot: SLOT, userId: OWNER, by: OWNER });
+	assert.ok(res.ok, res.message);
+	await waitFor(() => row(h2, res.binding.key).inventoryKnown, 'the slot inventory');
+	await settledPosts(h2);
+	h2.monitor.drop(3);
+	await waitFor(() => row(h2, res.binding.key).state === 'orphaned', 'the orphaned state');
+	const watchFix = 'Watch #3 will not come back, so once the room is watched again: `/apmedia unlink` the slot and `/apmedia link` it on its new watch.';
+	assert.strictEqual(row(h2, res.binding.key).stateDetail.fix, watchFix);
+	const [notice] = await settledPosts(h2);
+	assert.match(notice, /^\u26A0\uFE0F `ZackPlex`: watch #3 is gone/u);
+	assert.ok(notice.endsWith(watchFix), notice);
+	const retried = await h2.game.retry(res.binding.key);
+	assert.strictEqual(retried.ok, false);
+	assert.strictEqual(retried.message, 'Watch #3 is gone: watch the room again, then `/apmedia unlink` and `/apmedia link` the slot on its new watch.');
 });
 
 // --- the command's data ----------------------------------------------------------------
@@ -2982,6 +3281,46 @@ test('an armed trap outlasts a restart and hits at the first listen after it', a
 	assert.deepStrictEqual(h.runner.applied(), ['intermission'], 'tried at the start');
 	assert.deepStrictEqual(binding(h, key).armed, []);
 	assert.deepStrictEqual(await trapPosts(h), [`${E.trap} \`ZackPlex\` got Intermission from \`Watcher\`: intermission line`]);
+});
+
+// The review's second round: a retry no longer clears a stale slot at once, so until its Connected
+// decides the seed the binding counts again on its old one, and that seed's traps and holds could act
+// for a seed about to be cleared.
+test('between a stale slot\'s retry and its Connected, the old seed\'s armed trap and hold wait, and act once the room is back on that seed', async (t) => {
+	const h = await trapSetup(t);
+	const key = await linkSlot(h);
+	await sendItems(h, key, [TRAP('rewind'), TRAP('buffering')]);
+	await h.game._internal.handleEvent(historyEvent(MATRIX.rk));
+	await h.game._internal.idle();
+	assert.deepStrictEqual([binding(h, key).armed.length, binding(h, key).held.length], [1, MATRIX.ids.length]);
+	await trapPosts(h);
+	const home = h.server.target;
+
+	const away = await startApMediaServer(roomWithSlot('Seed_AWAY'));
+	t.after(() => away.close());
+	h.monitor.put(0, { target: away.target }, 'repointed');
+	await waitFor(() => row(h, key).state === 'stale', 'the stale state');
+	await trapPosts(h);
+	h.monitor.set(0, { target: NOWHERE });
+	assert.ok((await h.game.retry(key)).ok);
+	const client = runtime(h, key).client;
+	await waitFor(() => client.reconnectTimer !== null, 'the retry waiting for its room');
+
+	h.runner.listeners.set(OWNER, MUSIC);
+	h.clock += 16 * MIN_MS;
+	await tick(h, 15 * MIN_MS);
+	await tick(h);
+	assert.deepStrictEqual(h.runner.applied(), [], 'no trap of a seed still to be decided');
+	assert.strictEqual(binding(h, key).held.length, MATRIX.ids.length, 'and no hold let go');
+	assert.deepStrictEqual(await trapPosts(h), []);
+
+	h.monitor.set(0, { target: home });
+	reconnectNow(client);
+	await waitFor(() => hasAll(h.server.checkedOf(1), MATRIX.ids), 'the held checks, on the slot\'s own seed');
+	await tick(h);
+	assert.deepStrictEqual(h.runner.applied(), ['rewind'], 'its own seed\'s trap, once that seed is known');
+	assert.strictEqual(row(h, key).seedName, SEED);
+	assert.ok((await trapPosts(h)).includes(`${E.buffering} \`ZackPlex\`: Buffering is over, 9 checks sent.`));
 });
 
 // --- the game with the real trap runner ------------------------------------------------------------

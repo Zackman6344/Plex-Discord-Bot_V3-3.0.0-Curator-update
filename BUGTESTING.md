@@ -1211,12 +1211,11 @@ verdict.
   line, and the file had `locked_watches: ignore`), the friend's own checkpoints by movie and in
   voice (F1, F2, F3), and cleanup (H1). The friend's sessions were matched by `User.id`
   (21:12:37Z), and their album counted through Plex history for their slot alone.
-- **Before a second run, undo the first one as H1 would.** Its watch #1, both links on it and the
-  friend's claim are still live, and a second set beside them makes every slot-less `/apmedia`
-  reply "Several slots match". `/apmedia unlink slot:ZackPlex`, the friend unlinks their own slot,
-  then `!ap unwatch 1`: "🗑️ Stopped watching **archipelago.gg** (#1). 1 slot claim(s) dropped with
-  it." Then delete `PlexRehearsal\output` and every file in `PlexRehearsal\Players` but
-  `Finder.yaml`.
+- **Before a second run, undo what is left of the first.** Its watch #1 was unwatched on
+  2026-11-14, which dropped the friend's claim, and #1 now names the room watched on 2026-11-17:
+  leave that watch alone. `/apmedia unlink slot:ZackPlex` (the rehearsal's link, on seed
+  68102935821108366332), and the friend unlinks FriendPlex if `/apmedia status` still lists it.
+  Then delete `PlexRehearsal\output` and every file in `PlexRehearsal\Players` but `Finder.yaml`.
 
 Built on 2026-11-11 and 2026-11-12 and tested offline only. `npm run test:apworld` generated real
 seeds with the frozen Archipelago 0.6.8 (solo lists, every kind with every timer, two Plex lists
@@ -1632,14 +1631,22 @@ listen, and each part has to reach 85% alone for the track itself.
 **Refusals, a new seed and a lost watch**
 
 - [ ] Close seed A's server window and host seed C on the same port. Once the watch and the game
-      clients have reconnected, the test channel gets "🔴 `ZackPlex`: the room refused its Plex
-      Media client (`InvalidGame`). That slot plays another game in this room, not Plex Media:
-      `/apmedia unlink` it and link the room's Plex Media slot." and "🔴 `FriendPlex`: …
-      (`InvalidSlot`). The room has no slot …". `!diag`: `✗ ApMedia: 2 slots refused (ZackPlex:
-      InvalidGame, FriendPlex: InvalidSlot)`.
+      clients have reconnected, each slot posts "🟡 `ZackPlex`: the room is on another seed now, so
+      this list from the old seed no longer counts. If the new seed has a Plex Media slot by this
+      name, `/apmedia retry` takes that seed on (the old seed's progress does not carry over); if
+      not, `/apmedia unlink` it. Should the room go back to the old seed, `/apmedia retry` picks
+      that seed up again.", C's window shows no Connect from either, and `!diag` shows no refused
+      slot.
+- [ ] `/apmedia retry` for each slot (Friend may run their own): "🔄 Reconnecting `ZackPlex`. If
+      the room is still on another seed with this slot, it takes that seed on: the old seed's
+      progress does not carry over.", then "🔴 `ZackPlex`: the room refused its Plex Media client
+      (`InvalidGame`). That slot plays another game in this room, not Plex Media: `/apmedia unlink`
+      it and link the room's Plex Media slot." and "🔴 `FriendPlex`: … (`InvalidSlot`). The room
+      has no slot …". `!diag`: `✗ ApMedia: 2 slots refused (ZackPlex: InvalidGame, FriendPlex:
+      InvalidSlot)`.
 - [ ] Close C and host A again. The refused slots stay down until `/apmedia retry`, run for each
-      slot (Friend may run their own): "🔄 Reconnecting `ZackPlex`.", then both connect with no new
-      welcome, and `!diag` is ✓ again.
+      slot: "🔄 Reconnecting `ZackPlex`.", then both connect with no new welcome, since nothing of
+      seed A was cleared, and `!diag` is ✓ again.
 - [ ] A second watch of the same room: `!ap watch localhost:38281 Finder` again (its id is M), then
       `/apmedia link slot:ZackPlex watch:M user:@Other`. Within seconds: "🔴 `ZackPlex`: the room
       refused its Plex Media client (`duplicate`). This seed's `ZackPlex` is linked on watch #N
@@ -1655,16 +1662,21 @@ listen, and each part has to reach 85% alone for the track itself.
       0.6.1: host it with the default compatibility, then `/apmedia retry`." `/option compatibility
       2`, then `!restart` again, with no `/apmedia retry`: both connect, and the bot log has `Plex
       Media: ZackPlex connected after its refusal.` and the same line for `FriendPlex`.
-- [ ] Close A and host seed B on the same port: "🟡 `ZackPlex`: the room is on another seed now, so
-      this list from the old seed no longer counts. `/apmedia retry` adopts the new seed (the old
-      seed's progress does not carry over), or `/apmedia unlink` it.", for both slots, and
-      nothing counts for them. `/apmedia retry` for each slot (Friend may run their own):
-      "🔄 Reconnecting `ZackPlex`. It takes on the room's new seed: the old seed's progress does
-      not carry over.", then a new welcome for each.
+- [ ] Close A and host seed B on the same port: "🟡 `ZackPlex`: the room is on another seed now, …"
+      for both slots, and nothing counts for them. `/apmedia retry` for each slot (Friend may run
+      their own): "🔄 Reconnecting `ZackPlex`. If the room is still on another seed with this slot,
+      it takes that seed on: the old seed's progress does not carry over.", then a new welcome for
+      each.
 - [ ] `!ap unwatch N`: each slot posts "⚠️ `ZackPlex`: watch #N is gone, so its Plex Media client
-      stopped and nothing more counts for it. …", and `!diag` shows `✗ ApMedia: 2 slots lost their
-      watch (ZackPlex, FriendPlex)`. `/apmedia retry`: "Watch #N is gone: watch the room again, then
-      `/apmedia unlink` and `/apmedia link` the slot on its new watch."
+      stopped and nothing more counts for it. Watch #N will not come back, so once the room is
+      watched again: `/apmedia unlink` the slot and `/apmedia link` it on its new watch.", and
+      `!diag` shows `✗ ApMedia: 2 slots lost their watch (ZackPlex, FriendPlex)`. `/apmedia retry`:
+      "Watch #N is gone: watch the room again, then `/apmedia unlink` and `/apmedia link` the slot
+      on its new watch."
+- [ ] `!ap watch` the same room again: its id is above M, the second watch's (never N or M), and
+      neither slot reconnects or posts anything. `!ap unwatch` that watch, then stop and start the
+      bot (a `!restart` keeps the count in memory and reads no file), and `!ap watch` the room once
+      more: its id is above the one just removed.
 - [ ] Friend's `/apmedia unlink slot:FriendPlex`: "Unlinked `FriendPlex`.", plus "Its N unsent
       checks went with it." when any were waiting. Unlink ZackPlex too.
 - [ ] Friend's `!apmedia account none`: "Your Plex account link is gone: its history is no longer

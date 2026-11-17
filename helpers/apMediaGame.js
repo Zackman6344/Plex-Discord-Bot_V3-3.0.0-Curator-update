@@ -587,6 +587,11 @@ function createGame(options = {}) {
 				targetSig: null,
 				channelId: null,
 				refetched: false,
+				// Set by /apmedia retry of a stale slot: its next Connected takes the room's seed on even
+				// when it is not the slot's own, and only then clears the old seed's progress, so a room
+				// back on the slot's own seed costs it nothing. A refusal or a lost watch ends it: the
+				// retry was for the seed the room was on then, and a later one needs a retry of its own.
+				adopt: false,
 				heard: null,
 				heardDirty: false,
 				heardTimer: null,
@@ -1068,6 +1073,14 @@ function createGame(options = {}) {
 				return w ? { target: w.target, password: w.password || null } : null;
 			},
 			hasSlotData: (seed, slot) => store().cache.has(seed, slot),
+			// Read from the store at each RoomInfo, not taken now: a binding linked before its first
+			// Connected takes its seed then, and a host:port room can come back on another seed
+			// under the same client.
+			expectedSeed: () => {
+				if (rt.adopt) return null;
+				const current = store().bindings.get(b.key);
+				return current ? current.seedName : null;
+			},
 		});
 		rt.client = client;
 		rt.counts = null;
@@ -1085,6 +1098,7 @@ function createGame(options = {}) {
 		client.on('checked', (info) => queue(() => onChecked(rt, client, info), `${b.slot}'s checks`));
 		client.on('fatal', (info) => queue(() => onFatal(rt, client, info), `${b.slot}'s refusal`));
 		client.on('orphaned', () => queue(() => onOrphaned(rt, client), `${b.slot}'s lost watch`));
+		client.on('stale', (info) => queue(() => onAnotherSeed(rt, client, info), `${b.slot}'s new seed`));
 		store().bindings.patch(b.key, {
 			lastTarget: { target: watch.target || null, hasPassword: !!watch.password },
 			watchChannelId: watch.channelId ? String(watch.channelId) : null,
@@ -1108,7 +1122,7 @@ function createGame(options = {}) {
 
 	function onConnected(rt, client, info) {
 		if (rt.client !== client) return;
-		const b = store().bindings.get(rt.key);
+		let b = store().bindings.get(rt.key);
 		if (!b || !CREDITED.has(b.state)) {
 			dropClient(rt);
 			return;
@@ -1118,9 +1132,13 @@ function createGame(options = {}) {
 			refuse(b, rt, 'seed', ['the room did not say which seed it runs']);
 			return;
 		}
+		let adopting = false;
 		if (b.seedName && seed !== b.seedName) {
-			goStale(b, rt, seed);
-			return;
+			if (!rt.adopt) {
+				goStale(b, rt, seed);
+				return;
+			}
+			adopting = true;
 		}
 		// A binding is unique per watch, and two watches can point at one room: the same slot bound
 		// twice would credit one list with two people's watching and spend its Wild Tickets twice.
@@ -1159,6 +1177,10 @@ function createGame(options = {}) {
 				return;
 			}
 		}
+		// Not before: a seed the slot cannot take (a duplicate, slot_data it cannot read) is refused
+		// above, and the old seed's progress stays whole for a room that goes back to it.
+		if (adopting) b = startOver(b, rt);
+		rt.adopt = false;
 		// Written even with an index in hand: the server sends slot_data only when the cache said it
 		// held none, so a copy that failed to save is saved now.
 		if (sent) store().cache.write(seed, b.slot, sent);
@@ -1312,6 +1334,16 @@ function createGame(options = {}) {
 		else dropClient(rt);
 	}
 
+	function onAnotherSeed(rt, client, info) {
+		if (rt.client !== client) return;
+		const b = store().bindings.get(rt.key);
+		if (!b || !CREDITED.has(b.state)) {
+			dropClient(rt);
+			return;
+		}
+		goStale(b, rt, info.seedName);
+	}
+
 	function fixFor(b, reason, errors) {
 		const has = (name) => reason === name || errors.includes(name);
 		if (has('InvalidSlot')) {
@@ -1354,6 +1386,7 @@ function createGame(options = {}) {
 
 	function refuse(b, rt, reason, errors) {
 		dropClient(rt);
+		rt.adopt = false;
 		const repeat = b.state === 'refused' && !!b.stateDetail && b.stateDetail.reason === reason;
 		const fix = fixFor(b, reason, errors);
 		store().bindings.patch(b.key, { state: 'refused', stateDetail: { reason, errors, at: now(), fix } });
@@ -1365,17 +1398,35 @@ function createGame(options = {}) {
 
 	function orphan(b, rt) {
 		dropClient(rt);
+		rt.adopt = false;
 		if (b.state === 'orphaned') return;
-		const fix = `Once the room is watched again: \`/apmedia retry\` if it is back as watch #${b.watchId}, or \`/apmedia unlink\` and \`/apmedia link\` the slot on its new watch.`;
+		// A watch number is never handed out twice, so only the /config room comes back as itself.
+		const fix = b.watchId === 0
+			? 'Once the Archipelago settings in `/config` are complete again: `/apmedia retry`.'
+			: `Watch #${b.watchId} will not come back, so once the room is watched again: \`/apmedia unlink\` the slot and \`/apmedia link\` it on its new watch.`;
 		store().bindings.patch(b.key, { state: 'orphaned', stateDetail: { reason: 'orphaned', errors: [], at: now(), fix } });
 		log().warn(`Plex Media: watch #${b.watchId} of ${b.slot} is gone.`);
 		record('apmedia-orphaned', { slot: b.slot, watchId: b.watchId });
 		notice(b, `${ICON.orphaned} ${code(b.slot)}: watch #${b.watchId} is gone, so its Plex Media client stopped and nothing more counts for it. ${fix}`);
 	}
 
+	// A retried stale slot connected to a seed that is not its own: nothing of the old seed counts there.
+	function startOver(b, rt) {
+		speedBackNow(b);
+		forgetTraps(rt);
+		forgetSeed(rt);
+		flying.delete(b.key);
+		return store().bindings.patch(b.key, {
+			seedName: null, pending: [], banked: [], redeemed: [], wildUsed: 0,
+			goalSent: false, welcomed: false, lastCredit: null, backfillSeed: null, heard: {},
+			itemsSeen: null, held: [], holdUntil: null, holdMs: 0, expired: {}, armed: [], speedRestore: null,
+			ffUsed: 0, rcUsed: 0, snackSpent: 0, bought: { fastForward: 0, remoteControl: 0 }, trades: 0,
+		});
+	}
+
 	function goStale(b, rt, seed) {
 		dropClient(rt);
-		const fix = '`/apmedia retry` adopts the new seed (the old seed\'s progress does not carry over), or `/apmedia unlink` it.';
+		const fix = 'If the new seed has a Plex Media slot by this name, `/apmedia retry` takes that seed on (the old seed\'s progress does not carry over); if not, `/apmedia unlink` it. Should the room go back to the old seed, `/apmedia retry` picks that seed up again.';
 		store().bindings.patch(b.key, {
 			state: 'stale',
 			stateDetail: { reason: 'stale', errors: [], at: now(), oldSeed: b.seedName, newSeed: seed, fix },
@@ -1862,13 +1913,20 @@ function createGame(options = {}) {
 		return { next, sent: go.length, byTitle, bufferingOver, titlesOver };
 	}
 
+	// A retried stale slot's holds and armed traps belong to a seed that its next Connected may still
+	// clear, so they wait for it.
+	function undecided(key) {
+		const rt = runtimes.get(key);
+		return !!(rt && rt.adopt);
+	}
+
 	/** In the queue: the binding's holds that are due end, with a line each, and its hold timer is set again. */
 	function holdsDue(key, { all = false } = {}) {
 		const b = store().bindings.get(key);
 		if (!b) return;
 		const index = indexFor(b);
 		const any = b.held.length || b.holdUntil !== null || b.holdMs > 0 || Object.keys(b.expired).length;
-		if (!index || !CREDITED.has(b.state) || !any) {
+		if (!index || !CREDITED.has(b.state) || !any || undecided(key)) {
 			armHolds(b);
 			return;
 		}
@@ -1989,7 +2047,7 @@ function createGame(options = {}) {
 	function takeArmed(key) {
 		if (!running) return null;
 		let b = store().bindings.get(key);
-		if (!b || !CREDITED.has(b.state) || !b.armed.length) return null;
+		if (!b || !CREDITED.has(b.state) || !b.armed.length || undecided(key)) return null;
 		b = fizzleArmed(b);
 		if (!b.armed.length) return null;
 		const r = runner();
@@ -3413,7 +3471,8 @@ function createGame(options = {}) {
 	}
 
 	/**
-	 * Reconnect a binding. A stale one adopts the room's new seed and starts over.
+	 * Reconnect a binding. A stale one takes on whatever seed the room is on at its next Connected,
+	 * and starts over only when that seed is not its own.
 	 * @returns {Promise<{ok: boolean, message: string, binding?: object}>}
 	 */
 	function retry(key) {
@@ -3424,22 +3483,16 @@ function createGame(options = {}) {
 				return { ok: false, message: 'The Archipelago monitor is off (`archipelagoEnabled`), and Plex Media slots connect through its watches.' };
 			}
 			const watch = monitor().getWatch(b.watchId);
+			if (!watch && b.watchId === 0) {
+				return { ok: false, message: 'Watch #0 is the room `/config` sets up, and its Archipelago settings are not complete now: complete them in `/config`, then `/apmedia retry`.' };
+			}
 			if (!watch) return { ok: false, message: `Watch #${b.watchId} is gone: watch the room again, then \`/apmedia unlink\` and \`/apmedia link\` the slot on its new watch.` };
 			const fields = { state: 'active', stateDetail: null };
 			let note = '';
 			const rt = runtimeOf(b.key);
 			if (b.state === 'stale') {
-				Object.assign(fields, {
-					seedName: null, pending: [], banked: [], redeemed: [], wildUsed: 0,
-					goalSent: false, welcomed: false, lastCredit: null, backfillSeed: null, heard: {},
-					itemsSeen: null, held: [], holdUntil: null, holdMs: 0, expired: {}, armed: [], speedRestore: null,
-					ffUsed: 0, rcUsed: 0, snackSpent: 0, bought: { fastForward: 0, remoteControl: 0 }, trades: 0,
-				});
-				speedBackNow(b);
-				forgetTraps(rt);
-				forgetSeed(rt);
-				flying.delete(b.key);
-				note = ' It takes on the room\'s new seed: the old seed\'s progress does not carry over.';
+				rt.adopt = true;
+				note = ' If the room is still on another seed with this slot, it takes that seed on: the old seed\'s progress does not carry over.';
 			}
 			const next = canonicalize(store().bindings.patch(b.key, fields));
 			if (running) buildClient(next, watch);

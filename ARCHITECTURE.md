@@ -774,6 +774,14 @@ The config-defined room holds the reserved watch id `0` and is marked `managed`.
 
 `syncConfigWatch()` decides whether a change costs a reconnect. Target, slot, password and the DeathLink tag are read during the connect handshake, so those rebuild the socket. Filters, the progression toggle, the batch window and the channel apply to the next batch on the existing connection.
 
+### Watch ids
+
+**A watch id is handed out once.** Plex Media slot links outlive their watch (an unwatch orphans them) and key on its id, so an id that came back attached a removed room's links to the next room watched. `nextWatchId` in `archipelagoMonitor.js` only rises: `addWatch` moves it past the id it takes, `currentStore()` saves it as `nextId` even when no watch is left, and a load raises it to the saved `nextId` and past every saved id. A saved value that is not a whole number is ignored.
+
+The counter used to be rebuilt from the watches still listed, `max(1, ...ids + 1)`, so removing the last watch saved `{"nextId": 1, "watches": []}`. Seen live: `/ap unwatch 1` removed the rehearsal room on 2026-11-14, a new room watched on 2026-11-17 became #1 again, and the rehearsal's binding `ZackPlex` connected to it and was refused `InvalidSlot` at every start.
+
+Two cases can still give an id to another room later: #0, which passes to whatever room `/config` names, and any id after a start that moved the watch file aside as unreadable, since the count then starts at 1 again. Plex Media guards both with its seed check ("The game client" under "Plex Media world (Archipelago)"). An unwatch drops a watch's claims, and the claims on #0 go when `/config` re-points or clears its room; the claims on watches lost with a moved-aside file stay in `data/archipelago_claims.json` and ping for the room that next takes their id. The saved `nextId` is the counter alone: a saved id that is not a whole number moves it by its value (`"5"` counts as 5) or not at all. `test/archipelagoWatchIds.test.js` pins the counter across removals, restarts, turning the monitor off and on with a watch listed, and hand-edited files.
+
 ### How the log is read
 
 The web host serves a room's log at `/log/<room>`, gated on the room owner's browser session (`room.owner == session["_id"]`, otherwise `403`). Scraping it needs a cookie that expires, only ever covers rooms you own, and hands back text that has to be re-parsed. **The bot connects to the game server instead**, speaking the AP network protocol over a WebSocket, and receives the same events as structured packets. That path is identical for archipelago.gg and for a self-hosted server.
@@ -957,7 +965,7 @@ A claim ties one Discord user to one slot in one watch, so the relay can notify 
 
 **The ping is a separate message, posted after the log block.** A mention inside a code fence renders as literal text and notifies nobody, and the relay puts everything in a fence. That message is the one place in the monitor that sends with anything other than `allowedMentions: { parse: [] }`; it passes an explicit `users` whitelist of exactly the claimants named in it, so a player who names themselves `@everyone` still cannot reach anyone. The quoted line has its ANSI stripped, since colour outside a fence shows as escape text, and its markdown escaped.
 
-Claims are dropped when their watch is unwatched. Watch ids come from a counter that can reach a used number again, and a stale claim would otherwise attach itself to whatever room next took that id.
+Claims are dropped when their watch is unwatched. Watch ids are not handed out twice ("Watch ids" above), but a watch file moved aside as unreadable starts the count at 1 again, and a claim left behind would then attach itself to whatever room next took that id.
 
 Covered by 13 checks across `test/archipelagoClaims.test.js` (storage, casing, ping policy, the alias distinction) and `test/archipelagoPings.test.js`, which drives a real client against a stand-in server and asserts on what reaches the channel.
 
@@ -1038,7 +1046,7 @@ and asserts a 20-hint backlog pings nobody.
 
 **A reconnect may be to a different room.** `_handleConnected` clears `players`, `slotNames` and `slotGames` before absorbing, because `_absorbPlayers` only ever sets, and `_handleRoomInfo` assigns `seedName` unconditionally. `restartWatch` takes a `sameRoom` flag and carries nothing identifying the old multiworld when `/config` is re-pointed. Without all three, a re-pointed watch kept the old seed in its goal key, so a slot name present in both rooms was deduped against a goal from the room that no longer exists.
 
-Records key on `<seed_name>::<slot>`. `RoomInfo.seed_name` is stable for the life of a multiworld and unique across them, which is what lets the tally outlive the things around it: a reconnect, a hosted room restarting on a new port, the watch being removed, and the watch id being handed out again. A watch id or a `host:port` would fail all four. When a server sends no seed name the target string is used instead, which is stable for a room URL and not for a hosted room's moving port.
+Records key on `<seed_name>::<slot>`. `RoomInfo.seed_name` is stable for the life of a multiworld and unique across them, which is what lets the tally outlive the things around it: a reconnect, a hosted room restarting on a new port, the watch being removed, and a watch id naming another room later (#0 passes to whatever room `/config` names). A watch id or a `host:port` would fail all four. When a server sends no seed name the target string is used instead, which is stable for a room URL and not for a hosted room's moving port.
 
 Recording is idempotent because the goal set is rebuilt from `_read_client_status_{team}_{slot}` on every connect, so the same goal is offered many times. `record()` returns true only the first time, which is what drives the role update.
 
@@ -1755,7 +1763,7 @@ columns are dropped where they are read rather than carried around and filtered 
 | `scripts/ap-logic-worker.py` | Rebuilds a seed's logic from the Archipelago install that generated it, from the bot's copy of its yamls, and answers what is in logic. Started by the bot, on the install's own Python version; writes nothing into the install. |
 | `scripts/extract-spheres.py` | Run by hand: lifts a multidata's sphere table into `data/archipelago/spheres/<seed_name>.json` for the fallback. Needed only when the logic worker cannot run; `!ap next` then prints the command with the paths filled in. |
 | `data/archipelago/seeds/<seed name>/` | The bot's copy of a seed generated here: `players/` (the yamls its Generate log names), `AP_<seed name>.zip` and `seed.json`. Made the first time the seed is seen, reused after that, never deleted by the bot. Gitignored with the rest of `data/archipelago/`. Overridable with `PLEXBOT_AP_SEEDS_DIR`, which under the test runner is required for any copy to be made. |
-| `data/archipelago_watches.json` | Watches added with `!ap watch`, never the configured room. Gitignored: it holds the room URL, the Discord channel and user ids, and a room password in plain text if one was set. Overridable with `PLEXBOT_AP_WATCHES_FILE`, which is required under the test runner so a test run cannot read or rewrite the real one. |
+| `data/archipelago_watches.json` | Watches added with `!ap watch`, never the configured room, and `nextId`, the next watch id, which stays when the last watch goes ("Watch ids"). Gitignored: it holds the room URL, the Discord channel and user ids, and a room password in plain text if one was set. Overridable with `PLEXBOT_AP_WATCHES_FILE`, which is required under the test runner so a test run cannot read or rewrite the real one. |
 | `data/archipelago_claims.json` | Slot claims, including the configured room's. Gitignored: it maps Discord user ids to slot names. Overridable with `PLEXBOT_AP_CLAIMS_FILE`, required under the test runner on the same terms as the watch file. |
 | `data/archipelago_goals.json` | Lifetime goal tally per Discord user id. Gitignored. Overridable with `PLEXBOT_AP_GOALS_FILE`. |
 | `data/archipelago_roles.json` | Ids of the roles the bot created, per guild. Deleting it orphans those roles rather than breaking anything: the bot makes fresh ones and stops managing the old. Overridable with `PLEXBOT_AP_ROLES_FILE`. |
@@ -1912,7 +1920,7 @@ each event what is reached collapses to
 one range, and the entry is dropped once its last checkpoint is reached. The ranges are held in the
 runtime and written with the next credit's patch, else by one 60 s timer, and at stop: a durable
 write on every 10 to 15 s step would be synchronous disk work beside voice playback. A new seed, on
-connect and in a stale slot's retry, starts with none. Under `locked_watches: ignore` a title adds a
+connect and when a retried stale slot takes another seed on, starts with none. Under `locked_watches: ignore` a title adds a
 range only while the inventory is known and the title open, so a stretch heard while locked does not
 count after the unlock.
 
@@ -2114,12 +2122,37 @@ watch on the same room relays them already.
 Its events: `connected` (`{seedName, team, slot, slotId, slotData, checked, missing}`), then
 exactly one `items` (`{items, added}`), because MultiServer puts the first `ReceivedItems` in the
 `Connected` frame and sends none at all to a slot that holds nothing; then an `items` per change,
-`checked` (`{ids}`, from `RoomUpdate`), `invalid`, `orphaned`, and the inherited `fatal`
-(`{reason, errors}`) and `status`. A `ReceivedItems` at index 0 replaces the list, one at the
+`checked` (`{ids}`, from `RoomUpdate`), `invalid`, `orphaned`, `stale` (`{seedName, expected}`),
+and the inherited `fatal` (`{reason, errors}`) and `status`. A `ReceivedItems` at index 0 replaces the list, one at the
 list's length appends, and any other sends `Sync` and is dropped. `sendChecks` and `sendGoal`
 return true only when the socket took the frame. A re-pointed or re-passworded watch gets a fresh
 client object: `stop()` then `start()` on one client could run packets still queued from its old
 socket.
+
+**A room on another seed gets no Connect.** The game passes `expectedSeed()`, which reads the
+binding's `seedName` from the store at every `RoomInfo`, so a seed taken at the first `Connected`
+counts from the next connection on, under the same client. When the room names a seed and the
+binding holds another, the client stops before its `Connect` and emits `stale`, and the game marks
+the binding `stale`. The old slot name sent to such a room was refused `InvalidSlot` when the new
+seed had no slot by that name, and `InvalidGame` when its slot by that name played another game,
+which the game took for a refusal and tried again at every `start()`; with a Plex Media slot by
+that name in the new seed, the bot joined as that slot. A binding with no seed yet, a room that
+names none and a reader that throws (logged) connect as before, and the check at `Connected` (a
+new seed goes `stale`, no seed is refused `seed`) still applies to them.
+
+**A retried stale slot clears nothing until it takes a seed on.** `/apmedia retry` sets the
+runtime's `adopt`, under which `expectedSeed()` answers null, and leaves the binding's seed and
+progress as they are. Its next `Connected` decides: the slot's own seed resumes it with nothing
+cleared, and another seed clears the old seed's progress (`startOver`) and takes the new one on,
+but only once nothing more can refuse it there: a duplicate link of that seed's slot, or slot_data
+the bot cannot read, refuses the slot with the old seed whole. `adopt` covers the seed the room is
+on at that retry and no other. It ends at that `Connected`, and at a refusal or a lost watch, so a
+seed the room moves to later is marked stale with its notice and needs a retry of its own. Until it
+ends, the old seed's armed traps and holds wait (`undecided`), since that seed may yet be cleared.
+A process restart drops `adopt` too: at its next `RoomInfo` the slot is marked stale again, with
+one notice, while the room is on another seed, and resumes once the room is back on its own. Before
+this, a retry cleared the progress at once, which cost a slot its own seed whenever the room went
+back to it.
 
 **The bot's own join and leave lines stay out of the relay.** `isSelfDirected` is also true for a
 `Join` or `TagsChanged` whose tags include `PlexMediaBot`, and for a `Part` whose text ends in a
@@ -2157,8 +2190,8 @@ linked before the watch had read the room needs no `InvalidSlot` round trip.
 | ----- | ----- | ----- | ------- |
 | `active` | yes | connected, or trying to | |
 | `refused` | yes | the room refused the client (`InvalidSlot`, `InvalidGame`, `InvalidPassword`, `IncompatibleVersion`), its slot_data cannot be read (`slot_data`), or another binding holds this seed's slot already (`duplicate`) | `/apmedia retry`, a change of its watch, or any `start()`; the next `Connected` makes it `active` |
-| `stale` | no | the watched room moved to another seed | `/apmedia retry` takes the new seed on and clears `pending`, `banked`, `redeemed`, `wildUsed`, `goalSent`, `welcomed`, `lastCredit`, `backfillSeed`, `heard` and every item and trap field, after putting a Slow Motion speed back |
-| `orphaned` | no | the watch was removed | `/apmedia retry` once a watch with the same id exists again; an `added` watch never revives one, since watch ids are reused |
+| `stale` | no | the watched room is on another seed than `seedName`, seen in `RoomInfo` before the slot name goes to the room | `/apmedia retry`; at its next `Connected` the slot's own seed resumes it, and another seed clears `pending`, `banked`, `redeemed`, `wildUsed`, `goalSent`, `welcomed`, `lastCredit`, `backfillSeed`, `heard` and every item and trap field, after putting a Slow Motion speed back, and is taken on |
+| `orphaned` | no | the watch was removed | on watch #0, `/apmedia retry` once `/config`'s Archipelago settings are complete again; any other id is never handed out again ("Watch ids"), so `/apmedia unlink` and `/apmedia link` on the room's new watch. An `added` watch never revives one, since #0 may come back as another room |
 
 A refused slot keeps earning: a changed room password refuses the client, and a retry with the new
 one sends what was earned meanwhile. Each refusal posts one notice with its fix, and the same
@@ -2440,8 +2473,9 @@ the hint and `updatedAt` stay, and a bare `/book play` still resumes the book he
 still joining is tried every 5 s, six times. The binding keeps one speed record, so a Slow Motion
 on a second book within the first book's 10 minutes puts the first book's speed back at once, with
 no line (`afterApply`, through `speedBackNow`). At a start the sweep puts an overdue speed back at
-once, or hands a running one to `restore()` and arms the game's timer again. An unlink and a stale
-retry put the speed back first (`speedBackNow`), and either trap switch going off puts it back
+once, or hands a running one to `restore()` and arms the game's timer again. An unlink, and a
+retried stale slot taking another seed on (`startOver`), put the speed back first (`speedBackNow`),
+and either trap switch going off puts it back
 early with a line naming that switch, for `apMediaTraps`
 "🐢 `ZackPlex`: Slow Motion ended: traps are off on this server." and for `apMediaVoiceTraps`
 "🐢 `ZackPlex`: Slow Motion ended: voice traps are off on this server." `apMediaEnabled` off puts
@@ -2528,7 +2562,8 @@ and puts the Buffering line under the counts of every page, an empty view's incl
 | `snackSpent`, `trades` | snacks spent and trades made at the Snack Bar |
 | `bought` | `{fastForward, remoteControl}` bought there |
 
-A stale slot's retry clears every one of them with the seed, and an unlink drops `held` with
+A retried stale slot clears every one of them with the seed when its next `Connected` is to another
+seed (back on its own seed, it keeps them), and an unlink drops `held` with
 `pending` and `banked` (its reply counts all three) after putting a speed back. The rest go with
 the unlinked binding, so a new link of the same slot on the same seed starts them over (see the
 known gaps under "Testing it").

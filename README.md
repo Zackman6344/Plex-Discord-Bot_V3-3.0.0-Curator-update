@@ -1260,7 +1260,7 @@ A leading number is **always** read as the ID, including one no watch holds: `!a
 - `!ap hintpings [id] [slot] [off|dm|channel]`: Be told when somebody hints an item out of **your** world. **Off by default** and separate from `!ap pings`, which is about items arriving for you. The first read of a room is absorbed silently, so opting in never replays a backlog at you.
 - `!ap markers [id] [on|off]`: Prefix 🟪 progression, 🟦 useful, 🟥 trap to item names. Plain text, so unlike the colours it shows on every client including mobile. On by default, and it works alongside colour rather than replacing it. Filler is left unmarked because most sends are filler.
 - `!ap password [id] [password]`: Set a room password. The prefix form deletes your message afterwards. Clearing has to be asked for in words, `!ap password [id] clear`, because a leading number is read as the watch ID: `!ap password 0` meaning "set it to 0" would otherwise have left nothing after the ID and silently cleared it, after deleting the only other copy.
-- `!ap unwatch [id]` / `!ap retry [id]`: Stop a watch, or reconnect one the server refused. Unwatching also drops every slot claim on that watch.
+- `!ap unwatch [id]` / `!ap retry [id]`: Stop a watch, or reconnect one the server refused. Unwatching also drops every slot claim on that watch. **A watch's number is never given out again**, so the next room watched takes a new one, even after the last watch has gone and the bot has restarted. The one exception is a watch file found unreadable at start-up: it is moved aside, and the count starts at 1 again.
 - `!ap catchup [id]`: Post what the channel missed while the bot was down, rebuilt from the room tracker. It also runs by itself; the command runs one now. The reply says how many lines it is posting and how many the watch's filters hide, or that nothing was missed. Run in the first two minutes after a reconnect, it posts what the tracker already shows and says when the automatic check that picks up the rest is due.
 
 **What `!ap next` needs.** A seed generated on this machine needs nothing run by hand. Its logic is rebuilt from the Archipelago install that generated it, by a Python helper the bot starts on its own (`scripts/ap-logic-worker.py`). Two settings control it, both in `/config` → Archipelago:
@@ -1310,7 +1310,7 @@ Pings inherit every filter above them. A line hidden by `progression`, `skipgoal
 
 **Releases do not count.** A release hands out everything a slot was still holding without anyone finishing it, and a 100%-checked slot can still be waiting on an item to goal. Both make the relay treat a slot as finished, and neither adds to the tally. Only a real goal does. In a multi-team room only the team the bot is connected to is counted, because a claim carries no team and slot numbers repeat across them.
 
-The tally is lifetime and spans rooms. It keys on the multiworld's seed name and the slot name, so it survives reconnects, a room restarting on a new port, a watch being removed, and a watch id being handed out again. Goals that happened before the bot connected are counted too, since goal status is read back from the server on every connect.
+The tally is lifetime and spans rooms. It keys on the multiworld's seed name and the slot name, so it survives reconnects, a room restarting on a new port, a watch being removed, and watch `#0` moving to whatever room `/config` names next. Goals that happened before the bot connected are counted too, since goal status is read back from the server on every connect.
 
 **A goal belongs to whoever earned it.** The record is keyed by the game rather than by the person, so a slot changing hands later does not re-credit a game the previous holder already finished.
 
@@ -1595,7 +1595,21 @@ DM.
 - Item links are ignored: generation logs a warning and the link stays empty. `!ap next` still
   works for such a seed.
 - A new seed starts fresh. When a watched room moves to another seed, each bound slot says so and
-  stops counting, and `/apmedia retry` takes the new seed on without the old seed's progress.
+  stops counting. The bot checks the seed before the slot connects, so a slot name the new seed
+  lacks gets that same notice rather than an `InvalidSlot` refusal. When the new seed has a Plex
+  Media slot by that name, `/apmedia retry` takes that seed on without the old seed's progress;
+  when it has not, `/apmedia unlink` is the way out. A room that goes back to the slot's own seed
+  keeps the slot's progress there, and `/apmedia retry` picks that seed up again. Live credit from
+  while the slot was stale (voice listening, a book's progress, a Plex session's checkpoints) does
+  not count. A title finished meanwhile still can: Plex history and finished audiobooks are read
+  again once the slot is back, unless another slot on the same Plex account kept that history read
+  in between.
+- A link outlives its watch: after `!ap unwatch`, each slot linked there that still counts says its
+  watch is gone and stops counting (a stale one stays stale). Watch numbers are not given out again
+  (short of a watch file moved aside as unreadable), so for a room watched again it takes
+  `/apmedia unlink` and `/apmedia link` on the new watch. Only the `/config` room keeps its number
+  (`#0`), and `/apmedia retry` reconnects its slots once its Archipelago settings in `/config` are
+  complete again.
 - Universal Tracker cannot follow this game. `/apmedia status` and `/apmedia list` stand in for it.
 - A `!seek` splits a listen in two, and each part has to reach 85% on its own for the track to
   count; the checkpoints each part played past count either way.
@@ -1710,7 +1724,7 @@ unlike `/config`'s first-run bootstrap.
 | `/apmedia account [user] [plex] [shared]` | Owner; anyone, for `plex:none` on themselves | No user: the server's Plex accounts. A user alone: who they are linked to. A user and a Plex name (in full) or id: links them, and they get an Accept button. An account already linked to someone else needs `shared:True`. `plex:none` unlinks them, and on its own takes back your own link. |
 | `/apmedia link <slot> [user] [watch]` | The player holding the `!ap claim` on that slot; the owner, for anyone | Ties a Plex Media slot of a watched room to a Discord user. Without `watch:` the room is the one where they claimed the slot, unless another watched room has a slot of that name too, or the only room watched; anything else is asked back with the watches' ids. |
 | `/apmedia unlink <slot>` | The bound player, or the owner | Drops the link. Its unsent checks go with it, and the reply says how many. |
-| `/apmedia retry [slot]` | The bound player, or the owner | Reconnects a refused, stale or orphaned slot. A stale one takes on the room's new seed and starts over. |
+| `/apmedia retry [slot]` | The bound player, or the owner | Reconnects a refused, stale or orphaned slot. A stale one takes on the seed the room is on when it connects: another seed starts it over, and its own seed picks up where it left off. An orphaned one reconnects only on watch `#0`, once its Archipelago settings in `/config` are complete again, since no other watch number comes back. |
 | `/apmedia status [slot] [user]` | Anyone, for their own slots; the owner, for anyone's, and for every slot when nothing is named | Per slot: titles done, the goal, ready and locked counts, checks waiting or banked, Wild Tickets, Fast Forwards and Remote Controls on hand, the snacks and the Snack Bar's trades left, a Buffering or Rights Expired hold with the checks it holds, a trap at work, traps waiting to hit, the connection, the Plex account, how far the last Plex session got, and the last credit. |
 | `/apmedia list [show] [slot]` | The bound player, or the owner | `ready` (the default), `locked` or `done` titles, grouped by show, album, playlist and kind, each with its runtime. A playlist part's row names its first three songs and counts the rest: "• Road Trip Part 2 (Song D, Song E and Song F) · 9m". A locked title names the item that opens it, and which copy when it is not the first ("opened by Road Trip: Next 3 Songs (the 2nd)"), 💡 marks one somebody hinted, and ⛔ one whose rights Rights Expired took, until when. While Buffering runs, every page has a ⏳ line under the counts with the checks it holds. A long list gets ◀ ▶ buttons that only the asker can use, for 30 minutes after their last use. |
 | `/apmedia check <title> [at] [slot]` | The bound player, or the owner | Counts a title by hand: finished, or with `at:` (`45m`, `1h30m`, `1:30:00`) its checkpoints up to that time. |

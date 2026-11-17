@@ -88,6 +88,10 @@ let reattached = null;
 let holdGivenUp = false;
 let configBound = false;
 let savedWatchesLoaded = false;
+// Plex Media slot links outlive their watch and key on its id, so an id handed out a second time
+// would give a removed room's links to the next room watched. Hence a counter that only rises,
+// saved even when the list is empty and raised to the saved one on every load.
+let nextWatchId = 1;
 const states = new Map();
 // The Plex Media game clients connect to the rooms these watches name, and an open socket keeps a
 // hosted room awake, so they need to hear when a watch goes, moves or is rebuilt rather than find
@@ -156,7 +160,7 @@ function saveStore(store) {
 function currentStore() {
     const watches = [...states.values()].map(s => s.watch).filter(w => !w.managed);
     return {
-        nextId: Math.max(1, ...watches.map(w => w.id + 1)),
+        nextId: nextWatchId,
         watches
     };
 }
@@ -1586,6 +1590,9 @@ function applyConfig({ boot = false } = {}) {
 
     if (!savedWatchesLoaded) {
         const store = loadStore();
+        for (const next of [store.nextId, ...store.watches.map(w => Number(w.id) + 1)]) {
+            if (Number.isSafeInteger(next) && next > nextWatchId) nextWatchId = next;
+        }
         for (const watch of store.watches) {
             watch.filters = { ...DEFAULT_FILTERS, ...(watch.filters || {}) };
             // Watches saved before these existed default to on, matching a fresh watch.
@@ -1693,6 +1700,7 @@ function addWatch(options, waitMs = 20000) {
         addedBy: options.addedBy || null,
         addedAt: new Date().toISOString()
     };
+    nextWatchId = watch.id + 1;
 
     const state = startWatch(watch);
     persist();
@@ -1732,9 +1740,10 @@ function removeWatch(id) {
     releaseLogicFor(state);
     dropPipeline(id);
     catchup.forgetWatch(id);
-    // Claims are keyed by watch id, and ids are handed out from a counter that can reach this
-    // one again. Dropping them here stops a future watch inheriting the last one's pings. The
-    // state is already gone, so the role sync borrows this one purely for its channel and guild.
+    // Claims are keyed by watch id. Ids are not handed out again, but a watch file moved aside as
+    // unreadable starts the count over, and a claim left here would then ping for whichever room
+    // takes this id next. The state is already gone, so the role sync borrows this one purely for
+    // its channel and guild.
     const releasedClaims = releaseClaimsFor(state, id);
     persist();
     notifyWatchChange(id, 'removed');
