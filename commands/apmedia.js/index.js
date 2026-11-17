@@ -104,7 +104,7 @@ const SUBCOMMANDS = [
 			{ name: 'albums', type: 'INTEGER', description: 'Music albums in all (0-200)' },
 			{ name: 'books', type: 'INTEGER', description: 'Audiobooks in all (0-50)' },
 			{ name: 'titles', type: 'STRING', description: 'Hand-picks split by ; (prefix movie:, show:, album: or book:; show: X S1-2)' },
-			{ name: 'playlist', type: 'STRING', description: 'A Plex playlist, in its order (songs per unlock: more:songs_per_unlock=N, default 3 or the file\'s)', autocomplete: true },
+			{ name: 'playlist', type: 'STRING', description: '1-10 Plex playlists split by ; (songs per unlock: more:songs_per_unlock=N, default 3 or the file\'s)', autocomplete: true },
 			{ name: 'collection', type: 'STRING', description: 'A Plex collection to add' },
 			{ name: 'genre', type: 'STRING', description: 'Random picks of this genre only' },
 			{ name: 'years', type: 'STRING', description: 'Random picks from these years only: 1990 or 1990-1999' },
@@ -220,7 +220,7 @@ function helpEmbed(bot) {
 		.setDescription(
 			'Your Plex to-watch list as an Archipelago game: items from the multiworld unlock its titles, and watching or listening sends the checks. Everything works as `/apmedia ...` too.\n\n' +
 			'**\u{1F4DD} JOINING A SEED**\n' +
-			`> \`${p}apmedia yaml name=You [movies=10] [titles="Alien; Aliens"] [unwatched=false]\`: Build your list and send the file to the owner. Keys: preset, movies, shows, albums, books, titles, playlist, collection, genre, years, unwatched, max_episodes, time_movies, time_episodes, time_albums, time_books, goal_percent, tv_unlock, episodes_per_unlock, songs_per_unlock, label, starting_unlocks, wild_tickets, strict, locked_watches, checkpoint_items, snack_variety, fast_forwards, remote_controls, snack_bar_trades, snack_bar_price, trap_percentage, buffering_weight, rights_expired_weight, commercial_break_weight, shuffle_mode_weight, rewind_weight, intermission_weight, slow_motion_weight.\n` +
+			`> \`${p}apmedia yaml name=You [movies=10] [titles="Alien; Aliens"] [unwatched=false]\`: Build your list and send the file to the owner. Keys: preset, movies, shows, albums, books, titles, playlist (both take several, split by ;), collection, genre, years, unwatched, max_episodes, time_movies, time_episodes, time_albums, time_books, goal_percent, tv_unlock, episodes_per_unlock, songs_per_unlock, label, starting_unlocks, wild_tickets, strict, locked_watches, checkpoint_items, snack_variety, fast_forwards, remote_controls, snack_bar_trades, snack_bar_price, trap_percentage, buffering_weight, rights_expired_weight, commercial_break_weight, shuffle_mode_weight, rewind_weight, intermission_weight, slow_motion_weight.\n` +
 			`> Or make the YAML in the Archipelago Launcher's Options Creator and attach it to \`${p}apmedia yaml\` (\`/apmedia yaml file:\`): the bot picks the titles its list settings ask for and keeps every other setting. Keys you type replace the file's.\n` +
 			`> \`${p}ap claim <slot>\`, then \`${p}apmedia link <slot> [watch=n]\`: Once the seed is up, tie your slot to you.\n\n` +
 			'**\u{1F37F} PLAYING**\n' +
@@ -244,8 +244,9 @@ function helpEmbed(bot) {
 // ---- autocomplete ---------------------------------------------------------------------------
 // Answered from memory: the game's bindings and slot indexes, and the builder's playlist cache.
 // Nothing here waits on Plex. The game fills the playlist cache when it starts, and a cache that
-// is ten minutes old starts one background refresh (apMediaYaml cachedPlaylists: never awaited,
-// one in flight at most).
+// is ten minutes old starts one background refresh (apMediaYaml cachedPlaylistChoices: never
+// awaited, one in flight at most). The builder makes the playlist choices itself: their names come
+// back to it as text once a player types on after a pick.
 
 function choice(name, value) {
 	const text = String(name);
@@ -299,13 +300,6 @@ function titleChoices(sub, userId, interaction, typed) {
 	return game().titles(r.key, typed || '').map((c) => choice(partName(c.name, c.songs), c.value));
 }
 
-function playlistChoices(typed) {
-	const lists = builder().cachedPlaylists(typed || '');
-	return lists
-		.map((pl) => choice(`${pl.title} (${pl.type}${pl.items ? `, ${pl.items} items` : ''})`, String(pl.rk)))
-		.filter((c) => c.value.length <= CHOICE_MAX);
-}
-
 async function autocomplete(interaction) {
 	let choices = [];
 	try {
@@ -316,7 +310,7 @@ async function autocomplete(interaction) {
 			const userId = interaction.user ? String(interaction.user.id) : null;
 			if (focused.name === 'slot') choices = slotChoices(sub, userId, focused.value);
 			else if (focused.name === 'title') choices = titleChoices(sub, userId, interaction, focused.value);
-			else if (focused.name === 'playlist') choices = playlistChoices(focused.value);
+			else if (focused.name === 'playlist') choices = builder().cachedPlaylistChoices(String(focused.value || ''));
 			commandLog.noteTyped({ userId, command: interaction.commandName || 'apmedia', sub, text: focused.value });
 		}
 	} catch (err) {

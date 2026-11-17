@@ -1,6 +1,6 @@
 // helpers/apMediaYaml.js
-// Builds a player's Plex Media YAML from the Plex library: hand-picked titles, a Plex playlist or
-// collection, and random picks, with a summary of what the list adds up to.
+// Builds a player's Plex Media YAML from the Plex library: hand-picked titles, Plex playlists (up to
+// MAX_PLAYLISTS) or a collection, and random picks, with a summary of what the list adds up to.
 //
 // One bad character in one title makes the whole file invalid to AP's YAML loader (LibYAML refuses
 // raw C1 controls, U+FFFE/U+FFFF and any surrogate escape, quoted or not), and an invalid file stops
@@ -141,6 +141,25 @@ const LOOSE_CHARS = 900;
 // The titles an empty list's refusal names, the rest counted.
 const MISSES_SHOWN = 10;
 const SUGGEST_MIN = 0.35;
+const MAX_PLAYLISTS = 10;
+// The pieces a playlist text may hold: past MAX_PLAYLISTS is fine while some name the same playlist
+// another way, which only build() can tell once Plex is read.
+const MAX_PLAYLIST_PIECES = 2 * MAX_PLAYLISTS;
+// The closest playlists a refusal names for each piece that named none, and the length past which it
+// names no more: 10 pieces with 5 names each would run past a 2,000-character reply.
+const PLAYLISTS_SUGGESTED = 5;
+const MISSING_CHARS = 1500;
+// The music playlists the reply gives a line each; the rest are counted.
+const PLAYLIST_LINES = 5;
+// What the slash autocomplete shows for a playlist, "Human Music (audio, 486 items)", while its value
+// is the ratingKey; a player can still send the shown text, typed or kept after editing the choice.
+const PLAYLIST_LABEL = /^(.*?\S)\s*\((audio|video|photo)(?:,\s*(\d+)\s+items?)?\)$/i;
+// Discord's limits on the autocomplete: a choice's name and value at most 100 characters each, and
+// 25 choices. A name cut short ends in an ellipsis, as commands/apmedia.js cuts its others.
+const CHOICE_MAX = 100;
+const MAX_CHOICES = 25;
+const CUT = '\u2026';
+const SEVERAL_PLAYLISTS = 'Several playlists are separated with `;`.';
 
 const ACCOUNT_FIX = 'Leaving out what you have already watched needs your Plex account: ask the owner: '
 	+ '`/apmedia account @you <plex name>`. Or build the list with unwatched=false.';
@@ -246,6 +265,259 @@ function titlesParam(raw, name = 'titles') {
 	return list.map((title) => parseTitle(title, name));
 }
 
+function tooManyPlaylists(name, n) {
+	return `${name} names ${n} playlists, and a list takes at most ${MAX_PLAYLISTS}.`;
+}
+
+/**
+ * The playlists a text names, split at ";" as titles are: each piece trimmed, an empty one (after a
+ * ";" at the end) dropped, and a piece written twice kept once. Which playlist each names is for
+ * build() to find, since that needs Plex, and so is the count of MAX_PLAYLISTS.
+ * @returns {string[]}
+ */
+function playlistsParam(raw, name = 'playlist') {
+	const text = clean(raw);
+	const pieces = [...new Set(text.split(';').map((s) => s.trim()).filter(Boolean))];
+	if (pieces.length > MAX_PLAYLIST_PIECES) throw new Error(tooManyPlaylists(name, pieces.length));
+	// build() reads a text without ";" as several at its commas, so there each of those is held to the limit.
+	const whole = !text.includes(';');
+	for (const piece of pieces) {
+		const long = (whole ? commaPieces(piece) : [piece]).find((s) => [...s].length > MAX_TEXT);
+		if (long !== undefined) throw new Error(`${name}: ${codeSpan(long, 40)} is too long.${whole ? ` ${SEVERAL_PLAYLISTS}` : ''}`);
+	}
+	return pieces;
+}
+
+// A comma inside parentheses splits nothing, so an autocomplete label "(audio, 486 items)" stays whole.
+function commaPieces(text) {
+	const out = [];
+	let depth = 0;
+	let start = 0;
+	for (let i = 0; i < text.length; i++) {
+		if (text[i] === '(') depth += 1;
+		else if (text[i] === ')') depth = Math.max(0, depth - 1);
+		else if (text[i] === ',' && depth === 0) {
+			out.push(text.slice(start, i));
+			start = i + 1;
+		}
+	}
+	out.push(text.slice(start));
+	return out.map((s) => s.trim()).filter(Boolean);
+}
+
+function orList(items) {
+	return items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} or ${items[items.length - 1]}`;
+}
+
+/**
+ * The playlists named after a piece that names none, closest first by name, a music playlist before
+ * a video one as close; none below SUGGEST_MIN. For a piece the autocomplete cut short, the
+ * playlists whose label starts as it does, if any do.
+ */
+function closestPlaylists(all, piece) {
+	const kind = (x) => (x.pl.type === 'audio' ? 0 : 1);
+	const cut = cutPlaylists(all, piece);
+	if (cut && cut.length) {
+		return cut.map((pl, at) => ({ pl, at })).sort((a, b) => kind(a) - kind(b) || a.at - b.at).slice(0, PLAYLISTS_SUGGESTED).map((x) => x.pl);
+	}
+	const label = PLAYLIST_LABEL.exec(piece);
+	const q = norm(label ? label[1] : piece);
+	if (!q) return [];
+	const Q = bigrams(q);
+	return all
+		.map((pl, at) => ({ pl, at, sim: overlap(Q, bigrams(playlistKeys(pl).norm)) }))
+		.filter((x) => x.sim >= SUGGEST_MIN)
+		.sort((a, b) => b.sim - a.sim || kind(a) - kind(b) || a.at - b.at)
+		.slice(0, PLAYLISTS_SUGGESTED)
+		.map((x) => x.pl);
+}
+
+/**
+ * The refusal for pieces that name no playlist: every one of them, the closest playlists to each
+ * while the text stays within MISSING_CHARS, and how several are written.
+ */
+function missingPlaylists(all, missing) {
+	const head = `No playlist called ${orList(missing.map((piece) => codeSpan(piece)))}.`;
+	const tail = SEVERAL_PLAYLISTS;
+	const near = [];
+	let size = head.length + tail.length;
+	for (const piece of missing) {
+		const close = closestPlaylists(all, piece).map((pl) => codeSpan(pl.title));
+		if (!close.length) continue;
+		const line = `${missing.length === 1 ? 'Closest by name' : `Closest to ${codeSpan(piece)}`}: ${andList(close)}.`;
+		if (size + line.length + 1 > MISSING_CHARS) continue;
+		near.push(line);
+		size += line.length + 1;
+	}
+	return [head, ...near, tail].join(' ');
+}
+
+/**
+ * list_playlist as the bot reads it back to the same playlists: each by its name, or by its
+ * ratingKey where the name holds ";", is all digits, is longer than a piece may be, or is shared with
+ * another playlist, which would then be found first. Every one by its ratingKey where the names, read
+ * whole, are the name of one playlist that holds ";".
+ */
+function playlistsText(all, found) {
+	const text = found.map((pl) => {
+		const { lower, norm: want } = playlistKeys(pl);
+		const shared = all.some((x) => x.rk !== pl.rk && (playlistKeys(x).lower === lower || (want !== '' && playlistKeys(x).norm === want)));
+		const plain = !shared && !pl.title.includes(';') && !/^\d+$/.test(pl.title) && [...pl.title].length <= MAX_TEXT;
+		return plain ? pl.title : String(pl.rk);
+	}).join('; ');
+	return wholePlaylist(all, text) ? found.map((pl) => String(pl.rk)).join('; ') : text;
+}
+
+/** A playlist as the autocomplete shows it among pieces: its name, a ";" in it shown as ",". */
+function playlistName(pl) {
+	return pl.title.replace(/;/g, ',');
+}
+
+/** A playlist as the autocomplete labels it, the text PLAYLIST_LABEL reads: "Human Music (audio, 486 items)". */
+function playlistLabel(pl) {
+	return `${playlistName(pl)} (${pl.type}${pl.items ? `, ${pl.items} items` : ''})`;
+}
+
+// What the lookups below compare a playlist by, worked out once per playlist read from Plex: the
+// autocomplete runs them for every choice, at every key the player types.
+const PLAYLIST_KEYS = new WeakMap();
+
+function playlistKeys(pl) {
+	let keys = PLAYLIST_KEYS.get(pl);
+	if (!keys) {
+		keys = { lower: pl.title.toLowerCase(), norm: norm(pl.title), label: playlistLabel(pl).toLowerCase() };
+		PLAYLIST_KEYS.set(pl, keys);
+	}
+	return keys;
+}
+
+/** The playlists a text names: as written in any case, then as norm() reads it (never when that reads as nothing). */
+function namedPlaylists(all, text) {
+	const lower = text.toLowerCase();
+	const want = norm(text);
+	return all.filter((pl) => playlistKeys(pl).lower === lower).concat(want === '' ? [] : all.filter((pl) => playlistKeys(pl).norm === want));
+}
+
+/**
+ * The playlists a piece cut short by the autocomplete can be ("Recently P\u2026"): those whose label
+ * starts with what is left, in any case. Null for a piece that is not cut.
+ */
+function cutPlaylists(all, piece) {
+	if (!piece.endsWith(CUT)) return null;
+	const stem = piece.slice(0, -CUT.length).toLowerCase();
+	return stem.trim() ? all.filter((pl) => playlistKeys(pl).label.startsWith(stem)) : [];
+}
+
+/**
+ * The playlist a piece names exactly: by its ratingKey, its name (as written, then as norm() reads
+ * it), the autocomplete's label for it, or the start of that label when the autocomplete cut it
+ * short and only one playlist's label starts that way.
+ */
+function findPlaylist(all, piece) {
+	if (/^\d+$/.test(piece)) {
+		const hit = all.find((pl) => pl.rk === Number(piece));
+		if (hit) return hit;
+	}
+	const exact = namedPlaylists(all, piece);
+	if (exact.length) return exact[0];
+	// Only once the whole piece names no playlist, so a playlist whose own name ends like a label is still found.
+	const label = PLAYLIST_LABEL.exec(piece);
+	if (label) {
+		const type = label[2].toLowerCase();
+		const items = label[3] === undefined ? 0 : Number(label[3]);
+		const same = namedPlaylists(all, label[1]);
+		// A smart playlist's count moves between the autocomplete and the build, its type does not.
+		const hit = same.find((pl) => pl.type === type && pl.items === items) || same.find((pl) => pl.type === type) || same[0];
+		if (hit) return hit;
+	}
+	const cut = cutPlaylists(all, piece);
+	return cut && cut.length === 1 ? cut[0] : null;
+}
+
+/**
+ * The playlist whose own name holds ";" that a whole text names exactly, as a list written before
+ * several were taken names one; else null.
+ */
+function wholePlaylist(all, text) {
+	const hit = findPlaylist(all, text.replace(/^[\s;]+|[\s;]+$/g, ''));
+	return hit && hit.title.includes(';') ? hit : null;
+}
+
+/** Audio and video playlists whose name starts with (then holds) the prefix as norm() reads it, `max` at most. */
+function filterPlaylists(list, prefix, max = MAX_CHOICES) {
+	const q = norm(prefix);
+	if (!q) return list.slice(0, max);
+	const starts = list.filter((pl) => playlistKeys(pl).norm.startsWith(q));
+	const inside = list.filter((pl) => !starts.includes(pl) && playlistKeys(pl).norm.includes(q));
+	return [...starts, ...inside].slice(0, max);
+}
+
+/** How a choice shows a playlist named before the piece being typed: its name, else its label, else its ratingKey. */
+function earlierForm(all, pl) {
+	return [playlistName(pl), playlistLabel(pl)].find((form) => findPlaylist(all, form) === pl) || String(pl.rk);
+}
+
+/**
+ * A choice's name for a playlist after the pieces `before(k)` gives: its label, else its name, the
+ * first k earlier names shown as ratingKeys while neither fits; last its label cut short, where only
+ * its own label starts that way. Null when none fits.
+ */
+function choiceName(all, pl, before, earlier) {
+	const forms = [playlistLabel(pl), playlistName(pl)].filter((form) => findPlaylist(all, form) === pl);
+	for (let k = 0; k <= earlier; k++) {
+		const head = before(k);
+		for (const form of forms) {
+			const name = head ? `${head}; ${form}` : form;
+			if (name.length <= CHOICE_MAX) return name;
+		}
+	}
+	// The value fits, and it is this head and a ratingKey, so the room is never below 0.
+	const head = before(earlier);
+	const room = CHOICE_MAX - CUT.length - (head ? head.length + 2 : 0);
+	const piece = `${playlistLabel(pl).slice(0, room).replace(/[\uD800-\uDBFF]$/, '').trimEnd()}${CUT}`;
+	if (cutPlaylists(all, piece).length !== 1) return null;
+	return head ? `${head}; ${piece}` : piece;
+}
+
+/**
+ * The slash autocomplete's choices for a playlist text: the piece after the last ";" completed and
+ * the pieces before it kept. A pick puts the choice's name in the box, and Discord sends its value
+ * unless the player types on, so each name reads back to the playlists its value names. An earlier
+ * piece that names a playlist goes in the value as its ratingKey, which keeps 10 within 100
+ * characters, and one that names none stays as typed. After a ";" at the end, the first choice is
+ * the text as it is, and a playlist already named is never offered again.
+ * @param {object[]} all the playlists, as loadPlaylists keeps them
+ * @param {string} typed what the box holds
+ * @returns {{name: string, value: string}[]} at most MAX_CHOICES
+ */
+function playlistChoices(all, typed) {
+	const text = clean(typed);
+	const cut = text.lastIndexOf(';');
+	const earlier = cut < 0 ? [] : text.slice(0, cut).split(';').map((s) => s.trim()).filter(Boolean);
+	const found = earlier.map((piece) => findPlaylist(all, piece));
+	const shown = earlier.map((piece, i) => (found[i] ? earlierForm(all, found[i]) : piece));
+	const sent = earlier.map((piece, i) => (found[i] ? String(found[i].rk) : piece));
+	const before = (k) => shown.map((s, i) => (i < k ? sent[i] : s)).join('; ');
+	const named = new Set(found.filter(Boolean).map((pl) => pl.rk));
+	const current = cut < 0 ? text : text.slice(cut + 1).trim();
+	const out = [];
+	if (earlier.length && !current) {
+		const value = sent.join('; ');
+		let k = 0;
+		while (k < earlier.length && before(k).length > CHOICE_MAX) k += 1;
+		// With every earlier playlist a ratingKey the name is the value, so a value that fits leaves a name that does.
+		if (value.length <= CHOICE_MAX) out.push({ name: before(k), value });
+	}
+	for (const pl of filterPlaylists(all, current, Infinity)) {
+		if (out.length >= MAX_CHOICES) break;
+		if (named.has(pl.rk)) continue;
+		const value = earlier.length ? `${sent.join('; ')}; ${pl.rk}` : String(pl.rk);
+		const name = value.length <= CHOICE_MAX ? choiceName(all, pl, before, earlier.length) : null;
+		if (name) out.push({ name, value });
+	}
+	return out;
+}
+
 // The members of Archipelago's PlandoOptions, which a player file's requires: plando names, split by
 // commas; none asks for no module.
 const PLANDO_NAMES = new Set(['none', 'items', 'connections', 'texts', 'bosses']);
@@ -273,7 +545,7 @@ function discordParam(raw) {
 }
 
 function pickNothing(counts, p) {
-	return COUNT_KEYS.every((key) => counts[key] === 0) && !p.titles.length && !p.playlist && !p.collection;
+	return COUNT_KEYS.every((key) => counts[key] === 0) && !p.titles.length && !p.playlists.length && !p.collection;
 }
 
 function has(object, key) {
@@ -495,14 +767,16 @@ function validateParams(params) {
 		if (given(params[key])) explicit[key] = intParam(key, params[key], contracts.COUNT_RANGES[key].min, contracts.COUNT_RANGES[key].max);
 	}
 	p.titles = given(params.titles) ? titlesParam(params.titles) : [];
-	p.playlist = given(params.playlist) ? textParam('playlist', params.playlist, MAX_TEXT) : null;
+	// The whole text as given, which build() needs to tell a name with commas or ";" from several names.
+	p.playlist = given(params.playlist) ? clean(params.playlist) || null : null;
+	p.playlists = p.playlist === null ? [] : playlistsParam(p.playlist);
 	p.collection = given(params.collection) ? textParam('collection', params.collection, MAX_TEXT) : null;
 	let base = {};
 	let preset = NO_PRESET;
 	if (given(params.preset)) {
 		preset = choiceParam('preset', params.preset, PRESET_NAMES);
 		base = contracts.PRESETS[preset] || {};
-	} else if (!Object.keys(explicit).length && !p.titles.length && !p.playlist && !p.collection) {
+	} else if (!Object.keys(explicit).length && !p.titles.length && !p.playlists.length && !p.collection) {
 		preset = contracts.DEFAULT_PRESET;
 		base = contracts.PRESETS[preset];
 	}
@@ -529,7 +803,8 @@ function validateParams(params) {
 	p.list = {
 		list_preset: preset,
 		list_titles: p.titles.map((t) => t.query).join('; '),
-		list_playlist: p.playlist || '',
+		// What a caller without Plex writes (apworld/tests/fill_creator.js); build() writes what it found.
+		list_playlist: p.playlists.join('; '),
 		list_collection: p.collection || '',
 		list_genre: p.genre || '',
 		list_years: !p.years ? '' : (p.years.from === p.years.to ? `${p.years.from}` : `${p.years.from}-${p.years.to}`),
@@ -908,15 +1183,18 @@ function playlistText({ title, parts, songs, tracks }) {
 }
 
 /**
- * The reply's first lines, which the command shows as they are: the counts, how a music playlist
- * went on, the start and the goal, and what the pool holds.
+ * The reply's first lines, which the command shows as they are: the counts, how each music playlist
+ * went on (PLAYLIST_LINES of them, the rest counted), the start and the goal, and what the pool holds.
  * @param {object} summary build().summary
  * @returns {string[]}
  */
 function summaryHead(summary) {
+	const cuts = Array.isArray(summary.playlists) ? summary.playlists : [];
+	const rest = cuts.length - PLAYLIST_LINES;
 	return [
 		`${sizeText(summary.entries, summary.counts, summary.locations, summary.hours)}.`,
-		...(summary.playlist ? [playlistText(summary.playlist)] : []),
+		...cuts.slice(0, PLAYLIST_LINES).map(playlistText),
+		...(rest > 0 ? [`And ${plural(rest, ['more playlist', 'more playlists'])}.`] : []),
 		`Starts with ${summary.startOpen} open; goal: finish ${summary.goalCount} of ${summary.entries} (about ${hoursText(summary.hoursToGoal)} h).`,
 		itemsText(summary),
 	];
@@ -1481,6 +1759,9 @@ const LIST_FIX = Object.freeze({
 	toggle: 'set true or false',
 	text: 'write it as one text',
 });
+// A YAML list of titles or playlists is a random pick to Archipelago; the bot takes several as one text.
+const SEVERAL_KEYS = new Set(['list_titles', 'list_playlist']);
+const SEVERAL_FIX = 'write it as one text, several names split by `;`';
 
 function specialsOf(key, spec) {
 	if (spec.special) return spec.special;
@@ -1662,7 +1943,8 @@ class RandomListSetting extends Error {
 function fileListValue(key, value) {
 	const spec = contracts.LIST_OPTIONS[key];
 	const name = settingName(key);
-	const random = () => new RandomListSetting(`${name} is random: ${LIST_FIX[spec.type]}, the bot needs it to pick titles.`, name);
+	const fix = SEVERAL_KEYS.has(key) ? SEVERAL_FIX : LIST_FIX[spec.type];
+	const random = () => new RandomListSetting(`${name} is random: ${fix}, the bot needs it to pick titles.`, name);
 	let one = value;
 	if (value instanceof Map || Array.isArray(value)) {
 		const choices = rolls(name, value);
@@ -1690,6 +1972,7 @@ function fileListValue(key, value) {
 	if (!clean(text)) return '';
 	if (key === 'list_titles') titlesParam(text, name);
 	else if (key === 'list_years') yearsParam(text, name);
+	else if (key === 'list_playlist') playlistsParam(text, name);
 	else textParam(name, text, key === 'list_genre' ? 60 : key === 'list_label' ? MAX_LABEL : MAX_TEXT);
 	return text;
 }
@@ -2300,23 +2583,24 @@ function createBuilder(deps = {}) {
 		return playlistCache.pending;
 	}
 
-	function filterPlaylists(list, prefix) {
-		const q = norm(prefix);
-		if (!q) return list.slice(0, 25);
-		const starts = list.filter((pl) => norm(pl.title).startsWith(q));
-		const inside = list.filter((pl) => !starts.includes(pl) && norm(pl.title).includes(q));
-		return [...starts, ...inside].slice(0, 25);
-	}
-
 	/** Audio and video playlists whose title starts with (then contains) the prefix, at most 25. */
 	async function playlists(prefix = '') {
 		return filterPlaylists(await loadPlaylists(false), prefix);
 	}
 
+	function cached() {
+		if (!playlistCache.list || now() - playlistCache.at >= PLAYLIST_TTL_MS) loadPlaylists(false).catch(() => {});
+		return playlistCache.list || [];
+	}
+
 	/** The same from memory only, for autocomplete; a stale list is refreshed in the background. */
 	function cachedPlaylists(prefix = '') {
-		if (!playlistCache.list || now() - playlistCache.at >= PLAYLIST_TTL_MS) loadPlaylists(false).catch(() => {});
-		return filterPlaylists(playlistCache.list || [], prefix);
+		return filterPlaylists(cached(), prefix);
+	}
+
+	/** The slash autocomplete's choices for a playlist text, from memory as cachedPlaylists. */
+	function cachedPlaylistChoices(typed = '') {
+		return playlistChoices(cached(), typed);
 	}
 
 	function library(p, warnings) {
@@ -2551,7 +2835,7 @@ function createBuilder(deps = {}) {
 		const loose = [];
 		const lib = library(p, warnings);
 		const list = new EntryList();
-		let playlistCut = null;
+		const playlistCuts = [];
 		const norms = new Map();
 		const normOf = (text) => {
 			const key = String(text ?? '');
@@ -2566,7 +2850,7 @@ function createBuilder(deps = {}) {
 
 		// Said before Plex is read whenever it is already certain; hand-picks or a playlist may still
 		// fill the counts, and then lib.watched() says it only if random video picks are needed.
-		const certain = !!p.collection || (!p.titles.length && !p.playlist && (p.counts.movies > 0 || p.counts.shows > 0));
+		const certain = !!p.collection || (!p.titles.length && !p.playlists.length && (p.counts.movies > 0 || p.counts.shows > 0));
 		if (p.unwatched && p.accountId === null && certain) throw new Error(ACCOUNT_FIX);
 
 		function runOf(eps, watchedSet, max) {
@@ -2759,16 +3043,59 @@ function createBuilder(deps = {}) {
 			if (wasCut(items, VIDEO_READ_MAX, total)) warnings.push(`${source} has ${Math.max(total, items.length)} items; only the first ${items.length} were read.`);
 		}
 
-		async function addPlaylist() {
-			const all = await loadPlaylists(true);
-			const pl = findByName(all, p.playlist, (x) => x.title, (x) => x.rk, 'the playlist');
-			if (!pl) {
-				// A refusal goes out as written, so the library's names are code spans too.
-				const names = all.slice(0, 10).map((x) => codeSpan(x.title)).join(', ');
-				throw new Error(`No playlist called ${codeSpan(p.playlist)}.${names ? ` Playlists: ${names}.` : ''}`);
+		// The playlists are found before the titles are matched, and their near matches are said after
+		// the titles', in the list's own order.
+		const playlistLoose = [];
+
+		/** The playlist a piece names exactly (findPlaylist), else the nearest name, which the reply then says it took. */
+		function nearestPlaylist(all, piece) {
+			const hit = findPlaylist(all, piece);
+			// A choice cut short is never read as the nearest name: "Rec\u2026" would be Plex's first "Recently".
+			if (hit || piece.endsWith(CUT)) return hit;
+			const label = PLAYLIST_LABEL.exec(piece);
+			const text = label ? label[1] : piece;
+			const min = RANDOM_NAME.test(text) ? MATCH_CLOSE : MATCH_MIN;
+			let best = null;
+			for (const pl of all) {
+				const score = matchScore(text, pl.title);
+				if (score >= min && (!best || score > best.score)) best = { pl, score };
 			}
+			if (best && best.score < MATCH_CLOSE) playlistLoose.push([piece, `the playlist ${best.pl.title}`]);
+			return best ? best.pl : null;
+		}
+
+		/**
+		 * The playlists p.playlist names, in order and each once, MAX_PLAYLISTS at most; throws, naming
+		 * every piece that names none, before any is read. A text holding ";" that is the whole name of a
+		 * playlist holding ";" is that playlist (wholePlaylist). A text without ";" that names no playlist
+		 * exactly is read as several when each piece between its commas names one exactly.
+		 */
+		function resolvePlaylists(all) {
+			let found = null;
+			const whole = wholePlaylist(all, p.playlist);
+			if (whole) found = [whole];
+			else if (p.playlists.length === 1 && !p.playlist.includes(';')) {
+				const one = findPlaylist(all, p.playlists[0]);
+				const hits = one ? [] : commaPieces(p.playlists[0]).map((piece) => findPlaylist(all, piece));
+				if (one) found = [one];
+				// One piece is enough when the commas were stray, as after a label: "Lofi (audio, 10 items),".
+				else if (hits.length > 0 && hits.every(Boolean)) found = hits;
+			}
+			if (!found) {
+				found = p.playlists.map((piece) => nearestPlaylist(all, piece));
+				const missing = p.playlists.filter((_, i) => !found[i]);
+				// A refusal goes out as written, so the library's names are code spans too.
+				if (missing.length) throw new Error(missingPlaylists(all, missing));
+			}
+			const seen = new Set();
+			const once = found.filter((pl) => !seen.has(pl.rk) && seen.add(pl.rk));
+			// The text may come from the command or a file, so the refusal names neither.
+			if (once.length > MAX_PLAYLISTS) throw new Error(tooManyPlaylists('The playlist text', once.length));
+			return once;
+		}
+
+		async function addPlaylist(pl) {
 			if (pl.type === 'video') {
-				if (p.unwatched && p.accountId === null) throw new Error(ACCOUNT_FIX);
 				await addVideoItems(await pms.playlistItems(pl.rk, { limit: VIDEO_READ_MAX }), `The playlist ${pl.title}`, pl.items);
 				return;
 			}
@@ -2812,7 +3139,7 @@ function createBuilder(deps = {}) {
 					tr: chunk.map((t) => [t.rk, t.index, t.title, t.d, t.partId, t.artist]),
 				});
 			}
-			playlistCut = { title: pl.title, parts, songs, tracks: usable.reduce((n, chunk) => n + chunk.length, 0) };
+			playlistCuts.push({ title: pl.title, parts, songs, tracks: usable.reduce((n, chunk) => n + chunk.length, 0) });
 		}
 
 		async function addCollection() {
@@ -2923,8 +3250,17 @@ function createBuilder(deps = {}) {
 			return groups;
 		}
 
+		// Found before the hand-picks are matched, so a playlist named wrong is refused at once.
+		let playlists = [];
+		if (p.playlists.length) {
+			const all = await loadPlaylists(true);
+			playlists = resolvePlaylists(all);
+			if (p.unwatched && p.accountId === null && playlists.some((pl) => pl.type === 'video')) throw new Error(ACCOUNT_FIX);
+			p.list.list_playlist = playlistsText(all, playlists);
+		}
 		for (const parsed of p.titles) await pickTitle(parsed);
-		if (p.playlist) await addPlaylist();
+		loose.push(...playlistLoose);
+		for (const pl of playlists) await addPlaylist(pl);
 		if (p.collection) await addCollection();
 		// The counts are totals: hand-picked and playlist titles count toward them.
 		const listed = (k) => list.values().filter((e) => e.k === k).length;
@@ -2964,7 +3300,7 @@ function createBuilder(deps = {}) {
 		const L = contracts.LIMITS;
 		if (plan.entryCount > L.maxEntries || plan.C > L.maxCopies || plan.locations > L.maxLocations) {
 			// A playlist cut at 15 songs, or off, has its parts as big as they get.
-			const songs = playlistCut && playlistCut.songs > 0 && playlistCut.songs < L.mixTracks;
+			const songs = playlistCuts.some((cut) => cut.songs > 0 && cut.songs < L.mixTracks);
 			throw new Error(`That list is too big for one slot: ${plan.entryCount} entries (at most ${L.maxEntries}), `
 				+ `${plan.C} unlock copies (at most ${L.maxCopies}), ${plan.locations} locations (at most ${L.maxLocations}). `
 				+ `Lower the counts or the episodes per show, raise the episodes ${songs ? 'or songs ' : ''}per unlock, or turn the timers down.`);
@@ -2999,14 +3335,14 @@ function createBuilder(deps = {}) {
 			goalCount: plan.goal_count,
 			hours: plan.hours,
 			hoursToGoal: plan.hoursToGoal,
-			playlist: playlistCut,
+			playlists: playlistCuts,
 			warnings: [...new Set(warnings)],
 			misses,
 		};
 		return { yaml, fileName: safeFileName(p.name), summary };
 	}
 
-	return { build, playlists, cachedPlaylists, renderYaml };
+	return { build, playlists, cachedPlaylists, cachedPlaylistChoices, renderYaml };
 }
 
 module.exports = {
@@ -3023,5 +3359,7 @@ module.exports = {
 	_internal: {
 		parseTitle, matchScore, similarity, norm, isPlaceholderAlbum, orderedEntry, safeFileName, flowValue, yamlKey, codeSpan, LIST_PARAMS,
 		parsePlayerFile, lowestRoll, highestRoll, randomTrapProblem, COPY_MAX_BYTES, SETTINGS_MAX, PyFloat, LOOSE_CHARS, MISSES_SHOWN, sizeText,
+		playlistsParam, commaPieces, playlistsText, MAX_PLAYLISTS, PLAYLISTS_SUGGESTED, PLAYLIST_LINES, MISSING_CHARS,
+		MAX_PLAYLIST_PIECES, CHOICE_MAX, findPlaylist, cutPlaylists, wholePlaylist, playlistLabel, playlistChoices,
 	},
 };

@@ -40,13 +40,14 @@ not. `/apmedia account plex:none` takes your consent back at any time.
 3. Type your slot name under Player Name: 1 to 16 characters, without `{`, `}` or `%`.
 4. Open **Your list (the bot picks the titles)** and set what the bot picks. List: Preset gives a
    starting mix, and List: Movies, List: Shows, List: Albums and List: Audiobooks take their
-   numbers from it while they stay at Preset. Name titles, a playlist or a collection, narrow the
-   random picks with List: Genre and List: Years, and give the list a name if you like. Pointing
-   at a setting's name shows what it does, and the game page lists every setting.
+   numbers from it while they stay at Preset. Name titles, a collection or playlists (up to 10
+   playlists split by `;` in List: Playlist), narrow the random picks with List: Genre and
+   List: Years, and give the list a name if you like. Pointing at a setting's name shows what it
+   does, and the game page lists every setting.
 5. Change the game options in the other groups if you like. The bot copies them into the finished
-   file as they are. Songs per Unlock, under Unlocks and goal, sets how many songs of your
-   playlist one unlock opens, in the playlist's order; left at off, the playlist goes on in parts
-   of up to 15 songs, each its own unlock.
+   file as they are. Songs per Unlock, under Unlocks and goal, sets how many songs of each music
+   playlist one unlock opens, in the playlist's order; left at off, each goes on in parts of up to
+   15 songs, each its own unlock.
 6. Choose **Export Options** and save the file.
 7. In Discord, run `/apmedia yaml` with the file in `file:`, or attach it to a `!apmedia yaml`
    message. The bot picks the titles from the Plex library and replies with the finished YAML and a
@@ -100,12 +101,13 @@ is that choice, as Archipelago rolls it, so an unedited template reads as an unt
 ## Or build a list with the command's options
 
 1. Run `/apmedia yaml` with a slot name and a preset (`movies`, `tv`, `music`, `books` or `mixed`),
-   or pick titles, a collection or a playlist; `preset:none` takes only what you count or name. A
-   music playlist opens 3 songs per unlock, in its order: `more:songs_per_unlock=1` opens one song
+   or pick titles, a collection or playlists, several playlists split by `;` and up to 10
+   (`playlist:Road Trip; Lofi`); `preset:none` takes only what you count or name. Each music
+   playlist opens 3 songs per unlock, in its order: `more:songs_per_unlock=1` opens one song
    at a time, and `more:songs_per_unlock=0` puts it in parts of up to 15 songs, each its own
    unlock (`songs_per_unlock=1` on `!apmedia yaml`).
-2. The bot replies with a YAML file and the same summary, which says how the playlist opens. Send
-   the file to whoever generates the seed.
+2. The bot replies with a YAML file and the same summary, which says how each music playlist opens.
+   Send the file to whoever generates the seed.
 
 The YAML's `entries` and `list_info` are written by the bot. Edit the game options if you like; a
 change to a list setting takes effect only when the file is attached to `/apmedia yaml` again.

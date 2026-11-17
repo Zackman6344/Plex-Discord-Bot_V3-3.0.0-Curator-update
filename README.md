@@ -1334,15 +1334,15 @@ YAML options, and its [setup guide](apworld/plex_media/docs/setup_en.md) walks a
 joining.
 
 **What a list holds.** Movies, TV episodes, music and audiobooks. Music comes as whole albums, or
-as a Plex audio playlist cut into parts (**Songs per unlock**, below), and audiobooks come from
+as Plex audio playlists cut into parts (**Songs per unlock**, below), and audiobooks come from
 `/book`'s catalog. A list mixes random picks (narrowed by genre, years, and what that person has
-not watched yet), hand-picked titles, and a Plex playlist or collection. A few titles start open
-(`starting_unlocks`: 3 unlock copies by default, more on a long list), and the multiworld sends the
-rest: one unlock per movie, album or book, one per 3 episodes of a show (`episodes_per_unlock`, or
-a season at a time with `tv_unlock: season`), and one per part of a playlist. A Wild Ticket (2 by
-default, fewer on a short list) opens a locked title of the player's choosing (one step of a show,
-one part of a playlist). The goal is to finish 80% of the list (`goal_percent`), and the bot sends
-it once that many titles are done.
+not watched yet), hand-picked titles, up to 10 Plex playlists and a collection. A few titles start
+open (`starting_unlocks`: 3 unlock copies by default, more on a long list), and the multiworld
+sends the rest: one unlock per movie, album or book, one per 3 episodes of a show
+(`episodes_per_unlock`, or a season at a time with `tv_unlock: season`), and one per part of a
+playlist. A Wild Ticket (2 by default, fewer on a short list) opens a locked title of the player's
+choosing (one step of a show, one part of a playlist). The goal is to finish 80% of the list
+(`goal_percent`), and the bot sends it once that many titles are done.
 
 **Songs per unlock.** World 0.4.0 cuts a music playlist into parts of `songs_per_unlock` songs (1
 to 15), in the playlist's order, and gives the whole playlist one unlock, `Road Trip: Next 3 Songs`
@@ -1565,7 +1565,7 @@ player can make their YAML there and have the bot fill in the titles:
 3. Open **Options Creator** from the Launcher, pick **Plex Media** in the game list, and type the
    slot name under Player Name (1 to 16 characters, no `{`, `}` or `%`).
 4. Set the options. The group **Your list (the bot picks the titles)** tells the bot what to pick:
-   a preset, a count per kind, titles, a playlist or a collection, a genre and years for the
+   a preset, a count per kind, titles, playlists or a collection, a genre and years for the
    random picks, whether to leave out what the player has watched, episodes per show, and the
    list's name. The other groups hold the game options, which the bot copies into the finished
    file as they are.
@@ -1705,7 +1705,7 @@ unlike `/config`'s first-run bootstrap.
 
 | Command | Who | What it does |
 | ------- | --- | ------------ |
-| `/apmedia yaml [name] [file] [options]` | Anyone; with `for:`, the owner | Builds a list from the library and attaches it as a YAML for the next seed, with its counts, how its music playlist opens, how many titles start open, what the goal needs, and the Fast Forwards, Remote Controls, traps and snacks its pool holds. With `file:`, it fills in a YAML made in the Archipelago Options Creator, or one it wrote before, and keeps the file's settings. It needs a name or a file. See **Building a list** and **Filling in a YAML** below. |
+| `/apmedia yaml [name] [file] [options]` | Anyone; with `for:`, the owner | Builds a list from the library and attaches it as a YAML for the next seed, with its counts, how each music playlist opens, how many titles start open, what the goal needs, and the Fast Forwards, Remote Controls, traps and snacks its pool holds. With `file:`, it fills in a YAML made in the Archipelago Options Creator, or one it wrote before, and keeps the file's settings. It needs a name or a file. See **Building a list** and **Filling in a YAML** below. |
 | `/apmedia apworld` | Owner | Attaches `plex_media.apworld`, built in memory, with the install steps, and compares it with `<archipelagoInstallDir>\custom_worlds\plex_media.apworld`, which it only reads. The reply is public. |
 | `/apmedia account [user] [plex] [shared]` | Owner; anyone, for `plex:none` on themselves | No user: the server's Plex accounts. A user alone: who they are linked to. A user and a Plex name (in full) or id: links them, and they get an Accept button. An account already linked to someone else needs `shared:True`. `plex:none` unlinks them, and on its own takes back your own link. |
 | `/apmedia link <slot> [user] [watch]` | The player holding the `!ap claim` on that slot; the owner, for anyone | Ties a Plex Media slot of a watched room to a Discord user. Without `watch:` the room is the one where they claimed the slot, unless another watched room has a slot of that name too, or the only room watched; anything else is asked back with the watches' ids. |
@@ -1802,9 +1802,10 @@ is a whole list title is that title: `Murder at 1600` is the film.
 `none`, which takes only what is counted or named. `movies`, `shows`, `albums` and `books` set
 totals, hand-picks included. `titles:` takes hand-picks split by `;`, each with an optional
 `movie:`, `show:` (with a season range such as `S1-2`), `album:` or `book:` in front.
-`playlist:` and `collection:` add a Plex playlist or collection in its own order, a music playlist
-in parts of 3 songs (**Songs per unlock**, above), and `genre:` and `years:` (`1990` or
-`1990-1999`) narrow the random picks. A name that matches only the start of a title takes the
+`playlist:` adds up to 10 Plex playlists split by `;` (**Several playlists**, below) and
+`collection:` a Plex collection, each in its own order, a music playlist in parts of 3 songs
+(**Songs per unlock**, above), and `genre:` and `years:` (`1990` or `1990-1999`) narrow the random
+picks. A name that matches only the start of a title takes the
 nearest one, and the reply says what it took: "Nearest matches taken: "Alie" as Alien (1979)." A
 name that is just `random`, or starts with `random-`, takes only a title of that name. A list that
 comes out empty says so, with the warnings that name the filter that emptied it, such as "Movies
@@ -1828,7 +1829,8 @@ named without seasons; 24 by default) are options of their own, and the rarer se
 `more:wild_tickets=3 strict=true trap_percentage=20`. A `trap_percentage` above 0 with every
 weight at 0 is refused: "trap_percentage 50 makes 34 of the list's 69 filler items traps, but
 every trap weight is 0 (a trap weight above 0, or trap_percentage 0, would help)". The reply says
-how a music playlist went on, on the line after the counts: "`Road Trip` opens 3 songs per unlock,
+how each music playlist went on, a line each after the counts, five at most and then "And 2 more
+playlists.": "`Road Trip` opens 3 songs per unlock,
 in 20 parts.", "`Road Trip` is in 3 parts of up to 15 songs, one unlock each." while
 `songs_per_unlock` is off, or "`Lofi` is in 1 part of 2 songs, with one unlock." for a playlist
 that fits in one part. A `songs_per_unlock` typed for a list with no music playlist adds
@@ -1843,6 +1845,43 @@ Discord, is refused too. A person builds one list at a time, an attached file's 
 included, and the bot two at once in all; another ask meanwhile is told to wait. Every file
 records, after the game options, the list settings it was built with (`list_preset`,
 `list_movies` and the rest). Attached again, it gets a fresh pick with them.
+
+**Several playlists.** `playlist:` takes up to 10 Plex playlists split by `;`, as in
+`playlist:Human Music; Lofi A.M.` (`playlist="Human Music; Lofi A.M."` on `!`), and each one goes
+on the list as it would alone: a music playlist in parts of its own, with an unlock of its own
+(`<playlist>: Next 3 Songs`), a video playlist as its movies and episodes. A piece is trimmed, an
+empty one (after a `;` at the end) is dropped, and a playlist named twice counts once, however it
+is written. Each piece names a playlist by its rating key, by its name, by the text the
+autocomplete shows for it ("Human Music (audio, 486 items)"), by that text cut short where only
+that playlist's text starts that way ("Recently P…"), or by the nearest name, which the reply says
+it took. A piece is tried as a name before as that text, so a playlist named "Road Trip (audio)"
+is still found, and a piece cut short is never taken for the nearest name: "Rec…" beside Recently
+Added and Recently Played is refused with both named. A whole text that is the name of a playlist
+holding `;` is that playlist, as a list written before several were taken names it. A text with no
+`;` that names no playlist exactly is read as several split at its commas when each piece names
+one by its rating key, its name or that text, never the nearest name: `Human Music, Lofi A.M.`
+names two, and a playlist named `Rock, Paper, Scissors` stays one. Each piece, or in a text with no
+`;` each piece between its commas, may run to 200 characters, and a text may hold 20 pieces before
+Plex is read; more than 10 playlists is refused: "The playlist text names 11 playlists, and a list
+takes at most 10." A piece that names nothing refuses the whole list before Plex is read further,
+naming every such piece with up to 5 of the playlists closest to it by name, a music playlist first
+when two are as close; a playlist that is not close is never named: "No playlist called `Lofi AM`.
+Closest by name: `Lofi A.M.`. Several playlists are separated with `;`."
+
+The slash autocomplete completes the piece after the last `;`. A pick puts the suggestion's text in
+the box, and that text is what the bot reads once the player types on, so every suggestion reads
+back to the playlists it sends: it shows the playlists before it by name and sends them as rating
+keys (`5109; 5002; 5001`). Past Discord's 100 characters a suggestion leaves out the new playlist's
+type and count, shows as few of the earlier playlists as it can as rating keys, from the first on,
+and last cuts the new name short where only its text starts that way, so 10 can be picked in a row.
+A playlist already named is not offered again, and after a `;` at the end the first suggestion is
+the text as it is. The file's `list_playlist` holds the playlists found, joined by `; `: each by its
+name, or by its rating key when the name holds `;`, is all digits, runs past 200 characters or
+matches another playlist's name but for case or punctuation, and every one by its rating key when
+the names together would read as one playlist holding `;`, so the file, attached again, finds the
+same playlists. List: Playlist in a file from the Options Creator takes the same text, and a YAML
+list there is refused: "List: Playlist (`list_playlist`) is random: write it as one text, several
+names split by `;`, the bot needs it to pick titles."
 
 **Filling in a YAML: `/apmedia yaml file:`.** The file is a YAML from the Archipelago Options
 Creator, or one the bot wrote. On `!` it is the message's first attachment named `.yaml` or
