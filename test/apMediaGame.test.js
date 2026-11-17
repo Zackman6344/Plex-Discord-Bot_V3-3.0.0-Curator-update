@@ -40,6 +40,7 @@ const { EventEmitter } = require('node:events');
 
 const contracts = require('../helpers/apMediaContracts.js');
 const { createGame, commandCode } = require('../helpers/apMediaGame.js');
+const { ApMediaClient } = require('../helpers/apMediaClient.js');
 const { createApMediaStore } = require('../helpers/apMediaStore.js');
 const voiceClaims = require('../helpers/voiceClaims.js');
 const { startApMediaServer } = require('./helpers/apMediaServer.js');
@@ -1148,6 +1149,44 @@ test('a retried stale slot refused by the new seed keeps its old seed whole: a d
 	await waitFor(() => row(h2, key2).state === 'refused', 'refused for its slot_data');
 	assert.strictEqual(row(h2, key2).stateDetail.reason, 'slot_data');
 	assert.deepStrictEqual([row(h2, key2).seedName, row(h2, key2).banked], [SEED, 8]);
+});
+
+// The game client the game builds, for a watch whose target is a room URL: the room page names, in
+// turn, the servers in `answers` (a list the test fills later), the last one from then on.
+function roomPageClient(answers) {
+	return class RoomPageClient extends ApMediaClient {
+		async _resolveAddress() {
+			if (!this.target || this.target.kind !== 'room') return super._resolveAddress();
+			const server = answers.length > 1 ? answers.shift() : answers[0];
+			return { host: '127.0.0.1', port: server.port };
+		}
+	};
+}
+
+// The live case of 2026-11-17: the bot started after the PC had been off, archipelago.gg had moved
+// the sleeping room to a new port, and the first read of the room page gave the old one, which
+// another room held. The slot stays its room's, with no notice that would send its player to unlink it.
+test('a room URL that first answers with another seed, as after a sleeping room moved ports, keeps the slot and connects with no notice', async (t) => {
+	const answers = [];
+	const h = await setup(t, { game: { Client: roomPageClient(answers) } });
+	const key = await linkSlot(h);
+	await settledPosts(h);
+	const wrong = await startApMediaServer(NEW_ROOM);
+	t.after(() => wrong.close());
+	answers.push(wrong, h.server);
+	const connects = connectsTo(h.server).length;
+	h.monitor.put(0, { target: { kind: 'room', roomUrl: 'https://archipelago.gg/room/MovedPortRoom1' } }, 'restarted');
+	await h.game._internal.idle();
+	const client = runtime(h, key).client;
+	await waitFor(() => client.reconnectTimer !== null, 'the reconnect after the other room');
+	assert.strictEqual(row(h, key).state, 'active', 'not called stale');
+	assert.deepStrictEqual(connectsTo(wrong), []);
+
+	reconnectNow(client);
+	await waitFor(() => connectsTo(h.server).length === connects + 1 && row(h, key).inventoryKnown, 'its own room');
+	await h.game._internal.idle();
+	assert.deepStrictEqual([row(h, key).state, row(h, key).seedName], ['active', SEED]);
+	assert.deepStrictEqual(await settledPosts(h), []);
 });
 
 test('a new-seed report changes nothing for a slot that stopped counting or was unlinked meanwhile', async (t) => {
