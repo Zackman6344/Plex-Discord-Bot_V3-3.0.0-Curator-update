@@ -6,8 +6,8 @@
 // Sync when a frame was missed; checks and the goal going out only on a live connection, and
 // saying so; InvalidPacket surfaced instead of dropped; a refused connection stopping for good;
 // the room read again before every connection attempt; no Connect at all to a room on another seed
-// than the slot's; and a listener that throws, the base's 'status' listeners included, breaking
-// nothing.
+// than the slot's, behind a room URL only after its page was read again four times; and a listener
+// that throws, the base's 'status' listeners included, breaking nothing.
 //
 // Harness: the real client against test/helpers/apMediaServer.js on a loopback port, and, with no
 // socket at all, frames fed through the client's own packet queue the way its socket feeds them
@@ -631,6 +631,68 @@ test('a room that names no seed gets its Connect as before', async () => {
 	assert.deepStrictEqual(sent.map(packet => packet.cmd), ['Connect']);
 	assert.deepStrictEqual(named(events, 'stale'), []);
 	assert.strictEqual(client.stopped, false);
+});
+
+// A room URL's client whose room page names, in turn, the servers listed, the last one from then on.
+// With no resolveWatch it keeps its target, so only this read of the page moves.
+function roomClient(t, servers, options = {}) {
+	const client = new ApMediaClient({ target: { kind: 'room', roomUrl: 'https://archipelago.gg/room/WrongPortRoom1' }, slot: SLOT, label: 'test', ...options });
+	const queue = [...servers];
+	client._resolveAddress = async () => {
+		const server = queue.length > 1 ? queue.shift() : queue[0];
+		return { host: '127.0.0.1', port: server.port };
+	};
+	t.after(() => client.stop());
+	return { client, events: record(client) };
+}
+
+// The backoff timer's own callback, run now; the timer is forgotten, so the next one can be waited for.
+function nextTry(client) {
+	clearTimeout(client.reconnectTimer);
+	client.reconnectTimer = null;
+	return client._open();
+}
+
+// The bug the deploy of 2026-11-17 showed: the bot started after the PC had been off, archipelago.gg
+// had moved the sleeping room to a new port, and the first read of its page gave the old port, which
+// another room held. The slot's own room is still on its seed, so that answer is not a new seed.
+test('a room URL answered by another seed reads its page again, and connects once its own room answers', async (t) => {
+	const warnings = [];
+	t.mock.method(logger, 'warn', (...args) => { warnings.push(args.join(' ')); });
+	const wrong = await serve(t, { seedName: 'Seed_NEW', slots: [{ name: 'OtherPlex', game: contracts.GAME }] });
+	const right = await serve(t, { slotData: { [PLEX]: { schema: 1 } } });
+	const { client, events } = roomClient(t, [wrong, right], { expectedSeed: () => 'Seed_PLEX' });
+	client.start();
+	await waitFor(() => client.reconnectTimer !== null, 'the reconnect after the other room');
+	assert.deepStrictEqual(named(events, 'stale'), []);
+	assert.strictEqual(client.stopped, false);
+	assert.strictEqual(client.seedName, null, 'nothing of the other room is taken in, its seed name included');
+	assert.deepStrictEqual(wrong.received, [], 'no Connect to the other room');
+	assert.ok(warnings.some((line) => line.includes('answered as seed Seed_NEW, not Seed_PLEX')), warnings.join('\n'));
+
+	await nextTry(client);
+	await waitFor(() => named(events, 'connected').length === 1, 'its own room');
+	assert.strictEqual(named(events, 'connected')[0].seedName, 'Seed_PLEX');
+	assert.strictEqual(right.received.filter((packet) => packet.cmd === 'Connect').length, 1);
+	assert.deepStrictEqual(named(events, 'stale'), []);
+});
+
+test('a room URL that answers with another seed five times running is the slot\'s room on another seed', async (t) => {
+	t.mock.method(logger, 'warn', () => {});
+	const wrong = await serve(t, { seedName: 'Seed_NEW', slots: [{ name: 'OtherPlex', game: contracts.GAME }] });
+	const { client, events } = roomClient(t, [wrong], { expectedSeed: () => 'Seed_PLEX' });
+	client.start();
+	for (let n = 1; n <= 4; n++) {
+		await waitFor(() => client.reconnectTimer !== null, `the reconnect after answer ${n}`);
+		assert.deepStrictEqual(named(events, 'stale'), [], `still reading the page after answer ${n}`);
+		await nextTry(client);
+	}
+	await waitFor(() => named(events, 'stale').length === 1, 'the stale event');
+	assert.deepStrictEqual(named(events, 'stale'), [{ seedName: 'Seed_NEW', expected: 'Seed_PLEX' }]);
+	assert.strictEqual(client.stopped, true);
+	assert.strictEqual(client.reconnectTimer, null);
+	assert.strictEqual(wrong.connectionsOpened, 5);
+	assert.deepStrictEqual(wrong.received, [], 'not one Connect');
 });
 
 test('a seed reader that throws is logged, and the client connects as it did before', async (t) => {

@@ -1596,7 +1596,10 @@ DM.
   works for such a seed.
 - A new seed starts fresh. When a watched room moves to another seed, each bound slot says so and
   stops counting. The bot checks the seed before the slot connects, so a slot name the new seed
-  lacks gets that same notice rather than an `InvalidSlot` refusal. When the new seed has a Plex
+  lacks gets that same notice rather than an `InvalidSlot` refusal. An archipelago.gg room never
+  changes seed, and a sleeping room wakes on a new port, so behind a room URL another seed is first
+  taken for another room at the old port: the bot reads the room page again for about 75 seconds
+  before it calls the slot's room another seed. When the new seed has a Plex
   Media slot by that name, `/apmedia retry` takes that seed on without the old seed's progress;
   when it has not, `/apmedia unlink` is the way out. A room that goes back to the slot's own seed
   keeps the slot's progress there, and `/apmedia retry` picks that seed up again. Live credit from

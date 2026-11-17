@@ -2140,6 +2140,21 @@ that name in the new seed, the bot joined as that slot. A binding with no seed y
 names none and a reader that throws (logged) connect as before, and the check at `Connected` (a
 new seed goes `stale`, no seed is refused `seed`) still applies to them.
 
+**Behind a room URL, another seed is first another room.** An archipelago.gg room keeps its seed for
+life. A sleeping room wakes on a new port, and the first read of its page can still name the old
+one, which another room may hold by then. On 2026-11-17 the bot started after the PC had been off,
+and both the watch and the slot reached a foreign room on the old port and were refused
+`InvalidSlot`; under the plain check the slot would have gone `stale`, which a watch's `!ap retry`
+does not rebuild. So for a target of kind `room`, another seed in the first `WRONG_ROOM_TRIES` (4)
+attempts of a connection sequence closes the socket instead of stopping the client, and the base's
+backoff (5, 10, 20 and 40 s) reads the room page again. `attempt` counts the sequence and a
+`Connected` starts it over; each such answer logs a warning naming both seeds. The fifth answer in a
+row is the room's own new seed as far as the game can tell (a `/config` room pointed at another room
+URL, or a link left over from another room), and the binding goes `stale`. A `host:port` target goes
+stale at the first answer, since a self-hosted server can restart on another seed at the same
+address. The watch's own observer is unchanged: a foreign room still refuses it, which pauses the
+watch until `!ap retry`.
+
 **A retried stale slot clears nothing until it takes a seed on.** `/apmedia retry` sets the
 runtime's `adopt`, under which `expectedSeed()` answers null, and leaves the binding's seed and
 progress as they are. Its next `Connected` decides: the slot's own seed resumes it with nothing

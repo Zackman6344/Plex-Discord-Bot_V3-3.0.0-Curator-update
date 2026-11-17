@@ -26,14 +26,22 @@
 //   'checked'   {ids}            locations the server now reports checked
 //   'invalid'   {packet}         the server rejected something this client sent
 //   'orphaned'  {reason}         resolveWatch() found no watch; the client has stopped
-//   'stale'     {seedName, expected}  RoomInfo named another seed than expectedSeed(); the client
-//                                has stopped without sending Connect
+//   'stale'     {seedName, expected}  RoomInfo named another seed than expectedSeed() (behind a room
+//                                URL, WRONG_ROOM_TRIES times running); the client has stopped
+//                                without sending Connect
 //   'fatal' {reason, errors} and 'status' {state, detail} come from ArchipelagoClient.
 
 const WebSocket = require('ws');
 const logger = require('./logger.js');
 const { ArchipelagoClient, CLIENT_VERSION } = require('./archipelagoClient.js');
 const { GAME, CLIENT_TAGS, ITEMS_HANDLING, CLIENT_GOAL } = require('./apMediaContracts.js');
+
+// An archipelago.gg room keeps its seed for life, so another seed behind a room URL is another room.
+// A sleeping room wakes on a new port, and the first read of its page can still name the old one,
+// which another room may hold by then: seen 2026-11-17, when the bot started after the PC had been
+// off and reached a foreign room on the old port. So that many answers in a row (the reconnects come
+// 5, 10, 20 and 40 s apart) only make the client read the page again.
+const WRONG_ROOM_TRIES = 4;
 
 // Ids reach sendChecks from stores and slot_data, where one can turn up as a string, and the server
 // matches ints only: a "1347000005" in LocationChecks is dropped without a word.
@@ -188,6 +196,14 @@ class ApMediaClient extends ArchipelagoClient {
 			logger.warn(`[AP:${this.label}] could not read the seed of its slot: ${err.message || err}`);
 		}
 		if (!seed || !expected || seed === expected) return false;
+		if (this.target && this.target.kind === 'room' && this.attempt < WRONG_ROOM_TRIES) {
+			logger.warn(`[AP:${this.label}] ${this.address} answered as seed ${seed}, not ${expected}: another room at an address the room page gave; reading the page again.`);
+			// Closed rather than stopped, so the base's backoff reconnects and resolves the room again.
+			if (this.socket) {
+				try { this.socket.close(); } catch (_) {}
+			}
+			return true;
+		}
 		this.stop();
 		this.emit('stale', { seedName: seed, expected });
 		return true;
