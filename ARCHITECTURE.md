@@ -173,9 +173,11 @@ Two signature styles coexist in the codebase:
 | `archipelagoLogic.js`      | Finds what `scripts/ap-logic-worker.py` needs for a seed (the install, its Python version, the output zip, and the seed number from Archipelago's Generate log as a spare), keeps the bot's own copy of a seed's yamls and multidata in `data/archipelago/seeds/<seed>/` (`seedSnapshot`), keeps one worker running at a time, and talks JSON lines to it. `prewarm()` starts the worker when a room connects and `acquire()` when `!ap next` needs one; a failed start is remembered for ten minutes, `configChanged()` forgets that when the install or Python setting changes, and `release()` stops a seed's worker when its last watch ends. See "Suggesting what to check next" below. |
 | `archipelagoNextButtons.js` | The ◀ ▶ buttons on a one-slot `!ap next` reply. Keeps each reply's rendered pages in memory under a token its buttons carry (`apnext:<token>:<page>`), for 30 minutes after their last use and at most 50 lists, and turns them for the person who asked and nobody else. |
 | `archipelagoSpheres.js`    | Sphere data for a seed, from the extracted multidata table or a spoiler log, and the sphere 1 fallback `!ap next` answers with when the seed's own logic is unavailable. |
+| `archipelagoNextPrefs.js`  | Each person's own `!ap next` settings, persisted to `data/archipelago_next.json` and keyed by Discord user id. One so far, `hideFinished` (`!ap nexthide`), off for anyone who never set it. See "Leaving out what goes to finished slots" below. |
+| `archipelagoReleases.js`   | The slots each watch heard released, per seed, in `data/archipelago_releases.json` (durable). The only copy of a release, since the server keeps none; the monitor writes one as it is heard and puts the list back into the client on every connect. See "Releases the bot heard are kept" below. |
 | `archipelagoClaims.js`     | Which Discord user holds which slot in which watch, persisted to `data/archipelago_claims.json`. Storage and lookup only; whether a line is worth a ping is decided by `archipelagoMonitor.shouldPing`. See "Slot claims" below. |
 | `archipelagoCatchup.js`    | Which lines each watch has already posted, per watch and seed, persisted to `data/archipelago_catchup.json`, plus the pure `buildCatchup` that diffs a tracker read against that record and renders the missed lines exactly as the live relay would. See "Catching up after downtime" below. |
-| `jsonStore.js`             | One small JSON file holding one collection: env-overridable path, test gate, lazy cache, atomic write, and a corrupt file moved aside to `<file>.corrupt-<timestamp>` rather than overwritten. The claims, goals, roles and catch-up stores are built on it, and so are the audiobook catalog and bookmarks. Two opt-in options: `feature` names the feature in its log lines (default `'Archipelago'`, so the five Archipelago stores log byte for byte as before), and `durable` fsyncs each write before the rename, keeps an hourly `<file>.bak`, and loads from that backup when the main file is damaged. Only the bookmark store sets `durable`. |
+| `jsonStore.js`             | One small JSON file holding one collection: env-overridable path, test gate, lazy cache, atomic write, and a corrupt file moved aside to `<file>.corrupt-<timestamp>` rather than overwritten. The claims, goals, roles, catch-up, `!ap next` settings and release stores are built on it, and so are the audiobook catalog and bookmarks. Two opt-in options: `feature` names the feature in its log lines (default `'Archipelago'`, so the five Archipelago stores log byte for byte as before), and `durable` fsyncs each write before the rename, keeps an hourly `<file>.bak`, and loads from that backup when the main file is damaged. The bookmarks, the Plex Media bindings and account links, and the Archipelago releases set `durable`, each the only copy of what it holds. |
 | `logPrune.js`              | Day-file housekeeping shared by every day-file writer under `data/logs/` (bot log, command log, voice-health log): the `PLEXBOT_LOG_RETENTION_DAYS` parse, the hourly throttle and the cutoff. No dependencies, so `logger.js` can use it. |
 | `leaderboard.js`           | One ranked-list renderer. Only the Archipelago leaderboard calls in so far; the four game commands still carry their own copies and disagree on the fourth-place marker. |
 | `archipelagoGoals.js`      | Lifetime count of multiworlds each user has goaled, keyed `<seed>::<slot>` so it outlives the watch that saw it and so a slot changing hands cannot re-credit a finished game. Recording is idempotent, because the goal set is rebuilt on every reconnect. Goals only, never releases. Migrates the original user-keyed file shape on read. |
@@ -377,6 +379,8 @@ All persistent runtime state lives under `data/`. The directory is created if mi
 | `data/archipelago_goals.json`     | `helpers/archipelagoGoals.js`       |
 | `data/archipelago_roles.json`     | `helpers/archipelagoRoles.js`       |
 | `data/archipelago_catchup.json`   | `helpers/archipelagoCatchup.js`     |
+| `data/archipelago_next.json`      | `helpers/archipelagoNextPrefs.js`   |
+| `data/archipelago_releases.json`  | `helpers/archipelagoReleases.js` (the slots each watch heard released, per seed; durable, with an hourly `.bak`) |
 | `data/archipelago/datapackage/*.json` | `helpers/archipelagoData.js`    |
 | `data/apmedia_slots.json`         | `helpers/apMediaStore.js` (Plex Media slot bindings with their unsent, banked and held checks and their item and trap state; durable, with an hourly `.bak`) |
 | `data/apmedia_accounts.json`      | `helpers/apMediaStore.js` (Discord user to Plex account links and their consent; durable, with an hourly `.bak`) |
@@ -1163,10 +1167,11 @@ Naming a finished slot explicitly still answers about that slot.
 
 **How a slot finished is often unknowable, and the reply does not guess.** Goal status is read back
 from data storage at every connect, so it survives a restart. A release is not: it arrives once as
-a live `PrintJSON`, there is no key to re-read it from, and `client.released` starts empty on every
-boot. A slot released while the bot was down is therefore indistinguishable from one that goaled
-without its client ever reporting it; both are simply at 100% checked. That third state is carried
-as `how: 'complete'` and rendered as "finished".
+a live `PrintJSON`, and there is no key to re-read it from. `client.released` starts empty on every
+boot and is refilled only with the releases this watch heard on this seed (see "Releases the bot
+heard are kept" below). A slot released while the bot was down is therefore indistinguishable from
+one that goaled without its client ever reporting it; both are simply at 100% checked. That third
+state is carried as `how: 'complete'` and rendered as "finished".
 
 This is not hypothetical. On the room this was built against, six slots were done: three carried
 `client_status` 30 and three carried 0 while sitting at 100% checked, and all three of the latter
@@ -1174,6 +1179,22 @@ were releases. Calling 100%-checked "goaled" would have been wrong every time it
 
 The relay filter is unaffected by any of this. A release checks every remaining location, so
 `inferFinished` already catches released slots through the tracker's 100% column.
+
+**Releases the bot heard are kept** in `data/archipelago_releases.json`
+(`helpers/archipelagoReleases.js`), per `<watchId>::<seed>`, since nothing else holds one. A release
+line calls `noteRelease` before the relay filter, so a channel with goal lines filtered out still
+keeps it, and the store writes as soon as a release is new: the items a release hands out may all
+be filtered, leaving no post to carry it, and `stop-bot.ps1` ends the bot with
+`Stop-Process -Force`, which skips every exit hook. On every connect `restoreReleases` puts the
+current seed's list back into `client.released`. The store is durable (fsync before the rename,
+and an hourly `.bak` it falls back on), unlike the catch-up record, which is rewritten after every
+post and whose loss costs only a silent baseline. A watch's lists go with the watch. The client
+drops its releases when a server at the same address comes back on another seed, so none is kept
+as the new seed's. Before this store, a restart forgot every release: `resolveSlot` called such a
+slot `complete`, the relay caught it only once a tracker poll marked it fully checked, and
+`!ap nexthide`, which does not count full checks, listed its items again.
+`test/archipelagoReleases.test.js` covers the store and `test/archipelagoNextHideRoom.test.js` the
+monitor's use of it.
 
 **The item at a location is never shown, and no location is preferred over another for what it
 holds.** Locations are ordered by hint, sphere and name and nothing else, and every hint is public
@@ -1185,7 +1206,9 @@ location holds (see "Rules that read placements"), and the self-check below repl
 sphere handed out. Under the one such rule met so far, Dungeon Defenders', a location holding one
 of its actions stays out of logic until the hero for that action has arrived, so a location
 missing from an otherwise open area says a little about what it holds. Generation's sphere
-numbers, which every reply shows, were computed under the same rule.
+numbers, which every reply shows, were computed under the same rule. **The one exception is a
+setting each person turns on for their own answers**, `!ap nexthide`, which leaves out the checks
+whose items go to finished slots (see "Leaving out what goes to finished slots").
 
 #### Hinted locations
 
@@ -1206,6 +1229,69 @@ names its item and its location, so the star tells nobody anything `!ap hints` d
 
 On the 35-slot room on 2026-11-10, the asker's 24 slots held 31 hinted locations and none of them
 was in logic, so the live run showed the counts and no starred name.
+
+#### Leaving out what goes to finished slots
+
+**`!ap nexthide on` makes a person's own `!ap next` leave out every check whose item goes to a slot
+that has goaled or released.** It is the one place the command reads what a location holds, so it
+is a setting each person turns on for themselves (`helpers/archipelagoNextPrefs.js`,
+`data/archipelago_next.json`), off for anyone who never did, and nobody else's answers change.
+With nothing after it, it says which the caller has. The setting covers every room, but a leading
+integer is still taken as a watch id, as everywhere else in `!ap`, and the switch is the one word
+after it. Read as the switch, `1` and `0` are on and off, so a habitual `!ap nexthide 1` would have
+turned it on for somebody asking what it was set to. A line with more than one word after any id
+gets the usage line and changes nothing.
+
+**Which slots are done** is `goaledOrReleased(client)`: the client's `goaled` and `released` sets,
+this team only. A fully checked slot is left out of it, though `hasFinished` and the relay's
+`skipgoaled` count one, because it can still be waiting on an item out of another world, and that
+item's location is the check that matters most to it. `client.released` holds the releases heard
+since the seed was first watched, restarts included (see "Releases the bot heard are kept"),
+and a release announced while the bot was down is not in it.
+
+**In practice the releases are what it catches.** Both seeds kept under `data/archipelago/seeds/`
+on 2026-11-18 carry `collect_mode: auto` and `release_mode: auto` in their multidata, as this
+install's `host.yaml` does, and a room hosted on archipelago.gg runs with the options its multidata
+carries. MultiServer's `on_goal_achieved` then calls `collect_player`, which checks every location
+anywhere that holds the goaled slot's items, so they are gone from `!ap next` before this setting
+looks. `release_player` checks only the releasing slot's own world, so a slot the host releases
+without a goal, a dropout, leaves its items unchecked in everybody else's. The 35-slot room had one
+finished slot on 2026-11-18, ZackLL1Crab, goaled and auto-collected, and no release.
+
+**Only the logic worker knows where items are, so it does the leaving out.** `answerAll` sends the
+done slots as `finished` in the `inLogic` request, sorted, and only for somebody who asked. An
+empty list still goes, and the `hidden: 0` that comes back shows the worker applied it. For each
+asked slot the worker drops every unchecked location whose receiver, read from the multidata's
+`locations`, is in `finished` or is an item-link group whose members all are, from `locations` and
+`open` alike, and returns how many it dropped as `hidden`. A dropped location is never judged.
+The state is built exactly as without the setting, since a rule elsewhere can still read the item
+sitting there. A group whose members `link_items` dropped is never done. The sphere 1 answers of a
+slot that did not verify, and of a seed that could not be rebuilt, are thinned the same way, since
+both still come from the multidata.
+
+**`answerFromLogic` carries `hidden` onto the answer**, a nothing-left answer included, and only
+when the worker sent it. It also drops from the stars and from `hintedLocked` any hint whose
+receiver is done (`goesNowhere`, the worker's rule applied to the hint's public
+`receiving_player`), and only when the worker applied the setting, so a location still listed keeps
+its star.
+
+**The footer counts what was left out**, summed over every slot still in play:
+`Nothing here says what is in them. 1,207 left out because their items go to slots that have goaled
+or released.` A slot whose remaining checks all went reads `nothing left to check`. Sphere data
+files have no placements (`archipelagoSpheres.js` drops the item column unread), so an answer from
+them carries no `hidden`. Such an answer comes when the worker cannot start, or for the rest of a
+command whose worker dies or stalls mid-question (see "The sphere 1 fallback"). For somebody with
+the setting on, the footer then says
+`Nothing was left out for slots that have finished: that needs this seed loaded from the Archipelago install.`
+A sphere 1 answer from the worker itself, for a seed it could not rebuild, carries its count as
+usual.
+
+`test/archipelagoLogicHide.test.js` runs the real `ap-logic-worker.py` against a stand-in install
+(an empty `python313.dll` and two small `Utils` and `settings` modules) and a multidata the test
+writes, so the field names are checked across both languages. The rebuilt-logic path needs
+Archipelago itself and is driven through `Logic.answer` with stand-in locations instead.
+`test/archipelagoNextHideRoom.test.js` runs a real room watch: the command's `hideFinished`
+reaching the worker through `suggestNextAll`, and a real `Release` packet surviving a fresh boot.
 
 #### Pages for one slot
 
@@ -1371,8 +1457,9 @@ precollected items itself. **Only events are swept**, every slot's (locations wi
 every other location now holds its real item, and sweeping those would hand out everything
 reachable as if it had been checked. The answer is every unchecked location of the slot that the
 state can reach, each as `[id, sphere, name]`, the name from the data package inside the
-multidata. A state that cannot be built answers every slot asked about from sphere 1, with the
-error as the reason.
+multidata. A request carrying `finished` first drops the locations whose items go to those slots
+(see "Leaving out what goes to finished slots"). A state that cannot be built answers every slot
+asked about from sphere 1, with the error as the reason.
 
 **Worlds print freely while they import**, so the worker points file descriptor 1 at stderr before
 importing anything and keeps a duplicate of the real stdout for the protocol alone: JSON lines,
@@ -1749,7 +1836,7 @@ columns are dropped where they are read rather than carried around and filtered 
 
 | File | Role |
 | ---- | ---- |
-| `commands/archipelago.js` | `!ap` / `/ap` (alias `!archipelago`). Subcommands: `watch`, `list`, `status`, `unwatch`, `filter`, `progression`, `skipgoaled`, `infer`, `color`, `markers`, `claim`, `unclaim`, `claims`, `pings`, `hintpings`, `next`, `hints`, `goals`, `leaderboard`, `password`, `retry`, `catchup`. Open to everyone: the read-only `list`, `status`, `claims`, `goals`, `leaderboard`, `next` (it answers only for the caller's own claims) and `hints`, and `claim`, `unclaim`, `pings` and `hintpings` acting on the caller's own slot. Everything else is owner-only when `config.ownerId` is set. |
+| `commands/archipelago.js` | `!ap` / `/ap` (alias `!archipelago`). Subcommands: `watch`, `list`, `status`, `unwatch`, `filter`, `progression`, `skipgoaled`, `infer`, `color`, `markers`, `claim`, `unclaim`, `claims`, `pings`, `hintpings`, `next`, `nexthide`, `hints`, `goals`, `leaderboard`, `password`, `retry`, `catchup`. Open to everyone: the read-only `list`, `status`, `claims`, `goals`, `leaderboard`, `next` (it answers only for the caller's own claims) and `hints`, `claim`, `unclaim`, `pings` and `hintpings` acting on the caller's own slot, and `nexthide`, which only ever sets the caller's own. Everything else is owner-only when `config.ownerId` is set. |
 | `helpers/archipelagoClient.js` | Socket, handshake, reconnect, `PrintJSON` rendering, slot name lookups. |
 | `helpers/archipelagoMonitor.js` | Watch store, batching, the per-watch serial pipeline, Discord relay, catch-up runs and their scheduling, status notices, ping policy. |
 | `helpers/archipelagoCatchup.js` | What each watch has posted, per watch and seed, and the pure diff and render that rebuilds missed lines from a tracker read. |
@@ -1759,6 +1846,8 @@ columns are dropped where they are read rather than carried around and filtered 
 | `helpers/archipelagoData.js` | Data package disk cache. |
 | `helpers/archipelagoLogic.js` | Locates, starts, talks to and stops the logic worker behind `!ap next`, and keeps the bot's copy of each seed it can rebuild. |
 | `helpers/archipelagoNextButtons.js` | The ◀ ▶ page buttons on a one-slot `!ap next` reply, and the pages they turn. |
+| `helpers/archipelagoNextPrefs.js` | Each person's own `!ap next` settings (`!ap nexthide`). |
+| `helpers/archipelagoReleases.js` | The releases each watch heard, per seed, kept across restarts. |
 | `helpers/archipelagoSpheres.js` | Sphere data and the sphere 1 fallback. |
 | `scripts/ap-logic-worker.py` | Rebuilds a seed's logic from the Archipelago install that generated it, from the bot's copy of its yamls, and answers what is in logic. Started by the bot, on the install's own Python version; writes nothing into the install. |
 | `scripts/extract-spheres.py` | Run by hand: lifts a multidata's sphere table into `data/archipelago/spheres/<seed_name>.json` for the fallback. Needed only when the logic worker cannot run; `!ap next` then prints the command with the paths filled in. |
@@ -1768,6 +1857,8 @@ columns are dropped where they are read rather than carried around and filtered 
 | `data/archipelago_goals.json` | Lifetime goal tally per Discord user id. Gitignored. Overridable with `PLEXBOT_AP_GOALS_FILE`. |
 | `data/archipelago_roles.json` | Ids of the roles the bot created, per guild. Deleting it orphans those roles rather than breaking anything: the bot makes fresh ones and stops managing the old. Overridable with `PLEXBOT_AP_ROLES_FILE`. |
 | `data/archipelago_catchup.json` | Per `<watchId>::<seed>`: the item, goal and hint keys already posted or filtered, when the baseline was taken, the last successful post, and the finished slots at that moment. Gitignored. Deleting it costs one silent baseline per watch on the next catch-up, and anything missed before that is not posted. Records for a watch are dropped when it is unwatched, and a new seed on the same watch replaces the old one's. Overridable with `PLEXBOT_AP_CATCHUP_FILE`. |
+| `data/archipelago_next.json` | Per Discord user id, that person's `!ap next` settings: `{ "hideFinished": true }`. Gitignored. Deleting it turns `!ap nexthide` back off for everybody. Overridable with `PLEXBOT_AP_NEXT_FILE`, required under the test runner on the same terms as the watch file. |
+| `data/archipelago_releases.json` | Per `<watchId>::<seed>`, the slot numbers that watch heard released, which the server keeps no record of. Durable, with an hourly `.bak`, both gitignored. Deleting it forgets every release heard so far: `!ap nexthide` lists those slots' checks again and `resolveSlot` calls them finished rather than released, for the rest of their seeds. A watch's lists are dropped when it is unwatched. Overridable with `PLEXBOT_AP_RELEASES_FILE`, required under the test runner on the same terms as the watch file. |
 
 ---
 

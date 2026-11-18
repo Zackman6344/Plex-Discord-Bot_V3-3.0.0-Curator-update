@@ -28,7 +28,9 @@ function useTempStores(prefix) {
         goals: file('goals'),
         roles: file('roles'),
         hints: file('hints'),
-        catchup: file('catchup')
+        catchup: file('catchup'),
+        next: file('next'),
+        releases: file('releases')
     };
     process.env.PLEXBOT_AP_CLAIMS_FILE = paths.claims;
     process.env.PLEXBOT_AP_WATCHES_FILE = paths.watches;
@@ -36,12 +38,17 @@ function useTempStores(prefix) {
     process.env.PLEXBOT_AP_ROLES_FILE = paths.roles;
     process.env.PLEXBOT_AP_HINTS_FILE = paths.hints;
     process.env.PLEXBOT_AP_CATCHUP_FILE = paths.catchup;
+    process.env.PLEXBOT_AP_NEXT_FILE = paths.next;
+    process.env.PLEXBOT_AP_RELEASES_FILE = paths.releases;
 
     return {
         paths,
         cleanup() {
+            // The releases store is durable, so it also leaves an hourly `.bak` beside its file.
             for (const p of Object.values(paths)) {
-                try { fs.unlinkSync(p); } catch (_) {}
+                for (const f of [p, `${p}.bak`]) {
+                    try { fs.unlinkSync(f); } catch (_) {}
+                }
             }
         }
     };

@@ -304,8 +304,9 @@ class ArchipelagoClient extends EventEmitter {
         // connect, because a watch outlives its socket and a hosted room restarts often.
         this.goaled = new Set();
         // Releases are only ever announced, never stored anywhere readable, so this set is
-        // built from what the socket hears and deliberately survives a reconnect. A release
-        // seen before the bot first connected is invisible; a goal is not.
+        // built from what the socket hears and deliberately survives a reconnect. The monitor
+        // also puts back the ones heard before a restart, from data/archipelago_releases.json
+        // (restoreReleases). A release announced while the bot was down is invisible; a goal is not.
         this.released = new Set();
         // Every hint in the multiworld, keyed "team:findingPlayer:location". The server stores a
         // hint under both the finder's and the receiver's slot, so reading all slots returns each
@@ -746,7 +747,12 @@ class ArchipelagoClient extends EventEmitter {
         this.pendingChecksums = packet.datapackage_checksums || {};
         // Assigned unconditionally. Keeping the previous value when a server sends none let a
         // re-pointed watch carry the old multiworld's goal key into a different room.
-        this.seedName = packet.seed_name ? String(packet.seed_name) : null;
+        const seedName = packet.seed_name ? String(packet.seed_name) : null;
+        // Releases survive a reconnect on purpose, but they belong to one multiworld. A server at
+        // the same address that came back on another seed would otherwise inherit the old one's,
+        // and the monitor would keep them as the new seed's (archipelagoReleases.js).
+        if (this.seedName && seedName !== this.seedName) this.released.clear();
+        this.seedName = seedName;
 
         if (this.wantsDataPackages()) {
             const missing = [];

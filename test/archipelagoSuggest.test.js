@@ -1624,3 +1624,119 @@ test('a logic answer and a sphere 1 answer order by sphere, not by where they ca
     assert.deepStrictEqual([dave.mode, word.mode], ['logic', 'sphere1']);
     assert.deepStrictEqual(monitor.orderBySoonest([dave, word]).map(r => r.slot), ['ZackWord', 'DaveSMetroid']);
 });
+
+// --- leaving out what goes to finished slots (`!ap nexthide`) ------------------------------------
+//
+// The one part of `!ap next` that turns on what a location holds, and only for somebody who asked.
+// The worker does the leaving out, since only it knows where items are, and the real one is run in
+// archipelagoLogicHide.test.js. What is tested here is which slots it is told about, what an answer
+// makes of its count, and that the hints, whose receivers the room shows anyway, are thinned to match.
+
+/** A logicPrep whose worker also keeps the options each request came with. */
+function hidingPrep(checked, received, reply, over) {
+    const p = logicPrep(checked, received, reply, over);
+    const options = [];
+    const inLogic = p.worker.inLogic;
+    p.worker.inLogic = async (queries, items, opts) => {
+        options.push(opts);
+        return inLogic(queries, items);
+    };
+    p.options = options;
+    return p;
+}
+
+test('goaled and released slots on the client\'s team are done with, and a fully checked one is not', () => {
+    // 100% checked may still be waiting on one item out of somebody else's world, and that item's
+    // location is the check that matters most to it.
+    const client = {
+        team: 0,
+        goaled: new Set(['0:4', '1:7']),
+        released: new Set(['0:9']),
+        fullyChecked: new Set(['0:28'])
+    };
+    assert.deepStrictEqual([...monitor.goaledOrReleased(client)].sort((a, b) => a - b), [4, 9]);
+    client.team = 1;
+    assert.deepStrictEqual([...monitor.goaledOrReleased(client)], [7]);
+    assert.deepStrictEqual([...monitor.goaledOrReleased({ team: 0 })], [], 'a client that has read nothing yet');
+});
+
+test('the worker is told the done slots only for somebody who asked, in order, an empty list included', async () => {
+    const p = hidingPrep({}, {});
+    p.client.goaled = new Set(['0:28', '0:3']);
+    p.client.released = new Set(['0:11', '1:5']);
+    await monitor.answerAll(p, ['DaveSMetroid']);
+    await monitor.answerAll(p, ['DaveSMetroid'], undefined, { hideFinished: true });
+    p.client.goaled = new Set();
+    p.client.released = new Set();
+    await monitor.answerAll(p, ['DaveSMetroid'], undefined, { hideFinished: true });
+    assert.deepStrictEqual(p.options, [{}, { finished: [3, 11, 28] }, { finished: [] }]);
+});
+
+test('an answer carries the worker\'s count of what it left out, and so does nothing-left', () => {
+    const out = fromLogic({ slot: 4, verified: true, locations: [[82001, 1]], open: 3, hidden: 2 });
+    assert.strictEqual(out.hidden, 2);
+    assert.strictEqual(out.open, 3);
+    // Everything still unchecked went to somebody who is done: nothing left, and the count says why.
+    assert.deepStrictEqual(fromLogic({ slot: 4, verified: true, locations: [], open: 0, hidden: 5 }),
+        { ok: false, reason: 'nothing-left', slot: 'DaveSMetroid', hidden: 5 });
+    assert.ok(!('hidden' in fromLogic({ slot: 4, verified: true, locations: [[82001, 1]], open: 3 })),
+        'no count unless the worker sent one');
+    assert.ok(!('hidden' in fromLogic({ slot: 4, verified: true, locations: [], open: 0 })));
+});
+
+test('a hint whose receiver is done loses its star and is not counted as still locked', () => {
+    // Ridley was hinted for ZackWord, who has since goaled. X-Ray Scope's item goes to group 50, and
+    // one of its members is still playing. Morphing Ball's goes to group 51, whose members are both
+    // done. The worker left out Ridley and Morphing Ball.
+    const client = hinting([
+        hint({ location: 82002, receiving_player: 28 }),
+        hint({ location: 82001, receiving_player: 50 }),
+        hint({ location: 82003, receiving_player: 51 })
+    ]);
+    client.slotSet = (slot) => ({ 50: new Set([28, 4]), 51: new Set([28, 9]) }[slot] || new Set([Number(slot)]));
+    const done = new Set([28, 9]);
+    const resolved = monitor.resolveSlot(client, 'DaveSMetroid');
+
+    const out = monitor.answerFromLogic(client, resolved,
+        { slot: 4, verified: true, locations: [[82000, 1], [82001, 1]], open: 2, hidden: 2 }, { done });
+    assert.deepStrictEqual(out.hinted, [{ name: 'X-Ray Scope', sphere: 1 }]);
+    assert.strictEqual(out.hintedLocked, 0, 'nobody is waiting on what goes to a finished slot');
+
+    // A worker that did not do it sent no count. Its list still has Ridley, which keeps its star.
+    const ignored = monitor.answerFromLogic(client, resolved,
+        { slot: 4, verified: true, locations: [[82000, 1], [82001, 1], [82002, 2]], open: 4 }, { done });
+    assert.deepStrictEqual(ignored.hinted.map(h => h.name).sort(), ['Ridley', 'X-Ray Scope']);
+    assert.strictEqual(ignored.hintedLocked, 1);
+});
+
+test('a hint for a group with no members left keeps its star', () => {
+    // link_items drops every member with nothing to share, and an empty group is never done.
+    const client = hinting([hint({ location: 82001, receiving_player: 60 })]);
+    client.slotSet = (slot) => (Number(slot) === 60 ? new Set() : new Set([Number(slot)]));
+    const out = monitor.answerFromLogic(client, monitor.resolveSlot(client, 'DaveSMetroid'),
+        { slot: 4, verified: true, locations: [[82001, 1]], open: 1, hidden: 0 }, { done: new Set([28]) });
+    assert.deepStrictEqual(out.hinted, [{ name: 'X-Ray Scope', sphere: 1 }]);
+});
+
+test('every answer off the worker carries its count, through answerAll', async () => {
+    const replies = {
+        4: { verified: true, locations: [[82001, 1]], open: 2, hidden: 3 },
+        28: { verified: true, locations: [], open: 0, hidden: 1 }
+    };
+    const p = hidingPrep({}, {}, q => ({ slot: q.slot, ...replies[q.slot] }));
+    p.client.goaled = new Set(['0:9']);
+    const out = await monitor.answerAll(p, ['DaveSMetroid', 'ZackWord'], undefined, { hideFinished: true });
+    assert.deepStrictEqual(out.results.map(r => [r.slot, r.ok, r.hidden]),
+        [['DaveSMetroid', true, 3], ['ZackWord', false, 1]]);
+});
+
+test('an answer from sphere data alone leaves nothing out, and carries no count to say otherwise', async () => {
+    // Only the worker knows where items are. The reply reads the missing count as "could not".
+    const p = prep({ '0:4': [82000] });
+    p.logic = { ok: false, reason: 'no-install' };
+    p.client.goaled = new Set(['0:28']);
+    const out = await monitor.answerAll(p, ['DaveSMetroid'], undefined, { hideFinished: true });
+    assert.strictEqual(out.results[0].mode, 'sphere1');
+    assert.deepStrictEqual(out.results[0].locations, ['X-Ray Scope']);
+    assert.ok(!('hidden' in out.results[0]));
+});

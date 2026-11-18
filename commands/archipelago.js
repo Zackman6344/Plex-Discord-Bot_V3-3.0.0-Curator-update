@@ -14,6 +14,7 @@ const claims = require('../helpers/archipelagoClaims.js');
 const goals = require('../helpers/archipelagoGoals.js');
 const leaderboard = require('../helpers/leaderboard.js');
 const nextPages = require('../helpers/archipelagoNextButtons.js');
+const nextPrefs = require('../helpers/archipelagoNextPrefs.js');
 const apLogic = require('../helpers/archipelagoLogic.js');
 
 const BOT_ROOT = path.join(__dirname, '..');
@@ -319,6 +320,9 @@ module.exports = {
                     { name: 'slot', type: 'STRING', required: false, description: 'One of your claimed slots (defaults to all of them)' },
                     { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
                 ] },
+                { name: 'nexthide', description: 'Have your /ap next leave out checks whose items go to slots that goaled or released', options: [
+                    { name: 'enabled', type: 'BOOLEAN', required: false, description: 'Leave them out? Empty shows what yours is set to' }
+                ] },
                 { name: 'hints', description: 'Outstanding hints nobody has collected yet', options: [
                     { name: 'slot', type: 'STRING', required: false, description: 'Only hints involving this slot' },
                     { name: 'id', type: 'INTEGER', required: false, description: WATCH_ID_HELP }
@@ -442,6 +446,7 @@ module.exports = {
                     `\`${prefix}ap claims [id]\` — who has claimed what.`,
                     `\`${prefix}ap pings [id] <slot name> <${claims.PING_MODES.join('|')}>\` — how much a claimed slot pings you.`,
                     `\`${prefix}ap next [id] [slot]\` — the unchecked locations in logic for your claimed slots, all of them unless you name one.`,
+                    `\`${prefix}ap nexthide [on|off]\` — have your own \`${prefix}ap next\` leave out checks whose items go to slots that have goaled or released. Off until you turn it on.`,
                     `\`${prefix}ap hints [id] [slot]\` — hints nobody has collected yet, priority ones first.`,
                     `\`${prefix}ap hintpings [id] <slot name> <${claims.HINT_PING_MODES.join('|')}>\` — be told when someone wants an item out of your world. Starts off.`,
                     `\`${prefix}ap goals [@user]\` — multiworlds goaled. Releases don't count.`,
@@ -472,7 +477,7 @@ module.exports = {
             // Claims and their ping settings are what players manage for themselves. Gating them
             // behind the owner would mean the owner hand-registering everyone in a 29-slot async.
             // Acting on someone else's claim is still owner-only, checked per action below.
-            const selfService = ['claim', 'unclaim', 'pings', 'hintpings'].includes(action);
+            const selfService = ['claim', 'unclaim', 'pings', 'hintpings', 'nexthide'].includes(action);
             if (!readOnly && !selfService && !isOwner(msg)) {
                 return say('🔒 Only the bot owner can change Archipelago watches.');
             }
@@ -838,7 +843,8 @@ module.exports = {
                     const onWait = () => (status && status.edit
                         ? status.edit('🧭 Loading this seed\'s logic from the Archipelago install. About half a minute…').catch(() => {})
                         : null);
-                    const outcome = await monitor.suggestNextAll(id, wanted, { onWait });
+                    const hideFinished = nextPrefs.hidesFinished(callerId);
+                    const outcome = await monitor.suggestNextAll(id, wanted, { onWait, hideFinished });
                     // Text, or a payload with the page buttons. Mentions are off either way, as for say().
                     const reply = (payload) => {
                         const body = typeof payload === 'string'
@@ -1052,8 +1058,19 @@ module.exports = {
                     const lead = live.some(r => r.ok && r.mode === 'logic')
                         ? 'In logic with the items each slot has received, by the seed\'s own rules; earliest sphere first. '
                         : '';
+                    // Only for someone who asked for it (`!ap nexthide`). The count says why a list came
+                    // up shorter than the room tracker suggests. An answer from sphere data files, used
+                    // when the seed could not be loaded or its worker failed mid-question, cannot see
+                    // where items are, and says it left nothing out rather than looking like one that
+                    // had nothing to leave out.
+                    const leftOut = live.reduce((n, r) => n + (Number.isFinite(r.hidden) ? r.hidden : 0), 0);
+                    const couldNotHide = hideFinished && live.some(r => (r.ok || r.reason === 'nothing-left') && !Number.isFinite(r.hidden));
+                    const leftOutNote = (leftOut > 0
+                        ? ` ${count(leftOut)} left out because their items go to slots that have goaled or released.`
+                        : '')
+                        + (couldNotHide ? ' Nothing was left out for slots that have finished: that needs this seed loaded from the Archipelago install.' : '');
                     // Said only on a message that shows a ⭐, which a slot cut for length may not.
-                    const footerFor = (body) => `_${lead}Nothing here says what is in them.`
+                    const footerFor = (body) => `_${lead}Nothing here says what is in them.${leftOutNote}`
                         + `${String(body).includes('⭐') ? ' ⭐ marks a location somebody has hinted.' : ''}${fallbackNote}${skipped}${idleNote}_`;
 
                     // 2000 characters is a hard limit and an oversized send is rejected outright.
@@ -1079,6 +1096,35 @@ module.exports = {
                     }
                     if (kept.length < ordered.length) kept.push(`…and ${ordered.length - kept.length} more slot(s).`);
                     return reply(message(kept.join('\n\n')));
+                }
+
+                if (action === 'nexthide') {
+                    if (!callerId) return say('I could not work out who that setting is for.');
+                    // Yours across every room, so a watch id means nothing here. A leading integer is
+                    // still read as one, as everywhere else: '1' and '0' are switch words too, and
+                    // `!ap nexthide 1`, typed out of habit, would otherwise turn it on. The switch is
+                    // the one word after any id, so a line with anything more says how to use it.
+                    const rawToggle = opt('enabled');
+                    const given = words.slice(argBase);
+                    const word = given.length === 1 ? given[0] : '';
+                    const toggle = rawToggle !== null ? !!rawToggle
+                        : truthy(word) ? true
+                        : falsy(word) ? false
+                        : null;
+                    const which = 'checks whose items go to slots that have goaled or released';
+                    if (toggle === null) {
+                        const usage = given.length > 0 && !interaction ? `Usage: \`${prefix}ap nexthide <on|off>\`\n` : '';
+                        return say(usage + (nextPrefs.hidesFinished(callerId)
+                            ? `🧭 Your \`${prefix}ap next\` leaves out ${which}. \`${prefix}ap nexthide off\` lists them again.`
+                            : `🧭 Your \`${prefix}ap next\` lists every check, whoever its item is for. \`${prefix}ap nexthide on\` leaves out ${which}.`));
+                    }
+                    nextPrefs.setHideFinished(callerId, toggle);
+                    // Said once, here: a check it leaves out is one whose item is for somebody who has
+                    // finished, which is more than the list otherwise says about any check.
+                    return say(toggle
+                        ? `✅ Your \`${prefix}ap next\` now leaves out ${which}, and counts them at the end. Only yours changes. ` +
+                          'Leaving a check out does tell you its item is for somebody who has finished.'
+                        : `✅ Your \`${prefix}ap next\` lists every check again, whoever its item is for.`);
                 }
 
                 if (action === 'hintpings') {
