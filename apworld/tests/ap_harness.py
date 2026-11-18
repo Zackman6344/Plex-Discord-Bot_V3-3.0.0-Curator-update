@@ -1,7 +1,7 @@
 # apworld/tests/ap_harness.py
 # Loads the owner's frozen Archipelago 0.6.8 into this Python, read-only, with only the worlds a test needs.
 #
-# frozen_python_minor() and bootstrap() are copies of scripts/ap-logic-worker.py L135-231 (keep them in
+# frozen_python_minor() and bootstrap() are copies of scripts/ap-logic-worker.py L143-239 (keep them in
 # step): the install is a cx_Freeze build, so its modules load only into Python 3.13 run with
 # -O -s -S -B, and only once its startup steps are repeated; an audit hook refuses every write inside
 # the install. load() then points Utils.user_path at a temp root: its worlds/ folder stands in for

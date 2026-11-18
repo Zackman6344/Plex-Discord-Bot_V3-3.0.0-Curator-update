@@ -21,8 +21,9 @@
 //
 // An inLogic answer is built from its query and its own slot's entry in the request's received
 // map. It carries the query back as `echo` and the whole map as `echoReceived`, so a test can tell
-// whose answer it got and see exactly what the worker was sent. A query may carry delayMs to hold
-// its reply back, which is how a test gets two requests in flight and answered out of order.
+// whose answer it got and see exactly what the worker was sent, and a request's `finished` list as
+// `echoFinished`, only when the request had one. A query may carry delayMs to hold its reply back,
+// which is how a test gets two requests in flight and answered out of order.
 //
 // FAKE_LOGIC_WORKER_SPAWNS names a file each start appends its pid to: the only way to count the
 // processes acquire() started, and to make sure every one of them is gone before the next test.
@@ -92,7 +93,7 @@ function ready() {
     serve();
 }
 
-function answer(query, received) {
+function answer(query, received, finished) {
     const own = received[String(query.slot)] || [];
     const checked = query.checked || [];
     const id = query.slot * 1000 + own.length;
@@ -103,7 +104,8 @@ function answer(query, received) {
         open: checked.length,
         ...(rebuildFailed ? { reason: REBUILD_ERROR } : {}),
         echo: query,
-        echoReceived: received
+        echoReceived: received,
+        ...(finished !== undefined ? { echoFinished: finished } : {})
     };
 }
 
@@ -131,7 +133,7 @@ function serve() {
             const queries = request.slots || [];
             const received = request.received || {};
             const delay = Math.max(0, ...queries.map(q => Number(q.delayMs) || 0));
-            setTimeout(() => send({ id: request.id, ok: true, results: queries.map(q => answer(q, received)) }), delay);
+            setTimeout(() => send({ id: request.id, ok: true, results: queries.map(q => answer(q, received, request.finished)) }), delay);
         } else {
             send({ id: request.id, ok: false, error: `unknown op '${request.op}'` });
         }

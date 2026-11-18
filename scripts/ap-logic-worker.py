@@ -47,16 +47,24 @@ the protocol keeps a duplicate of the real one to itself.
             "rebuildError": str|null, "injected": {...}|null, ...}
   event    {"event": "fatal", "error": str}                        (then exit 1)
   request  {"id": n, "op": "inLogic", "received": {slot: [[item, location, flags], ...]},
-            "slots": [{"slot": int, "checked": [location, ...]}, ...]}
+            "slots": [{"slot": int, "checked": [location, ...]}, ...], "finished"?: [slot, ...]}
   reply    {"id": n, "ok": true, "results": [{"slot": int, "verified": bool, "locations":
-            [[location, sphere|null, name|null], ...], "open": int, "reason"?: str}
-            | {"slot": int, "error": str}]}
+            [[location, sphere|null, name|null], ...], "open": int, "hidden"?: int,
+            "reason"?: str} | {"slot": int, "error": str}]}
   request  {"id": n, "op": "ping"}  ->  {"id": n, "ok": true}
 
 `received` holds every slot's NetworkItems from the room tracker, less the finder, whichever slots
 are asked about. `locations` is every unchecked location in logic when `verified`, and the
 unchecked sphere 1 locations when not. `open` counts every unchecked location either way. Names
 come from the data package inside the multidata.
+
+`finished` names the slots that have goaled or released, and comes only from somebody who asked
+`!ap next` to leave out what nobody can use any more. An unchecked location whose item goes to one
+of them, or to an item-link group whose members are all among them, is then left out of
+`locations` and `open` alike, and `hidden` counts it. It is the one answer here that depends on
+what a location holds, so a request without the field is answered exactly as before, with no
+`hidden` at all. Logic is judged the same either way: a left-out location's item still sits there
+for any rule that reads it.
 
 Usage
 -----
@@ -457,6 +465,8 @@ class Logic:
         # The seed's own location ids per slot, which answers that do not come from the rebuild
         # are built from, so a slot the rebuild got wrong is still answered about its real world.
         self.seed_locations = {int(p): set(ids) for p, ids in multidata["locations"].items()}
+        self.receivers = {int(p): {int(address): int(entry[1]) for address, entry in table.items()}
+                          for p, table in multidata["locations"].items()}
         self.members = {}
         self.games = {}
         for slot, info in (multidata.get("slot_info") or {}).items():
@@ -636,18 +646,34 @@ class Logic:
             return None
         return index
 
-    def answer(self, query, state, fallback_reason):
+    def going_nowhere(self, player, unchecked, finished):
+        """The unchecked locations whose item goes to a slot in `finished`, or to an item-link group
+        whose members are all in it. The group's own number is never in it, since a group cannot
+        goal or release, so a group whose members link_items dropped keeps its locations."""
+        receivers = self.receivers.get(player, {})
+
+        def done(receiver):
+            if receiver is None:
+                return False
+            return all(int(member) in finished for member in self.members.get(receiver, [receiver]))
+
+        return {address for address in unchecked if done(receivers.get(address))}
+
+    def answer(self, query, state, fallback_reason, finished=None):
         player = int(query["slot"])
         if player not in self.seed_locations:
             return {"slot": player, "error": "not a slot in this multiworld"}
         checked = set(int(c) for c in query.get("checked") or ())
         unchecked = self.seed_locations[player] - checked
+        hidden = self.going_nowhere(player, unchecked, finished) if finished is not None else set()
+        unchecked -= hidden
         ok, reason = self.verified.get(player, (False, fallback_reason))
         if ok and state is None:
             ok, reason = False, fallback_reason
         if ok:
             try:
-                ids = {l.address for l in self.addressed[player] if l.address not in checked and l.can_reach(state)}
+                ids = {l.address for l in self.addressed[player]
+                       if l.address not in checked and l.address not in hidden and l.can_reach(state)}
             except Exception as err:
                 print(f"P{player} evaluation failed: {err!r}", file=sys.stderr)
                 ok, reason = False, f"evaluation failed: {err!r}"[:300]
@@ -661,6 +687,8 @@ class Logic:
                                 key=lambda entry: (entry[1] or 1 << 30, entry[0])),
             "open": len(unchecked),
         }
+        if finished is not None:
+            result["hidden"] = len(hidden)
         if not ok:
             result["reason"] = reason
         return result
@@ -671,6 +699,9 @@ class Logic:
         received = request.get("received")
         if received is None:
             received = {str(q.get("slot")): q.get("received") or () for q in queries}
+        finished = request.get("finished")
+        if finished is not None:
+            finished = {int(slot) for slot in finished}
         state, reason = None, unavailable
         if self.multiworld is not None and any(self.verified.get(int(q["slot"]), (False,))[0] for q in queries):
             try:
@@ -681,7 +712,7 @@ class Logic:
         results = []
         for query in queries:
             try:
-                results.append(self.answer(query, state, reason))
+                results.append(self.answer(query, state, reason, finished))
             except Exception as err:
                 results.append({"slot": query.get("slot"), "error": f"{err!r}"[:300]})
         return results

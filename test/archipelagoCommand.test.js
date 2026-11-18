@@ -1493,3 +1493,188 @@ test('!ap help lists catchup and every message fits Discord\'s limit', async () 
     }
     assert.match(said(msg), /ap catchup \[id\]/);
 });
+
+// --- leaving out what goes to finished slots (`!ap nexthide`) ------------------------------------
+//
+// A setting each person makes for their own `!ap next`, and the only thing that has the bot read
+// where items are. Off for everybody until they turn it on. With it on, the reply counts what it
+// left out, and an answer that could not leave anything out says so rather than passing for one that
+// had nothing to leave out.
+
+const nextPrefs = require('../helpers/archipelagoNextPrefs.js');
+
+function freshNextPrefs(t) {
+    const clear = () => {
+        fs.rmSync(nextPrefs.NEXT_FILE, { force: true });
+        fs.rmSync(`${nextPrefs.NEXT_FILE}.tmp`, { recursive: true, force: true });
+        nextPrefs.reset();
+    };
+    clear();
+    t.after(clear);
+}
+
+const LEFT_OUT = 'left out because their items go to slots that have goaled or released.';
+
+test('!ap nexthide starts off, turns on and off, and says what it is set to', async (t) => {
+    freshNextPrefs(t);
+    assert.strictEqual(said(await run('nexthide')),
+        '🧭 Your `!ap next` lists every check, whoever its item is for. ' +
+        '`!ap nexthide on` leaves out checks whose items go to slots that have goaled or released.');
+
+    const on = await run('nexthide', 'on');
+    assert.strictEqual(said(on),
+        '✅ Your `!ap next` now leaves out checks whose items go to slots that have goaled or released, ' +
+        'and counts them at the end. Only yours changes. ' +
+        'Leaving a check out does tell you its item is for somebody who has finished.');
+    assert.deepStrictEqual(on.sent[0].allowedMentions, { parse: [] });
+    assert.strictEqual(nextPrefs.hidesFinished(ZACK), true);
+    assert.strictEqual(said(await run('nexthide')),
+        '🧭 Your `!ap next` leaves out checks whose items go to slots that have goaled or released. ' +
+        '`!ap nexthide off` lists them again.');
+
+    assert.strictEqual(said(await run('nexthide', 'off')),
+        '✅ Your `!ap next` lists every check again, whoever its item is for.');
+    assert.strictEqual(nextPrefs.hidesFinished(ZACK), false);
+});
+
+test('!ap nexthide takes a leading integer as a watch id, so no id ever works the switch', async (t) => {
+    // The setting has no watch, and '1' and '0' are switch words. Read as the switch, a habitual
+    // `!ap nexthide 1` turned the setting on for somebody who only asked what it was.
+    freshNextPrefs(t);
+    const lone = await run('nexthide', '1');
+    assert.strictEqual(nextPrefs.hidesFinished(ZACK), false);
+    assert.strictEqual(said(lone),
+        '🧭 Your `!ap next` lists every check, whoever its item is for. ' +
+        '`!ap nexthide on` leaves out checks whose items go to slots that have goaled or released.');
+
+    await run('nexthide', '0', 'on');
+    assert.strictEqual(nextPrefs.hidesFinished(ZACK), true);
+    await run('nexthide', '0');
+    assert.strictEqual(nextPrefs.hidesFinished(ZACK), true, 'a lone 0 is watch 0, not "off"');
+    await run('nexthide', '3', 'off');
+    assert.strictEqual(nextPrefs.hidesFinished(ZACK), false);
+    await run('nexthide', '1', '1');
+    assert.strictEqual(nextPrefs.hidesFinished(ZACK), true, 'after an id, 1 is the switch, as for !ap progression');
+
+    for (const words of [['off', '1'], ['on', '0'], ['maybe']]) {
+        const unclear = await run('nexthide', ...words);
+        assert.match(said(unclear), /^Usage: `!ap nexthide <on\|off>`\n🧭 Your `!ap next` leaves out/, words.join(' '));
+        assert.strictEqual(nextPrefs.hidesFinished(ZACK), true, `${words.join(' ')} changed the setting`);
+    }
+});
+
+test('/ap nexthide takes its enabled option, false included, and with none says what it is set to', async (t) => {
+    freshNextPrefs(t);
+    const slash = async (value) => {
+        const msg = fakeMessage();
+        msg.interaction = { options: { get: (name) => (name === 'enabled' && value !== undefined ? { value } : null) } };
+        await ap.command.process(msg, ...['nexthide', ...(value === undefined ? [] : [String(value)])]);
+        return msg;
+    };
+    await slash(true);
+    assert.strictEqual(nextPrefs.hidesFinished(ZACK), true);
+    await slash(false);
+    assert.strictEqual(nextPrefs.hidesFinished(ZACK), false, 'a false option is an answer, not a missing one');
+    const asked = await slash(undefined);
+    assert.match(said(asked), /^🧭 Your `!ap next` lists every check/);
+    assert.ok(!said(asked).includes('Usage'), said(asked));
+});
+
+test('anyone can set their own !ap nexthide, and it changes nobody else\'s', async (t) => {
+    asOwnedBot(t);
+    freshNextPrefs(t);
+    const msg = await runAs(PLAYER, 'nexthide', 'on');
+    assert.ok(!gated(msg), said(msg));
+    assert.strictEqual(nextPrefs.hidesFinished(PLAYER), true);
+    assert.strictEqual(nextPrefs.hidesFinished(OTHER), false);
+    assert.strictEqual(nextPrefs.hidesFinished(OWNER), false);
+});
+
+test('a setting that cannot be saved is refused in the reply, and nothing changes', async (t) => {
+    freshNextPrefs(t);
+    fs.mkdirSync(`${nextPrefs.NEXT_FILE}.tmp`, { recursive: true });
+    const msg = await run('nexthide', 'on');
+    assert.strictEqual(said(msg), '❌ I could not save that setting — the settings file is not writable. Nothing changed.');
+    assert.strictEqual(nextPrefs.hidesFinished(ZACK), false);
+});
+
+test('!ap next asks to leave out finished slots\' checks only for somebody who turned it on', async (t) => {
+    freshNextPrefs(t);
+    await claimAll(['ZackWord']);
+    const off = await askNext(t, answered(inLogic('ZackWord', ['Crate 1'], 3)));
+    assert.strictEqual(off.calls[0].options.hideFinished, false);
+
+    nextPrefs.setHideFinished(ZACK, true);
+    const on = await askNext(t, answered(inLogic('ZackWord', ['Crate 1'], 3)));
+    assert.strictEqual(on.calls[0].options.hideFinished, true);
+    assert.strictEqual(typeof on.calls[0].options.onWait, 'function');
+});
+
+test('!ap next counts what it left out across every slot, nothing-left ones included', async (t) => {
+    freshNextPrefs(t);
+    nextPrefs.setHideFinished(ZACK, true);
+    await claimAll(['ZackWord', 'ZackRisk', 'ZackDone']);
+    const reply = await askNext(t, answered(
+        { ...inLogic('ZackWord', ['Crate 1'], 3), hidden: 2 },
+        { ...inLogic('ZackRisk', ['Barrel 1'], 4), hidden: 1200 },
+        { ok: false, reason: 'nothing-left', slot: 'ZackDone', hidden: 5 }));
+    assert.ok(reply.final.endsWith(`${LEAD}Nothing here says what is in them. 1,207 ${LEFT_OUT} ` +
+        '1 with nothing left to check: `ZackDone`._'), reply.final);
+});
+
+test('!ap next says nothing about leaving out when nothing was', async (t) => {
+    freshNextPrefs(t);
+    nextPrefs.setHideFinished(ZACK, true);
+    await claimAll(['ZackWord']);
+    const reply = await askNext(t, answered({ ...inLogic('ZackWord', ['Crate 1'], 3), hidden: 0 }));
+    assert.ok(reply.final.endsWith(`${LEAD}Nothing here says what is in them._`), reply.final);
+});
+
+test('a slot whose every check goes to finished slots has nothing left to check, and says why', async (t) => {
+    freshNextPrefs(t);
+    nextPrefs.setHideFinished(ZACK, true);
+    await claimAll(['ZackWord']);
+    const reply = await askNext(t, answered({ ok: false, reason: 'nothing-left', slot: 'ZackWord', hidden: 7 }));
+    assert.strictEqual(reply.final,
+        '🧭 **What is in logic**\n**ZackWord** — nothing left to check.\n' +
+        `_Nothing here says what is in them. 7 ${LEFT_OUT}_`);
+});
+
+test('!ap next says when it could not leave anything out, and only to somebody who asked', async (t) => {
+    // Sphere data files cannot see where items are, so their answers carry no count.
+    freshNextPrefs(t);
+    await claimAll(['ZackWord']);
+    const fallback = answered(sphereOne('ZackWord', ['Crate 1'], 4, 'no-install'));
+    const quiet = await askNext(t, fallback);
+    assert.ok(!quiet.final.includes('left out'), quiet.final);
+
+    nextPrefs.setHideFinished(ZACK, true);
+    const asked = await askNext(t, fallback);
+    assert.ok(asked.final.includes('_Nothing here says what is in them. Nothing was left out for slots that have finished: ' +
+        'that needs this seed loaded from the Archipelago install. Sphere 1 only where the seed\'s own logic is unavailable'), asked.final);
+});
+
+test('a sphere 1 answer from a seed that could not be rebuilt still counts what it left out', async (t) => {
+    // The helper still reads the multidata, which knows where every item is, so that answer can
+    // carry a count. Only answers from sphere data files cannot.
+    freshNextPrefs(t);
+    nextPrefs.setHideFinished(ZACK, true);
+    await claimAll(['ZackWord']);
+    const reply = await askNext(t, answered({ ...sphereOne('ZackWord', ['Crate 1'], 4, 'rebuild-failed'), hidden: 3 }));
+    assert.ok(reply.final.includes(`Nothing here says what is in them. 3 ${LEFT_OUT} Sphere 1 only where`), reply.final);
+    assert.ok(!reply.final.includes('Nothing was left out'), reply.final);
+});
+
+test('the /ap nexthide picker sits right under next, with its switch optional', () => {
+    const spec = slashRegistry.buildSpec('ap', ap.command.slash);
+    const names = spec.options.map(o => o.name);
+    assert.strictEqual(names.indexOf('nexthide'), names.indexOf('next') + 1);
+    const hide = spec.options.find(o => o.name === 'nexthide');
+    assert.strictEqual(hide.description, 'Have your /ap next leave out checks whose items go to slots that goaled or released');
+    assert.deepStrictEqual(hide.options.map(o => [o.name, o.type, o.required]), [['enabled', 5, false]]);
+});
+
+test('!ap help lists nexthide right after next', async () => {
+    const msg = await run('help');
+    assert.match(said(msg), /`!ap next \[id\] \[slot\]` — [^\n]*\n`!ap nexthide \[on\|off\]` — have your own `!ap next` leave out checks whose items go to slots that have goaled or released\. Off until you turn it on\./);
+});

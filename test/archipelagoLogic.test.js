@@ -721,6 +721,21 @@ test('inLogic sends every slot\'s received items once for the whole request, bes
     assert.deepStrictEqual(results.map(result => result.echoReceived), [received, received]);
 });
 
+test('inLogic sends the finished slots only when given them, so nobody else\'s request changes', async () => {
+    // The finished list is what makes the worker read where items go (`!ap nexthide`). A request
+    // without it has to be byte for byte the one sent before the setting existed.
+    const worker = startFake('normal');
+    await worker.whenReady(5000);
+    const [plain] = await worker.inLogic([{ slot: 1, checked: [] }], {});
+    assert.ok(!('echoFinished' in plain), 'sent without being asked for');
+    const [unlisted] = await worker.inLogic([{ slot: 1, checked: [] }], {}, { finished: new Set([4]) });
+    assert.ok(!('echoFinished' in unlisted), 'only a list is sent, never something that serialises to {}');
+    const [asked] = await worker.inLogic([{ slot: 1, checked: [] }], {}, { finished: [4, 9] });
+    assert.deepStrictEqual(asked.echoFinished, [4, 9]);
+    const [empty] = await worker.inLogic([{ slot: 1, checked: [] }], {}, { finished: [] });
+    assert.deepStrictEqual(empty.echoFinished, [], 'an empty list is still a request to leave out');
+});
+
 test('a request the worker refuses rejects with the worker\'s own error', async () => {
     const worker = startFake('normal');
     await worker.whenReady(5000);

@@ -27,6 +27,7 @@ const claims = require('./archipelagoClaims.js');
 const goals = require('./archipelagoGoals.js');
 const roles = require('./archipelagoRoles.js');
 const catchup = require('./archipelagoCatchup.js');
+const releases = require('./archipelagoReleases.js');
 const { ArchipelagoClient, parseTarget, stripAnsi, ITEM_FLAG_PROGRESSION, CATEGORY_GROUPS, DEFAULT_PORT } = require('./archipelagoClient.js');
 
 // Overridable so a test run can point at its own file, and so the store can be relocated.
@@ -374,14 +375,19 @@ async function sendIfCurrent(state, content, mentionUsers = null) {
     return send(state, content, mentionUsers);
 }
 
-/** Slots finished on this connection's team, for the record's skip-goaled snapshot. */
-function finishedSlots(client) {
+/** Slot numbers in one of the client's "team:slot" sets that are on this connection's team. */
+function onTeam(client, ids) {
     const prefix = `${client.team}:`;
     const out = new Set();
-    for (const id of [...client.goaled, ...client.released, ...client.fullyChecked]) {
+    for (const id of ids) {
         if (String(id).startsWith(prefix)) out.add(Number(String(id).slice(prefix.length)));
     }
     return out;
+}
+
+/** Slots finished on this connection's team, for the record's skip-goaled snapshot. */
+function finishedSlots(client) {
+    return onTeam(client, [...client.goaled, ...client.released, ...client.fullyChecked]);
 }
 
 /**
@@ -395,6 +401,25 @@ function noteFinished(state) {
     // before it finished.
     if (!seed || state.status !== 'connected' || !isCurrent(state)) return;
     catchup.commit(state.watch.id, seed, [], { finished: finishedSlots(state.client) });
+}
+
+/** Keep a release the moment it is heard (archipelagoReleases.js), on the same terms as noteFinished. */
+function noteRelease(state) {
+    const seed = state.client.seedName;
+    if (!seed || state.status !== 'connected' || !isCurrent(state)) return;
+    releases.note(state.watch.id, seed, onTeam(state.client, state.client.released));
+}
+
+/**
+ * Put back the releases this watch heard on this seed before the bot last stopped. The server keeps
+ * no record of a release, so a restart used to forget every one: a slot released without a goal then
+ * read as still playing to resolveSlot and to `!ap nexthide`, until the tracker poll marked it fully
+ * checked, which nexthide does not count. A release announced while the bot was down stays unknown.
+ */
+function restoreReleases(state) {
+    const { client } = state;
+    if (!client.seedName) return;
+    for (const slot of releases.heard(state.watch.id, client.seedName)) client.released.add(`${client.team}:${slot}`);
 }
 
 /**
@@ -654,6 +679,7 @@ function attach(state) {
         // goals category is switched off for this channel.
         if (line.type === 'Goal') syncGoalsAndRoles(state);
         if (line.type === 'Goal' || line.type === 'Release') noteFinished(state);
+        if (line.type === 'Release') noteRelease(state);
 
         const seed = client.seedName || null;
         const key = seed ? lineKey(client, line) : null;
@@ -691,6 +717,7 @@ function attach(state) {
         if (phase === 'connected') {
             state.connectedAt = Date.now();
             snapshotGap(state);
+            restoreReleases(state);
             state.loadingRetries = 0;
             scheduleSettledCatchUp(state, catchupTiming.settleMs);
         }
@@ -1484,6 +1511,7 @@ function syncConfigWatch() {
             releaseLogicFor(existing);
             dropPipeline(CONFIG_WATCH_ID);
             catchup.forgetWatch(CONFIG_WATCH_ID);
+            releases.forgetWatch(CONFIG_WATCH_ID);
             // With no state for id 0, listClaims(0) answers null and `!ap claims` / `!ap unclaim`
             // report "No watch with ID 0", so claims left here would be unreachable from the
             // command surface and would attach to whatever room /config names next.
@@ -1740,6 +1768,7 @@ function removeWatch(id) {
     releaseLogicFor(state);
     dropPipeline(id);
     catchup.forgetWatch(id);
+    releases.forgetWatch(id);
     // Claims are keyed by watch id. Ids are not handed out again, but a watch file moved aside as
     // unreadable starts the count over, and a claim left here would then ping for whichever room
     // takes this id next. The state is already gone, so the role sync borrows this one purely for
@@ -2225,9 +2254,10 @@ function orderBySoonest(results) {
  * A slot that is done has nothing worth pointing at, and is settled here, before any sphere or
  * logic work. `how` is what is actually known, which is not always the outcome. Goal status is
  * read back from data storage, so it survives a restart. A release is only ever seen live, in a
- * PrintJSON that arrives once, and there is no key to re-read it from, so a slot released while
- * the bot was down is indistinguishable from one that goaled without its client ever saying so.
- * Both land as 'complete', and the reply says finished rather than guessing.
+ * PrintJSON that arrives once, and there is no key to re-read it from. The ones the bot heard come
+ * back from archipelagoReleases.js (restoreReleases), but a slot released while the bot was down is
+ * indistinguishable from one that goaled without its client ever saying so. Both land as
+ * 'complete', and the reply says finished rather than guessing.
  */
 function resolveSlot(client, slotName) {
     const slot = client.canonicalSlotName ? client.canonicalSlotName(slotName) : slotName;
@@ -2245,14 +2275,43 @@ function resolveSlot(client, slotName) {
 }
 
 /**
+ * Slot numbers on the client's team that have goaled or released, for `!ap next` to leave out the
+ * checks whose items go to them (`hideFinished`).
+ *
+ * Narrower than hasFinished on purpose. A slot with every location checked may still be waiting on
+ * an item out of somebody else's world, and hiding where that item is would hide the one check that
+ * still matters to it. A release announced while the bot was down is missing here (see
+ * restoreReleases). In a seed whose goals collect automatically, as Archipelago's default does, a
+ * goal has already checked every location holding the slot's items, so the releases are what this
+ * mostly finds.
+ */
+function goaledOrReleased(client) {
+    return onTeam(client, [...(client.goaled || []), ...(client.released || [])]);
+}
+
+/**
+ * Whether an item for this slot is one nobody can use any more: the slot is in `done`, or it is an
+ * item-link group and every one of its members is. The same rule the logic worker applies to
+ * placements (going_nowhere), applied here to hints, whose receiver the room already shows.
+ */
+function goesNowhere(client, receiving, done) {
+    const members = typeof client.slotSet === 'function' ? client.slotSet(receiving) : new Set([Number(receiving)]);
+    return members.size > 0 && [...members].every(slot => done.has(slot));
+}
+
+/**
  * Locations in a slot's world that somebody has hinted and is still waiting on, as a Set of ids.
  * Hints are public in the room already, so marking where one points says nothing new. One the
  * receiver has marked to avoid is nobody's priority and is left out.
+ *
+ * With `done` (see goaledOrReleased), so is one whose receiver is done: nobody is waiting on it any
+ * more, and the worker has left its location out of the answer already.
  */
-function hintedIn(client, slotId) {
+function hintedIn(client, slotId, done = null) {
     if (!client || typeof client.hintsToFindIn !== 'function') return new Set();
     return new Set(client.hintsToFindIn(slotId, client.team)
         .filter(hint => hint.status !== HINT_AVOID)
+        .filter(hint => !done || !goesNowhere(client, hint.receiving_player, done))
         .map(hint => hint.location));
 }
 
@@ -2266,16 +2325,23 @@ function hintedIn(client, slotId) {
  *
  * A name comes from the room's data package, else from the worker's copy of the seed's own, and an
  * id neither knows is kept as an id rather than dropped: the location is real and worth naming badly.
+ *
+ * `hidden` is how many locations the worker left out because their items go to a slot in
+ * `options.done`, and is there only when the worker was asked to and did; `open` and every count
+ * already leave them out. A worker that ignored the request sends no `hidden`, and then the hints
+ * are not thinned either, so a location still listed keeps its star.
  */
-function answerFromLogic(client, resolved, result) {
+function answerFromLogic(client, resolved, result, options = {}) {
     const { slot, slotId } = resolved;
     if (!result || result.error) {
         return { ok: false, reason: result && /not a slot/.test(result.error) ? 'unknown-slot' : 'failed', slot };
     }
-    if (!result.open) return { ok: false, reason: 'nothing-left', slot };
+    const applied = Number.isFinite(result.hidden);
+    const hidden = applied ? { hidden: result.hidden } : {};
+    if (!result.open) return { ok: false, reason: 'nothing-left', slot, ...hidden };
 
     const names = client.locationNames.get(client.slotGames.get(slotId));
-    const hints = hintedIn(client, slotId);
+    const hints = hintedIn(client, slotId, applied ? options.done || null : null);
     const listed = (result.locations || []).map(([id, sphere, workerName]) => ({
         id,
         name: (names && names.get(id)) || workerName || `Location#${id}`,
@@ -2313,6 +2379,7 @@ function answerFromLogic(client, resolved, result) {
         all: [...hinted, ...listed.filter(l => !l.hinted)].map(l => ({ name: l.name, sphere: known(l.sphere), hinted: l.hinted })),
         total: listed.length,
         open: result.open,
+        ...hidden,
         // A rebuild that failed outright fails every slot alike, which is not this slot's fault.
         ...(result.verified ? {} : { why: /^could not rebuild/.test(String(result.reason || '')) ? 'rebuild-failed' : 'unverified' })
     };
@@ -2381,7 +2448,12 @@ function suggestFor(prep, slotName) {
  * puts the seed's own items back to judge rules that look at them (Dungeon Defenders'), and reads
  * the items each slot has RECEIVED, which that player already knows.
  *
- * @param {{onWait?: Function}} [options] passed to prepareSuggest
+ * The one exception is `hideFinished`, which only the person asking can turn on, for their own
+ * answers (`!ap nexthide`): the worker then leaves out every location whose item goes to a slot
+ * that has goaled or released, and each answer counts them in `hidden`. Only the logic worker knows
+ * where items are, so an answer from sphere data alone carries no `hidden`, and leaves nothing out.
+ *
+ * @param {{onWait?: Function, hideFinished?: boolean}} [options] onWait is passed to prepareSuggest
  * @returns {Promise<{ok: boolean, reason?: string, want?: string, results?: Array, logic?: Object}>}
  *   one entry per slot asked about, in the order asked, each carrying its own `ok`; a false `ok`
  *   on the outer object means the read itself failed and there are no entries at all
@@ -2389,7 +2461,7 @@ function suggestFor(prep, slotName) {
 async function suggestNextAll(id, slotNames, options = {}) {
     const prep = await prepareSuggest(id, { ...options, slotNames: slotNames || [] });
     if (!prep.ok) return prep;
-    return answerAll(prep, slotNames || []);
+    return answerAll(prep, slotNames || [], SPHERE_DIRS, { hideFinished: !!options.hideFinished });
 }
 
 /**
@@ -2400,8 +2472,10 @@ async function suggestNextAll(id, slotNames, options = {}) {
  * @param {string[]} names slot names, as asked for
  * @param {{sphereDir: string, spoilerDir: string}} [dirs] where sphere data is looked for if the
  *   worker fails mid-question
+ * @param {{hideFinished?: boolean}} [options] leave out what goes to slots that have goaled or
+ *   released (see suggestNextAll)
  */
-async function answerAll(prep, names, dirs = SPHERE_DIRS) {
+async function answerAll(prep, names, dirs = SPHERE_DIRS, options = {}) {
     if (prep.settled) return { ok: true, logic: prep.logic, results: names.map(name => resolveSlot(prep.client, name)) };
     if (!prep.worker) {
         return { ok: true, logic: prep.logic, results: names.map(name => suggestFor(prep, name)) };
@@ -2421,12 +2495,15 @@ async function answerAll(prep, names, dirs = SPHERE_DIRS) {
         const [team, slot] = String(key).split(':');
         if (Number(team) === Number(client.team)) received[slot] = items.map(item => [item[0], item[1], item[3]]);
     }
+    // Sent even when nobody is done yet: the empty list still asks, and the `hidden: 0` that comes back
+    // is how the reply knows the worker could have left something out.
+    const done = options.hideFinished ? goaledOrReleased(client) : null;
     let answers;
     try {
         answers = await prep.worker.inLogic(asked.map(r => ({
             slot: r.slotId,
             checked: prep.checkedIds.get(`${client.team}:${r.slotId}`) || []
-        })), received);
+        })), received, done ? { finished: [...done].sort((a, b) => a - b) } : {});
     } catch (err) {
         // The worker died or stalled mid-question. Sphere 1 still answers, if there is sphere
         // data to take it from.
@@ -2450,7 +2527,7 @@ async function answerAll(prep, names, dirs = SPHERE_DIRS) {
     return {
         ok: true,
         logic: prep.logic,
-        results: resolved.map(r => (r.ok ? answerFromLogic(client, r, bySlot.get(r.slotId)) : r))
+        results: resolved.map(r => (r.ok ? answerFromLogic(client, r, bySlot.get(r.slotId), { done }) : r))
     };
 }
 
@@ -2605,6 +2682,7 @@ module.exports = {
     answerFromLogic,
     answerAll,
     resolveSlot,
+    goaledOrReleased,
     orderBySoonest,
     describeSpheres,
     ensureSpheres,

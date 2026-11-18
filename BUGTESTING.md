@@ -1153,6 +1153,47 @@ then, so a starred name has only been seen in the unit tests. Leave the five `Za
       slot sphere 1 only. Clear the Python setting: the next `/ap next` says the seed's logic is
       loading, and about 30 s later answers from the logic again. Delete that `.json` afterwards.
 
+**Leaving out what goes to finished slots (`!ap nexthide`)**
+
+Built on 2026-11-17. Unit-tested offline; the real `ap-logic-worker.py` was run against a
+stand-in install and a small hand-made multidata, and a real room watch on the test server carried
+a release through a simulated restart. None of it has met a real seed, the bot or Discord yet.
+
+**A goaled slot shows nothing here.** This seed carries `collect_mode: auto`, so a goal checks
+every location holding that slot's items at once: ZackLL1Crab goaled on 2026-11-18 and left nothing
+to leave out. The steps after the first two need a slot released without a goal, which only the
+host can do in this room, with `/release <slot>` in the room page's command box while the bot is
+running. **A release cannot be undone**: it hands out every item still in that slot's world. Use a
+slot nobody will play again, or a throwaway seed generated here. This seed has no item-link
+groups, so the group rule is covered by the tests alone.
+
+- [ ] `/ap nexthide` with nothing given: "🧭 Your `!ap next` lists every check, whoever its item is
+      for. `!ap nexthide on` leaves out checks whose items go to slots that have goaled or
+      released." `!ap nexthide 1` gives the same reply and changes nothing.
+- [ ] `/ap nexthide enabled: True`: "✅ Your `!ap next` now leaves out ...", and `/ap nexthide`
+      now says yours leaves them out. `data\archipelago_next.json` in the bot's folder holds your
+      Discord user id with `"hideFinished": true`, and nobody else's.
+- [ ] Release a slot that has not goaled, as above. The channel gets its "has released all
+      remaining items from their world" line, unless goal lines are filtered out there.
+- [ ] `/ap next slot: <one of your slots holding the released slot's items>` with it off, then
+      on. With it on, the footer has "N left out because their items go to slots that have goaled
+      or released.", and the slot's counts (in logic, each later sphere, still locked) add up to N
+      fewer than with it off. A slot holding none of its items says nothing about leaving out.
+- [ ] Every location the on-answer drops holds an item for the released slot: spot-check two in
+      `AP_<seed>_Spoiler.txt` inside the output zip.
+- [ ] Stop and start the bot. `data\archipelago_releases.json` in the bot's folder has
+      `"0::<seed>": [<the released slot's number>]`, and the next `/ap next` with it on leaves out
+      the same N.
+- [ ] A second account with claimed slots runs `/ap next` while yours is on: its footer has no
+      "left out", and its counts match what it showed before.
+- [ ] A hint in one of your worlds for an item the released slot was waiting on: with it off, the
+      location is starred or counted in `⭐ N hinted still locked`; with it on, it is neither.
+- [ ] In the "When the worker cannot run at all" setup above, with it on: the footer says
+      "Nothing was left out for slots that have finished: that needs this seed loaded from the
+      Archipelago install."
+- [ ] `!ap nexthide off`: "✅ Your `!ap next` lists every check again, whoever its item is for.",
+      and the next `/ap next` matches the off-answer from before.
+
 ## Phase 17: Plex Media world (live)
 
 **Phase 17A, the first-seed rehearsal, comes first.** It is the interactive checklist in

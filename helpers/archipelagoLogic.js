@@ -512,10 +512,15 @@ class LogicWorker {
      * @param {Object<string, Array<[number, number, number]>>} received every slot's NetworkItems
      *   as [item, location, flags], whichever slots are asked about: a rule in one slot's world can
      *   wait on another slot's items, as Dungeon Defenders' rules do
+     * @param {{finished?: number[]}} [options] finished: the slots that have goaled or released.
+     *   Given, every result leaves out the locations whose items go to them and counts them in
+     *   `hidden`; left out, the request is the one this sent before that existed.
      * @returns {Promise<Array>} one result per query, in order
      */
-    async inLogic(queries, received) {
-        const reply = await this.request({ op: 'inLogic', slots: queries, received: received || {} });
+    async inLogic(queries, received, options = {}) {
+        const body = { op: 'inLogic', slots: queries, received: received || {} };
+        if (Array.isArray(options.finished)) body.finished = options.finished;
+        const reply = await this.request(body);
         return reply.results || [];
     }
 
