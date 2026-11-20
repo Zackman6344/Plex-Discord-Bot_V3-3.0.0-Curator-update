@@ -74,7 +74,7 @@ async function run(ctx) {
 	}
 	const found = common.findTitle(ctx, r.key, title);
 	if (!found.ok) return ctx.say(found.message);
-	const out = await ctx.game.creditManual(r.key, found.entryKey, { atMs });
+	const out = await ctx.game.creditManual(r.key, found.entryKey, { atMs, by: ctx.userId });
 	return ctx.say(out.message);
 }
 

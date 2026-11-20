@@ -1,6 +1,6 @@
 // helpers/apMediaPlex.js
 // Read-only Plex server access for the Plex Media world: history, sessions, accounts, sections,
-// listings and item metadata.
+// listings and item metadata. An item's metadata carries its markers (intro, credits).
 //
 // The owner token (config/plex.js homeOwnerToken) is preferred over `token`: only the server owner
 // can read every account's history and sessions, and the example config recommends a managed user
@@ -23,6 +23,9 @@ const MAX_PAGE_SIZE = 1000;
 // A server that answers full pages forever would otherwise never let a read finish.
 const MAX_PAGES = 1000;
 const METADATA_CACHE_MAX = 2000;
+// Plex adds an intro marker when its analysis reaches an episode, after the item may be cached.
+const MARKER_RECHECK_MS = 60 * 60000;
+const MARKER_CHECKS_MAX = 2000;
 const OWNER_TOKEN_HINT = "it needs the server owner's token (config/plex.js homeOwnerToken)";
 
 class PmsError extends Error {
@@ -78,15 +81,36 @@ function reasonOf(err, timeoutMs) {
 	return typeof code === 'string' && /^[A-Z0-9_]{2,40}$/.test(code) ? code : 'a network error';
 }
 
+function offsetOf(value) {
+	if (typeof value === 'number') return value;
+	if (typeof value === 'string' && value.trim() !== '') return Number(value);
+	return NaN;
+}
+
+/** An item's Marker rows as [{type, startMs, endMs, final}] sorted by start; [] for none. */
+function markersOf(item) {
+	const out = [];
+	for (const m of item && Array.isArray(item.Marker) ? item.Marker : []) {
+		if (!m || typeof m !== 'object') continue;
+		const startMs = offsetOf(m.startTimeOffset);
+		const endMs = offsetOf(m.endTimeOffset);
+		if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || !(endMs > startMs)) continue;
+		out.push({ type: String(m.type), startMs, endMs, final: m.final === true });
+	}
+	return out.sort((a, b) => a.startMs - b.startMs);
+}
+
 /**
  * @param {object} [deps]
  * @param {() => object} [deps.loadConfig] returns config/plex.js's shape: hostname, port, https,
  *   token, homeOwnerToken
  * @param {typeof fetch} [deps.fetchImpl]
  * @param {number} [deps.timeoutMs] per request, body included
+ * @param {() => number} [deps.now] the clock of the hourly marker re-read
  */
-function createPms({ loadConfig = defaultLoadConfig, fetchImpl = globalThis.fetch, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+function createPms({ loadConfig = defaultLoadConfig, fetchImpl = globalThis.fetch, timeoutMs = DEFAULT_TIMEOUT_MS, now = Date.now } = {}) {
 	const metadataCache = new Map();
+	const markerChecks = new Map();
 
 	function settings() {
 		const c = loadConfig() || {};
@@ -225,8 +249,11 @@ function createPms({ loadConfig = defaultLoadConfig, fetchImpl = globalThis.fetc
 			metadataCache.set(rk, hit);
 			return hit;
 		}
-		const pending = get(`/library/metadata/${rk}`).then(
-			(mc) => (Array.isArray(mc.Metadata) && mc.Metadata[0]) || null,
+		const pending = get(`/library/metadata/${rk}`, { includeMarkers: 1 }).then(
+			(mc) => {
+				checkedMarkers(rk);
+				return (Array.isArray(mc.Metadata) && mc.Metadata[0]) || null;
+			},
 			(err) => {
 				if (err && err.status === 404) return null;
 				if (metadataCache.get(rk) === pending) metadataCache.delete(rk);
@@ -238,8 +265,40 @@ function createPms({ loadConfig = defaultLoadConfig, fetchImpl = globalThis.fetc
 		return pending;
 	}
 
+	function checkedMarkers(rk) {
+		markerChecks.delete(rk);
+		markerChecks.set(rk, now());
+		while (markerChecks.size > MARKER_CHECKS_MAX) markerChecks.delete(markerChecks.keys().next().value);
+	}
+
+	/**
+	 * An item's markers, sorted by start: [{type, startMs, endMs, final}]. An item cached without a
+	 * Marker array is read again past the cache at most once per MARKER_RECHECK_MS, and the cache
+	 * entry is replaced when that read succeeds; a failed re-read leaves the cached item.
+	 */
+	async function markers(ratingKey) {
+		const rk = Number(ratingKey);
+		const item = await metadata(rk);
+		if (!item || Array.isArray(item.Marker)) return markersOf(item);
+		const checked = markerChecks.get(rk);
+		if (checked !== undefined && now() - checked < MARKER_RECHECK_MS) return [];
+		checkedMarkers(rk);
+		let fresh;
+		try {
+			const mc = await get(`/library/metadata/${rk}`, { includeMarkers: 1 });
+			fresh = (Array.isArray(mc.Metadata) && mc.Metadata[0]) || null;
+		} catch {
+			return [];
+		}
+		if (metadataCache.has(rk)) metadataCache.delete(rk);
+		metadataCache.set(rk, Promise.resolve(fresh));
+		while (metadataCache.size > METADATA_CACHE_MAX) metadataCache.delete(metadataCache.keys().next().value);
+		return markersOf(fresh);
+	}
+
 	function clearMetadata() {
 		metadataCache.clear();
+		markerChecks.clear();
 	}
 
 	/** The server's machineIdentifier and version. */
@@ -300,6 +359,7 @@ function createPms({ loadConfig = defaultLoadConfig, fetchImpl = globalThis.fetc
 		accounts,
 		sections,
 		metadata,
+		markers,
 		clearMetadata,
 		identity,
 		children,
@@ -316,5 +376,6 @@ module.exports = {
 	createPms,
 	PmsError,
 	DEFAULT_PAGE_SIZE,
-	_internal: { queryOf, withQuery, rowsOf },
+	MARKER_RECHECK_MS,
+	_internal: { queryOf, withQuery, rowsOf, markersOf },
 };

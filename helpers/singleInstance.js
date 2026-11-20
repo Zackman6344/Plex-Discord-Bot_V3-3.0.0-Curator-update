@@ -17,6 +17,11 @@
 // in with the same token doubles every answer just the same. It only sees copies on the same
 // operating system. A Docker container or WSL has a pipe and socket namespace of its own, so a
 // copy inside one and a copy outside it do not see each other, and neither does another machine.
+//
+// stop-bot.ps1 asks the holder to quit over this pipe before forcing it, because Stop-Process -Force
+// runs no shutdown code on Windows. Only on Windows: the named pipe's default DACL gives write
+// access only to its creator, administrators and SYSTEM, while a Linux abstract socket has no
+// permissions at all.
 
 const net = require('net');
 const os = require('os');
@@ -29,6 +34,10 @@ const PIPE_PREFIX = '\\\\.\\pipe\\';
 const ATTEMPTS = 3;
 const RETRY_MS = 50;
 const GONE_CODES = new Set(['ECONNREFUSED', 'ENOENT', 'ECONNRESET', 'EPIPE']);
+const STOP_LINE = 'stop';
+const LINE_MAX = 256;
+const LINE_WAIT_MS = 2000;
+const HANGUP_WAIT_MS = 1000;
 
 let held = null;
 
@@ -41,11 +50,61 @@ function lockAddress(token, platform = process.platform) {
 	return path.join(os.tmpdir(), `${name}.sock`);
 }
 
-function listen(address, info) {
+function answerFor(line, onStop) {
+	if (line !== STOP_LINE) return { stopping: false, why: 'unknown request' };
+	if (!onStop) return { stopping: false, why: 'not on Windows' };
+	// The quitter in app/utils.js is bound at the first start(); before that a SIGINT would kill the
+	// process with no shutdown at all.
+	if (process.listenerCount('SIGINT') === 0) return { stopping: false, why: 'not ready' };
+	return { stopping: true };
+}
+
+function listen(address, info, { onStop = null } = {}) {
+	let stopping = false;
+	const stopOnce = () => {
+		if (stopping) return;
+		stopping = true;
+		logger.info('Asked to shut down through the single-instance pipe (stop-bot.ps1).');
+		onStop();
+	};
 	return new Promise((resolve, reject) => {
 		const server = net.createServer((socket) => {
 			socket.on('error', () => {});
-			socket.end(JSON.stringify(info) + '\n');
+			// An asker that never speaks or never hangs up must not keep the process alive.
+			socket.unref();
+			socket.setEncoding('utf8');
+			socket.write(JSON.stringify(info) + '\n');
+			let line = '';
+			let answered = false;
+			const lineTimer = setTimeout(() => socket.destroy(), LINE_WAIT_MS);
+			lineTimer.unref();
+			socket.on('close', () => clearTimeout(lineTimer));
+			socket.on('data', (chunk) => {
+				if (answered) return;
+				line += chunk;
+				const end = line.indexOf('\n');
+				if (end === -1) {
+					if (line.length > LINE_MAX) socket.destroy();
+					return;
+				}
+				answered = true;
+				clearTimeout(lineTimer);
+				const answer = answerFor(line.slice(0, end).replace(/^\uFEFF/, '').trim(), onStop);
+				socket.end(JSON.stringify(answer) + '\n');
+				if (!answer.stopping) return;
+				let fired = false;
+				const fire = () => {
+					if (fired) return;
+					fired = true;
+					clearTimeout(hangupTimer);
+					socket.destroy();
+					stopOnce();
+				};
+				// Stopping before the asker has read the answer would look to it like no answer at all.
+				const hangupTimer = setTimeout(fire, HANGUP_WAIT_MS);
+				hangupTimer.unref();
+				socket.on('close', fire);
+			});
 		});
 		server.once('error', reject);
 		server.listen(address, () => {
@@ -103,10 +162,10 @@ function askHolder(address, timeoutMs) {
  *   now holds the lock; otherwise null, with whatever the running copy said about itself
  * @throws when the lock cannot be taken for any reason other than another copy holding it
  */
-async function acquire(address, { info = holderInfo(), askTimeoutMs = 2000 } = {}) {
+async function acquire(address, { info = holderInfo(), askTimeoutMs = 2000, onStop = null } = {}) {
 	for (let attempt = 1; ; attempt++) {
 		try {
-			return { server: await listen(address, info), holder: null };
+			return { server: await listen(address, info, { onStop }), holder: null };
 		} catch (err) {
 			if (err.code !== 'EADDRINUSE') throw err;
 			const reply = await askHolder(address, askTimeoutMs);
@@ -120,8 +179,10 @@ async function acquire(address, { info = holderInfo(), askTimeoutMs = 2000 } = {
 	}
 }
 
-function holderInfo() {
-	return { pid: process.pid, startedAt: new Date().toISOString(), entry: process.argv[1] || null };
+function holderInfo({ stop = false } = {}) {
+	const info = { pid: process.pid, startedAt: new Date().toISOString(), entry: process.argv[1] || null };
+	if (stop) info.accepts = ['stop'];
+	return info;
 }
 
 /**
@@ -132,11 +193,17 @@ function holderInfo() {
  * so the process keeps it across the restart. A lock that cannot be taken at all is logged and the
  * bot starts anyway: a broken lock is no reason to have no bot.
  */
-async function claim(token, { address = lockAddress(token), askTimeoutMs } = {}) {
+async function claim(token, {
+	address = lockAddress(token),
+	askTimeoutMs,
+	onStop = () => process.emit('SIGINT'),
+	platform = process.platform
+} = {}) {
 	if (held) return true;
+	const stop = platform === 'win32' && typeof onStop === 'function' ? onStop : null;
 	let result;
 	try {
-		result = await acquire(address, { askTimeoutMs });
+		result = await acquire(address, { askTimeoutMs, onStop: stop, info: holderInfo({ stop: !!stop }) });
 	} catch (err) {
 		logger.warn('Could not take the single-instance lock; starting without it:', err.message || err);
 		return true;

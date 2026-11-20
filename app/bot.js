@@ -73,6 +73,10 @@ class Bot extends EventEmitter{
 				this.playRun = 0;
 				this.stopGeneration = 0;
 				this.stoppedEntry = null;
+				// The stopGeneration the queue has been resolved against.
+				this.stopsHandled = 0;
+				// Entries a skip or stop is still owed to, queued behind another head (takeOwedStop).
+				this.owedStops = new Set();
 				// Set by app/music.js to the book director. Null keeps the runPlayback gate a no-op,
 				// which is what every test Bot without books relies on.
 				this.books = null;
@@ -625,7 +629,10 @@ class Bot extends EventEmitter{
 				return true;
 			}
 			if (this.stopGeneration !== stops) {
-				if (this.songQueue[0] === this.stoppedEntry) this.songQueue.shift();
+				if (this.songQueue[0] === this.stoppedEntry) {
+					this.stopsHandled = this.stopGeneration;
+					this.songQueue.shift();
+				}
 				continue;
 			}
 			if (this.songQueue[0] !== head) continue;
@@ -636,6 +643,40 @@ class Bot extends EventEmitter{
 		this.reportLocked(skipped, message);
 		if (this.songQueue.length > 0) return false;
 		// An older run still loading its track stands down, rather than end playback a second time.
+		this.playRun++;
+		this.isPlaying = false;
+		this.reportUnplayable(message);
+		this.emit('finish', message);
+		this.playbackCompletion(message);
+		return true;
+	}
+
+	/**
+	 * Act on a skip or stop that landed while an earlier run was still joining or downloading, for
+	 * the track still at the head, which that run, replaced by this one, never acts on.
+	 *
+	 * A stop whose entry is still queued behind another head, as when a Hitster turn unshifts its clip
+	 * in front (commands/hitster.js), stays owed in owedStops until that entry reaches the head. The
+	 * turn ends its clip with a stop of its own, which moves stopGeneration and stoppedEntry on to the
+	 * clip, so the entry cannot wait in those. One that leaves the queue first is dropped.
+	 *
+	 * @returns {boolean} true when the stop emptied the queue and ended playback
+	 */
+	takeOwedStop(message) {
+		for (const entry of this.owedStops) {
+			if (!this.songQueue.includes(entry)) this.owedStops.delete(entry);
+		}
+		if (this.stopsHandled !== this.stopGeneration) {
+			this.stopsHandled = this.stopGeneration;
+			if (this.songQueue.includes(this.stoppedEntry)) this.owedStops.add(this.stoppedEntry);
+		}
+		const head = this.songQueue[0];
+		if (!head || !this.owedStops.has(head)) return false;
+		this.owedStops.delete(head);
+		seek.takeSeek(head);
+		if (seek.afterTrack(this.songQueue) === 'replay') return false;
+		this.songQueue.shift();
+		if (this.songQueue.length > 0) return false;
 		this.playRun++;
 		this.isPlaying = false;
 		this.reportUnplayable(message);
@@ -924,7 +965,7 @@ class Bot extends EventEmitter{
 				this.waitForStartMessage = message;
 			} else {
 				// Before the join and the download, so a song locked for everyone here costs neither.
-				if (this.skipLocked(message, channel)) return;
+				if (this.takeOwedStop(message) || this.skipLocked(message, channel)) return;
 				// Read again after each await below. A skip or stop landing in one has no player of
 				// this run's to stop, and the queue or a newer run may have moved on meanwhile.
 				const run = ++this.playRun;
@@ -964,6 +1005,7 @@ class Bot extends EventEmitter{
 						// the stop also stopped the music's player, whose Idle leaves the queue to
 						// this run. A seek still waiting on this download would turn that into a
 						// replay and swallow a skip.
+						this.stopsHandled = this.stopGeneration;
 						seek.takeSeek(track);
 						dispatcherFunc();
 						return true;
@@ -983,9 +1025,17 @@ class Bot extends EventEmitter{
 					// A newer run's openConnection destroyed this run's unfinished join, which then
 					// only times out. Failing here would destroy that run's connection mid-track.
 					if (this.playRun !== run) return;
+					// A !skip of the head while the join hung is this run's to take, since no player of
+					// its own will ever go Idle. A skip of the only track then ends below as quietly as
+					// a !stop, and a failed join counts only the tracks after the skipped one.
+					if (this.stopGeneration !== generation && this.songQueue[0] === this.stoppedEntry) {
+						this.stopsHandled = this.stopGeneration;
+						seek.takeSeek(this.songQueue[0]);
+						if (seek.afterTrack(this.songQueue) !== 'replay') this.songQueue.shift();
+					}
 					// A !stop that emptied the queue while the join hung already said playback stopped,
-					// and has no queue left to keep. Only that case: a !skip keeps the queue, so its
-					// failed join still reports and keeps the rest for the next !play.
+					// and has no queue left to keep. A !skip that leaves tracks keeps them, so its failed
+					// join still reports and keeps the rest for the next !play.
 					if (this.stopGeneration !== generation && this.songQueue.length === 0) {
 						superseded();
 						return;
@@ -1092,6 +1142,7 @@ class Bot extends EventEmitter{
 					// superseded(), and a track queued after !stop, with a run of its own or without one
 					// (a requester outside voice, !artist between album lookups), is not this player's.
 					if (stopped() && (this.playRun !== run || this.songQueue[0] !== this.stoppedEntry)) return;
+					if (stopped()) this.stopsHandled = this.stopGeneration;
 					dispatcherFunc()
 					// Last, so no listener can change what plays next. This runs inside the AudioPlayer's
 					// state setter, so listeners defer their work, and a throw would escape into voice's

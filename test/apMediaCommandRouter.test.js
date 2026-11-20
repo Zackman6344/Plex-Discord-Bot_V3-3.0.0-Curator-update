@@ -105,7 +105,12 @@ test('/apmedia defers privately for every subcommand but apworld', async () => {
 		assert.deepStrictEqual(defer[1], name === 'apworld' ? undefined : { flags: EPHEMERAL }, name);
 		const answers = i.calls.filter((c) => c[0] !== 'deferReply');
 		assert.deepStrictEqual(answers.map((c) => c[0]), ['editReply'], `${name}: one answer, through the defer`);
-		assert.match(answers[0][1].content, /Plex Media is turned off/);
+		if (name === 'help') {
+			assert.ok(!/Plex Media is turned off/.test(answers[0][1].content || ''), 'help answers with Plex Media off too');
+			assert.match(answers[0][1].embeds[0].data.description, /`\/apmedia help` shows this to you alone/);
+		} else {
+			assert.match(answers[0][1].content, /Plex Media is turned off/);
+		}
 		assert.deepStrictEqual(answers[0][1].allowedMentions, { parse: [] });
 	}
 });

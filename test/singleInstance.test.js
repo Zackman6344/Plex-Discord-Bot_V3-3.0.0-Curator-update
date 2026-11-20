@@ -163,3 +163,182 @@ test('index.js exits before logging in when the bot is already running', async (
 	assert.strictEqual(plain.code, 1);
 	assert.strictEqual(plain.said, 1, 'said once, not once per sink, with the console mirror on');
 });
+
+const WINDOWS_ONLY = { skip: process.platform !== 'win32' };
+const noop = () => {};
+
+/**
+ * Connect to the lock at `address`, read the holder's line and, given `line`, send it and read the
+ * answer. The socket is handed back open, so a test decides when the asker hangs up.
+ */
+function ask(address, line = null) {
+	return new Promise((resolve, reject) => {
+		const socket = net.connect(address);
+		const lines = [];
+		let data = '';
+		socket.setEncoding('utf8');
+		socket.on('error', reject);
+		socket.on('data', (chunk) => {
+			data += chunk;
+			let end;
+			while ((end = data.indexOf('\n')) !== -1) {
+				lines.push(JSON.parse(data.slice(0, end)));
+				data = data.slice(end + 1);
+				if (lines.length === 1 && line !== null) socket.write(line + '\n');
+			}
+			if (lines.length === (line === null ? 1 : 2)) resolve({ info: lines[0], answer: lines[1], socket });
+		});
+	});
+}
+
+function hangUp(socket) {
+	return new Promise((resolve) => {
+		socket.once('close', () => setTimeout(resolve, 50));
+		socket.end();
+	});
+}
+
+function withSigint(fn) {
+	return async () => {
+		process.on('SIGINT', noop);
+		try { await fn(); } finally { process.removeListener('SIGINT', noop); }
+	};
+}
+
+test('the holder offers the stop on Windows, and a second copy still gets its line', WINDOWS_ONLY, async () => {
+	const token = uniqueToken();
+	assert.strictEqual(await singleInstance.claim(token, { onStop: noop }), true);
+	const address = singleInstance.lockAddress(token);
+	const { info, socket } = await ask(address);
+	try {
+		assert.deepStrictEqual(info.accepts, ['stop']);
+		assert.strictEqual(info.pid, process.pid);
+		const result = await singleInstance.acquire(address, { askTimeoutMs: 1000 });
+		assert.strictEqual(result.server, null);
+		assert.strictEqual(result.holder.pid, process.pid, 'askHolder reads the line though the holder keeps the socket open');
+	} finally {
+		socket.destroy();
+	}
+});
+
+test('a stop line is answered, and the stop runs once, after the asker hangs up', WINDOWS_ONLY, withSigint(async () => {
+	const token = uniqueToken();
+	let stops = 0;
+	assert.strictEqual(await singleInstance.claim(token, { onStop: () => { stops++; } }), true);
+	const address = singleInstance.lockAddress(token);
+	const first = await ask(address, '\uFEFFstop ');
+	assert.deepStrictEqual(first.answer, { stopping: true });
+	assert.strictEqual(stops, 0, 'not before the asker has hung up');
+	await hangUp(first.socket);
+	assert.strictEqual(stops, 1);
+	const second = await ask(address, 'stop');
+	assert.deepStrictEqual(second.answer, { stopping: true });
+	await hangUp(second.socket);
+	assert.strictEqual(stops, 1, 'a second ask does not stop twice');
+}));
+
+test('another line changes nothing, and the lock still answers a second copy', WINDOWS_ONLY, withSigint(async () => {
+	const token = uniqueToken();
+	let stops = 0;
+	assert.strictEqual(await singleInstance.claim(token, { onStop: () => { stops++; } }), true);
+	const address = singleInstance.lockAddress(token);
+	const { answer, socket } = await ask(address, 'quit');
+	assert.deepStrictEqual(answer, { stopping: false, why: 'unknown request' });
+	await hangUp(socket);
+	assert.strictEqual(stops, 0);
+	const result = await singleInstance.acquire(address, { askTimeoutMs: 1000 });
+	assert.strictEqual(result.holder.pid, process.pid);
+}));
+
+test('a stop is refused as not ready while nothing listens for SIGINT', WINDOWS_ONLY, async () => {
+	assert.strictEqual(process.listenerCount('SIGINT'), 0, 'a node --test child has no quitter');
+	const token = uniqueToken();
+	let stops = 0;
+	assert.strictEqual(await singleInstance.claim(token, { onStop: () => { stops++; } }), true);
+	const { answer, socket } = await ask(singleInstance.lockAddress(token), 'stop');
+	assert.deepStrictEqual(answer, { stopping: false, why: 'not ready' });
+	await hangUp(socket);
+	assert.strictEqual(stops, 0);
+});
+
+test('off Windows the holder offers no stop and refuses one', withSigint(async () => {
+	const token = uniqueToken();
+	let stops = 0;
+	assert.strictEqual(await singleInstance.claim(token, { onStop: () => { stops++; }, platform: 'linux' }), true);
+	const address = singleInstance.lockAddress(token);
+	const { info, answer, socket } = await ask(address, 'stop');
+	assert.strictEqual(info.accepts, undefined);
+	assert.deepStrictEqual(answer, { stopping: false, why: 'not on Windows' });
+	await hangUp(socket);
+	assert.strictEqual(stops, 0);
+}));
+
+test('a silent asker is cut off within 2 s', async () => {
+	const token = uniqueToken();
+	assert.strictEqual(await singleInstance.claim(token, { onStop: noop }), true);
+	const { socket } = await ask(singleInstance.lockAddress(token));
+	const started = Date.now();
+	await new Promise((resolve) => socket.once('close', resolve));
+	assert.ok(Date.now() - started < 2500, `closed after ${Date.now() - started} ms`);
+});
+
+/** A child holding the lock for `token`, with a SIGINT listener that prints quit when asked. */
+function stopChild(token, { sigint = true, keepAliveMs = null } = {}) {
+	const script = (sigint ? `process.on('SIGINT', () => { console.log('quit'); process.exit(0); });` : '') +
+		`require(${JSON.stringify(HELPER)}).claim(${JSON.stringify(token)})` +
+		`.then((c) => { console.log(c ? 'held' : 'refused'); ` +
+		(keepAliveMs === null ? `setInterval(() => {}, 1000); });` : `setTimeout(() => {}, ${keepAliveMs}); });`);
+	const child = spawn(process.execPath, ['-e', script], { env: childEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
+	child.out = '';
+	child.exited = new Promise((resolve) => child.on('exit', (code) => resolve(code)));
+	return new Promise((resolve, reject) => {
+		child.stdout.on('data', (d) => {
+			child.out += d;
+			if (child.out.includes('held')) resolve(child);
+			if (child.out.includes('refused')) reject(new Error('the child could not take the lock'));
+		});
+		child.exited.then((code) => reject(new Error(`the holder exited early (${code})`)));
+	});
+}
+
+test('a holder with only the lock and a silent asker exits by itself', async () => {
+	const token = uniqueToken();
+	const child = await stopChild(token, { sigint: false, keepAliveMs: 200 });
+	const { socket } = await ask(singleInstance.lockAddress(token));
+	const started = Date.now();
+	const timer = setTimeout(() => child.kill('SIGKILL'), 10000);
+	const code = await child.exited;
+	clearTimeout(timer);
+	socket.destroy();
+	assert.strictEqual(code, 0);
+	assert.ok(Date.now() - started < 1500, `exited after ${Date.now() - started} ms, so the asker held it`);
+});
+
+test('a holder with a SIGINT listener quits when asked', WINDOWS_ONLY, async () => {
+	const token = uniqueToken();
+	const child = await stopChild(token);
+	const timer = setTimeout(() => child.kill('SIGKILL'), 10000);
+	try {
+		const { answer, socket } = await ask(singleInstance.lockAddress(token), 'stop');
+		assert.deepStrictEqual(answer, { stopping: true });
+		await hangUp(socket);
+		assert.strictEqual(await child.exited, 0);
+		assert.match(child.out, /quit/);
+	} finally {
+		clearTimeout(timer);
+		child.kill('SIGKILL');
+	}
+});
+
+test('a holder with no SIGINT listener answers not ready and keeps running', WINDOWS_ONLY, async () => {
+	const token = uniqueToken();
+	const child = await stopChild(token, { sigint: false });
+	try {
+		const { answer, socket } = await ask(singleInstance.lockAddress(token), 'stop');
+		assert.deepStrictEqual(answer, { stopping: false, why: 'not ready' });
+		await hangUp(socket);
+		assert.strictEqual(child.exitCode, null);
+	} finally {
+		await killed(child);
+	}
+});

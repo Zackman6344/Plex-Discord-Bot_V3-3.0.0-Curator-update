@@ -426,7 +426,7 @@ test('under locked_watches ignore a locked title earns nothing, however often it
 	assert.strictEqual(row(h, key).banked, 0);
 	assert.strictEqual(row(h, key).pending, 0);
 	assert.strictEqual(sentChecks(h).length, before);
-	assert.deepStrictEqual(await posts(h), []);
+	assert.deepStrictEqual(await posts(h), [`\u{1F512} \`${SLOT}\`: **1917** is locked, and this slot counts nothing played while a title is locked. It opens when **1917 (movie)** arrives.`]);
 });
 
 test('credit before the slot\'s inventory is known is held, then sorted out by its first items', async (t) => {
@@ -917,7 +917,7 @@ test('a room on a new seed marks the slot stale, and retry takes the new seed fr
 	assert.strictEqual(row(h, key).banked, 0, 'the old seed\'s bank is gone');
 	assert.strictEqual(row(h, key).state, 'active');
 	await h.game._internal.idle();
-	assert.match((await posts(h))[0], /is in the game/, 'welcomed again on the new seed');
+	assert.match((await posts(h))[0], /^\u{1F7E2} `ZackPlex` is connected again, on the room's new seed: the old seed's progress does not carry over\.\n\u{1F3AC} `ZackPlex` is in the game/u, 'the green line first, then the welcome on the new seed');
 });
 
 const NEW_ROOM = {
@@ -963,7 +963,7 @@ test('a room on a seed without the slot marks it stale before any Connect, and r
 	// refusal says where the slot went. Nothing is cleared before a seed is taken on.
 	const retried = await h.game.retry(key);
 	assert.ok(retried.ok, retried.message);
-	assert.strictEqual(retried.message, 'Reconnecting `ZackPlex`. If the room is still on another seed with this slot, it takes that seed on: the old seed\'s progress does not carry over.');
+	assert.strictEqual(retried.message, `Reconnecting \`ZackPlex\`. If the room is still on another seed with this slot, it takes that seed on: the old seed's progress does not carry over. <#${CHANNEL}> gets a line once it is back in the room.`);
 	await waitFor(() => row(h, key).state === 'refused', 'the refusal on the new seed');
 	assert.strictEqual(connectsTo(fresh).length, 1);
 	assert.strictEqual(row(h, key).stateDetail.reason, 'InvalidSlot');
@@ -1055,7 +1055,7 @@ test('a stale slot whose room is back on its own seed resumes on /apmedia retry 
 	await h.game._internal.idle();
 	assert.strictEqual(row(h, key).seedName, SEED);
 	assert.strictEqual(row(h, key).banked, 8, 'its own seed\'s progress, kept');
-	assert.deepStrictEqual(await settledPosts(h), [], 'no second welcome');
+	assert.deepStrictEqual(await settledPosts(h), ['\u{1F7E2} `ZackPlex` is connected again, back on its own seed with nothing lost.'], 'no second welcome');
 	assert.deepStrictEqual(connectsTo(away), []);
 
 	// The retry's leave to take another seed on ended with that Connected: a room that moves again
@@ -1221,7 +1221,131 @@ test('a new-seed report from a client that /apmedia retry has replaced changes n
 	assert.strictEqual(row(h, key).state, 'active');
 	assert.notStrictEqual(runtime(h, key).client, old);
 	await waitFor(() => runtime(h, key).client && runtime(h, key).client.isReady, 'the new connection');
+	assert.deepStrictEqual(await settledPosts(h), ['\u{1F7E2} `ZackPlex` is connected again.']);
+	assert.strictEqual(runtime(h, key).rejoin, null);
+});
+
+test('a refused slot that gets back into its room posts one line with the checks earned meanwhile, whatever the announce settings', async (t) => {
+	const h = await setup(t, { startGame: false, config: { apMediaAnnounce: 'off' } });
+	const ids = MATRIX.ids.slice(0, 2);
+	const b = h.store.bindings.put({
+		watchId: 0, slot: SLOT, userId: OWNER, seedName: SEED, state: 'refused', announce: false, welcomed: true, pending: ids,
+		stateDetail: { reason: 'InvalidSlot', errors: ['InvalidSlot'], at: h.clock, fix: 'Link it again.' },
+	});
+	h.game.start({ discord: h.discord, bot: h.bot });
+	await waitFor(() => row(h, b.key).state === 'active' && hasAll(h.server.checkedOf(1), ids), 'the slot back in its room');
+	assert.deepStrictEqual(await settledPosts(h), ['\u{1F7E2} `ZackPlex` is connected again; 2 checks earned meanwhile were sent.']);
+	assert.ok(h.events.some((e) => e.kind === 'apmedia-reconnected' && e.from === 'refused' && e.sent === 2));
+	assert.strictEqual(runtime(h, b.key).rejoin, null);
+});
+
+test('a refusal after a retry clears its line, and a stored refused slot that gets in at start() posts it', async (t) => {
+	const h = await setup(t);
+	const key = await linkSlot(h);
+	await settledPosts(h);
+	const rt = runtime(h, key);
+	rt.rejoin = { from: 'active' };
+	h.game._internal.refuse(h.store.bindings.get(key), rt, 'InvalidSlot', ['InvalidSlot']);
+	assert.strictEqual(rt.rejoin, null);
+	await settledPosts(h);
+	h.game.stop();
+	h.game = h.make();
+	h.game.start({ discord: h.discord, bot: h.bot });
+	await waitFor(() => row(h, key).state === 'active', 'the slot back in its room');
+	assert.deepStrictEqual(await settledPosts(h), ['\u{1F7E2} `ZackPlex` is connected again.']);
+});
+
+test('an active slot that drops and comes back posts no reconnect line, and a retried one posts it once', async (t) => {
+	const h = await setup(t);
+	const key = await linkSlot(h);
+	await settledPosts(h);
+	const bounce = async () => {
+		const client = runtime(h, key).client;
+		const before = connectsTo(h.server).length;
+		for (const socket of h.server.clientsOn(1)) socket.socket.terminate();
+		await waitFor(() => !client.connected, 'the drop');
+		reconnectNow(client);
+		await waitFor(() => connectsTo(h.server).length === before + 1 && client.connected && client.inventoryKnown, 'the reconnect');
+		await h.game._internal.idle();
+	};
+	await bounce();
 	assert.deepStrictEqual(await settledPosts(h), []);
+
+	const res = await h.game.retry(key);
+	assert.ok(res.ok, res.message);
+	await waitFor(() => runtime(h, key).rejoin === null, 'the retried connection');
+	assert.deepStrictEqual(await settledPosts(h), ['\u{1F7E2} `ZackPlex` is connected again.']);
+	await bounce();
+	assert.deepStrictEqual(await settledPosts(h), [], 'the next drop is an ordinary one');
+	assert.strictEqual(h.events.filter((e) => e.kind === 'apmedia-reconnected').length, 1);
+});
+
+test('a refused slot back in its room counts no checks the socket did not take, and they go at the next Connected', async (t) => {
+	let busy = 1;
+	class BusyClient extends ApMediaClient {
+		sendChecks(ids) {
+			if (busy > 0) {
+				busy -= 1;
+				return false;
+			}
+			return super.sendChecks(ids);
+		}
+	}
+	const h = await setup(t, { startGame: false, game: { Client: BusyClient } });
+	const ids = MATRIX.ids.slice(0, 2);
+	const b = h.store.bindings.put({
+		watchId: 0, slot: SLOT, userId: OWNER, seedName: SEED, state: 'refused', welcomed: true, pending: ids,
+		stateDetail: { reason: 'InvalidSlot', errors: ['InvalidSlot'], at: h.clock, fix: 'Link it again.' },
+	});
+	h.game.start({ discord: h.discord, bot: h.bot });
+	await waitFor(() => row(h, b.key).state === 'active' && row(h, b.key).inventoryKnown, 'the slot back in its room');
+	assert.deepStrictEqual(await settledPosts(h), ['\u{1F7E2} `ZackPlex` is connected again.']);
+	assert.deepStrictEqual(h.events.filter((e) => e.kind === 'apmedia-reconnected').map((e) => e.sent), [0]);
+	assert.deepStrictEqual(h.store.bindings.get(b.key).pending, ids);
+	assert.ok(!ids.some((id) => h.server.checkedOf(1).has(id)), 'nothing went out');
+	const client = runtime(h, b.key).client;
+	const before = connectsTo(h.server).length;
+	for (const socket of h.server.clientsOn(1)) socket.socket.terminate();
+	await waitFor(() => !client.connected, 'the drop');
+	reconnectNow(client);
+	await waitFor(() => connectsTo(h.server).length === before + 1 && hasAll(h.server.checkedOf(1), ids), 'the checks at the next Connected');
+	await h.game._internal.idle();
+	assert.deepStrictEqual(await settledPosts(h), [], 'the refusal\'s one line was posted already');
+});
+
+test('a retry while Plex Media is off waits for the start, and the slot posts its line once it is back', async (t) => {
+	const h = await setup(t);
+	const key = await linkSlot(h);
+	await settledPosts(h);
+	h.game.stop();
+	const res = await h.game.retry(key);
+	assert.strictEqual(res.message, `Reconnecting \`ZackPlex\` once Plex Media is running. <#${CHANNEL}> gets a line once it is back in the room.`);
+	assert.deepStrictEqual(runtime(h, key).rejoin, { from: 'active' });
+	assert.strictEqual(runtime(h, key).client, null, 'nothing connects while it is off');
+	h.game.start({ discord: h.discord, bot: h.bot });
+	await waitFor(() => runtime(h, key).rejoin === null, 'the Connected after the start');
+	assert.deepStrictEqual(await settledPosts(h), ['\u{1F7E2} `ZackPlex` is connected again.']);
+});
+
+test('a lost watch, or a room on another seed, ends a retry\'s wait for its line', async (t) => {
+	const h = await setup(t);
+	const key = await linkSlot(h);
+	await settledPosts(h);
+	runtime(h, key).rejoin = { from: 'active' };
+	h.monitor.drop(0);
+	await h.game._internal.idle();
+	assert.strictEqual(row(h, key).state, 'orphaned');
+	assert.strictEqual(runtime(h, key).rejoin, null);
+
+	const h2 = await setup(t);
+	const key2 = await linkSlot(h2);
+	await settledPosts(h2);
+	runtime(h2, key2).rejoin = { from: 'active' };
+	const fresh = await startApMediaServer({ seedName: 'Seed_NEW', slotData: { 1: slotData() }, locations: { 1: ALL_LOCATIONS }, startInventory: { 1: START } });
+	t.after(() => fresh.close());
+	h2.monitor.put(0, { target: fresh.target }, 'repointed');
+	await waitFor(() => row(h2, key2).state === 'stale', 'the stale state');
+	assert.strictEqual(runtime(h2, key2).rejoin, null);
 });
 
 test('slot_data the bot cannot index refuses the slot with one notice and keeps no copy, and a retry says so again', async (t) => {
@@ -1243,7 +1367,11 @@ test('slot_data the bot cannot index refuses the slot with one notice and keeps 
 	const notices = await settledPosts(h);
 	assert.strictEqual(notices.length, 1);
 	assert.match(notices[0], /^\u{1F534} `ZackPlex`: the room refused its Plex Media client \(`slot_data`\)\. Its slot_data is not Plex Media data this bot can read \(`slot_data has no generated_at\.`\): the seed may come from another version of the apworld\.$/u);
-	assert.deepStrictEqual(h.game.health(), { status: 'error', detail: '1 slot refused (ZackPlex: slot_data)' });
+	assert.deepStrictEqual(h.game.health(), {
+		status: 'error',
+		detail: '1 slot refused (ZackPlex: slot_data)',
+		problems: [{ key: 'refused:0::zackplex:slot_data', text: '`ZackPlex` refused by its room (`slot_data`)' }],
+	});
 	assert.ok(h.events.some((e) => e.kind === 'apmedia-refused' && e.reason === 'slot_data'));
 	assert.ok(!h.logger.lines.some((l) => l.level === 'error'), 'handled, not thrown');
 
@@ -1770,7 +1898,7 @@ test('stop and start are idempotent, leave nothing behind, and a !restart hands 
 test('/config: apMediaEnabled starts and stops it live, an interval change rearms the poll, archipelagoEnabled parks the clients', async (t) => {
 	const h = await setup(t, { config: { apMediaEnabled: false } });
 	assert.strictEqual(h.game._internal.running, false);
-	assert.deepStrictEqual(h.game.health(), { status: 'disabled', detail: 'apMediaEnabled is false in config/config.js' });
+	assert.deepStrictEqual(h.game.health(), { status: 'disabled', detail: 'apMediaEnabled is off (/config \u2192 AP Media)' });
 	const linked = await h.game.link({ watchId: 0, slot: SLOT, userId: OWNER });
 	const key = linked.binding.key;
 	assert.strictEqual(runtime(h, key) && runtime(h, key).client, null, 'nothing connects while it is off');
@@ -1870,6 +1998,31 @@ test('health keeps player and room text inside !diag\'s code block, and names fi
 	assert.ok(diag().length < 1000);
 });
 
+test('refused and orphaned slots each name a problem of their own for the health DM, and stale slots are only counted', async (t) => {
+	const h = await setup(t, { startGame: false });
+	h.store.bindings.put({ watchId: 0, slot: 'ZackPlex', userId: OWNER, state: 'refused', stateDetail: { reason: 'InvalidSlot', errors: [] } });
+	h.store.bindings.put({ watchId: 1, slot: 'Gone', userId: FRIEND, state: 'orphaned' });
+	h.store.bindings.put({ watchId: 2, slot: 'Old', userId: FRIEND, state: 'stale' });
+	const sick = h.game.health();
+	assert.deepStrictEqual(sick, {
+		status: 'error',
+		detail: '1 slot refused (ZackPlex: InvalidSlot); 1 slot lost its watch (Gone); 1 stale',
+		problems: [
+			{ key: 'refused:0::zackplex:InvalidSlot', text: '`ZackPlex` refused by its room (`InvalidSlot`)' },
+			{ key: 'orphaned:1::gone', text: '`Gone` lost watch #1' },
+		],
+	});
+	for (const p of sick.problems) assert.match(p.key, /^(refused|orphaned):\d+::/);
+
+	const ok = await setup(t);
+	await linkSlot(ok);
+	ok.store.bindings.put({ watchId: 2, slot: 'Old', userId: FRIEND, state: 'stale' });
+	const fine = ok.game.health();
+	assert.strictEqual(fine.status, 'ok');
+	assert.match(fine.detail, /^2 slots, 1 connected, 1 stale, /);
+	assert.strictEqual(fine.problems, undefined);
+});
+
 test('a start failure and a Plex history error stay inside !diag\'s code block too', async (t) => {
 	const hostile = `\`\`\`@everyone ${'e'.repeat(500)}`;
 	const broken = await setup(t, { startGame: false });
@@ -1877,6 +2030,7 @@ test('a start failure and a Plex history error stay inside !diag\'s code block t
 	assert.strictEqual(broken.game.start({ discord: broken.discord, bot: broken.bot }).running, false);
 	const failed = broken.game.health().detail;
 	assert.match(failed, /^failed to start: '''@everyone e+\u2026$/u);
+	assert.deepStrictEqual(broken.game.health().problems, [{ key: 'start', text: 'Plex Media failed to start' }]);
 	assert.ok([...failed].length <= 220, failed);
 
 	const h = await setup(t);
@@ -1885,6 +2039,7 @@ test('a start failure and a Plex history error stay inside !diag\'s code block t
 	for (let i = 0; i < 3; i++) await h.game._internal.watcher().pollHistory();
 	const sick = h.game.health().detail;
 	assert.match(sick, /^the Plex history read failed 3 times in a row \('''@everyone e+\u2026\)$/u);
+	assert.deepStrictEqual(h.game.health().problems, [{ key: 'history', text: 'the Plex history read keeps failing' }]);
 	assert.ok([...sick].length <= 260, sick);
 });
 
@@ -1911,7 +2066,7 @@ test('the health check reports Plex Media through the shared instance', () => {
 	const healthCheck = require('../helpers/healthCheck.js');
 	const config = require('../config/config.js');
 	const result = healthCheck.checkApMedia();
-	if (!config.apMediaEnabled) assert.deepStrictEqual(result, { status: 'disabled', detail: 'apMediaEnabled is false in config/config.js' });
+	if (!config.apMediaEnabled) assert.deepStrictEqual(result, { status: 'disabled', detail: 'apMediaEnabled is off (/config \u2192 AP Media)' });
 	assert.ok(['ok', 'error', 'missing', 'disabled'].includes(result.status));
 });
 // --- timesanity_strict: everything before a checkpoint heard -------------------------------------

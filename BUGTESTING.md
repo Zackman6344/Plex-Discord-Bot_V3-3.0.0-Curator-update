@@ -100,6 +100,11 @@ node -e "const k=require('./config/keys.js'),c=require('./config/config.js');con
 - [ ] Health monitor / event server / presence / theater lines appear as expected for the
       toggles in config, and `Plex Media started.` when `apMediaEnabled` is on.
 - [ ] No `Uncaught exception` / `Unhandled promise rejection` in the first 30s.
+- [ ] Run **Stop Plex Bot** mid-book, start the bot, resume; then the same mid-strict-title on a
+      linked Plex Media slot. The console prints `Shut down cleanly.`, the log shows
+      `Asked to shut down through the single-instance pipe (stop-bot.ps1).` and then
+      `Bot shutdown`, the book resumes at the exact place, and `/apmedia progress` shows the title's
+      heard ranges up to the stop.
 
 ## Phase 2 — Slash registration integrity
 
@@ -308,8 +313,8 @@ cannot reach. Watch `npm run logs -- --raw` for `music-gated-by-book`, `book-str
 
 **Bookmarks and finishing**
 
-- [ ] `!restart` mid-book: the place is saved. `scripts/stop-bot.ps1` mid-book, start, resume: at
-      most 15 s lost.
+- [ ] `!restart` mid-book: the place is saved. `scripts/stop-bot.ps1` mid-book, start, resume:
+      nothing lost on a clean stop (`Shut down cleanly.`), at most 15 s on the forced fallback.
 - [ ] Resume the next day: it rewinds 30 s (10 s after more than 5 minutes away).
 - [ ] Re-scan the library in Plex, then resume: it plays (the part key is repaired), from the right
       place.
@@ -1225,7 +1230,8 @@ verdict.
   three times. Its condition did not hold: the file was dragged onto a Launcher open since 11-11
   while the TWW3 client was still connected, and both closed at 12:23. What failed was not written
   down.
-- **Found and fixed (not deployed yet):** `/apmedia link` without `watch:` meant watch 0, so the
+- **Found and fixed (live since 474bca3, 2026-11-14):**
+  `/apmedia link` without `watch:` meant watch 0, so the
   friend's claim on watch #1 met "Claim the slot first". It now takes the room of the claim
   (`commands/apmedia.js/link.js`), and asks instead when another read room has a slot of the same
   name. A command it suggests to the owner keeps the user it was for, and the owner too hears that
@@ -1240,7 +1246,8 @@ verdict.
   Players, and two generates stopped on the world's own "this YAML has no titles yet" before the
   bot's file replaced it. The server was started with `AP_seed.zip` typed as written; C2 now finds
   the zip itself.
-- **Decided after the run, built, not deployed:** under `timesanity_strict`, E4's book checkpoint
+- **Decided after the run, built, live since 474bca3 (2026-11-14):**
+  under `timesanity_strict`, E4's book checkpoint
   came after 16 skip-forward presses from about 21:29 to 29:54 and 10 s heard across 30:00. The
   owner wants all of it heard: a strict checkpoint now needs everything from the title's start to it
   played where the bot saw it (`strictLocations` in `helpers/apMediaCredit.js`, kept per binding as
@@ -1294,7 +1301,7 @@ names keeps relaying your real game.
 
 - [ ] Before enabling: `/apmedia status` answers "🎬 Plex Media is turned off. The bot owner can
       turn it on with `!config`, under AP Media (`apMediaEnabled`).", `!help` has no `!apmedia ?`
-      line, and `!diag` shows `− ApMedia: apMediaEnabled is false in config/config.js`.
+      line, and `!diag` shows `− ApMedia: apMediaEnabled is off (/config → AP Media)`.
 - [ ] `/config` → AP Media lists nine settings. Turn on "Plex Media world (/apmedia)": no restart,
       the bot log has `Plex Media started.`, `!diag` shows `✓ ApMedia: 0 slots, 0 connected, no
       linked accounts`, `!help`'s 🧩 ARCHIPELAGO section ends with the `!apmedia ?` line ("Plex
@@ -1571,12 +1578,49 @@ names keeps relaying your real game.
 - [ ] An episode of the show on the list, the same way: a checkpoint every 10 minutes, and the
       episode's watch at its end.
 - [ ] On a slot whose YAML has `timesanity_strict: true` (decided 2026-11-13): play an open movie
-      from 0:00 to 10:00, seek to 14:50 and play past 15:00. Nothing posts. Seek back to 10:00 and
-      play to 14:50: within about 20 s "⏱️ … 1 check sent" for 15:00. Then finish the movie with a
-      skip in the middle: the watch is sent, and no checkpoint after the skip. A pause costs
+      from 0:00 to 10:00, seek to 14:50 and play past 15:00. No check is sent, and a 🚧 line says
+      nothing was heard from 10:00 to 14:50, so its checkpoints from 15m on wait, then gives the
+      rewind, an `!apmedia check` command and a Fast Forward if the slot holds one. Playing on in
+      the same sitting posts no second line. Seek back to 10:00 and play to 14:50: within about
+      20 s "⏱️ … 1 check sent" for 15:00. Then finish the movie with a skip in the middle: a second
+      🚧 line names that gap, the watch is sent, and no checkpoint after the skip. A pause costs
       nothing. A bot restart while the film plays leaves the restart's length unseen: up to about
       50 s it is forgiven, as a seam between two Plex sessions, and a longer one has to be played
       again. A Plexamp album listened through earns its checkpoints despite the seam at each track.
+- [ ] Strict, filling a gap in steps: play another open movie from 0:00 to 10:00, seek to 14:50
+      and play past 15:00 (one 🚧 line for 10:00 to 14:50). Seek back to 10:00, play to 12:00,
+      stop, then play from 12:00 to 13:30: no second 🚧 line posts, and `/apmedia progress` names
+      the gap as 13:30 to 14:50. Play on past 14:50 (the check for 15:00 is sent, as in the step
+      above) to 20:00, then seek to 25:00 and play past 30:00: a new 🚧 line for 20:00 to 25:00
+      posts in the same sitting.
+- [ ] Strict, with a gap left open in one title: `!ap next ZackPlex` marks each checkpoint the gap
+      holds back with `🚧 gap <from>–<to>, heard to <furthest>`, and the footer explains the mark.
+      `/apmedia status` shows the held-back line, and `/apmedia progress` with no title lists every
+      title a gap holds back, this one included, then up to five titles to watch next.
+- [ ] Strict, Skip Intro with the switch off (the default): `/apmedia switch` lists
+      "`ZackPlex`'s switches:" with "`intro`: off." In a Plex app, play an open episode of a show
+      whose intros Plex has marked (its Skip Intro button shows) from 0:00, and press Skip Intro no
+      sooner than 45 s in, so the bot has heard some of it first (an episode with a cold open before
+      its intro makes this easy). Play on past 10:00: no check is sent for 10:00, and a 🚧 line
+      names the stretch the skip jumped and ends "Plex's Skip Intro made that gap:
+      `!apmedia switch intro on` counts a skipped intro as heard." (it waits when the slot posted
+      an episodes line in the last 30 minutes; wait for it, since a line that goes out after the
+      next step turns the switch on has no such sentence). `/apmedia progress` on the episode ends
+      its gap line with the same sentence.
+- [ ] Strict, Skip Intro with the switch on: `/apmedia switch name:intro on:True` answers "Skip
+      Intro now counts as heard for `ZackPlex`.", the same again "`intro` is already on for
+      `ZackPlex`.", and `/apmedia status` has "Switches on: Skip Intro as heard." Another open
+      episode of that show, the same way: no 🚧 line, "⏱️ … 1 check sent" for 10:00 as it plays,
+      and `npm run logs -- --raw` has an `apmedia-intro` event for the episode. In a third episode,
+      seek from the intro to 6:00 instead: the gap stays, and a 🚧 line posts once playback passes
+      10:00, but no sooner than 30 minutes after the slot's last episodes line, the first episode's.
+- [ ] Strict, Plex's automatic skip, with the switch still on and the Plex app set to skip intros
+      automatically: an episode whose intro follows a cold open counts as above, the bot having
+      seen the cold open play. One whose intro starts at 0:00 is usually skipped before the bot's
+      first look: its gap from 0:00 stays, switch on or off, and a 🚧 line posts once playback
+      passes 10:00 (again no sooner than 30 minutes after the last episodes line).
+      `!apmedia switch intro off` answers "Skip Intro no longer counts as heard for
+      `ZackPlex`: an intro jumped over leaves a gap again."
 
 **Locked titles, unlocks and Wild Tickets**
 
@@ -1593,6 +1637,23 @@ names keeps relaying your real game.
 - [ ] Friend's `/apmedia redeem title:<any title> slot:ZackPlex` and `/apmedia check
       title:<any title> slot:ZackPlex`: "No linked Plex Media slot is called `ZackPlex`." Your
       `/apmedia check` on `slot:FriendPlex` works.
+- [ ] On a slot whose YAML has `locked_watches: ignore` (`more:locked_watches=ignore` in
+      `/apmedia yaml`), play a movie from `/apmedia list show:locked` in a Plex app for a minute:
+      one line posts, "🔒 `<slot>`: **<Title (Year)>** is locked, and this slot counts nothing
+      played while a title is locked." and what opens it, and `npm run logs -- --raw` has an
+      `apmedia-locked-play` event. Stop and play it again: no second line. Stop and start the bot
+      (a `!restart` keeps the game's memory), then play it once more within 3 hours: still none.
+      In the same way, a strict title whose 🚧 line has posted posts no second one when it is
+      played on after a stop and start.
+
+**Six 🚧 and 🔒 lines an hour**
+
+- [ ] Last of the line checks, because it fills the slot's hour: on the strict slot, play a minute
+      of one open movie after another, seeking each to 14:50 and playing past 15:00. Once the slot
+      has posted six 🚧 or 🔒 lines within the hour, counting those of the steps above since the
+      bot last started (the count lives in memory, so the stop and start above emptied it and a
+      `!restart` keeps it), the next movie's line does not post while the hour is full, and the
+      bot log has `Plex Media: held back a line for <slot> (6 an hour):` followed by that line.
 
 **Listening through the bot.** Do not `!seek` in a track that should count: a seek splits the
 listen, and each part has to reach 85% alone for the track itself.
@@ -1677,37 +1738,49 @@ listen, and each part has to reach 85% alone for the track itself.
       name, `/apmedia retry` takes that seed on (the old seed's progress does not carry over); if
       not, `/apmedia unlink` it. Should the room go back to the old seed, `/apmedia retry` picks
       that seed up again.", C's window shows no Connect from either, and `!diag` shows no refused
-      slot.
+      slot and counts both as stale: `✓ ApMedia: 2 slots, 0 connected, 2 stale, …`.
 - [ ] `/apmedia retry` for each slot (Friend may run their own): "🔄 Reconnecting `ZackPlex`. If
       the room is still on another seed with this slot, it takes that seed on: the old seed's
-      progress does not carry over.", then "🔴 `ZackPlex`: the room refused its Plex Media client
-      (`InvalidGame`). That slot plays another game in this room, not Plex Media: `/apmedia unlink`
-      it and link the room's Plex Media slot." and "🔴 `FriendPlex`: … (`InvalidSlot`). The room
-      has no slot …". `!diag`: `✗ ApMedia: 2 slots refused (ZackPlex: InvalidGame, FriendPlex:
-      InvalidSlot)`.
+      progress does not carry over. #<channel> gets a line once it is back in the room.", then
+      "🔴 `ZackPlex`: the room refused its Plex Media client (`InvalidGame`). That slot plays
+      another game in this room, not Plex Media: `/apmedia unlink` it and link the room's Plex
+      Media slot." and "🔴 `FriendPlex`: … (`InvalidSlot`). The room has no slot …". `!diag`:
+      `✗ ApMedia: 2 slots refused (ZackPlex: InvalidGame, FriendPlex: InvalidSlot)`. Within 15
+      minutes the owner gets one DM, Health change detected, with apMedia to `error` and each
+      refusal as new ("`ZackPlex` refused by its room (`InvalidGame`)"); no second DM follows.
 - [ ] Close C and host A again. The refused slots stay down until `/apmedia retry`, run for each
-      slot: "🔄 Reconnecting `ZackPlex`.", then both connect with no new welcome, since nothing of
-      seed A was cleared, and `!diag` is ✓ again.
-- [ ] A second watch of the same room: `!ap watch localhost:38281 Finder` again (its id is M), then
-      `/apmedia link slot:ZackPlex watch:M user:@Other`. Within seconds: "🔴 `ZackPlex`: the room
-      refused its Plex Media client (`duplicate`). This seed's `ZackPlex` is linked on watch #N
-      already, and only that link counts: `/apmedia unlink` this one." Your ZackPlex on watch N
-      stays connected. `/apmedia unlink`, picking `ZackPlex (watch #M)` from the slot list, then
-      `!ap unwatch M`.
+      slot: "🔄 Reconnecting `ZackPlex`. #<channel> gets a line once it is back in the room.", then
+      both connect with no new welcome, since nothing of seed A was cleared, and each posts
+      "🟢 `ZackPlex` is connected again." (with "; N checks earned meanwhile were sent" when some
+      waited). `!diag` is ✓ again, and the command log has two `apmedia-reconnected` lines with
+      `from` `refused`.
+- [ ] A second watch of the same room: `!ap watch localhost:38281 Finder` again in the test channel
+      answers "🧩 Watch #N already relays this room here (as `Finder`), so a second one would post
+      every line twice." and adds no watch. In another channel the same command adds one (its id
+      is M), which connects. Then `/apmedia link slot:ZackPlex watch:M user:@Other`. Within
+      seconds that channel has "🔴 `ZackPlex`: the room refused its Plex Media client
+      (`duplicate`). This seed's `ZackPlex` is linked on watch #N already, and only that link
+      counts: `/apmedia unlink` this one." Your ZackPlex on watch N stays connected.
+      `/apmedia unlink`, picking `ZackPlex (watch #M)` from the slot list, then `!ap unwatch M`.
 - [ ] In seed A's window `/option password secret`, then `!restart`: the watch keeps its
       connection and the game clients reconnect, to "🔴 `ZackPlex`: … (`InvalidPassword`). The
       room's password changed: set it with `!ap password N <password>`, then `/apmedia retry`."
-      `/option password none`, then `/apmedia retry` for each slot: both connect.
+      `/option password none`, then `/apmedia retry` for each slot: "🔄 Reconnecting `ZackPlex`.
+      #<channel> gets a line once it is back in the room.", then both connect and each posts
+      "🟢 `ZackPlex` is connected again."
 - [ ] `/option compatibility 0`, then `!restart`: "🔴 `ZackPlex`: … (`IncompatibleVersion`). The
       room was hosted with an exact-version compatibility setting, and the bot's client reports
       0.6.1: host it with the default compatibility, then `/apmedia retry`." `/option compatibility
-      2`, then `!restart` again, with no `/apmedia retry`: both connect, and the bot log has `Plex
-      Media: ZackPlex connected after its refusal.` and the same line for `FriendPlex`.
+      2`, then `!restart` again, with no `/apmedia retry`: both connect, each posts "🟢 `ZackPlex`
+      is connected again.", and the bot log has `Plex Media: ZackPlex connected after its
+      refusal.` and the same line for `FriendPlex`.
 - [ ] Close A and host seed B on the same port: "🟡 `ZackPlex`: the room is on another seed now, …"
       for both slots, and nothing counts for them. `/apmedia retry` for each slot (Friend may run
       their own): "🔄 Reconnecting `ZackPlex`. If the room is still on another seed with this slot,
-      it takes that seed on: the old seed's progress does not carry over.", then a new welcome for
-      each.
+      it takes that seed on: the old seed's progress does not carry over. #<channel> gets a line
+      once it is back in the room.", then each slot posts "🟢 `ZackPlex` is connected again, on the
+      room's new seed: the old seed's progress does not carry over." with its new welcome after it,
+      and the command log has two `apmedia-reconnected` lines with `from` `stale`.
 - [ ] `!ap unwatch N`: each slot posts "⚠️ `ZackPlex`: watch #N is gone, so its Plex Media client
       stopped and nothing more counts for it. Watch #N will not come back, so once the room is
       watched again: `/apmedia unlink` the slot and `/apmedia link` it on its new watch.", and
@@ -2201,8 +2274,9 @@ builder and the reader, and `test/apMediaSongsGame.test.js` (5 tests) plays a so
 the real game and a stand-in room. The skipping runs over the real `app/bot.js` and a FakePlayer
 in `test/playbackAutoskip.test.js` (25 tests), over the real voice library's connection code in
 `test/playbackAutoskipJoin.test.js` (3 tests), and through the real game and three slots in the
-14 tests of `test/apMediaGame.test.js`'s autoskip section. **Nothing below has met a live room, a
-Plex playlist or Discord voice yet.**
+14 tests of `test/apMediaGame.test.js`'s autoskip section. **Both are live (on 2026-11-15 and 16
+the command log holds 51 voice credits and 103 `track-locked` stretches, 2,010 songs); the steps
+below have not been run.**
 
 Like Phase 18, this phase is written for a room hosted on this PC, whose `ArchipelagoServer.exe`
 window takes `/send`; on archipelago.gg the room page's command box takes it instead.
@@ -2369,12 +2443,20 @@ in the playlist's order. Steps marked **Friend** need the second account. Set "A
 - [ ] `!apmedia check <S7's title in lower case>`: "✅ **<Mix> Part 3**: 3 checks sent.", in one
       step, with no "Did you mean". `!apmedia check <S8's title less its last letter>` counts
       nothing.
+- [ ] `!playlist create human_music`, then `!playlist add human_music <title>` (with
+      `!playlist choice <n>` when a list comes) for S5, S8 and S11, in that order. In voice,
+      `/playlist play name:human_music earning:True` queues S11 alone, since S5's check went out
+      with the unlock and S8's with the check above, and replies "▶️ Queued 1 of 3 songs from
+      `human_music`: the ones that still earn on `SongsPlex`'s list."
+      `!playlist play human_music -e -r` does the same. `!stop`.
 
 **Cleanup**
 
-- [ ] `/apmedia unlink slot:SongsPlex`; Friend unlinks FriendSongs. `!ap unwatch W`. Close the
-      server window, delete the seed's folder, and set "Announcements" back to "Completions and
-      unlocks".
+- [ ] `/apmedia unlink slot:SongsPlex`; Friend unlinks FriendSongs.
+      `/playlist play name:human_music earning:True` now answers "No Plex Media slot is linked to
+      you, so nothing in `human_music` earns for you: play it without `-e` (`earning`)." and
+      queues nothing; `!playlist remove human_music`. `!ap unwatch W`. Close the server window,
+      delete the seed's folder, and set "Announcements" back to "Completions and unlocks".
 
 ---
 

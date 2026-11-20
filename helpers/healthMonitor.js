@@ -7,12 +7,16 @@
 //   ok       → error      = something broke
 //   error    → ok         = something recovered
 //   disabled → anything   = a feature got turned on without restart (rare)
+//
+// A check may also return `problems: [{key, text}]`. A key the last check did not have is logged
+// and DMed even while the status stays the same; a key that went away is only logged.
 const config = require('../config/config.js');
 const logger = require('./logger.js');
 const { runHealthCheck, formatHealthCheck } = require('./healthCheck.js');
 
 const INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
 let previousStatuses = null;
+let previousProblems = null;
 let monitorTimer = null;
 // Bumped on every start and stop. A check that was still waiting on its results when the monitor
 // it belongs to stopped must not report: its client is the one !restart destroyed.
@@ -32,6 +36,29 @@ function diffStatuses(prev, curr) {
         }
     }
     return changes;
+}
+
+function problemMap(results) {
+    const out = {};
+    for (const [check, result] of Object.entries(results)) {
+        if (!result || !Array.isArray(result.problems)) continue;
+        out[check] = new Map(result.problems.map(p => [p.key, p.text]));
+    }
+    return out;
+}
+
+function newProblems(prev, curr) {
+    const fresh = [];
+    for (const [check, problems] of Object.entries(curr)) {
+        for (const [key, text] of problems) {
+            if (!(prev[check] && prev[check].has(key))) fresh.push({ check, text });
+        }
+    }
+    return fresh;
+}
+
+function cleared(prev, curr) {
+    return newProblems(curr, prev);
 }
 
 async function dmOwner(client, message) {
@@ -79,12 +106,22 @@ async function tick(client, gen) {
         logger.info('Health check: ' + Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', '));
 
         const changes = diffStatuses(previousStatuses, statusMap(results));
+        const problems = problemMap(results);
+        const fresh = newProblems(previousProblems || {}, problems);
+        for (const p of fresh) logger.warn(`Health check: new problem: ${p.check}: ${p.text}`);
+        for (const p of cleared(previousProblems || {}, problems)) logger.info(`Health check: cleared: ${p.check}: ${p.text}`);
         if (changes.length > 0) {
             const summary = changes.map(c => `${c.key}: ${c.from} → ${c.to}`).join(', ');
             logger.warn('Health check status changed: ' + summary);
+        }
+        if (changes.length || fresh.length) {
+            const title = changes.length ? 'Health change detected'
+                : fresh.length === 1 ? 'New health problem' : 'New health problems';
+            const lines = changes.map(c => `• **${c.key}**: \`${c.from}\` → \`${c.to}\``)
+                .concat(fresh.map(p => `\u2022 **${p.check}**${changes.length ? ', new' : ''}: ${p.text}`));
             const dmBody =
-                `🩺 **Health change detected**\n` +
-                changes.map(c => `• **${c.key}**: \`${c.from}\` → \`${c.to}\``).join('\n') +
+                `\u{1FA7A} **${title}**\n` +
+                lines.join('\n') +
                 `\n\n\`\`\`\n${formatted}\n\`\`\``;
             await dmOwner(client, dmBody);
         }
@@ -95,6 +132,7 @@ async function tick(client, gen) {
     // change itself. A notice sent twice beats one never sent.
     if (gen !== generation) return;
     previousStatuses = statusMap(results);
+    previousProblems = problemMap(results);
 }
 
 // Replaces any monitor already running. !restart starts a new one for the new client, and the old

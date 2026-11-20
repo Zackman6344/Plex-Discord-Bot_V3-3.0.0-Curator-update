@@ -121,6 +121,58 @@ const KEY_LIST = 'name, preset, movies, shows, albums, books, titles, playlist (
 	+ 'snack_bar_trades, snack_bar_price, trap_percentage, buffering_weight, rights_expired_weight, commercial_break_weight, '
 	+ 'shuffle_mode_weight, rewind_weight, intermission_weight, slow_motion_weight, for';
 
+const MORE_KEYS = Object.freeze(['label', 'songs_per_unlock', 'starting_unlocks', 'wild_tickets', 'strict', 'locked_watches',
+	'checkpoint_items', 'snack_variety', 'fast_forwards', 'remote_controls', 'snack_bar_trades', 'snack_bar_price',
+	'trap_percentage', 'buffering_weight', 'rights_expired_weight', 'commercial_break_weight', 'shuffle_mode_weight',
+	'rewind_weight', 'intermission_weight', 'slow_motion_weight']);
+const MORE_SPEC = new Map(MORE_KEYS.map((key) => {
+	if (key === 'label') return [common.normKey(key), { key, type: 'text' }];
+	const option = contracts.OPTIONS[key === 'strict' ? 'timesanity_strict' : key];
+	return [common.normKey(key), { key, type: option.type, values: option.values, min: option.min, max: option.max, default: option.default }];
+}));
+
+/**
+ * Suggestions for the yaml `more` field: `key=` stubs for the keys not given yet, or the values of
+ * the key being typed, each the whole field as it would read.
+ * @returns {{name: string, value: string}[]}
+ */
+function moreChoices(typed) {
+	const text = String(typed || '');
+	if (text.length > 100) return [];
+	if ([...text].filter((ch) => common.QUOTES.includes(ch)).length % 2 === 1) return [];
+	const cut = text.search(/\S*$/);
+	const head = text.slice(0, cut);
+	const word = text.slice(cut);
+	const used = new Set(common.tokenize(head).filter((t) => t.key).map((t) => KEYS[common.normKey(t.key)]));
+	const completions = [];
+	const eq = word.indexOf('=');
+	if (eq < 0) {
+		const start = common.normKey(word);
+		for (const key of MORE_KEYS) {
+			const norm = common.normKey(key);
+			if (!used.has(KEYS[norm]) && norm.startsWith(start)) completions.push(`${key}=`);
+		}
+	} else {
+		const spec = MORE_SPEC.get(common.normKey(word.slice(0, eq)));
+		const value = word.slice(eq + 1);
+		let values = [];
+		if (spec && spec.type === 'toggle') values = ['true', 'false'];
+		else if (spec && spec.type === 'choice') values = spec.values.map(String);
+		else if (spec && spec.type === 'range') {
+			const n = /^\d+$/.test(value) ? Number(value) : null;
+			const typedOne = n !== null && n >= spec.min && n <= spec.max ? String(n) : null;
+			values = [...new Set([typedOne, String(spec.default), String(spec.min), String(spec.max)].filter((v) => v !== null))];
+		}
+		const lower = value.toLowerCase();
+		for (const v of values) if (v.toLowerCase().startsWith(lower)) completions.push(`${word.slice(0, eq + 1)}${v}`);
+	}
+	return completions
+		.map((completion) => `${head}${completion}`)
+		.filter((full) => full.length >= 1 && full.length <= 100)
+		.slice(0, 25)
+		.map((full) => ({ name: full, value: full }));
+}
+
 /**
  * key=value words into builder params. A bare word is the name when name= is not given, and a
  * mention (or for=@user) is who the list is for.
@@ -445,4 +497,4 @@ async function run(ctx) {
 	});
 }
 
-module.exports = { names: ['yaml'], run, parsePairs, readAttachment, fitLines, fileLines, KEYS, FILE_HOSTS, FILE_TIMEOUT_MS, REPLY_FILE_MAX, CONTENT_MAX, RANDOM_SHOWN };
+module.exports = { names: ['yaml'], run, parsePairs, moreChoices, MORE_KEYS, readAttachment, fitLines, fileLines, KEYS, FILE_HOSTS, FILE_TIMEOUT_MS, REPLY_FILE_MAX, CONTENT_MAX, RANDOM_SHOWN };

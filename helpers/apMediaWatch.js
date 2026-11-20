@@ -18,6 +18,8 @@
 // forward step counts only while it fits the wall time that passed (2.5x plus 20 s), which a seek
 // does not. A pause or a stall reports where playback stopped, so the step that ends on it counts
 // when the poll before it was playing; between two polls that are not playing, a move is a scrub.
+// An episode's forward step too long for its wall time is a jump (Skip Intro, a seek) and goes to
+// onJump after the spans; a first sight only sets the baseline, so it never makes one.
 // The owner's session User.id may be their plex.tv id rather than local account 1, so an unknown id
 // is matched by User.title against the /accounts names.
 
@@ -104,8 +106,10 @@ function targetList(raw) {
  * @param {object|(() => object)} [deps.config] carries apMediaHistorySeconds and apMediaSessionSeconds,
  *   each held between its contracts.SETTINGS minimum and MAX_POLL_S (a day)
  * @param {object} [deps.logger]
+ * @param {(jump: object) => any} [deps.onJump] an episode's rejected forward step between two seen
+ *   positions: {accountId, ratingKey, fromMs, toMs, wallMs, padMs, at}; a returned promise is awaited
  */
-function createWatcher({ pms, targets, onEvent, marks, now = Date.now, timers = DEFAULT_TIMERS, config, logger = defaultLogger } = {}) {
+function createWatcher({ pms, targets, onEvent, marks, now = Date.now, timers = DEFAULT_TIMERS, config, logger = defaultLogger, onJump = null } = {}) {
 	if (!pms || typeof pms.history !== 'function') throw new TypeError('createWatcher needs pms.');
 	if (typeof targets !== 'function') throw new TypeError('createWatcher needs targets().');
 	if (typeof onEvent !== 'function') throw new TypeError('createWatcher needs onEvent().');
@@ -385,6 +389,7 @@ function createWatcher({ pms, targets, onEvent, marks, now = Date.now, timers = 
 		const at = now();
 		const live = new Set();
 		const spans = [];
+		const jumps = [];
 		for (const { row, ratingKey, accountId } of mine) {
 			if (epochOf(accountId) !== epochs.get(accountId)) continue;
 			const session = (row.Session && row.Session.id) || row.sessionKey;
@@ -411,6 +416,9 @@ function createWatcher({ pms, targets, onEvent, marks, now = Date.now, timers = 
 				const rate = wall > 0 ? dOffset / wall : 1;
 				const padMs = Math.min(PAD_MAX_MS, Math.round((sessionMs || settings().sessionMs) * Math.max(1, rate) + PAD_LAG_MS));
 				spans.push({ type: 'span', source: 'session', accountId, ratingKey, fromMs: prev.offset, toMs: offset, padMs, at });
+			} else if ((playing || prev.playing) && dOffset > 0 && row.type === 'episode') {
+				const padMs = Math.min(PAD_MAX_MS, Math.round((sessionMs || settings().sessionMs) + PAD_LAG_MS));
+				jumps.push({ accountId, ratingKey, fromMs: prev.offset, toMs: offset, wallMs: at - prev.wall, padMs, at });
 			}
 			baselines.set(key, { offset, wall: at, playing });
 		}
@@ -424,6 +432,15 @@ function createWatcher({ pms, targets, onEvent, marks, now = Date.now, timers = 
 				await onEvent(event);
 			} catch (err) {
 				logger.warn(`Plex Media: a session credit for account ${event.accountId} failed:`, (err && err.message) || err);
+			}
+		}
+		if (typeof onJump !== 'function') return;
+		for (const jump of jumps) {
+			if (gen !== generation) return;
+			try {
+				await onJump(jump);
+			} catch (err) {
+				logger.warn(`Plex Media: a jump for account ${jump.accountId} failed:`, (err && err.message) || err);
 			}
 		}
 	}
@@ -530,8 +547,21 @@ function createWatcher({ pms, targets, onEvent, marks, now = Date.now, timers = 
 	};
 }
 
+/**
+ * Whether a jump crossed an intro the way Skip Intro does: from a position no more than one bound
+ * before the intro to its end or past it, by no more than one bound beyond what the intro covers.
+ */
+function introStep({ fromMs, toMs, wallMs }, intro) {
+	if (!intro) return false;
+	const bound = wallMs * SPAN_FACTOR + SPAN_SLACK_MS;
+	return intro.endMs > intro.startMs && fromMs <= intro.endMs && toMs >= intro.endMs
+		&& fromMs >= intro.startMs - bound
+		&& (toMs - fromMs) - (intro.endMs - Math.max(fromMs, intro.startMs)) <= bound;
+}
+
 module.exports = {
 	createWatcher,
+	introStep,
 	WINDOW_S,
 	MIN_VALID_S,
 	MAX_ROW_TRIES,

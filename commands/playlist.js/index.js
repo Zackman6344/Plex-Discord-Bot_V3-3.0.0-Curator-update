@@ -50,7 +50,8 @@ module.exports = {
         { name: 'play',      description: 'Play a custom playlist (joins your voice channel)',
           options: [
             { name: 'name',    type: 'STRING',  description: 'Custom playlist name', required: true, autocomplete: true },
-            { name: 'shuffle', type: 'BOOLEAN', description: 'Shuffle the playlist before playing', required: false, flag: '-r' }
+            { name: 'shuffle', type: 'BOOLEAN', description: 'Shuffle the playlist before playing', required: false, flag: '-r' },
+            { name: 'earning', type: 'BOOLEAN', description: 'Only the songs that still earn on your Plex Media list', required: false, flag: '-e' }
           ] },
         { name: 'plex-list', description: 'List Plex audio playlists (optionally for a managed user)',
           options: [{ name: 'account', type: 'STRING', description: 'Managed user (prompts for PIN via DM)', required: false }] },
@@ -111,7 +112,7 @@ module.exports = {
                     `> \`${bot.config.commandPrefix}playlist page\` — See the next page of search results.\n` +
                     `> \`${bot.config.commandPrefix}playlist delete [playlist] [index]\` — Remove a specific song (use \`print\` to get the index number).\n\n` +
                     `**▶️ PLAYBACK & PLEX INTEGRATION**\n` +
-                    `> \`${bot.config.commandPrefix}playlist play [name] [-r]\` — Play your custom playlist (\`-r\` to shuffle).\n` +
+                    `> \`${bot.config.commandPrefix}playlist play [name] [-r] [-e]\`: Play your custom playlist (\`-r\` to shuffle, \`-e\` for only the songs that still earn on your Plex Media list).\n` +
                     `> \`${bot.config.commandPrefix}playlist plex-list [managed-user]\` — View Plex playlists. Optional managed-user shows that account's lists (DM-prompted PIN).\n` +
                     `> \`${bot.config.commandPrefix}playlist plex-play [name] [-r]\` — Play an official Plex playlist (\`-r\` to shuffle).\n` +
                     `> \`${bot.config.commandPrefix}playlist plex-copy\` — Interactive wizard: copy any managed-user's Plex playlist into a local bot playlist (asks for PIN via DM). Once copied, anyone can use it with \`play\`.`

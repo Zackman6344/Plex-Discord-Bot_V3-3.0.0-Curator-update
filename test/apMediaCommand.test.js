@@ -414,6 +414,15 @@ test('the bare command and ? show the sub-help, which fits an embed; an unknown 
 	assert.match(first(await runPrefix(ana(), 'constructor')).content, /Unknown \/apmedia command/);
 });
 
+test('the help embed fits 4,096 characters at a five-character prefix and names /apmedia help', () => {
+	const help = apmedia._internal.helpEmbed({ config: { commandPrefix: '!!!!!' } }).data.description;
+	assert.ok(help.length <= 4096, `${help.length} characters`);
+	assert.ok(help.includes('Everything works as `/apmedia ...` too, and `/apmedia help` shows this to you alone.'), help);
+	const spec = apmedia._internal.SUBCOMMANDS[apmedia._internal.SUBCOMMANDS.length - 1];
+	assert.deepStrictEqual(spec, { name: 'help', description: 'Every /apmedia command, shown only to you' });
+	assert.match(apmedia.command.usage, /\|help>$/);
+});
+
 test('slot names reach a reply in a code span, titles escaped, and the reply never pings', async () => {
 	const { game } = use();
 	game.bindings.push({ key: '0::zack', slot: 'Zack', userId: ANA, watchId: 0 });
@@ -479,9 +488,51 @@ test('yaml from slash options: kebab-case names, numbers and booleans as Discord
 		rewindWeight: '4', slowMotionWeight: '0', accountId: null, discordUserId: ANA
 	}, 'the item and trap options arrive as the other game options do');
 	const more = apmedia._internal.SUBCOMMANDS.find((s) => s.name === 'yaml').options.find((o) => o.name === 'more');
-	for (const key of ['label', 'strict', 'wild_tickets', 'trap_percentage']) assert.ok(more.description.includes(key), `the more option names ${key}`);
+	assert.match(more.description, /key=value/);
+	assert.strictEqual(more.autocomplete, true);
 	assert.match(first(await runSlash(ana(), 'yaml', { name: 'Zack', more: 'traps=5' })).content, /The options are: .*, trap_percentage, buffering_weight, .*, slow_motion_weight, for\./, 'a wrong key lists every key');
 	assert.ok(more.description.length <= 100);
+});
+
+test('more: completion offers the keys not given yet, then the values of the key being typed', () => {
+	const yamlCommand = require('../commands/apmedia.js/yaml.js');
+	const offered = (typed) => yamlCommand.moreChoices(typed).map((c) => c.value);
+	assert.deepStrictEqual(offered(''), yamlCommand.MORE_KEYS.map((key) => `${key}=`));
+	assert.strictEqual(yamlCommand.MORE_KEYS.length, 20);
+	assert.deepStrictEqual(offered('trap_percentage=20 snack'),
+		['trap_percentage=20 snack_variety=', 'trap_percentage=20 snack_bar_trades=', 'trap_percentage=20 snack_bar_price=']);
+	assert.deepStrictEqual(offered('strict='), ['strict=true', 'strict=false']);
+	assert.deepStrictEqual(offered('locked_watches=i'), ['locked_watches=ignore']);
+	assert.deepStrictEqual(offered('trap_percentage=1'), ['trap_percentage=1', 'trap_percentage=100']);
+	assert.deepStrictEqual(offered('label="My '), []);
+	assert.deepStrictEqual(offered('x'.repeat(101)), []);
+	assert.ok(!offered('timesanity_strict=true ').some((v) => /strict=$/.test(v)), 'a given key is not offered again');
+	assert.ok(!offered('wild_tickets=3 ').includes('wild_tickets=3 wild_tickets='));
+	for (const typed of ['', 'strict=', 'trap_percentage=1', 'locked_watches=', 'snack_variety=', 'label=x ']) {
+		for (const choice of yamlCommand.moreChoices(typed)) {
+			assert.strictEqual(choice.name, choice.value);
+			assert.ok(choice.value.length >= 1 && choice.value.length <= 100);
+			if (!choice.value.endsWith('=')) assert.strictEqual(yamlCommand.parsePairs(choice.value, { allowName: false, allowFor: false }).error, undefined, choice.value);
+		}
+	}
+});
+
+test('MORE_KEYS holds every world option that has no slash option of its own, and only KEYS keys', () => {
+	const yamlCommand = require('../commands/apmedia.js/yaml.js');
+	const slashed = new Set(apmedia._internal.SUBCOMMANDS.find((s) => s.name === 'yaml').options.map((o) => yamlCommand.KEYS[common.normKey(o.name)]).filter(Boolean));
+	const more = new Set(yamlCommand.MORE_KEYS.map((key) => yamlCommand.KEYS[common.normKey(key)]));
+	for (const key of yamlCommand.MORE_KEYS) assert.ok(yamlCommand.KEYS[common.normKey(key)], `${key} is a KEYS key`);
+	for (const key of Object.keys(contracts.OPTIONS)) {
+		const canonical = yamlCommand.KEYS[common.normKey(key)];
+		if (!slashed.has(canonical)) assert.ok(more.has(canonical), `${key} is offered through more`);
+	}
+});
+
+test('the autocomplete handler answers the more field', async () => {
+	use();
+	const i = focus(ana(), 'yaml', 'more', 'strict=');
+	await apmedia.command.slash.autocomplete(i);
+	assert.deepStrictEqual(i.responded, [[{ name: 'strict=true', value: 'strict=true' }, { name: 'strict=false', value: 'strict=false' }]]);
 });
 
 // The bug: a backtick in a slot name became a quote inside the suggested command, which then
@@ -1155,15 +1206,15 @@ test('the yaml slash spec: file is an attachment read straight off the interacti
 
 // ---- apworld ----------------------------------------------------------------------------------
 
-function fakeApworld(manifest) {
+function fakeApworld(found) {
 	const reads = [];
 	return {
 		reads,
 		buildApworld: () => ({ buffer: Buffer.from('PK\u0005\u0006'), bytes: 62177, worldVersion: '0.1.0', files: [] }),
-		readApworldManifest(file) {
+		compareInstalled(file, built) {
 			reads.push(file);
-			if (manifest instanceof Error) throw manifest;
-			return manifest;
+			if (found instanceof Error) throw found;
+			return { version: null, differ: [], code: null, ...found };
 		}
 	};
 }
@@ -1174,20 +1225,37 @@ test('apworld attaches the world and reads, never writes, the installed copy to 
 		use({ apworld, installedApworld: installed });
 		return first(await runPrefix(owner(), 'apworld'));
 	};
-	const same = await said(fakeApworld({ game: 'Plex Media', world_version: '0.1.0' }));
+	const same = await said(fakeApworld({ state: 'same', version: '0.1.0' }));
 	assert.deepStrictEqual(same.files.map((f) => f.name), ['plex_media.apworld']);
 	assert.match(same.content, /the Plex Media world 0\.1\.0 \(61 KB\)/);
 	assert.match(same.content, /Install APWorld/);
 	assert.match(same.content, /Keep it installed for as long as the seed's room lives: `!ap next` rebuilds the seed from it/);
 	assert.match(same.content, /This PC already has world 0\.1\.0 installed\./);
-	assert.match((await said(fakeApworld({ world_version: '0.0.9' }))).content, /This PC has world 0\.0\.9 installed, and this file is 0\.1\.0/);
-	assert.match((await said(fakeApworld(null))).content, /has no archipelago\.json/);
-	assert.match((await said(fakeApworld(new Error('C:/AP/plex_media.apworld is not a zip')))).content, /is not a valid zip: while it is there, every Archipelago program on this PC fails to start/);
-	assert.match((await said(fakeApworld(Object.assign(new Error('missing'), { code: 'ENOENT' })))).content, /has no plex_media\.apworld installed yet/);
-	const none = await said(fakeApworld({ world_version: '9.9.9' }), null);
+	assert.match((await said(fakeApworld({ state: 'version', version: '0.0.9' }))).content, /This PC has world 0\.0\.9 installed, and this file is 0\.1\.0/);
+	assert.match((await said(fakeApworld({ state: 'nomanifest' }))).content, /has no archipelago\.json/);
+	assert.match((await said(fakeApworld({ state: 'notzip' }))).content, /is not a valid zip: while it is there, every Archipelago program on this PC fails to start/);
+	assert.match((await said(fakeApworld(new Error('EISDIR: illegal operation on a directory')))).content, /is not a valid zip: while it is there/);
+	assert.match((await said(fakeApworld({ state: 'unreadable', code: 'EBUSY' }))).content, /The installed plex_media\.apworld could not be read \(EBUSY\), so its version is unknown\./);
+	assert.match((await said(fakeApworld({ state: 'missing' }))).content, /has no plex_media\.apworld installed yet/);
+	const none = await said(fakeApworld({ state: 'version', version: '9.9.9' }), null);
 	assert.ok(!/This PC/.test(none.content), 'no install configured: nothing compared');
 	const bad = { buildApworld() { throw new Error('archipelago.json world_version must be exactly x.y.z'); }, readApworldManifest() { throw new Error('unused'); } };
 	assert.strictEqual((await said(bad)).content, '\u274C The apworld could not be built; the bot log has the reason.');
+});
+
+test('apworld names the installed files that differ from this build, three at most', async () => {
+	const said = async (differ) => {
+		if (restore) restore();
+		use({ apworld: fakeApworld({ state: 'differs', version: '0.1.0', differ }), installedApworld: 'C:/AP/custom_worlds/plex_media.apworld' });
+		return first(await runPrefix(owner(), 'apworld')).content;
+	};
+	const one = await said(['options.py']);
+	assert.ok(one.endsWith('This PC has world 0.1.0 installed with 1 file that differs from this one (`options.py`): install this one over it.'), one);
+	const two = await said(['items.py', 'options.py']);
+	assert.ok(two.endsWith('This PC has world 0.1.0 installed with 2 files that differ from this one (`items.py` and `options.py`): install this one over it.'), two);
+	const five = await said(['a.py', 'b.py', 'c.py', 'd.py', 'e.py']);
+	assert.ok(five.endsWith('This PC has world 0.1.0 installed with 5 files that differ from this one (`a.py`, `b.py`, `c.py` and 2 more): install this one over it.'), five);
+	assert.ok(!/already has world/.test(five), five);
 });
 
 // The bug: every test above handed the command its installed path, so the folder it really reads
@@ -1200,7 +1268,7 @@ test('apworld reads <archipelagoInstallDir>/custom_worlds/plex_media.apworld, an
 	const dir = path.join(os.tmpdir(), `plexbot-test-apmedia-install-${process.pid}`);
 	const savedDir = config.archipelagoInstallDir;
 	const reads = [];
-	const apworld = { ...realBuild, readApworldManifest(file) { reads.push(file); return realBuild.readApworldManifest(file); } };
+	const apworld = { ...realBuild, compareInstalled(file, built) { reads.push(file); return realBuild.compareInstalled(file, built); } };
 	try {
 		const installed = realBuild.writeApworld(path.join(dir, 'custom_worlds', 'plex_media.apworld'));
 		use({ apworld });
@@ -1822,11 +1890,11 @@ test('snackbar shows the terms or buys one item, from a slash choice or the word
 // earns the next checkpoint wherever it is.
 test('ff\'s description and help say what a Fast Forward earns, with strict and without', () => {
 	const spec = apmedia._internal.SUBCOMMANDS.find((s) => s.name === 'ff');
-	assert.strictEqual(spec.description, 'Spend a Fast Forward: earn a title\'s next checkpoint (strict: 10 minutes of it count as heard)');
+	assert.strictEqual(spec.description, 'Spend a Fast Forward on a title');
 	assert.ok(spec.description.length <= 100, `${spec.description.length} characters`);
 	const help = apmedia._internal.helpEmbed(BOT).data.description;
 	assert.ok(help.includes('`!apmedia ff <title> [slot=x]`: Spend a Fast Forward: earn a title\'s next checkpoint without playing it '
-		+ '(with Timesanity Strict on, the 10 minutes after where you got to count as heard instead).\n'), help);
+		+ '(with Timesanity Strict on, the 10 minutes from where everything before is heard count as heard instead).\n'), help);
 	// The autoskip's line says "skipped" of locked songs in voice, which is no Fast Forward.
 	const forward = help.split('\n').filter((line) => /fast[ -]forward|apmedia ff /i.test(line));
 	assert.strictEqual(forward.length, 2, 'the ff line and the Snack Bar\'s');
@@ -1839,7 +1907,7 @@ test('the help says in one line, under PLAYING, that a locked playlist song is s
 	// An album's song in a locked part is skipped too (lockedFor), so the line promises no album a play.
 	const line = '> In the bot\'s voice channel, a song of a playlist part still locked for someone listening is skipped, unless someone there has it open; an album never locks a song.';
 	const lines = help.split('\n');
-	assert.strictEqual(lines.filter((l) => /skip/i.test(l)).length, 1);
+	assert.strictEqual(lines.filter((l) => /skip/i.test(l) && !l.includes('apmedia switch')).length, 1);
 	assert.ok(!/always play/i.test(help), help);
 	const at = lines.indexOf(line);
 	assert.ok(at > lines.indexOf('**\u{1F37F} PLAYING**') && at < lines.indexOf('**\u{1F527} OWNER**'), help);
@@ -2028,9 +2096,9 @@ test('a leading slot= value that names a slot as typed opens no quote', async ()
 	assert.deepStrictEqual(spent(), [
 		['fastForward', '0::tis', rain],
 		['redeem', '0::tis', rain],
-		['creditManual', '0::tis', rain, { atMs: 3600000 }],
+		['creditManual', '0::tis', rain, { atMs: 3600000, by: ANA }],
 		['fastForward', '1::til', rain],
-		['creditManual', '2::twas', rain, { atMs: 3600000 }],
+		['creditManual', '2::twas', rain, { atMs: 3600000, by: OWNER }],
 	], 'the owner checks any slot, so Ben\'s counts for them too');
 });
 
@@ -2228,6 +2296,20 @@ test('status leaves the Snack Bar out of a seed that allows no trades, and keeps
 	assert.deepStrictEqual(status.itemLines(row({ price: 10, trades: 3, tradesLeft: 0 })),
 		['> Snacks: 12. The Snack Bar takes 10 snacks a trade, 0 trades left (`/apmedia snackbar`).']);
 	assert.deepStrictEqual(status.itemLines(row(null)), [], 'a seed from before 0.3.0 has no Snack Bar');
+});
+
+test('status counts the titles held back by a gap after the counts line, and says nothing at none', () => {
+	const status = require('../commands/apmedia.js/status.js');
+	const MARK = String.fromCodePoint(0x1F6A7);
+	const row = (heldBack) => ({
+		slot: 'Zack', watchId: 1, userId: 'u1', connection: 'connected', state: 'active', total: 4, done: 1,
+		goalCount: 3, goalReached: false, inventoryKnown: true, ready: 2, locked: 1, heldBack, account: null
+	});
+	const rows = (heldBack) => status.block(row(heldBack), { showUser: false }).rows;
+	assert.strictEqual(rows(2)[1], `> ${MARK} 2 titles have checkpoints held back by a gap: \`/apmedia progress\` lists them.`);
+	assert.strictEqual(rows(1)[1], `> ${MARK} 1 title has checkpoints held back by a gap: \`/apmedia progress\` lists it.`);
+	assert.match(rows(1)[0], /^> 1 of 4 done/);
+	for (const none of [0, undefined]) assert.ok(!rows(none).some((line) => line.includes(MARK)));
 });
 
 // ---- autocomplete -----------------------------------------------------------------------------

@@ -34,6 +34,7 @@ const { escapeMarkdown } = require('discord.js');
 const contracts = require('./apMediaContracts.js');
 const credit = require('./apMediaCredit.js');
 const autoskip = require('./apMediaAutoskip.js');
+const switchRegistry = require('./apMediaSwitches.js');
 
 const HOLD_MS = 5 * 60 * 1000;
 // 1900 keeps a chunk inside Discord's 2000-character message limit, as the relay does.
@@ -85,6 +86,8 @@ const ICON = Object.freeze({
 	snack: '\u{1F37F}',
 	dodged: '\u{1F340}',
 	slow: '\u{1F422}',
+	gap: '\u{1F6A7}',
+	connected: '\u{1F7E2}',
 });
 const ELLIPSIS = '\u2026';
 
@@ -102,6 +105,23 @@ const ARMED_MAX = 20;
 // A !collect or a release can deliver a slot's whole share of traps in one batch.
 const BURST = 2;
 const FAST_FORWARD_MS = 10 * MINUTE_MS;
+// A locked watch that stopped this close before a gap's end still made the gap.
+const LOCKED_SLACK_MS = MINUTE_MS;
+const INTRO_SLACK_MS = 1000;
+const INTRO_SEEN_MAX = 100;
+// A title with no hit for this long starts a new sitting, and its lines may be told again.
+const SITTING_GAP_MS = 3 * 60 * MINUTE_MS;
+const LINES_PER_HOUR = 6;
+const EPISODES_PENDING_MAX = 20;
+const SONGS_PENDING_MAX = 20;
+// One songs line and one episodes line per slot this often; the rest wait for the next.
+const SONGS_LINE_MS = 30 * MINUTE_MS;
+// An older play of a locked title is history by now, and its locked line would only be noise.
+const LOCKED_RECENT_MS = 3 * 60 * MINUTE_MS;
+// A history row or a finished bookmark adds no range, so it has no gap to tell.
+const TELL_SOURCES = new Set(['session', 'voice', 'book', 'intro']);
+const LOCKED_SOURCES = new Set(['session', 'history', 'voice', 'book', 'intro']);
+const PICKS_MAX = 5;
 const TICK_MS = MINUTE_MS;
 // 'will play' comes before the player is Playing, when a listen through the bot is not visible yet.
 const TRACK_START_MS = 3000;
@@ -201,6 +221,68 @@ function formatDuration(ms) {
 	const m = minutes % 60;
 	if (!h) return `${m}m`;
 	return m ? `${h}h${m}m` : `${h}h`;
+}
+
+/** A position read off a player: `0:00`, `18:47`, `1:02:05`. */
+function clock(ms) {
+	const total = Math.floor(Math.max(0, Number(ms) || 0) / 1000);
+	const h = Math.floor(total / 3600);
+	const m = Math.floor((total % 3600) / 60);
+	const s = total % 60;
+	return h ? `${h}:${pad2(m)}:${pad2(s)}` : `${m}:${pad2(s)}`;
+}
+
+/** `1st`, `2nd`, `3rd`, `4th`, `11th`, `21st`. */
+function ordinal(n) {
+	const v = Math.floor(Number(n) || 0);
+	const teen = v % 100 >= 11 && v % 100 <= 13;
+	const suffix = teen ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' }[v % 10] || 'th');
+	return `${v}${suffix}`;
+}
+
+function openerText(o, ref, p, commands) {
+	let line;
+	if (!o.unit) line = 'It opens with an item from the multiworld.';
+	else if (o.step <= 1) line = `It opens when ${bold(o.unit)} arrives.`;
+	else line = `It opens with the ${ordinal(o.step)} ${bold(o.unit)}${o.have > 0 ? ` (${o.have} so far)` : ''}.`;
+	if (o.tickets > 0) line += ` A Wild Ticket opens it${commands ? `: ${commandCode(`${p}apmedia redeem ${ref}`)}` : ''} (${o.tickets} on hand).`;
+	return line;
+}
+
+/**
+ * The sentences every Plex Media line shares about one title's standing. Without commands they say
+ * the same with each command left out, for a reply about another player's slot: the commands act
+ * only on the slots of whoever types them.
+ */
+function standingText(s, p, introOn, commands = true) {
+	const text = { gap: null, gapAlone: null, fix: null, opener: s.opener ? openerText(s.opener, s.ref, p, commands) : null, tag: null };
+	const heard = s.heard;
+	if (!heard || !heard.gap || !heard.heldBack.length) return text;
+	const first = formatDuration(heard.heldBack[0].atMs);
+	if (heard.byLock) {
+		const played = `was played to ${clock(heard.playedLockedToMs)} while it was locked, and this slot counts nothing played then, so its checkpoints from ${first} on wait`;
+		text.gap = played;
+		text.gapAlone = `It ${played}.`;
+		text.tag = `played while locked to ${clock(heard.playedLockedToMs)}`;
+	} else {
+		const span = `${clock(heard.gap.fromMs)} to ${clock(heard.gap.toMs)}`;
+		text.gap = `has nothing heard from ${span}, so its checkpoints from ${first} on wait`;
+		text.gapAlone = `Nothing heard from ${span}, so its checkpoints from ${first} on wait.`;
+		text.tag = `gap ${clock(heard.gap.fromMs)}\u2013${clock(heard.gap.toMs)}, heard to ${clock(heard.furthestMs)}`;
+	}
+	if (s.fix) {
+		const rewind = s.fix.rewindMs ? clock(s.fix.rewindMs) : 'the start';
+		const run = (command, after = '') => (commands ? `: ${commandCode(`${p}apmedia ${command}`)}${after}` : '');
+		let line = heard.byLock || !commands
+			? `Rewind to ${rewind}.`
+			: `Rewind to ${rewind}, or if you watched it${run(`check ${s.ref} at ${clock(s.fix.checkAtMs)}`)}.`;
+		const ff = s.fix.ff;
+		if (ff && ff.have) line += ` One Fast Forward covers the gap${run(`ff ${s.ref}`)} (${ff.have} on hand).`;
+		else if (ff && ff.price) line += ` One Fast Forward covers the gap, and the Snack Bar trades one for ${plural(ff.price, 'snack')}${run('snackbar buy fast-forward')}.`;
+		if (heard.intro && !introOn) line += ` Plex's Skip Intro made that gap${run('switch intro on', ' counts a skipped intro as heard')}.`;
+		text.fix = line;
+	}
+	return text;
 }
 
 /** How a list title reads to a person: `The Matrix (1999)`, `Show S01E02`, `Artist - Album`. */
@@ -431,6 +513,7 @@ function createGame(options = {}) {
 	let configBound = false;
 	let startError = null;
 	let watchOff = null;
+	let describerOff = null;
 	let watcher = null;
 	let attachedBot = null;
 	let voiceDetach = null;
@@ -445,6 +528,7 @@ function createGame(options = {}) {
 	let runnerMade = null;
 	let runnerFailed = false;
 	let autoskipWarned = false;
+	let earningWarned = false;
 	let tickTimer = null;
 	const trackTimers = new Set();
 	// Binding key -> the armed-trap pass running for it, so two passes never apply one trap twice.
@@ -592,8 +676,23 @@ function createGame(options = {}) {
 				// back on the slot's own seed costs it nothing. A refusal or a lost watch ends it: the
 				// retry was for the seed the room was on then, and a later one needs a retry of its own.
 				adopt: false,
+				// Set by /apmedia retry, so its next Connected posts a line as a refused slot's does; a
+				// refusal, a lost watch or a new seed clears it.
+				rejoin: null,
 				heard: null,
 				heardDirty: false,
+				told: null,
+				toldDirty: false,
+				gapsToTell: new Map(),
+				seen: new Map(),
+				lineTimes: [],
+				songsPending: new Map(),
+				songsNamed: new Map(),
+				songsTimer: null,
+				episodesPending: new Map(),
+				episodesTimer: null,
+				heldBackKeys: new Set(),
+				introSeen: new Map(),
 				heardTimer: null,
 				holdTimer: null,
 				speedTimer: null,
@@ -701,10 +800,15 @@ function createGame(options = {}) {
 	function eventBindings(event, only) {
 		let list = bindings().filter((b) => CREDITED.has(b.state));
 		if (only) list = list.filter((b) => b.key === only);
-		if (event.source === 'history' || event.source === 'session') {
+		if (event.source === 'history' || event.source === 'session' || event.source === 'intro') {
 			const accountId = Number(event.accountId);
 			if (!Number.isSafeInteger(accountId) || accountId <= 0) return [];
-			return list.filter((b) => consentedAccount(b.userId) === accountId);
+			list = list.filter((b) => consentedAccount(b.userId) === accountId);
+			if (event.source !== 'intro') return list;
+			return list.filter((b) => {
+				const index = indexFor(b);
+				return !!index && index.strict && switchOn(b, 'intro', index);
+			});
 		}
 		const users = new Set((Array.isArray(event.userIds) ? event.userIds : []).map(String));
 		return list.filter((b) => users.has(b.userId));
@@ -784,7 +888,7 @@ function createGame(options = {}) {
 			if (!index || at < index.generatedAtMs) continue;
 			try {
 				const hits = await eventHits(b, index, event);
-				if (hits.length) plans.push({ key: b.key, index, hits });
+				if (hits.length) plans.push({ key: b.key, index, hits, backfill: !!only });
 			} catch (err) {
 				failure = failure || err;
 			}
@@ -794,17 +898,22 @@ function createGame(options = {}) {
 	}
 
 	function applyEvent(event, plans) {
-		for (const { key, index, hits } of plans) {
+		for (const { key, index, hits, backfill } of plans) {
 			const b = store().bindings.get(key);
 			if (!b || !CREDITED.has(b.state) || indexFor(b) !== index) continue;
 			const rt = runtimeOf(key);
 			const ids = [];
-			for (const hit of hits) {
-				if (index.strict) ids.push(...strictIds(b, rt, index, hit, event));
+			// Hits are frozen, so a strict hit carries its entry's last hit before this event in a copy.
+			const prevSeen = hits.map((hit) => rt.seen.get(contracts.entryKey(hit.entry)));
+			for (const hit of hits) rt.seen.set(contracts.entryKey(hit.entry), now());
+			hits.forEach((hit, i) => {
+				if (!backfill) noteLocked(b, rt, index, hit, event, prevSeen[i]);
+				if (index.strict) ids.push(...strictIds(b, rt, index, { ...hit, prevSeen: prevSeen[i] }, event, { tell: true }));
 				else ids.push(...credit.locationsFor(hit, event, false));
-			}
+			});
 			creditIds(b, index, ids, Number(event.at), event.source);
-			if (rt.heardDirty) armHeardFlush(rt);
+			tellGaps(b, rt, index);
+			if (rt.heardDirty || rt.toldDirty) armHeardFlush(rt);
 		}
 	}
 
@@ -821,13 +930,17 @@ function createGame(options = {}) {
 		return n;
 	}
 
-	/** Under timesanity_strict: one hit's ids, its entry's heard ranges updated in the runtime. */
-	function strictIds(b, rt, index, hit, event) {
+	/**
+	 * Under timesanity_strict: one hit's ids, its entry's heard ranges updated in the runtime.
+	 * @param {{tell?: boolean}} options tell: a gap holding checkpoints back waits in rt.gapsToTell
+	 */
+	function strictIds(b, rt, index, hit, event, { tell = true } = {}) {
 		const heard = heardOf(b, rt);
 		const entryKey = contracts.entryKey(hit.entry);
 		const before = heard[entryKey];
 		const counted = recordsHeard(b, rt, index, hit.entry) ? event : { ...event, fromMs: undefined, toMs: undefined };
-		const r = credit.strictLocations(hit, counted, before, { floorMs: earnedFloor(b, rt, hit.entry) });
+		const floorMs = earnedFloor(b, rt, hit.entry);
+		const r = credit.strictLocations(hit, counted, before, { floorMs });
 		// Once the slot holds HEARD_TOTAL_MAX ranges, a title not started yet is judged on each stretch
 		// alone and keeps nothing.
 		const room = !!before || heardCount(heard) < credit.HEARD_TOTAL_MAX;
@@ -835,6 +948,12 @@ function createGame(options = {}) {
 			if (r.heard.length) heard[entryKey] = r.heard;
 			else delete heard[entryKey];
 			rt.heardDirty = true;
+		}
+		if (room && tell && TELL_SOURCES.has(event.source)) {
+			const gap = credit.firstGap(r.heard, { floorMs });
+			// earnedFloor lifts the reach to the furthest earned checkpoint, so every one past it is unearned.
+			const heldBack = gap ? credit.entryLocations(hit.entry).checkpoints.filter((cp) => cp.atMs > gap.reachMs && cp.atMs <= gap.furthestMs) : [];
+			if (heldBack.length) rt.gapsToTell.set(entryKey, { entry: hit.entry, gap, prevSeen: hit.prevSeen });
 		}
 		return r.ids;
 	}
@@ -848,8 +967,7 @@ function createGame(options = {}) {
 
 	// An earned checkpoint stands for everything before it heard, so progress from before this rule,
 	// ranges lost with a crash, and a time credited by hand all carry on from its mark.
-	function earnedFloor(b, rt, entry) {
-		const earned = earnedIds(b, rt);
+	function earnedFloor(b, rt, entry, earned = earnedIds(b, rt)) {
 		let floor = 0;
 		for (const cp of credit.entryLocations(entry).checkpoints) {
 			if (cp.atMs > floor && earned.has(cp.id)) floor = cp.atMs;
@@ -860,6 +978,436 @@ function createGame(options = {}) {
 	/** Every location the slot has earned: checked by the room, waiting to send, banked or held by a trap. */
 	function earnedIds(b, rt) {
 		return union(rt && rt.checked, b.pending, b.banked, b.held);
+	}
+
+	// Each set copies every id the room checked, and a seed late in its run holds thousands: a caller
+	// that reads many titles' standing builds them once and hands them to each.
+	function slotSets(b, rt) {
+		return { checked: union(rt && rt.checked, b.pending), earned: earnedIds(b, rt) };
+	}
+
+	// --- lines for a title that is not earning ---------------------------------------------------
+
+	function toldOf(b, rt) {
+		if (!rt.told) {
+			const told = b.told || {};
+			rt.told = { titles: { ...(told.titles || {}) }, songsAt: told.songsAt ?? null, episodesAt: told.episodesAt ?? null };
+		}
+		return rt.told;
+	}
+
+	// After a restart the stored told time stands in for the hits before it, so a restart inside a
+	// sitting repeats nothing.
+	function sameSitting(toldAt, prevSeen) {
+		const last = Math.max(Number(toldAt) || 0, Number(prevSeen) || 0);
+		return last > 0 && now() - last < SITTING_GAP_MS;
+	}
+
+	/** LINES_PER_HOUR per binding: a line over it is logged once per key and window, and not told. */
+	function allowLine(b, rt, key, line) {
+		const t = now();
+		rt.lineTimes = rt.lineTimes.filter((at) => t - at < 60 * MINUTE_MS);
+		if (rt.lineTimes.length < LINES_PER_HOUR) {
+			rt.heldBackKeys.clear();
+			rt.lineTimes.push(t);
+			return true;
+		}
+		if (!rt.heldBackKeys.has(key)) {
+			rt.heldBackKeys.add(key);
+			log().info(`Plex Media: held back a line for ${b.slot} (${LINES_PER_HOUR} an hour): ${line}`);
+		}
+		return false;
+	}
+
+	// Decision D1: these lines post whatever the announce settings say; this is the one place to change that.
+	function tell(b, line) {
+		notice(b, line);
+	}
+
+	/** The gap lines strictIds queued in rt.gapsToTell, each once a sitting and reach; episodes wait to be grouped. */
+	function tellGaps(b, rt, index) {
+		if (!rt.gapsToTell.size) return;
+		const queued = [...rt.gapsToTell.values()];
+		rt.gapsToTell.clear();
+		const told = toldOf(b, rt);
+		let changed = false;
+		let episodes = false;
+		for (const { entry, gap, prevSeen } of queued) {
+			const s = standing(b, entry);
+			if (!s || !s.heard || !s.heard.heldBack.length) continue;
+			const key = contracts.entryKey(entry);
+			const pair = told.titles[key] && told.titles[key].gap;
+			if (pair && sameGap(pair, gap.reachMs) && sameSitting(pair[1], prevSeen)) continue;
+			if (entry.k === 'episode') {
+				if (rt.episodesPending.has(key) || rt.episodesPending.size < EPISODES_PENDING_MAX) {
+					rt.episodesPending.set(key, { kind: 'gap', entry, gap });
+					episodes = true;
+				}
+				continue;
+			}
+			const line = gapLine(b, s);
+			if (!allowLine(b, rt, key, line)) continue;
+			tell(b, line);
+			told.titles[key] = { ...told.titles[key], gap: [gap.reachMs, now(), gap.gapEndMs] };
+			changed = true;
+			record('apmedia-gap', { slot: b.slot, title: s.title, fromMs: gap.reachMs, toMs: gap.gapEndMs, held: s.heard.heldBack.length });
+		}
+		if (changed && store().bindings.get(b.key)) {
+			store().bindings.patch(b.key, { told });
+			rt.toldDirty = false;
+		}
+		if (episodes) sendEpisodes(b, rt);
+	}
+
+	/** A told gap pair `[reachMs, toldAt, endMs?]` still names the gap that reaches from `reachMs`: filling it forward moves the reach but keeps its end. */
+	function sameGap(pair, reachMs) {
+		if (pair.length > 2) return reachMs >= pair[0] && reachMs < pair[2];
+		return pair[0] === reachMs;
+	}
+
+	function gapLine(b, s) {
+		return `${ICON.gap} ${code(b.slot)}: ${bold(s.title)} ${s.text.gap}. ${s.text.fix}`;
+	}
+
+	/**
+	 * Under 'ignore', a recent play of a locked title: a movie or book gets its locked line once a
+	 * sitting; an episode waits under its show's key for the episodes line.
+	 */
+	function noteLocked(b, rt, index, hit, event, prevSeen) {
+		if (index.lockedPolicy !== 'ignore' || !rt.counts || credit.isUnlocked(hit.entry, rt.counts, b.redeemed)) return;
+		if (!LOCKED_SOURCES.has(event.source) || !(Number(event.at) >= now() - LOCKED_RECENT_MS)) return;
+		if (index.strict) keepLockedReach(b, rt, hit, event);
+		if (hit.entry.k === 'episode') {
+			lockedEpisode(b, rt, hit.entry, prevSeen);
+			return;
+		}
+		if (hit.entry.k === 'album' || hit.entry.k === 'mix') {
+			lockedSong(b, rt, hit.entry, prevSeen);
+			return;
+		}
+		if (hit.entry.k !== 'movie' && hit.entry.k !== 'book') return;
+		const key = contracts.entryKey(hit.entry);
+		const told = toldOf(b, rt);
+		const pair = told.titles[key] && told.titles[key].locked;
+		// An untold reach (toldAt 0, from keepLockedReach) is no line told.
+		if (pair && pair[1] > 0 && sameSitting(pair[1], prevSeen)) return;
+		const s = standing(b, hit.entry);
+		// A title the room has checked (another player's collect) reads done everywhere, and redeem refuses it.
+		if (!s || s.status !== 'locked' || !s.text.opener) return;
+		const line = lockedLine(b, s);
+		if (!allowLine(b, rt, key, line)) return;
+		tell(b, line);
+		told.titles[key] = { ...told.titles[key], locked: [pair ? pair[0] : 0, now()] };
+		record('apmedia-locked-play', { slot: b.slot, titles: [s.title], count: 1, songs: false });
+		if (store().bindings.get(b.key)) {
+			store().bindings.patch(b.key, { told });
+			rt.toldDirty = false;
+		}
+	}
+
+	/**
+	 * Under strict, how far a locked title was played, which standing reads as a gap the lock made.
+	 * It goes out with the next heard write. A track or part counts from its place on its title. A
+	 * history row keeps nothing: it carries no stretch, and its whole runtime would blame every later
+	 * gap on the lock.
+	 */
+	function keepLockedReach(b, rt, hit, event) {
+		const toMs = credit.playedTo(hit, event);
+		if (!(toMs > 0)) return;
+		const key = contracts.entryKey(hit.entry);
+		const told = toldOf(b, rt);
+		const pair = told.titles[key] && told.titles[key].locked;
+		if (pair && pair[0] >= toMs) return;
+		told.titles[key] = { ...told.titles[key], locked: pair && pair[1] > 0 ? [toMs, pair[1]] : [toMs, 0, now()] };
+		rt.toldDirty = true;
+		armHeardFlush(rt);
+	}
+
+	function lockedLine(b, s) {
+		return `${ICON.locked} ${code(b.slot)}: ${bold(s.title)} is locked, and this slot counts nothing played while a title is locked. ${s.text.opener}`;
+	}
+
+	// The show's key, so the line names the show once and every locked episode of it reads one told time.
+	function lockedEpisode(b, rt, entry, prevSeen) {
+		const key = groupOf(entry).key;
+		const told = toldOf(b, rt);
+		const pair = told.titles[key] && told.titles[key].locked;
+		if (pair && sameSitting(pair[1], prevSeen)) return;
+		if (!rt.episodesPending.has(key) && rt.episodesPending.size >= EPISODES_PENDING_MAX) return;
+		rt.episodesPending.set(key, { kind: 'locked', entry });
+		sendEpisodes(b, rt);
+	}
+
+	// A title named or waiting to be is not named again in its sitting. The time it was queued counts,
+	// not its last hit: a hit noteLocked passed over (a backfill, a play before the items, an old
+	// history row) named nothing.
+	function lockedSong(b, rt, entry, prevSeen) {
+		const key = contracts.entryKey(entry);
+		const named = rt.songsNamed.get(key);
+		if (named && sameSitting(named, prevSeen)) return;
+		if (rt.songsPending.has(key) || rt.songsPending.size < SONGS_PENDING_MAX) {
+			rt.songsPending.set(key, { entry });
+			rt.songsNamed.set(key, now());
+		}
+		if (rt.songsTimer) return;
+		const at = toldOf(b, rt).songsAt;
+		const waitMs = at ? at + SONGS_LINE_MS - now() : 0;
+		if (waitMs > 0) armSongs(b, rt, waitMs);
+		else flushSongs(b.key, rt, b.seedName);
+	}
+
+	function armSongs(b, rt, waitMs) {
+		const { key, seedName } = b;
+		const handle = trapTimers().setTimeout(() => {
+			if (rt.songsTimer !== handle) return;
+			rt.songsTimer = null;
+			queue(() => flushSongs(key, rt, seedName), 'the songs line');
+		}, waitMs);
+		if (handle && typeof handle.unref === 'function') handle.unref();
+		rt.songsTimer = handle;
+	}
+
+	/**
+	 * The songs rt.songsPending holds, as one line. A title that opened meanwhile, or that the room
+	 * checked, drops out; a line over the cap stays pending until the cap frees a slot.
+	 */
+	function flushSongs(key, rt, seedName) {
+		const b = store().bindings.get(key);
+		if (!b || !CREDITED.has(b.state) || b.seedName !== seedName || runtimes.get(key) !== rt) return;
+		const read = { hints: new Map(), sets: slotSets(b, rt) };
+		const items = [];
+		for (const [pendingKey, item] of [...rt.songsPending]) {
+			const s = item ? standing(b, item.entry, read) : null;
+			if (s && s.status === 'locked') items.push({ label: s.title, ref: s.ref });
+			else rt.songsPending.delete(pendingKey);
+		}
+		if (!items.length) return;
+		const line = songsLine(b, rt, items);
+		if (!allowLine(b, rt, 'songs', line)) {
+			const freeMs = rt.lineTimes.length ? rt.lineTimes[0] + 60 * MINUTE_MS - now() : 0;
+			if (!rt.songsTimer) armSongs(b, rt, Math.max(freeMs, 1000));
+			return;
+		}
+		tell(b, line);
+		record('apmedia-locked-play', { slot: b.slot, titles: items.slice(0, 5).map((item) => item.label), count: items.length, songs: true });
+		const told = toldOf(b, rt);
+		told.songsAt = now();
+		rt.songsPending.clear();
+		store().bindings.patch(key, { told });
+		rt.toldDirty = false;
+	}
+
+	function songsLine(b, rt, items) {
+		const p = cfg().commandPrefix || '!';
+		const shown = items.slice(0, 2).map((item) => bold(item.label));
+		const more = items.length - shown.length;
+		const names = more > 0 ? `${shown.join(', ')} and ${more} more` : shown.join(' and ');
+		const tickets = rt.counts ? Math.max(0, rt.counts.wild - (Number(b.wildUsed) || 0)) : 0;
+		const tail = tickets > 0
+			? `A Wild Ticket opens one: ${commandCode(`${p}apmedia redeem ${items[0].ref}`)} (${tickets} on hand).`
+			: 'They open as their items arrive.';
+		return `${ICON.locked} ${code(b.slot)}: songs from locked titles count for nothing on this slot: ${names}. ${tail}`;
+	}
+
+	/** One episodes line per SONGS_LINE_MS: now when the last one is that old, else when it will be. */
+	function sendEpisodes(b, rt) {
+		if (!rt.episodesPending.size || rt.episodesTimer) return;
+		const at = toldOf(b, rt).episodesAt;
+		const waitMs = at ? at + SONGS_LINE_MS - now() : 0;
+		if (waitMs > 0) armEpisodes(b, rt, waitMs);
+		else flushEpisodes(b.key, rt, b.seedName);
+	}
+
+	function armEpisodes(b, rt, waitMs) {
+		const { key, seedName } = b;
+		const handle = trapTimers().setTimeout(() => {
+			if (rt.episodesTimer !== handle) return;
+			rt.episodesTimer = null;
+			queue(() => flushEpisodes(key, rt, seedName), 'the episodes line');
+		}, waitMs);
+		if (handle && typeof handle.unref === 'function') handle.unref();
+		rt.episodesTimer = handle;
+	}
+
+	/**
+	 * The episodes rt.episodesPending holds, as one line (one title left: its own line). A gap that
+	 * closed meanwhile drops out; a line over the cap stays pending until the cap frees a slot.
+	 */
+	function flushEpisodes(key, rt, seedName) {
+		const b = store().bindings.get(key);
+		if (!b || !CREDITED.has(b.state) || b.seedName !== seedName || runtimes.get(key) !== rt) return;
+		const index = indexFor(b);
+		if (!index) return;
+		const positions = positionsOf(index);
+		const read = { hints: new Map(), sets: slotSets(b, rt) };
+		const items = [];
+		for (const [pendingKey, item] of [...rt.episodesPending]) {
+			const s = standing(b, item.entry, read);
+			const open = !!s && (item.kind === 'gap' ? !!s.heard && s.heard.heldBack.length > 0 : s.status === 'locked' && !!s.text.opener);
+			if (open) items.push({ ...item, key: pendingKey, s });
+			else rt.episodesPending.delete(pendingKey);
+		}
+		if (!items.length) return;
+		items.sort((x, y) => (positions.get(x.entry) || 0) - (positions.get(y.entry) || 0));
+		const line = items.length === 1 ? episodeAlone(b, items[0]) : episodesLine(b, items);
+		if (!allowLine(b, rt, 'episodes', line)) {
+			const freeMs = rt.lineTimes.length ? rt.lineTimes[0] + 60 * MINUTE_MS - now() : 0;
+			if (!rt.episodesTimer) armEpisodes(b, rt, Math.max(freeMs, 1000));
+			return;
+		}
+		tell(b, line);
+		const told = toldOf(b, rt);
+		for (const { kind, key: itemKey, s } of items) {
+			if (kind === 'gap') {
+				told.titles[itemKey] = { ...told.titles[itemKey], gap: [s.heard.gap.fromMs, now(), s.heard.gap.toMs] };
+				record('apmedia-gap', { slot: b.slot, title: s.title, fromMs: s.heard.gap.fromMs, toMs: s.heard.gap.toMs, held: s.heard.heldBack.length });
+			} else {
+				told.titles[itemKey] = { ...told.titles[itemKey], locked: [0, now()] };
+			}
+		}
+		const shows = items.filter((item) => item.kind !== 'gap');
+		if (shows.length) record('apmedia-locked-play', { slot: b.slot, titles: shows.slice(0, 5).map((item) => String(item.entry.sh ?? '')), count: shows.length, songs: false });
+		told.episodesAt = now();
+		rt.episodesPending.clear();
+		store().bindings.patch(key, { told });
+		rt.toldDirty = false;
+	}
+
+	function episodeAlone(b, item) {
+		if (item.kind === 'gap') return gapLine(b, item.s);
+		return `${ICON.locked} ${code(b.slot)}: ${bold(item.entry.sh)} is locked, and this slot counts nothing played while a title is locked. ${item.s.text.opener}`;
+	}
+
+	function episodesLine(b, items) {
+		const p = cfg().commandPrefix || '!';
+		const shown = items.slice(0, 5);
+		const lines = [`${ICON.gap} ${code(b.slot)}: ${items.length} episodes earn nothing yet.`];
+		for (const { kind, entry, s } of shown) {
+			if (kind !== 'gap') {
+				lines.push(`\u2022 ${bold(entry.sh)} is locked. ${s.text.opener}`);
+			} else if (s.heard.byLock) {
+				lines.push(`\u2022 ${bold(s.title)} ${s.text.gap}. Rewind to ${s.fix.rewindMs ? clock(s.fix.rewindMs) : 'the start'}.`);
+			} else {
+				const from = clock(s.heard.gap.fromMs);
+				lines.push(`\u2022 ${bold(s.title)}: nothing heard from ${from} to ${clock(s.heard.gap.toMs)}. Rewind to ${from}, or ${commandCode(`${p}apmedia check ${s.ref} at ${clock(s.fix.checkAtMs)}`)}.`);
+			}
+		}
+		if (items.length > shown.length) lines.push(`And ${items.length - shown.length} more: ${commandCode(`${p}apmedia progress`)} lists them.`);
+		if (!switchOn(b, 'intro') && shown.some(({ kind, s }) => kind === 'gap' && s.heard.intro)) {
+			lines.push(`Plex's Skip Intro made a gap above: ${commandCode(`${p}apmedia switch intro on`)} counts a skipped intro as heard.`);
+		}
+		return lines.join('\n');
+	}
+
+	// refOf names a long key by its list position; one map per index serves every call.
+	const positionsCache = new WeakMap();
+	function positionsOf(index) {
+		let positions = positionsCache.get(index);
+		if (!positions) {
+			positions = new Map(index.entries.map((e, i) => [e, i + 1]));
+			positionsCache.set(index, positions);
+		}
+		return positions;
+	}
+
+	/**
+	 * Where a slot stands with one title, read without a Plex call, a patch or a runtime heard copy.
+	 * @param {Map|null} hints hintedEntries(b, index), read once by a caller that asks for many titles
+	 * @param {{checked: Set<number>, earned: Set<number>}|null} sets slotSets(b, rt), the same way
+	 * @param {boolean} commands false: s.text leaves its commands out (standingText)
+	 * @returns {object|null} null without an index or for an entry outside it
+	 */
+	function standing(b, entry, { hints = null, sets = null, commands = true } = {}) {
+		try {
+			return readStanding(b, entry, hints, sets, commands);
+		} catch (_) {
+			return null;
+		}
+	}
+
+	function readStanding(b, entry, hints, sets, commands) {
+		const index = indexFor(b);
+		if (!index || !entry) return null;
+		const positions = positionsOf(index);
+		if (!positions.has(entry)) return null;
+		const rt = runtimes.get(b.key) || null;
+		const { counts, known } = countsFor(rt, index);
+		const { checked, earned } = sets || slotSets(b, rt);
+		const entryKey = contracts.entryKey(entry);
+		const ref = refOf(entry, positions);
+		const where = credit.entryLocations(entry);
+		const cps = where.checkpoints;
+		const status = credit.entryStatus(entry, counts, b.redeemed, checked);
+		const point = (cp) => ({ minute: cp.minute, atMs: cp.atMs, id: cp.id });
+		const nextCp = cps.find((cp) => !earned.has(cp.id)) || null;
+		let opener = null;
+		if (status === 'locked') {
+			const unit = index.units.get(Number(entry.u));
+			opener = {
+				unit: unit ? unit.name : null,
+				step: Number(entry.s) || 1,
+				have: unit ? counts.units.get(unit.id) || 0 : 0,
+				tickets: known ? Math.max(0, counts.wild - b.wildUsed) : null,
+			};
+		}
+		let tracks = null;
+		if (entry.k === 'album' || entry.k === 'mix') tracks = { done: where.main.filter((id) => checked.has(id)).length, total: where.main.length };
+		const floorMs = earnedFloor(b, rt, entry, earned);
+		let heard = null;
+		let fix = null;
+		if (index.strict) {
+			const ranges = ((rt && rt.heard) || b.heard || {})[entryKey] || [];
+			const throughMs = credit.heardThrough(ranges, credit.HEARD_GAP_MS, floorMs);
+			const furthestMs = Math.max(throughMs, ...credit.cleanRanges(ranges).map((r) => r[1]));
+			const found = credit.firstGap(ranges, { floorMs });
+			const gap = found ? { fromMs: found.reachMs, toMs: found.gapEndMs } : null;
+			const heldBack = gap ? cps.filter((cp) => !earned.has(cp.id) && cp.atMs > gap.fromMs && cp.atMs <= furthestMs).map(point) : [];
+			const told = (rt && rt.told) || b.told || null;
+			const toldTitle = told && told.titles ? told.titles[entryKey] : null;
+			const lockedTo = toldTitle && Array.isArray(toldTitle.locked) ? Number(toldTitle.locked[0]) : null;
+			const byLock = !!gap && index.lockedPolicy === 'ignore' && Number.isFinite(lockedTo)
+				&& lockedTo > gap.fromMs && lockedTo >= gap.toMs - LOCKED_SLACK_MS;
+			const seen = gap && rt && rt.introSeen ? rt.introSeen.get(entryKey) : null;
+			const intro = seen && gap.fromMs >= seen.fromMs - INTRO_SLACK_MS && gap.toMs <= seen.toMs + INTRO_SLACK_MS
+				? { fromMs: seen.fromMs, toMs: seen.toMs } : null;
+			heard = { throughMs, furthestMs, gap, heldBack, byLock, playedLockedToMs: byLock ? lockedTo : null, intro };
+			if (heldBack.length) {
+				let ff = null;
+				if (gap.toMs - gap.fromMs <= FAST_FORWARD_MS && index.items.fastForward !== null && known) {
+					const have = usefulOf(b, counts).fastForward.available;
+					const bar = index.snackBar;
+					if (have > 0) ff = { have };
+					else if (bar && bar.trades - b.trades > 0 && counts.snacks - b.snackSpent >= bar.price) ff = { price: bar.price };
+				}
+				fix = { rewindMs: gap.fromMs, checkAtMs: byLock ? null : Math.floor(furthestMs / 1000) * 1000, ff };
+			}
+		}
+		const own = new Set([...where.main, ...cps.map((cp) => cp.id)]);
+		const mine = (ids) => (Array.isArray(ids) ? ids.filter((id) => own.has(Number(id))).length : 0);
+		const until = (b.expired || {})[entryKey];
+		const hinted = (hints || hintedEntries(b, index)).get(entryKey) || [];
+		const s = {
+			entryKey,
+			ref,
+			title: entryLabel(entry),
+			kind: entry.k,
+			runtimeMs: where.durationMs,
+			status,
+			known,
+			collected: false,
+			collectedLeft: null,
+			opener,
+			checkpoints: { total: cps.length, earned: cps.filter((cp) => earned.has(cp.id)).length, next: nextCp ? point(nextCp) : null },
+			tracks,
+			heard,
+			fix,
+			waiting: { pending: mine(b.pending), banked: mine(b.banked), held: mine(b.held) },
+			expiredUntil: until > now() ? until : null,
+			hints: hinted.map((h) => (h && typeof h === 'object' ? h : { receiver: String(h), item: null, priority: false })),
+			distanceMs: Math.max(0, (nextCp ? nextCp.atMs : where.durationMs) - (heard ? heard.throughMs : floorMs)),
+		};
+		s.text = standingText(s, cfg().commandPrefix || '!', switchOn(b, 'intro', index), commands);
+		return s;
 	}
 
 	function armHeardFlush(rt) {
@@ -879,15 +1427,32 @@ function createGame(options = {}) {
 
 	function writeHeard(rt) {
 		disarmHeardFlush(rt);
-		if (!rt.heardDirty) return;
+		const fields = {};
+		if (rt.heardDirty) fields.heard = rt.heard || {};
+		if (rt.toldDirty && rt.told) fields.told = rt.told;
 		rt.heardDirty = false;
-		if (store().bindings.get(rt.key)) store().bindings.patch(rt.key, { heard: rt.heard || {} });
+		rt.toldDirty = false;
+		if (Object.keys(fields).length && store().bindings.get(rt.key)) store().bindings.patch(rt.key, fields);
 	}
 
 	function forgetHeard(rt) {
 		disarmHeardFlush(rt);
 		rt.heard = null;
 		rt.heardDirty = false;
+		rt.told = null;
+		rt.toldDirty = false;
+		if (rt.songsTimer) trapTimers().clearTimeout(rt.songsTimer);
+		if (rt.episodesTimer) trapTimers().clearTimeout(rt.episodesTimer);
+		rt.songsTimer = null;
+		rt.episodesTimer = null;
+		rt.songsPending.clear();
+		rt.songsNamed.clear();
+		rt.episodesPending.clear();
+		rt.gapsToTell.clear();
+		rt.heldBackKeys.clear();
+		rt.introSeen.clear();
+		rt.seen.clear();
+		rt.lineTimes = [];
 	}
 
 	/**
@@ -936,8 +1501,12 @@ function createGame(options = {}) {
 		if (rt.heardDirty) {
 			fields.heard = rt.heard || {};
 			rt.heardDirty = false;
-			disarmHeardFlush(rt);
 		}
+		if (rt.toldDirty && rt.told) {
+			fields.told = rt.told;
+			rt.toldDirty = false;
+		}
+		if ((fields.heard || fields.told) && !rt.toldDirty) disarmHeardFlush(rt);
 		const next = store().bindings.patch(b.key, fields);
 		if (send.length && rt.client) rt.client.sendChecks(send);
 		record('apmedia-credit', { slot: b.slot, source, title, sent: send.length, held: hold.length, banked: bank.length });
@@ -1179,6 +1748,8 @@ function createGame(options = {}) {
 		}
 		// Not before: a seed the slot cannot take (a duplicate, slot_data it cannot read) is refused
 		// above, and the old seed's progress stays whole for a room that goes back to it.
+		const wasRefused = b.state === 'refused';
+		const back = rt.rejoin;
 		if (adopting) b = startOver(b, rt);
 		rt.adopt = false;
 		// Written even with an index in hand: the server sends slot_data only when the cache said it
@@ -1210,7 +1781,13 @@ function createGame(options = {}) {
 		if (banked.length !== b.banked.length) fields.banked = banked;
 		if (held.length !== b.held.length) fields.held = held;
 		const next = Object.keys(fields).length ? store().bindings.patch(b.key, fields) : b;
-		if (pending.length) client.sendChecks(pending);
+		const sentNow = pending.length && client.sendChecks(pending) ? pending.length : 0;
+		if (wasRefused || back) {
+			rt.rejoin = null;
+			const seedNote = back && back.from === 'stale' ? (adopting ? 'new' : 'own') : null;
+			notice(next, backLine(next, { sent: sentNow, seed: seedNote }));
+			record('apmedia-reconnected', { slot: next.slot, watchId: next.watchId, from: back ? back.from : 'refused', sent: sentNow });
+		}
 		maybeGoal(next, rt, index, true);
 		maybeBackfill(next);
 		holdsDue(next.key);
@@ -1387,6 +1964,7 @@ function createGame(options = {}) {
 	function refuse(b, rt, reason, errors) {
 		dropClient(rt);
 		rt.adopt = false;
+		rt.rejoin = null;
 		const repeat = b.state === 'refused' && !!b.stateDetail && b.stateDetail.reason === reason;
 		const fix = fixFor(b, reason, errors);
 		store().bindings.patch(b.key, { state: 'refused', stateDetail: { reason, errors, at: now(), fix } });
@@ -1399,6 +1977,7 @@ function createGame(options = {}) {
 	function orphan(b, rt) {
 		dropClient(rt);
 		rt.adopt = false;
+		rt.rejoin = null;
 		if (b.state === 'orphaned') return;
 		// A watch number is never handed out twice, so only the /config room comes back as itself.
 		const fix = b.watchId === 0
@@ -1421,11 +2000,13 @@ function createGame(options = {}) {
 			goalSent: false, welcomed: false, lastCredit: null, backfillSeed: null, heard: {},
 			itemsSeen: null, held: [], holdUntil: null, holdMs: 0, expired: {}, armed: [], speedRestore: null,
 			ffUsed: 0, rcUsed: 0, snackSpent: 0, bought: { fastForward: 0, remoteControl: 0 }, trades: 0,
+			told: { titles: {}, songsAt: null, episodesAt: null },
 		});
 	}
 
 	function goStale(b, rt, seed) {
 		dropClient(rt);
+		rt.rejoin = null;
 		const fix = 'If the new seed has a Plex Media slot by this name, `/apmedia retry` takes that seed on (the old seed\'s progress does not carry over); if not, `/apmedia unlink` it. Should the room go back to the old seed, `/apmedia retry` picks that seed up again.';
 		store().bindings.patch(b.key, {
 			state: 'stale',
@@ -1434,6 +2015,14 @@ function createGame(options = {}) {
 		log().warn(`Plex Media: the room of ${b.slot} moved to another seed.`);
 		record('apmedia-stale', { slot: b.slot, watchId: b.watchId });
 		notice(b, `${ICON.stale} ${code(b.slot)}: the room is on another seed now, so this list from the old seed no longer counts. ${fix}`);
+	}
+
+	/** The line of a slot back in its room after a refusal or a retry. */
+	function backLine(b, { sent = 0, seed = null } = {}) {
+		const earned = sent ? `; ${sent} ${sent === 1 ? 'check' : 'checks'} earned meanwhile ${sent === 1 ? 'was' : 'were'} sent` : '';
+		if (seed === 'new') return `${ICON.connected} ${code(b.slot)} is connected again, on the room's new seed: the old seed's progress does not carry over.`;
+		if (seed === 'own') return `${ICON.connected} ${code(b.slot)} is connected again, back on its own seed with nothing lost${earned}.`;
+		return `${ICON.connected} ${code(b.slot)} is connected again${earned}.`;
 	}
 
 	function welcome(b, rt, index) {
@@ -2789,6 +3378,7 @@ function createGame(options = {}) {
 				pms: pms(),
 				targets,
 				onEvent: (event) => handleEvent(event),
+				onJump: (jump) => introJump(jump),
 				marks: store().marks,
 				config: cfg,
 				timers: deps.watcherTimers,
@@ -2797,6 +3387,53 @@ function createGame(options = {}) {
 			});
 		}
 		return watcher;
+	}
+
+	/**
+	 * M1: a forward jump the watcher saw in an episode. When it skipped the episode's intro, a strict
+	 * slot with the `intro` switch on hears the skipped stretch; one with the switch off keeps it in
+	 * rt.introSeen for the gap line's intro tail.
+	 * @param {{accountId: number, ratingKey: string|number, fromMs: number, toMs: number,
+	 *   wallMs: number, padMs: number, at: number}} jump
+	 */
+	async function introJump(jump) {
+		if (!jump || typeof jump !== 'object') return;
+		const accountId = Number(jump.accountId);
+		const strict = eventBindings({ source: 'session', accountId }).filter((b) => {
+			const index = indexFor(b);
+			return !!index && index.strict;
+		});
+		if (!strict.length) return;
+		const plex = pms();
+		if (!plex || typeof plex.markers !== 'function') return;
+		let intro;
+		try {
+			intro = (await plex.markers(jump.ratingKey)).find((m) => m && m.type === 'intro');
+		} catch (err) {
+			log().debug('Plex Media could not read the markers of', String(jump.ratingKey), errText(err));
+			return;
+		}
+		if (!intro || !require('./apMediaWatch.js').introStep(jump, intro)) return;
+		const event = {
+			type: 'span', source: 'intro', accountId, ratingKey: jump.ratingKey,
+			fromMs: jump.fromMs, toMs: jump.toMs, padMs: jump.padMs, at: jump.at,
+		};
+		for (const b of strict) {
+			const index = indexFor(b);
+			const rt = runtimeOf(b.key);
+			const hits = (await eventHits(b, index, event)).filter((hit) => hit.entry.k === 'episode' && recordsHeard(b, rt, index, hit.entry));
+			if (switchOn(b, 'intro', index)) {
+				await handleEvent(event, b.key);
+				for (const hit of hits) record('apmedia-intro', { slot: b.slot, title: entryLabel(hit.entry), fromMs: event.fromMs, toMs: event.toMs });
+				continue;
+			}
+			for (const hit of hits) {
+				const entryKey = contracts.entryKey(hit.entry);
+				rt.introSeen.delete(entryKey);
+				rt.introSeen.set(entryKey, { fromMs: event.fromMs, toMs: event.toMs, at: event.at });
+				while (rt.introSeen.size > INTRO_SEEN_MAX) rt.introSeen.delete(rt.introSeen.keys().next().value);
+			}
+		}
 	}
 
 	function attachPlayers() {
@@ -2869,6 +3506,7 @@ function createGame(options = {}) {
 		try {
 			watchOff = monitor().onWatchChange((e) => queue(() => applyWatchChange(e && e.watchId, e && e.change), 'a watch change'));
 			ensureWatcher().start();
+			if (typeof monitor().setGameDescriber === 'function') describerOff = monitor().setGameDescriber(contracts.GAME, { next: describeNext });
 			attachPlayers();
 		} catch (err) {
 			startError = errText(err);
@@ -2907,6 +3545,12 @@ function createGame(options = {}) {
 			} catch (_) {}
 			watchOff = null;
 		}
+		if (describerOff) {
+			try {
+				describerOff();
+			} catch (_) {}
+			describerOff = null;
+		}
 		if (watcher) {
 			try {
 				watcher.stop();
@@ -2921,6 +3565,10 @@ function createGame(options = {}) {
 			writeHeard(rt);
 			dropClient(rt);
 			forgetTraps(rt);
+			for (const name of ['songsTimer', 'episodesTimer']) {
+				if (rt[name]) trapTimers().clearTimeout(rt[name]);
+				rt[name] = null;
+			}
 		}
 		stopRunner();
 		holdLines();
@@ -3038,6 +3686,7 @@ function createGame(options = {}) {
 				else if (s === 'locked') locked += 1;
 			}
 		}
+		const heldBack = index && index.strict ? heldTitles(b, index, { checked, earned: earnedIds(b, rt) }).length : 0;
 		const account = accountOf(b.userId);
 		const received = known ? counts.wild : null;
 		const detail = b.stateDetail && typeof b.stateDetail === 'object' ? { ...b.stateDetail } : null;
@@ -3054,6 +3703,8 @@ function createGame(options = {}) {
 			connection: connectionOf(b, rt),
 			indexKnown: !!index,
 			inventoryKnown: known,
+			heldBack,
+			switches: switchRows(b, index),
 			done: progress ? progress.done : null,
 			total: progress ? progress.total : null,
 			goalCount: index ? index.goalCount : null,
@@ -3164,8 +3815,134 @@ function createGame(options = {}) {
 			for (const entry of entries) {
 				const key = contracts.entryKey(entry);
 				if (!out.has(key)) out.set(key, []);
-				if (row.receiver && !out.get(key).includes(String(row.receiver))) out.get(key).push(String(row.receiver));
+				out.get(key).push({
+					receiver: row.receiver ? String(row.receiver) : '',
+					item: row.item ? String(row.item) : null,
+					priority: row.priority === true,
+					locationId: Number.isSafeInteger(location) && location > 0 ? location : null,
+				});
 			}
+		}
+		for (const hints of out.values()) hints.sort((x, y) => Number(y.priority) - Number(x.priority));
+		return out;
+	}
+
+	function receiversOf(hints) {
+		return [...new Set((hints || []).map((h) => h.receiver).filter(Boolean))];
+	}
+
+	/** One title's standing, from what a person typed (findEntry's rules), or null. */
+	function standingOf(key, entryRef) {
+		const found = findEntry(key, entryRef);
+		return found.ok ? standing(bindingByKey(key), found.entry) : null;
+	}
+
+	/**
+	 * The titles of a strict slot whose checkpoints a gap holds back, in list order: status counts
+	 * them and progress lists them, so the two always agree. A locked title is left out, as its
+	 * checkpoints wait for its unlock first.
+	 * @param {{checked: Set<number>, earned: Set<number>}} sets slotSets(b, rt)
+	 * @returns {object[]} their standings
+	 */
+	function heldTitles(b, index, sets) {
+		const rt = runtimes.get(b.key) || null;
+		const positions = positionsOf(index);
+		const read = { hints: new Map(), sets };
+		const held = [];
+		for (const entryKey of Object.keys((rt && rt.heard) || b.heard || {})) {
+			const entry = index.byKey.get(entryKey);
+			const s = entry ? standing(b, entry, read) : null;
+			if (s && s.status !== 'locked' && s.heard && s.heard.heldBack.length) held.push({ s, position: positions.get(entry) });
+		}
+		return held.sort((x, y) => x.position - y.position).map((x) => x.s);
+	}
+
+	/**
+	 * Where one title stands, or with no title the open titles to watch next (at most 5) and every
+	 * title a gap holds back (held, as heldTitles). Read only.
+	 * @returns {{ok: false, message: string}|{ok: true, key: string, slot: string, standing: object}|
+	 *   {ok: true, key: string, slot: string, open: number, picks: object[], held: Array<{entryKey:
+	 *   string, title: string, ref: string, gap: {fromMs: number, toMs: number}, furthestMs: number}>}}
+	 */
+	function progress(key, entryRef = null) {
+		const b = bindingByKey(key);
+		if (!b) return { ok: false, message: 'There is no such Plex Media slot.' };
+		const index = indexFor(b);
+		if (!index) return { ok: false, message: `${code(b.slot)} has not connected yet, so its list is not known.` };
+		if (entryRef !== null && entryRef !== undefined && entryRef !== '') {
+			const found = findEntry(key, entryRef);
+			if (!found.ok) return found;
+			const s = standing(b, found.entry);
+			if (!s) return { ok: false, message: `${bold(found.title)} could not be read just now.` };
+			return { ok: true, key: b.key, slot: b.slot, standing: s };
+		}
+		const rt = runtimes.get(b.key) || null;
+		const ranges = (rt && rt.heard) || b.heard || {};
+		const read = { hints: hintedEntries(b, index), sets: slotSets(b, rt) };
+		const { counts } = countsFor(rt, index);
+		const open = [];
+		index.entries.forEach((entry, position) => {
+			if (credit.entryStatus(entry, counts, b.redeemed, read.sets.checked) !== 'ready') return;
+			const s = standing(b, entry, read);
+			if (s && s.status === 'ready') open.push({ s, position, tier: pickTier(s, ranges) });
+		});
+		open.sort((x, y) => x.tier - y.tier
+			|| (x.tier >= 4 ? x.s.distanceMs - y.s.distanceMs : 0)
+			|| x.position - y.position);
+		const held = index.strict ? heldTitles(b, index, read.sets).map((s) => ({
+			entryKey: s.entryKey,
+			title: s.title,
+			ref: s.ref,
+			gap: { fromMs: s.heard.gap.fromMs, toMs: s.heard.gap.toMs },
+			furthestMs: s.heard.furthestMs,
+		})) : [];
+		return { ok: true, key: b.key, slot: b.slot, open: open.length, picks: open.slice(0, PICKS_MAX).map((o) => o.s), held };
+	}
+
+	function pickTier(s, ranges) {
+		if (s.hints.some((h) => h.priority)) return 1;
+		if (s.hints.length) return 2;
+		if (s.heard && s.heard.heldBack.length) return 3;
+		const heard = ranges[s.entryKey];
+		return s.checkpoints.earned > 0 || (Array.isArray(heard) && heard.length) ? 4 : 5;
+	}
+
+	/** The credited binding a watch's `!ap next` asks about: the one on that watch first, else the first. */
+	function describedBinding(watchId, seedName, slot) {
+		if (typeof seedName !== 'string' || !seedName) return null;
+		const name = String(slot ?? '').toLowerCase();
+		const found = bindings().filter((b) => CREDITED.has(b.state) && !isDuplicate(b)
+			&& b.seedName === seedName && String(b.slot).toLowerCase() === name);
+		return found.find((b) => b.watchId === Number(watchId)) || found[0] || null;
+	}
+
+	/**
+	 * The `next` describer: a gap tag for each checkpoint id a strict slot's gap holds back. Reads
+	 * no scout and no placement, and never throws.
+	 * @param {{watchId: number, seedName: string, slot: string, ids: number[]}} q
+	 * @returns {Map<number, string>}
+	 */
+	function describeNext(q) {
+		const out = new Map();
+		try {
+			const b = q && typeof q === 'object' ? describedBinding(q.watchId, q.seedName, q.slot) : null;
+			const index = b ? indexFor(b) : null;
+			if (!index || !index.strict || !Array.isArray(q.ids)) return out;
+			const sets = slotSets(b, runtimes.get(b.key) || null);
+			const options = { hints: new Map(), sets };
+			const read = new Map();
+			for (const raw of q.ids) {
+				const id = Number(raw);
+				const entry = index.byLocation.get(id);
+				if (!entry) continue;
+				const cp = credit.entryLocations(entry).checkpoints.find((c) => c.id === id);
+				if (!cp) continue;
+				if (!read.has(entry)) read.set(entry, standing(b, entry, options));
+				const s = read.get(entry);
+				if (s && s.text.tag && s.heard && s.heard.gap && cp.atMs > s.heard.gap.fromMs && !sets.earned.has(cp.id)) out.set(id, s.text.tag);
+			}
+		} catch (err) {
+			log().debug('Plex Media could not describe the next checks:', errText(err));
 		}
 		return out;
 	}
@@ -3191,7 +3968,7 @@ function createGame(options = {}) {
 		const checked = union(rt && rt.checked, b.pending);
 		const { counts, known } = countsFor(rt, index);
 		const hinted = hintedEntries(b, index);
-		const positions = new Map(index.entries.map((e, i) => [e, i + 1]));
+		const positions = positionsOf(index);
 		const groups = new Map();
 		const totals = { ready: 0, locked: 0, done: 0, total: index.entries.length };
 		const t = now();
@@ -3219,7 +3996,7 @@ function createGame(options = {}) {
 				runtime: formatDuration(entry.d),
 				status,
 				hinted: hinted.has(entryKey),
-				hintedFor: hinted.get(entryKey) || [],
+				hintedFor: receiversOf(hinted.get(entryKey)),
 				unit: unit ? unit.name : null,
 				step: Number(entry.s) || 1,
 			};
@@ -3336,7 +4113,7 @@ function createGame(options = {}) {
 		const index = b ? indexFor(b) : null;
 		if (!index) return [];
 		const wanted = credit.normTitle(prefix || '');
-		const positions = new Map(index.entries.map((e, i) => [e, i + 1]));
+		const positions = positionsOf(index);
 		const out = [];
 		for (const entry of index.entries) {
 			const label = entryLabel(entry);
@@ -3350,38 +4127,127 @@ function createGame(options = {}) {
 		return out;
 	}
 
+	/**
+	 * /playlist play's `-e`: which songs still earn on one Discord user's Plex Media slots. Only a
+	 * slot connected with its items counts. Synchronous, and never throws: on an error it answers
+	 * as if Plex Media were off, and earns() answers false.
+	 * @param {string} userId
+	 * @returns {{ok: true, slots: string[], earns: (entry: object) => boolean}
+	 *   |{ok: false, reason: 'off'|'none'|'unknown', slots: string[]}}
+	 */
+	function earningFilter(userId) {
+		try {
+			if (!cfg().apMediaEnabled || !running) return { ok: false, reason: 'off', slots: [] };
+			const user = String(userId ?? '');
+			const mine = bindings().filter((b) => b.userId === user && CREDITED.has(b.state) && !isDuplicate(b));
+			if (!mine.length) return { ok: false, reason: 'none', slots: [] };
+			const ready = [];
+			for (const b of mine) {
+				const rt = runtimes.get(b.key);
+				const index = rt && rt.client && rt.client.isReady && rt.counts ? indexFor(b) : null;
+				if (index) ready.push({ b, rt, index, earned: earnedIds(b, rt), checked: union(rt.checked, b.pending) });
+			}
+			if (!ready.length) return { ok: false, reason: 'unknown', slots: mine.map((b) => b.slot) };
+			const earns = (entry) => {
+				try {
+					const ident = voiceModule().identify(entry);
+					return ready.some(({ b, rt, index, earned, checked }) => credit.hitsFor(index, ident)
+						.some((hit) => songEarns(b, rt, index, hit, earned, checked)));
+				} catch (err) {
+					warnEarning(err);
+					return false;
+				}
+			};
+			return { ok: true, slots: ready.map(({ b }) => b.slot), earns };
+		} catch (err) {
+			warnEarning(err);
+			return { ok: false, reason: 'off', slots: [] };
+		}
+	}
+
+	function warnEarning(err) {
+		if (earningWarned) return;
+		earningWarned = true;
+		log().warn('Plex Media: could not tell which songs still earn:', errText(err));
+	}
+
+	// A track of an open album or playlist part earns while playing it again can earn: its own
+	// location, a checkpoint inside its own span (as credit.locationsFor counts a completion), or under
+	// strict, a checkpoint at or after it while the track is not heard yet. 'done' counts only the
+	// tracks' own locations, so a done entry can still hold such a checkpoint.
+	function songEarns(b, rt, index, hit, earned, checked) {
+		if (hit.role !== 'track' || (hit.entry.k !== 'album' && hit.entry.k !== 'mix')) return false;
+		if (credit.entryStatus(hit.entry, rt.counts, b.redeemed, checked) === 'locked') return false;
+		const own = trackLocation(hit);
+		if (own !== null && !earned.has(own)) return true;
+		const checkpoints = credit.entryLocations(hit.entry).checkpoints;
+		const waiting = checkpoints.filter((cp) => !earned.has(cp.id));
+		const inside = (atMs) => (hit.index === 1 ? atMs >= 0 : atMs > hit.startMs) && atMs <= hit.endMs;
+		if (waiting.some((cp) => inside(cp.atMs))) return true;
+		if (!index.strict || !waiting.some((cp) => cp.atMs > hit.startMs)) return false;
+		return !trackHeard(b, rt, hit, checkpoints, earned);
+	}
+
+	function trackHeard(b, rt, hit, checkpoints, earned) {
+		const ranges = ((rt && rt.heard) || b.heard || {})[contracts.entryKey(hit.entry)] || [];
+		let floorMs = 0;
+		for (const cp of checkpoints) if (earned.has(cp.id)) floorMs = Math.max(floorMs, cp.atMs);
+		if (Math.max(floorMs, credit.heardThrough(ranges, credit.HEARD_GAP_MS, floorMs)) >= hit.endMs) return true;
+		return credit.cleanRanges(ranges).some(([lo, hi]) => lo <= hit.startMs && hi >= hit.endMs);
+	}
+
+	// A track's own location (null for a track too short to have one).
+	function trackLocation(hit) {
+		const tuple = Array.isArray(hit.entry.tr) ? hit.entry.tr[hit.index - 1] : null;
+		const id = Array.isArray(tuple) ? Number(tuple[hit.entry.k === 'mix' ? 6 : 5]) : NaN;
+		return Number.isSafeInteger(id) && id > 0 ? id : null;
+	}
+
 	function health() {
 		const c = cfg();
-		if (!c.apMediaEnabled) return { status: 'disabled', detail: 'apMediaEnabled is false in config/config.js' };
+		if (!c.apMediaEnabled) return { status: 'disabled', detail: 'apMediaEnabled is off (/config \u2192 AP Media)' };
 		if (!c.archipelagoEnabled) {
 			return { status: 'missing', detail: 'needs the Archipelago monitor (archipelagoEnabled is off): Plex Media slots connect through its watches' };
 		}
 		const list = bindings();
 		const problems = [];
+		// The health monitor DMs a key it has not seen while the status stays red, so a key names
+		// the problem alone, never a count or a time.
+		const found = [];
 		// Slot names are the players' and refusal reasons the room's, and !diag shows this detail to
 		// anyone inside one code block: a backtick in either would end the block early.
-		if (!running && startError) problems.push(`failed to start: ${plain(startError, 200)}`);
+		if (!running && startError) {
+			problems.push(`failed to start: ${plain(startError, 200)}`);
+			found.push({ key: 'start', text: 'Plex Media failed to start' });
+		}
 		const refused = list.filter((b) => b.state === 'refused');
 		const orphaned = list.filter((b) => b.state === 'orphaned');
+		const reasonOf = (b) => (b.stateDetail && b.stateDetail.reason) || 'refused';
 		if (refused.length) {
-			const why = firstFew(refused, (b) => `${plain(b.slot)}: ${plain((b.stateDetail && b.stateDetail.reason) || 'refused')}`);
+			const why = firstFew(refused, (b) => `${plain(b.slot)}: ${plain(reasonOf(b))}`);
 			problems.push(`${plural(refused.length, 'slot')} refused (${why})`);
+			for (const b of refused) {
+				found.push({ key: `refused:${b.key}:${reasonOf(b)}`, text: `${code(plain(b.slot))} refused by its room (${code(plain(reasonOf(b)))})` });
+			}
 		}
 		if (orphaned.length) {
 			problems.push(`${plural(orphaned.length, 'slot')} lost ${orphaned.length === 1 ? 'its' : 'their'} watch (${firstFew(orphaned, (b) => plain(b.slot))})`);
+			for (const b of orphaned) found.push({ key: `orphaned:${b.key}`, text: `${code(plain(b.slot))} lost watch #${b.watchId}` });
 		}
 		const wh = watcher ? watcher.health() : null;
 		// A pass with no linked account asks Plex nothing, so the failures are an earlier pass's.
 		if (wh && wh.accounts !== 0 && wh.historyFailures >= 3) {
 			problems.push(`the Plex history read failed ${wh.historyFailures} times in a row (${plain(wh.lastHistoryError || 'no detail', 200)})`);
+			found.push({ key: 'history', text: 'the Plex history read keeps failing' });
 		}
-		if (problems.length) return { status: 'error', detail: problems.join('; ') };
+		const stale = list.filter((b) => b.state === 'stale').length;
+		if (problems.length) return { status: 'error', detail: `${problems.join('; ')}${stale ? `; ${stale} stale` : ''}`, problems: found };
 		if (!running) return { status: 'ok', detail: `${plural(list.length, 'slot')}, waiting to start` };
 		const connected = list.filter((b) => {
 			const rt = runtimes.get(b.key);
 			return !!(rt && rt.client && rt.client.isReady);
 		}).length;
-		return { status: 'ok', detail: `${plural(list.length, 'slot')}, ${connected} connected, ${historyText(wh)}` };
+		return { status: 'ok', detail: `${plural(list.length, 'slot')}, ${connected} connected${stale ? `, ${stale} stale` : ''}, ${historyText(wh)}` };
 	}
 
 	function historyText(wh) {
@@ -3490,15 +4356,17 @@ function createGame(options = {}) {
 			const fields = { state: 'active', stateDetail: null };
 			let note = '';
 			const rt = runtimeOf(b.key);
+			rt.rejoin = { from: b.state };
 			if (b.state === 'stale') {
 				rt.adopt = true;
 				note = ' If the room is still on another seed with this slot, it takes that seed on: the old seed\'s progress does not carry over.';
 			}
 			const next = canonicalize(store().bindings.patch(b.key, fields));
 			if (running) buildClient(next, watch);
+			const where = channelFor(next);
 			return {
 				ok: true,
-				message: `Reconnecting ${code(next.slot)}${running ? '' : ' once Plex Media is running'}.${note}`,
+				message: `Reconnecting ${code(next.slot)}${running ? '' : ' once Plex Media is running'}.${note}${where ? ` <#${where}> gets a line once it is back in the room.` : ''}`,
 				binding: summary(next),
 			};
 		});
@@ -3511,10 +4379,12 @@ function createGame(options = {}) {
 
 	/**
 	 * Credit a title by hand. With atMs (ms, or text such as `1h30m` for parseDuration): the
-	 * checkpoints up to that point (a span 0..atMs of the title); without: the title finished.
+	 * checkpoints up to that point (a span 0..atMs of the title); without: the title finished. by is
+	 * the Discord id of whoever asked: when it is not the slot's own player, the reply leaves out the
+	 * commands its strict tail suggests, which would act on the asker's own slot.
 	 * @returns {Promise<{ok: boolean, message: string, title?: string, sent?: number, banked?: number, dropped?: number, provisional?: boolean}>}
 	 */
-	function creditManual(key, entryRef, { atMs = null } = {}) {
+	function creditManual(key, entryRef, { atMs = null, by = null } = {}) {
 		return api('manual credit', () => {
 			const b = bindingByKey(key);
 			if (!b) return { ok: false, message: 'There is no such Plex Media slot.' };
@@ -3534,7 +4404,7 @@ function createGame(options = {}) {
 			// By hand the time is taken as said; under strict it is also heard, for what plays after it.
 			const rt = runtimeOf(b.key);
 			const ids = index.strict
-				? strictIds(b, rt, index, credit.wholeHit(entry), event)
+				? strictIds(b, rt, index, credit.wholeHit(entry), event, { tell: false })
 				: credit.locationsFor(credit.wholeHit(entry), event, false);
 			const out = creditIds(b, index, ids, event.at, 'manual');
 			if (rt.heardDirty) armHeardFlush(rt);
@@ -3547,15 +4417,39 @@ function createGame(options = {}) {
 			else if (out.dropped) message = `${title} is locked, and this slot ignores locked titles, so nothing counted.`;
 			else if (!ids.length) message = `${title} has no check ${event.type === 'span' ? 'up to that point' : 'left'} to earn.`;
 			else message = `Nothing new: ${title}'s checks up to there were counted already.`;
+			const own = by === null || by === undefined || discordIdOf(by) === b.userId;
+			if (index.strict) message += manualTail(b, rt, entry, event, out, own);
 			return { ok: true, message, title: found.title, sent: out.sent, held: out.held, banked: out.banked, dropped: out.dropped, provisional: out.provisional };
 		});
 	}
 
 	/**
+	 * Under strict, what a check by hand still leaves waiting; a gap it names is marked told so the
+	 * channel does not repeat it. Not own: a reply to someone other than the slot's player, without commands.
+	 */
+	function manualTail(b, rt, entry, event, out, own) {
+		const s = standing(b, entry, { commands: own });
+		if (!s || !s.heard) return '';
+		if (s.heard.heldBack.length) {
+			const told = toldOf(b, rt);
+			told.titles[s.entryKey] = { ...told.titles[s.entryKey], gap: [s.heard.gap.fromMs, now(), s.heard.gap.toMs] };
+			store().bindings.patch(b.key, { told });
+			rt.toldDirty = false;
+			return ` ${s.text.gapAlone} ${s.text.fix}`;
+		}
+		const left = s.checkpoints.total - s.checkpoints.earned;
+		if (event.type !== 'complete' || out.dropped || out.provisional || left <= 0) return '';
+		const wait = `${left} of its checkpoints still ${left === 1 ? 'waits' : 'wait'}`;
+		if (!own) return ` ${wait}.`;
+		const p = cfg().commandPrefix || '!';
+		return ` ${wait}: ${commandCode(`${p}apmedia check ${s.ref} at ${clock(s.runtimeMs)}`)} counts all of it as heard.`;
+	}
+
+	/**
 	 * Spend a Fast Forward on a title. It earns the title's next checkpoint (the first in time order
-	 * not earned yet), however far along it is. Under timesanity_strict the 10 minutes after the
-	 * furthest point heard (or the furthest checkpoint earned) count as heard instead, and the
-	 * checkpoints that completes are earned; it is spent even when that completes none. It never earns
+	 * not earned yet), however far along it is. Under timesanity_strict the 10 minutes from where
+	 * everything before is heard (heardThrough, from the furthest checkpoint earned) count as heard
+	 * instead, and the checkpoints that completes are earned; it is spent even when that completes none. It never earns
 	 * a main location, so finishing a title still takes watching it. A locked title banks under
 	 * locked_watches bank and is refused under ignore. A refusal spends nothing: a title with no
 	 * checkpoint left, or a seed made before world 0.3.0, which has no Fast Forwards.
@@ -3594,7 +4488,7 @@ function createGame(options = {}) {
 			if (index.strict) {
 				const heard = heardOf(b, rt)[contracts.entryKey(entry)] || [];
 				const reach = credit.heardThrough(heard, credit.HEARD_GAP_MS, earnedFloor(b, rt, entry));
-				ids = strictIds(b, rt, index, credit.wholeHit(entry), { type: 'span', source: 'fastforward', fromMs: reach, toMs: reach + FAST_FORWARD_MS, at });
+				ids = strictIds(b, rt, index, credit.wholeHit(entry), { type: 'span', source: 'fastforward', fromMs: reach, toMs: reach + FAST_FORWARD_MS, at }, { tell: false });
 				span = reach > 0
 					? ` From ${formatDuration(reach)} to ${formatDuration(reach + FAST_FORWARD_MS)} counts as heard.`
 					: ` The first ${formatDuration(FAST_FORWARD_MS)} count as heard.`;
@@ -3606,7 +4500,21 @@ function createGame(options = {}) {
 			if (rt.heardDirty) {
 				fields.heard = rt.heard || {};
 				rt.heardDirty = false;
-				disarmHeardFlush(rt);
+			}
+			// A locked reach waits in told for the flush this write disarms.
+			if (rt.toldDirty && rt.told) {
+				fields.told = rt.told;
+				rt.toldDirty = false;
+			}
+			if (fields.heard || fields.told) disarmHeardFlush(rt);
+			let gapTail = '';
+			const s = index.strict ? standing({ ...b, ffUsed: fields.ffUsed }, entry) : null;
+			if (s && s.heard && s.heard.heldBack.length) {
+				const told = toldOf(b, rt);
+				told.titles[s.entryKey] = { ...told.titles[s.entryKey], gap: [s.heard.gap.fromMs, now(), s.heard.gap.toMs] };
+				fields.told = told;
+				rt.toldDirty = false;
+				gapTail = ` ${s.text.gapAlone} ${s.text.fix}`;
 			}
 			store().bindings.patch(b.key, fields);
 			record('apmedia-fastforward', { slot: b.slot, title: found.title, sent: out.sent, held: out.held, banked: out.banked });
@@ -3618,7 +4526,7 @@ function createGame(options = {}) {
 			else what = 'That reaches no checkpoint yet.';
 			return {
 				ok: true,
-				message: `${ICON.forward} ${code(b.slot)} spent a Fast Forward on ${title}:${span} ${what} ${plural(left, 'Fast Forward')} left.`,
+				message: `${ICON.forward} ${code(b.slot)} spent a Fast Forward on ${title}:${span} ${what} ${plural(left, 'Fast Forward')} left.${gapTail}`,
 				title: found.title,
 				sent: out.sent,
 				held: out.held,
@@ -3701,6 +4609,55 @@ function createGame(options = {}) {
 	 * Spend a Wild Ticket on a locked title (a show: every locked episode of that step).
 	 * @returns {Promise<{ok: boolean, message: string, opened?: string[], released?: number, ticketsLeft?: number}>}
 	 */
+	/** A switch's value for the slot: its own setting, else the seed's value, else off. */
+	function switchOn(b, name, index = indexFor(b)) {
+		const sw = switchRegistry.switchNamed(name);
+		return !!sw && switchRegistry.effective(sw, b && b.switches, index).on;
+	}
+
+	function switchRows(b, index) {
+		return switchRegistry.SWITCHES.map((sw) => {
+			const { on, from } = switchRegistry.effective(sw, b.switches, index);
+			return { name: sw.name, label: sw.label, short: sw.short, help: sw.help, on, from };
+		});
+	}
+
+	function switches(key) {
+		const b = bindingByKey(key);
+		if (!b) return { ok: false, message: 'There is no such Plex Media slot.' };
+		return { ok: true, slot: b.slot, rows: switchRows(b, indexFor(b)) };
+	}
+
+	/** The canonical name of a typed switch name or alias, or null. */
+	function switchName(text) {
+		const sw = switchRegistry.switchNamed(text);
+		return sw ? sw.name : null;
+	}
+
+	/** The one place a switch's side effect starts, given (next, name, on); `intro` has none. */
+	function afterSwitch() {}
+
+	function setSwitch(key, word, on, { by = null } = {}) {
+		return api('switch', () => {
+			const b = bindingByKey(key);
+			if (!b) return { ok: false, message: 'There is no such Plex Media slot.' };
+			const sw = switchRegistry.switchNamed(word);
+			if (!sw) return { ok: false, message: `There is no switch called ${code(word)}. The switches: ${switchRegistry.names().join(', ')}.` };
+			const value = switchOf(on);
+			if (value === null) return { ok: false, message: `Say \`on\` or \`off\`: \`${cfg().commandPrefix || '!'}apmedia switch ${sw.name} on|off [slot]\`.` };
+			const index = indexFor(b);
+			if (switchRegistry.effective(sw, b.switches, index).on === value) {
+				return { ok: true, message: `${code(sw.name)} is already ${value ? 'on' : 'off'} for ${code(b.slot)}.`, name: sw.name, on: value };
+			}
+			const next = store().bindings.patch(b.key, { switches: { ...b.switches, [sw.name]: value } }) || b;
+			afterSwitch(next, sw.name, value);
+			record('apmedia-switch', { slot: b.slot, name: sw.name, on: value, by });
+			const text = value ? sw.onText(b.slot) : sw.offText(b.slot);
+			const warn = typeof sw.warn === 'function' ? sw.warn(index, cfg(), b.slot) : null;
+			return { ok: true, message: warn ? `${text} ${warn}` : text, name: sw.name, on: value };
+		});
+	}
+
 	function redeem(key, entryRef) {
 		return api('redeem', () => {
 			const b = bindingByKey(key);
@@ -3866,10 +4823,16 @@ function createGame(options = {}) {
 		status,
 		list,
 		findEntry,
+		progress,
+		standingOf,
 		resolveBinding,
 		bindingsFor,
 		slotNames,
 		titles,
+		earningFilter,
+		switches,
+		setSwitch,
+		switchName,
 		accountOf,
 		plexAccounts,
 		link,
@@ -3885,6 +4848,15 @@ function createGame(options = {}) {
 		unlinkAccount,
 		_internal: {
 			handleEvent,
+			introJump,
+			standing: (key, entryKey, options) => {
+				const b = bindingByKey(key);
+				const index = b ? indexFor(b) : null;
+				const entry = index ? index.entries.find((e) => contracts.entryKey(e) === entryKey) : null;
+				return entry ? standing(b, entry, options) : null;
+			},
+			describeNext,
+			refuse,
 			idle,
 			flushAll,
 			trapsIdle,
@@ -3906,6 +4878,8 @@ module.exports = {
 	entryLabel,
 	formatDuration,
 	commandCode,
+	clock,
+	ordinal,
 	escapeText: md,
 	namesSong,
 	HOLD_MS,

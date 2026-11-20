@@ -238,3 +238,94 @@ test('readApworldManifest reads the built file and a deflated one, and refuses a
 	fs.writeFileSync(junk, 'not a zip at all');
 	assert.throws(() => build.readApworldManifest(junk), /is not a zip/);
 });
+
+const MEMBERS = {
+	'__init__.py': 'GAME = "Plex Media"\n',
+	'archipelago.json': JSON.stringify(GOOD_MANIFEST),
+	'options.py': 'x = 1\n',
+};
+
+function builtWorld() {
+	return build.buildApworld({ srcDir: source(MEMBERS) });
+}
+
+function installed(members, method = 8) {
+	const file = path.join(TMP, `installed-${++made}.apworld`);
+	fs.writeFileSync(file, zip(Object.entries(members).map(([rel, data]) => ({ name: `plex_media/${rel}`, data, method }))));
+	return file;
+}
+
+test('buildApworld returns one entries row per member, with its CRC and uncompressed size', () => {
+	const built = builtWorld();
+	assert.deepStrictEqual(built.entries.map((e) => e.name), built.files);
+	const directory = build.readZipDirectory(built.buffer);
+	assert.deepStrictEqual(built.entries, directory.map(({ name, crc, size }) => ({ name, crc, size })));
+	const options = built.entries.find((e) => e.name === 'plex_media/options.py');
+	assert.deepStrictEqual(options, { name: 'plex_media/options.py', crc: build.crc32(Buffer.from('x = 1\n')), size: 6 });
+});
+
+test('compareInstalled reads the written build, and a deflated re-zip of the same files, as the same', () => {
+	const built = builtWorld();
+	const written = path.join(TMP, 'same.apworld');
+	fs.writeFileSync(written, built.buffer);
+	assert.deepStrictEqual(build.compareInstalled(written, built), { state: 'same', version: '0.1.0', differ: [], code: null });
+	const rezipped = installed({ ...MEMBERS, '__pycache__/options.cpython-313.pyc': 'cache', 'tests/test_x.py': 'pass\n', 'helper.pyc': 'x' });
+	assert.deepStrictEqual(build.compareInstalled(rezipped, built), { state: 'same', version: '0.1.0', differ: [], code: null });
+});
+
+test('compareInstalled names a changed, an extra and a missing member, sorted and without the folder', () => {
+	const built = builtWorld();
+	const changed = installed({ ...MEMBERS, 'options.py': 'x = 2\n' });
+	assert.deepStrictEqual(build.compareInstalled(changed, built), { state: 'differs', version: '0.1.0', differ: ['options.py'], code: null });
+	const { 'options.py': _gone, ...rest } = MEMBERS;
+	const reshaped = installed({ ...rest, 'extra.py': 'y = 1\n' });
+	assert.deepStrictEqual(build.compareInstalled(reshaped, built).differ, ['extra.py', 'options.py']);
+});
+
+test('compareInstalled reads another manifest version before comparing any member', () => {
+	const built = builtWorld();
+	const older = installed({ ...MEMBERS, 'archipelago.json': JSON.stringify({ ...GOOD_MANIFEST, world_version: '0.0.9' }), 'options.py': 'x = 2\n' });
+	assert.deepStrictEqual(build.compareInstalled(older, built), { state: 'version', version: '0.0.9', differ: [], code: null });
+});
+
+test('compareInstalled reads a missing file, junk, a zip without a manifest and a locked file', (t) => {
+	const built = builtWorld();
+	assert.strictEqual(build.compareInstalled(path.join(TMP, 'nothing-here.apworld'), built).state, 'missing');
+	const junk = path.join(TMP, 'junk-compare.apworld');
+	fs.writeFileSync(junk, 'not a zip at all');
+	assert.strictEqual(build.compareInstalled(junk, built).state, 'notzip');
+	const { 'archipelago.json': _manifest, ...rest } = MEMBERS;
+	assert.strictEqual(build.compareInstalled(installed(rest), built).state, 'nomanifest');
+	t.mock.method(fs, 'readFileSync', () => { throw Object.assign(new Error('EBUSY: locked'), { code: 'EBUSY' }); });
+	assert.deepStrictEqual(build.compareInstalled(junk, built), { state: 'unreadable', version: null, differ: [], code: 'EBUSY' });
+});
+
+test('installedApworldPath is the custom_worlds copy, and null for a blank folder', () => {
+	assert.strictEqual(build.installedApworldPath('C:\\Archipelago'), path.join('C:\\Archipelago', 'custom_worlds', 'plex_media.apworld'));
+	assert.strictEqual(build.installedApworldPath(''), null);
+	assert.strictEqual(build.installedApworldPath('   '), null);
+	assert.strictEqual(build.installedApworldPath(null), null);
+});
+
+test('checkInstalled keeps its answer until the size or mtime changes, and fresh reads again', () => {
+	build._internal.resetInstalledCache();
+	const dir = path.join(TMP, 'ap-install');
+	const file = build.installedApworldPath(dir);
+	fs.mkdirSync(path.dirname(file), { recursive: true });
+	const real = build.buildApworld();
+	fs.writeFileSync(file, real.buffer);
+	fs.utimesSync(file, 1700000000, 1700000000);
+	assert.strictEqual(build.checkInstalled(dir).state, 'same');
+	fs.writeFileSync(file, Buffer.alloc(real.buffer.length, 0x20));
+	fs.utimesSync(file, 1700000000, 1700000000);
+	assert.strictEqual(build.checkInstalled(dir).state, 'same', 'same size and mtime: the cached answer');
+	assert.strictEqual(build.checkInstalled(dir, { fresh: true }).state, 'notzip');
+	fs.writeFileSync(file, real.buffer);
+	fs.utimesSync(file, 1700000100, 1700000100);
+	assert.strictEqual(build.checkInstalled(dir).state, 'same', 'a new mtime reads again');
+	fs.writeFileSync(file, Buffer.from('short'));
+	fs.utimesSync(file, 1700000100, 1700000100);
+	assert.strictEqual(build.checkInstalled(dir).state, 'notzip', 'a new size reads again');
+	assert.strictEqual(build.checkInstalled(path.join(TMP, 'no-install')).state, 'missing');
+	build._internal.resetInstalledCache();
+});

@@ -13,7 +13,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { createWatcher, WINDOW_S, MAX_ROW_TRIES, MAX_POLL_S } = require('../helpers/apMediaWatch.js');
+const { createWatcher, introStep, WINDOW_S, MAX_ROW_TRIES, MAX_POLL_S } = require('../helpers/apMediaWatch.js');
 
 const NOW_MS = Date.UTC(2026, 10, 11, 12, 0, 0);
 const NOW_S = NOW_MS / 1000;
@@ -112,6 +112,7 @@ function setup(over = {}) {
 		timers,
 		config: over.config || { apMediaHistorySeconds: 120, apMediaSessionSeconds: 15 },
 		logger,
+		onJump: over.onJump,
 	});
 	return { w, pms, marks, events, clock, logger, timers };
 }
@@ -763,4 +764,102 @@ test('createWatcher refuses missing dependencies', () => {
 	assert.throws(() => createWatcher({ pms: fakePms() }), /targets/);
 	assert.throws(() => createWatcher({ pms: fakePms(), targets: () => [] }), /onEvent/);
 	assert.throws(() => createWatcher({ pms: fakePms(), targets: () => [], onEvent() {} }), /marks/);
+});
+
+function jumpSetup(over = {}) {
+	const jumps = [];
+	const ctx = setup({ onJump: (j) => { jumps.push(j); }, ...over });
+	const at = (s, offset, type = 'episode', state = 'playing') => {
+		ctx.clock.ms = NOW_MS + s * 1000;
+		ctx.pms.state.sessions = [{ ...session({ offset, state }), type }];
+		return ctx.w.pollSessions();
+	};
+	return { ...ctx, jumps, at };
+}
+
+test('sessions: an episode step too long for its wall time goes to onJump with the rate-1 pad', async () => {
+	const { jumps, events, at } = jumpSetup();
+	await at(0, 40000);
+	await at(15, 115000);
+	assert.deepStrictEqual(jumps, [{ accountId: 5, ratingKey: 777, fromMs: 40000, toMs: 115000, wallMs: 15000, padMs: 25000, at: NOW_MS + 15000 }]);
+	assert.deepStrictEqual(events, []);
+	await at(30, 130000);
+	assert.strictEqual(jumps.length, 1, 'an accepted step is a span');
+	assert.strictEqual(events.length, 1);
+});
+
+test('sessions: a movie or track step and a backward or paused move make no jump', async () => {
+	for (const type of ['movie', 'track']) {
+		const { jumps, at } = jumpSetup();
+		await at(0, 40000, type);
+		await at(15, 115000, type);
+		assert.deepStrictEqual(jumps, [], type);
+	}
+	const { jumps, at } = jumpSetup();
+	await at(0, 400000);
+	await at(15, 40000);
+	await at(30, 40000, 'episode', 'paused');
+	await at(45, 900000, 'episode', 'paused');
+	assert.deepStrictEqual(jumps, []);
+});
+
+test('sessions: a first sight only sets the baseline, past the intro or inside it', async () => {
+	const past = jumpSetup();
+	past.w.start();
+	await past.at(0, 115000);
+	await past.at(15, 130000);
+	assert.deepStrictEqual(past.jumps, [], 'a first pass after start() at 1:55, then a steady step');
+	past.w.stop();
+	const inside = jumpSetup();
+	await inside.at(0, 50000);
+	await inside.at(15, 115000);
+	assert.deepStrictEqual(inside.jumps.map((j) => [j.fromMs, j.toMs]), [[50000, 115000]]);
+});
+
+test('sessions: an account added to the targets mid-episode makes no jump on its first pass', async () => {
+	let list = [];
+	const { jumps, at } = jumpSetup({ targets: () => list });
+	await at(0, 40000);
+	list = [{ accountId: 5, floorS: FLOOR }];
+	await at(15, 115000);
+	assert.deepStrictEqual(jumps, []);
+	await at(30, 130000);
+	assert.deepStrictEqual(jumps, []);
+});
+
+test('sessions: a throwing onJump only warns, and stop() delivers no more jumps', async () => {
+	const ctx = jumpSetup({ onJump: () => { throw new Error('boom'); } });
+	await ctx.at(0, 40000);
+	await ctx.at(15, 115000);
+	assert.ok(ctx.logger.lines.some((l) => l.startsWith('warn') && l.includes('jump') && l.includes('boom')));
+	let w;
+	const seen = [];
+	const stopped = setup({ onJump: (j) => { seen.push(j); } });
+	w = stopped.w;
+	const at = (s, offset) => {
+		stopped.clock.ms = NOW_MS + s * 1000;
+		stopped.pms.state.sessions = [{ ...session({ offset }), type: 'episode' }];
+		return w.pollSessions();
+	};
+	w.start();
+	await at(0, 40000);
+	stopped.pms.state.sessionsFail = null;
+	const pending = at(15, 115000);
+	w.stop();
+	await pending;
+	assert.deepStrictEqual(seen, []);
+});
+
+test('introStep: a jump over the intro, from before it or inside it, by no more than one bound past it', () => {
+	const intro = { startMs: 15000, endMs: 105000 };
+	const step = (fromS, toS) => introStep({ fromMs: fromS * 1000, toMs: toS * 1000, wallMs: 15000 }, intro);
+	assert.strictEqual(step(40, 115), true);
+	assert.strictEqual(step(10, 115), true);
+	assert.strictEqual(step(50, 115), true);
+	assert.strictEqual(step(40, 1200), false);
+	assert.strictEqual(step(40, 90), false);
+	assert.strictEqual(step(110, 200), false);
+	assert.strictEqual(step(106, 130), false, 'a step that starts past the intro');
+	assert.strictEqual(introStep({ fromMs: 40000, toMs: 115000, wallMs: 15000 }, { startMs: 15000, endMs: 15000 }), false);
+	assert.strictEqual(introStep({ fromMs: 40000, toMs: 115000, wallMs: 15000 }, null), false);
 });

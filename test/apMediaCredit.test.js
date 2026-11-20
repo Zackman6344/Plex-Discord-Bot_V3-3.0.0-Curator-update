@@ -593,6 +593,34 @@ test('under strict the ranges come back empty once every checkpoint is reached, 
 	assert.strictEqual(credit.heardThrough([[0, 10000], [40000, 50000]]), 10000);
 	assert.strictEqual(credit.heardThrough([]), 0);
 });
+test('firstGap names the first unheard stretch from the floor, null once the ranges reach through', () => {
+	assert.deepStrictEqual(credit.firstGap([[0, 600000], [1127000, 2617000]]), { reachMs: 600000, gapEndMs: 1127000, furthestMs: 2617000 });
+	assert.strictEqual(credit.firstGap([[0, 600000], [600000, 900000]]), null, 'touching');
+	assert.strictEqual(credit.firstGap([[0, 600000], [500000, 900000]]), null, 'overlapping');
+	assert.strictEqual(credit.firstGap([[0, 600000], [620000, 900000]]), null, 'a 20 s gap is forgiven');
+	assert.strictEqual(credit.firstGap([[0, 600000, 25000], [640000, 900000, 25000]]), null, 'a 40 s gap between ranges padded 25 s each is forgiven');
+	assert.deepStrictEqual(credit.firstGap([[0, 600000], [640000, 900000]]), { reachMs: 600000, gapEndMs: 640000, furthestMs: 900000 }, 'the same 40 s gap unpadded is not');
+	assert.deepStrictEqual(credit.firstGap([[1127000, 2617000]], { floorMs: 600000 }), { reachMs: 600000, gapEndMs: 1127000, furthestMs: 2617000 });
+	assert.deepStrictEqual(credit.firstGap([[1127000, 2617000], [0, 300000], [200000, 600000]]), { reachMs: 600000, gapEndMs: 1127000, furthestMs: 2617000 }, 'unsorted overlapping input is cleaned first');
+	assert.strictEqual(credit.firstGap([]), null);
+	assert.strictEqual(credit.firstGap([[0, 600000], [1127000, 2617000]], { floorMs: 3000000 }), null, 'a floor past every range');
+	assert.deepStrictEqual(credit.firstGap([[0, 100000], [200000, 300000], [400000, 500000]]), { reachMs: 100000, gapEndMs: 200000, furthestMs: 500000 }, 'of two gaps the first');
+	assert.strictEqual(credit.firstGap([[0, 100000], [150000, 300000]], { gapMs: 60000 }), null, 'gapMs widens what is forgiven');
+});
+
+test('playedTo reads how far one event was heard on its entry\'s own timeline', () => {
+	const whole = credit.wholeHit(MATRIX);
+	assert.strictEqual(credit.playedTo(whole, span(5 * MIN, 18 * MIN)), 18 * MIN);
+	assert.strictEqual(credit.playedTo(whole, span(0, 999 * MIN)), MATRIX.d, 'held at the end');
+	assert.strictEqual(credit.playedTo(only(ix.byRk.get(23002)), span(0, 100000)), 420000, 'track 2 starts at 5:20');
+	assert.strictEqual(credit.playedTo(only(ix.byRk.get(23002)), span(0, 999999)), 532000, 'held at the track\'s end');
+	assert.strictEqual(credit.playedTo(only(ix.byRk.get(27002)), span(0, 31 * MIN)), 91 * MIN, 'part 2 starts an hour in');
+	assert.strictEqual(credit.playedTo(only(ix.byRk.get(23001)), { type: 'complete', fromMs: 0, toMs: 272000 }), 272000, 'a voice completion carries its stretch');
+	assert.strictEqual(credit.playedTo(whole, COMPLETE), null, 'a history row or a finished bookmark');
+	assert.strictEqual(credit.playedTo(whole, span(5 * MIN, 5 * MIN)), null, 'an empty stretch');
+	assert.strictEqual(credit.playedTo({ entry: MATRIX, role: 'track', index: 1 }, span(0, MIN)), null, 'a role that does not fit');
+	assert.strictEqual(credit.playedTo(null, span(0, MIN)), null);
+});
 // A Plexamp stop and resume, or a track change, leaves a seam of up to two polls plus the client's lag
 // that nobody skipped. Session ranges carry a pad for it; bot-played books and voice carry none.
 test('under strict a seam between two Plex session ranges is forgiven up to their pads, a bot-book gap only below 30 s', () => {
