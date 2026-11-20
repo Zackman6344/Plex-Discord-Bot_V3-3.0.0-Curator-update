@@ -303,11 +303,21 @@ window stops the bot.** You also get three desktop shortcuts:
 | Shortcut | What it does |
 |---|---|
 | **Start Plex Bot** | Starts it, same as login does |
-| **Stop Plex Bot** | Stops it without hunting for the window |
+| **Stop Plex Bot** | Asks the bot to shut down by itself, and stops it outright only when it cannot |
 | **Plex Bot Status** | Whether it is running, how long for, and the tail of today's log |
 
 If the bot exits on its own, the window stays open with the exit code so you can read what
 happened instead of watching it vanish.
+
+**Stop Plex Bot asks before it kills.** `scripts\stop-bot.ps1` asks the running copy over its
+single-instance pipe to shut down, waits up to 10 s for it to exit and prints `Shut down cleanly.`
+The bot then goes through the same shutdown as Ctrl+C in its window: it logs
+`Bot shutdown`, saves the audiobook place and the heard ranges up to that moment, and leaves
+Discord. The script falls back to a forced stop (`Stop-Process -Force`) and says which case it hit
+when the copy is still running after 10 s, is an older build that cannot be asked, answers that it
+is not ready (still starting, before its shutdown hook is bound), or does not answer on its pipe. A
+forced stop skips every exit hook, so an audiobook place can be up to 15 s behind. The ask works on
+Windows only.
 
 **Only one copy runs at a time.** Starting the bot while it is already running, from any shortcut
 or by hand, ends the new copy before it logs in, with exit code 1 and a line naming the running
@@ -1144,6 +1154,7 @@ A few take a required option, because they can't do anything without one:
 | `/apmedia yaml` | none, but it needs `name:`, the slot name the list is for, or `file:`, a YAML that names one |
 | `/apmedia link` / `unlink` | `slot:`, the slot name in the room |
 | `/apmedia check` / `redeem` / `ff` | `title:`, a title on your list, from the autocomplete |
+| `/apmedia progress` | none: without `title:` it lists every title a gap holds back, then what to watch next |
 | `/apmedia announce` | `mode:`, `on` or `off` |
 
 Run `npm run check:slash` after editing any command's `slash` block. Registration is
@@ -1165,6 +1176,9 @@ all-or-nothing, so a single malformed spec makes *every* slash command disappear
 
 - `!play [song/url]` — Add a song to the queue.
 - `!pause` / `!resume` / `!stop` / `!skip` — Standard playback controls.
+  A `!skip` or `!stop` sent while the bot is still joining voice or loading the song holds even
+  when a `!play` follows at once, or a Hitster turn plays its clip first: the skipped song never
+  plays.
 - `!volume [1-100]` — Adjust the bot's volume.
 - `!loop` / `!shuffle` — Modify how the queue plays.
 - `!viewqueue` / `!clearqueue` — Manage the current playlist.
@@ -1248,14 +1262,14 @@ Off unless `archipelagoEnabled` is set. The bot joins a multiworld as a read-onl
 
 A leading number is **always** read as the ID, including one no watch holds: `!ap unwatch 999` answers "No watch with ID 999" rather than acting on whatever room happens to be the only one. The cost is that a slot literally named `12345` needs the explicit form, `!ap claim <id> 12345`. In the slash form `id` trails the required options, because Discord rejects a command where a required option follows an optional one.
 
-- `!ap watch [room url or host:port] [slot name]`: Start relaying a room's log here. The slot name has to match a real slot in that multiworld; the bot attaches to it as an observer, receives no items, and cannot affect the person playing it.
+- `!ap watch [room url or host:port] [slot name]`: Start relaying a room's log here. The slot name has to match a real slot in that multiworld; the bot attaches to it as an observer, receives no items, and cannot affect the person playing it. A second watch of a room this channel already watches (the same room URL, or the same host and port) is refused, whatever its state: the reply names the watch, the slot it watches as, and for a paused or reconnecting one the `!ap retry` that wakes it. A host:port is never matched against a room watch's last address, so after a new watch connects the bot checks its seed and warns when another watch in the channel follows the same multiworld, naming the `!ap unwatch` that removes the new one.
 - `!ap list` / `!ap status [id]`: Watches, their connection state, how many lines each has posted (live and caught up), and when its last catch-up ran.
 - `!ap filter [id] [items|hints|chat|joins|goals|deaths|misc] [on|off]`: Pick which lines get posted.
 - `!ap progression [id] on`: Item sends only when they are progression. The usual fix for a noisy async.
 - `!ap skipgoaled [id] [on|off]`: Hide items sent to slots that already finished, meaning goaled, released, or with every location checked. On by default. Goal status is read from the server, so players who goaled before the bot connected count too; a release is only seen if the bot was connected when it was announced, because the server stores nothing about it. The bot keeps the releases it heard for each seed, so they still count after it restarts.
 - `!ap infer [id] [on|off]`: Whether a 100%-checked slot counts as finished. On by default, and it does most of the work late in a game: on one live 29-player room, 15 slots were fully checked and 9 of those had never goaled. It reads the room's tracker page every 15 minutes, so it needs a room URL rather than a bare `host:port`. Turn it off if you would rather still see items going to someone who has checked everything but is waiting on an item to goal.
 - `!ap color [id] [on|off]`: Colour item names by class: progression magenta, useful blue, trap red, filler cyan, matching Archipelago's own clients. On by default. Discord renders ANSI code blocks on **desktop and web only**, so this does nothing in the mobile apps.
-- `!ap next [id] [slot]`: The unchecked locations your slots can reach **in logic right now**, by the seed's own rules and the items every slot in the room has received. With no slot named it answers for **every slot you have claimed**, earliest sphere first; name one to narrow it. Only ever your own slots, and it never says what is in them. Across several slots each block reads like `sphere 1: 56 in logic · +1,177 later · 1,696 locked` over three names from its soonest sphere, and slots with nothing in logic yet are named together at the end rather than given a block. **Name one slot, or hold only one, and it lists everything that slot has in logic, 15 to a page**, with ◀ ▶ buttons under the reply: the soonest sphere first, then each later sphere under an italic `Sphere 2` line of its own. Every page repeats the slot's line and the counts it closes with, such as `Also in logic: sphere 2 (21) · 665 still locked`, and says `Page 1 of 17`. Only the person who asked can turn the pages. A list is kept for 30 minutes after its last use, and not across a stop and start of the bot; a click after that says to ask again. **⭐ marks a location somebody has hinted** and is still waiting on. Hinted locations in logic are listed first, from any sphere (`⭐ <name> · sphere 3` when that is not the soonest), and, in an answer from the seed's own logic, hinted locations not in logic yet are counted, as `⭐ 1 hinted locked` on a slot's line and `⭐ 1 hinted still locked` in the closing counts. A hint the waiting player has marked avoid gets no star. (`!ap hints` stars only priority hints.) Slots that have already goaled or been released are skipped and counted off at the end, so a mostly-finished async still answers about the slots you are actually playing, and asking about finished slots alone answers at once without loading anything. Exact logic needs the seed to have been generated with the Archipelago install at `archipelagoInstallDir`, and such a seed needs nothing run by hand (see **What `!ap next` needs** below). Any other seed gets **sphere 1 only**, which needs nothing and so is always in logic, and the reply says so with a short reason such as "this seed was not generated here". The install's paths and the helper's own errors stay out of the channel; when loading failed, the reply points at the bot log, which has them.
+- `!ap next [id] [slot]`: The unchecked locations your slots can reach **in logic right now**, by the seed's own rules and the items every slot in the room has received. With no slot named it answers for **every slot you have claimed**, earliest sphere first; name one to narrow it. Only ever your own slots, and it never says what is in them. Across several slots each block reads like `sphere 1: 56 in logic · +1,177 later · 1,696 locked` over three names from its soonest sphere, and slots with nothing in logic yet are named together at the end rather than given a block. **Name one slot, or hold only one, and it lists everything that slot has in logic, 15 to a page**, with ◀ ▶ buttons under the reply: the soonest sphere first, then each later sphere under an italic `Sphere 2` line of its own. Every page repeats the slot's line and the counts it closes with, such as `Also in logic: sphere 2 (21) · 665 still locked`, and says `Page 1 of 17`. Only the person who asked can turn the pages. A list is kept for 30 minutes after its last use, and not across a stop and start of the bot; a click after that says to ask again. **⭐ marks a location somebody has hinted** and is still waiting on. Hinted locations in logic are listed first, from any sphere (`⭐ <name> · sphere 3` when that is not the soonest), and, in an answer from the seed's own logic, hinted locations not in logic yet are counted, as `⭐ 1 hinted locked` on a slot's line and `⭐ 1 hinted still locked` in the closing counts. A hint the waiting player has marked avoid gets no star. (`!ap hints` stars only priority hints.) **🚧 after a location marks a checkpoint that waits until a gap is heard**: a game can note its own locations from its player's progress, and Plex Media does it for a slot with Timesanity Strict on; the footer explains the mark only on a page that shows one. Slots that have already goaled or been released are skipped and counted off at the end, so a mostly-finished async still answers about the slots you are actually playing, and asking about finished slots alone answers at once without loading anything. Exact logic needs the seed to have been generated with the Archipelago install at `archipelagoInstallDir`, and such a seed needs nothing run by hand (see **What `!ap next` needs** below). Any other seed gets **sphere 1 only**, which needs nothing and so is always in logic, and the reply says so with a short reason such as "this seed was not generated here". The install's paths and the helper's own errors stay out of the channel; when loading failed, the reply points at the bot log, which has them.
 - `!ap nexthide [on|off]`: Your own `!ap next` leaves out every check whose item goes to a slot that has goaled or released, and its footer counts them, as `12 left out because their items go to slots that have goaled or released.` **Off until you turn it on, and nobody else's answers change.** With nothing after it, it says which you have; a watch ID in front of the switch is allowed and changes nothing, since the setting covers every room. Turning it on does tell you one thing about each check it leaves out: its item is for somebody who has finished. **In practice it is releases that it catches.** A seed generated with Archipelago's default `collect_mode: auto`, which this install's `host.yaml` sets, checks every location holding a slot's items the moment that slot goals, so those checks are gone from `!ap next` already; a slot the host releases without a goal, such as a dropout, leaves its items sitting in everybody else's worlds. An item for an item-link group counts once every member of the group is done. A slot with every location checked that has neither goaled nor been released still gets its items listed, since it may be waiting on one of them. The bot keeps the releases it hears for each seed across its own restarts (`data/archipelago_releases.json`), and a release announced while it was down is unknown. Where items go is read from the seed's multidata by the helper that loads it from the Archipelago install, so its sphere 1 answers, for a seed it could not rebuild or a slot that did not match, leave checks out too. An answer from sphere data files leaves nothing out, and the footer says so; such an answer comes when the helper cannot start, or when it stops answering partway through a question. Kept per Discord user in `data/archipelago_next.json`.
 - `!ap hints [id] [slot]`: Outstanding hints nobody has collected yet, priority ones first. With a slot, both what that world owes and what it is waiting on.
 - `!ap hintpings [id] [slot] [off|dm|channel]`: Be told when somebody hints an item out of **your** world. **Off by default** and separate from `!ap pings`, which is about items arriving for you. The first read of a room is absorbed silently, so opting in never replays a backlog at you.
@@ -1375,8 +1389,14 @@ before a checkpoint played where the bot can see it, in voice or in a Plex app w
 over any number of sittings, and a checkpoint already earned counts as everything before it heard.
 A gap under 30 seconds is forgiven. In a Plex app, which the bot looks at every 15 seconds, so is a
 seam of up to about 50 seconds between two stretches, such as a stop and resume or a Plexamp track
-change. A longer skip, Plex's Skip Intro included, has to be played before the checkpoints after it
-count. Checkpoints hold only filler by default (`checkpoint_items: filler_only`).
+change. A longer skip has to be played before the checkpoints after it count, and so does a TV
+episode's intro skipped with Plex's Skip Intro, unless the slot's `intro` switch is on
+(`/apmedia switch intro on`). Each slot has its own switch, and it does nothing without strict.
+With it on, a jump over an intro Plex has marked, by the Skip Intro button or Plex's automatic
+skip, counts as heard. Only a jump the bot saw counts: an intro skipped before the bot's first look
+at the episode, as an automatic skip at 0:00 usually is, or while the bot was down, keeps its gap.
+Plex marks intros with Plex Pass intro detection, and an episode without a marker still needs its
+intro played. Checkpoints hold only filler by default (`checkpoint_items: filler_only`).
 
 **How a play is counted.** Only plays after the seed was generated count. The bot sees them in
 five places:
@@ -1416,16 +1436,29 @@ songs as `Artist - Title`, and the slots and playlists. Only a slot whose game c
 connected, with its items reported by the room, can lock a song: a listener's slot that lists the
 song but cannot be read that far (items not known yet, reconnecting, refused) keeps it playing for
 everyone, and a stale, orphaned or duplicate link plays no part. A song in a locked part that is
-also on a locked album is skipped with its part. Album tracks otherwise play and bank as before,
+also on a locked album is skipped with its part. Album tracks otherwise play and bank as before
+(under `locked_watches: ignore` they count for nothing),
 and nothing is skipped for a Hitster or Commercial Break clip, a YouTube entry, a song a `!seek`
 or a Rewind replays, a `!loop` replay once the song has played, a song nobody is there to hear, or
 anything while Plex Media is off. The rule covers the 15-song parts of seeds made before 0.4.0
 too, and reads neither `apMediaVoiceCredit` nor `locked_watches`. Plexamp and other Plex apps
-cannot be held back: a locked song played there banks as above. Its switch, `apMediaAutoskip`
+cannot be held back: a locked song played there banks as above, or counts for nothing under
+`ignore`. Its switch, `apMediaAutoskip`
 (true by default), has no `/config` row, since the panel's worst case is 14 characters under
 Discord's 6,000: set `"apMediaAutoskip": false` in `data/config.overrides.json`, then stop and
 start the bot. `config/config.js` reads that file when the process starts, and a `!restart` keeps
 the process.
+
+**Only the songs that still earn.** `/playlist play name:<playlist> earning:True` (prefix:
+`!playlist play <playlist> -e`, which combines with `-r`) queues only the songs of your custom
+playlist that still earn on your linked Plex Media slots, and says how many of the playlist it
+queued: "▶️ Queued 12 of 40 songs from `Road Trip`: the ones that still earn on `ZackPlex`'s
+list." A song earns while it is a track of an open album or playlist part on one of those lists
+and its own check, or a checkpoint inside it, is not earned yet (an album with every track checked
+can still hold such a checkpoint). Under Timesanity Strict a track not heard yet also earns while
+a checkpoint after it waits. Only a slot connected with its items counts. When none of the songs
+earns, nothing is queued. With no slot linked to you, none that has reported its items yet, or
+Plex Media off, it queues nothing and says which.
 
 **Items and traps.** A seed made with world 0.3.0 or later deals each list more than its unlocks
 and Wild Tickets. The [game page's Items table](apworld/plex_media/docs/en_Plex%20Media.md#items)
@@ -1438,10 +1471,10 @@ says what a list's pool will hold, and the slot's welcome what it holds.
   Control, 3 times a slot (`snack_bar_trades`). Every snack counts the same.
 - **Fast Forward** (2 by default, `fast_forwards`): `/apmedia ff <title>` spends one. It sends the
   title's first checkpoint not earned yet, however far into the title it lies, a movie's and an
-  audiobook's included. Under `timesanity_strict` it counts the 10 minutes after the furthest point
-  heard as heard instead, and sends what that reaches; one that reaches no checkpoint yet is spent
-  all the same. It never sends a watch, a track or a finish, and on a locked title its checkpoint
-  is banked (refused under `locked_watches: ignore`).
+  audiobook's included. Under `timesanity_strict` it counts the 10 minutes from where everything
+  before is heard as heard instead, and sends what that reaches; one that reaches no checkpoint
+  yet is spent all the same. It never sends a watch, a track or a finish, and on a locked title its
+  checkpoint is banked (refused under `locked_watches: ignore`).
 - **Remote Control** (1 by default, `remote_controls`) works by itself: one that arrives while a
   trap is at work on the slot ends it, and otherwise it is kept and blocks the next trap. With more
   than one at work, it takes Buffering first, then the Rights Expired that ends last, then the trap
@@ -1651,21 +1684,46 @@ DM.
   was marked passed, but the log shows it never ran), and a friend's own checkpoints from a Plex
   movie or in voice. The failed check, installing the world with every Archipelago program closed,
   has no note, though its expected lines all came.
-- None of world 0.3.0's items and traps has met a live room, the bot's voice playback, a Plex
-  clip playlist or an audiobook session yet. Phase 18 of [BUGTESTING.md](BUGTESTING.md) is their
-  checklist.
-- Songs per unlock and the skipping of locked playlist songs have met no live room, Plex server or
-  voice channel yet. Phase 19 of [BUGTESTING.md](BUGTESTING.md) is their checklist.
+- Of world 0.3.0's items, the snacks are live: ZackTestPlex's pool of 1,913 deals them. A Fast
+  Forward, a Remote Control, a trap and a Snack Bar trade have not fired in a live room yet. Phase
+  18 of [BUGTESTING.md](BUGTESTING.md) is their checklist.
+- Songs per unlock and the skipping of locked playlist songs are live: on 2026-11-15 and 16 the
+  command log holds 51 voice credits and 103 `track-locked` stretches, 2,010 songs. Phase 19 of
+  [BUGTESTING.md](BUGTESTING.md) is their checklist, and most of it is still to be run.
 - `!viewqueue` still lists locked songs: each is skipped when it reaches the head of the queue. A
   song is matched as voice credit matches it, by rating key, then part id, then artist and title,
   so another recording with a locked song's artist and title is skipped as that song.
 - When locked songs end playback while an earlier song's voice join is still under way, the bot
   joins and leaves at once as that join lands.
 
+**Gap and locked lines.** Under Timesanity Strict, playing a title past a checkpoint with a
+stretch before it that nothing was heard in posts a 🚧 line in the slot's channel: the title has
+nothing heard from one time to another, so its checkpoints from the first one held wait. The line
+ends with the way out: rewind to the gap, or the `!apmedia check` command it gives for a part you
+did watch, one Fast Forward for a gap of 10 minutes or less when the slot holds one (or what the
+Snack Bar asks for one), and `/apmedia switch intro on` when the bot saw Plex's Skip Intro make
+the gap. With locked titles set to `ignore`, the line of a title played while it was locked says
+so instead, with a rewind or that Fast Forward as its way out and never the check command, and a
+play of a locked movie or book from the last 3 hours posts a 🔒 line saying what opens it.
+Episodes, gaps and locked shows alike, come together in one 🚧 line that names five and leaves the
+rest to `/apmedia progress`, and locked songs in one 🔒 line, each at most once every 30 minutes.
+A title's line comes once a sitting (a sitting ends after 3 hours with no play of it). A 🚧 line
+stands for one gap: filling that gap from its start posts no second line, and a different gap in
+the same title gets its own line in the same sitting. A slot
+gets at most 6 of these lines an hour; a line over that goes to the bot log, and a grouped one
+waits for the hour to free a place. `/apmedia check` and a Fast Forward end their reply with the
+same gap sentence while a gap still holds checkpoints back, and a check of a whole title (no `at:`)
+that leaves checkpoints waiting says how many and gives the `at` command that counts all of it as
+heard. These lines post whatever the announce settings say.
+
 **What it posts.** `apMediaAnnounce` decides: `completions` (the default) posts a title finished,
 banked or unlocked, `all` adds a line for every credit that finishes nothing (a checkpoint, an
 album track), and `off` posts none of those and no welcome. A refusal, a lost watch and a new seed
-are posted whatever it says. Lines go out at most once per `archipelagoBatchSeconds` in each
+are posted whatever it says, and so is the 🟢 line of a slot back in its room after a refusal or
+an `/apmedia retry`: "🟢 `ZackPlex` is connected again.", with "; 2 checks earned meanwhile were
+sent" when the reconnect sent checks that waited, and after a stale slot's retry either "back on
+its own seed with nothing lost" or "on the room's new seed: the old seed's progress does not carry
+over". Lines go out at most once per `archipelagoBatchSeconds` in each
 channel, every line of the batch however many, and never ping anyone. While no Discord client can
 post them (a `!restart`), up to 200 lines per channel wait for 5 minutes, and the log says how many
 older ones it dropped. A player can silence their own slot with `/apmedia announce off`. The
@@ -1685,7 +1743,8 @@ the items did.
 warns while `archipelagoEnabled` is off, shows an error for a refused slot, a slot whose watch is
 gone (naming 5 slots at most), or 3 failed Plex history reads in a row, and otherwise reads like
 `2 slots, 2 connected, Plex history read 1m ago`. The command log (`npm run logs -- --raw`) gains
-`apmedia-credit`, `apmedia-refused`, `apmedia-stale`, `apmedia-orphaned`, `apmedia-goal`,
+`apmedia-credit`, `apmedia-refused`, `apmedia-reconnected`, `apmedia-stale`, `apmedia-orphaned`,
+`apmedia-goal`, `apmedia-gap`, `apmedia-locked-play`, `apmedia-intro`, `apmedia-switch`,
 `apmedia-fastforward` and `apmedia-snackbar` lines, an `apmedia-trap` line for each trap with
 its `outcome`: `hit`, `armed` (waiting to hit), `blocked` (by a Remote Control), `dodged` or
 `fizzled`, and a `track-locked` line for each stretch of locked songs skipped in voice. Slot links
@@ -1724,18 +1783,21 @@ unlike `/config`'s first-run bootstrap.
 | Command | Who | What it does |
 | ------- | --- | ------------ |
 | `/apmedia yaml [name] [file] [options]` | Anyone; with `for:`, the owner | Builds a list from the library and attaches it as a YAML for the next seed, with its counts, how each music playlist opens, how many titles start open, what the goal needs, and the Fast Forwards, Remote Controls, traps and snacks its pool holds. With `file:`, it fills in a YAML made in the Archipelago Options Creator, or one it wrote before, and keeps the file's settings. It needs a name or a file. See **Building a list** and **Filling in a YAML** below. |
-| `/apmedia apworld` | Owner | Attaches `plex_media.apworld`, built in memory, with the install steps, and compares it with `<archipelagoInstallDir>\custom_worlds\plex_media.apworld`, which it only reads. The reply is public. |
+| `/apmedia apworld` | Owner | Attaches `plex_media.apworld`, built in memory, with the install steps, and compares the whole file with `<archipelagoInstallDir>\custom_worlds\plex_media.apworld`, which it only reads. The reply says when the installed copy is another version, holds files that differ from this build (naming up to three), or is not a valid zip, which stops every Archipelago program on the PC from starting. The reply is public. |
+| `/apmedia progress [title] [slot]` | The bound player, or the owner | Where a title stands and what holds it back. With no title, every title a gap holds back, then up to five titles to watch next. |
 | `/apmedia account [user] [plex] [shared]` | Owner; anyone, for `plex:none` on themselves | No user: the server's Plex accounts. A user alone: who they are linked to. A user and a Plex name (in full) or id: links them, and they get an Accept button. An account already linked to someone else needs `shared:True`. `plex:none` unlinks them, and on its own takes back your own link. |
 | `/apmedia link <slot> [user] [watch]` | The player holding the `!ap claim` on that slot; the owner, for anyone | Ties a Plex Media slot of a watched room to a Discord user. Without `watch:` the room is the one where they claimed the slot, unless another watched room has a slot of that name too, or the only room watched; anything else is asked back with the watches' ids. |
 | `/apmedia unlink <slot>` | The bound player, or the owner | Drops the link. Its unsent checks go with it, and the reply says how many. |
 | `/apmedia retry [slot]` | The bound player, or the owner | Reconnects a refused, stale or orphaned slot. A stale one takes on the seed the room is on when it connects: another seed starts it over, and its own seed picks up where it left off. An orphaned one reconnects only on watch `#0`, once its Archipelago settings in `/config` are complete again, since no other watch number comes back. |
-| `/apmedia status [slot] [user]` | Anyone, for their own slots; the owner, for anyone's, and for every slot when nothing is named | Per slot: titles done, the goal, ready and locked counts, checks waiting or banked, Wild Tickets, Fast Forwards and Remote Controls on hand, the snacks and the Snack Bar's trades left, a Buffering or Rights Expired hold with the checks it holds, a trap at work, traps waiting to hit, the connection, the Plex account, how far the last Plex session got, and the last credit. |
+| `/apmedia status [slot] [user]` | Anyone, for their own slots; the owner, for anyone's, and for every slot when nothing is named | Per slot: titles done, the goal, ready and locked counts, checks waiting or banked, Wild Tickets, Fast Forwards and Remote Controls on hand, the snacks and the Snack Bar's trades left, a Buffering or Rights Expired hold with the checks it holds, a trap at work, traps waiting to hit, the connection, the Plex account, how far the last Plex session got, and the last credit. A 🚧 line counts the titles whose checkpoints a gap holds back (`/apmedia progress` lists them), and a `Switches on:` line names the slot's switches that are on, `(from the YAML)` for one the seed turned on. |
 | `/apmedia list [show] [slot]` | The bound player, or the owner | `ready` (the default), `locked` or `done` titles, grouped by show, album, playlist and kind, each with its runtime. A playlist part's row names its first three songs and counts the rest: "• Road Trip Part 2 (Song D, Song E and Song F) · 9m". A locked title names the item that opens it, and which copy when it is not the first ("opened by Road Trip: Next 3 Songs (the 2nd)"), 💡 marks one somebody hinted, and ⛔ one whose rights Rights Expired took, until when. While Buffering runs, every page has a ⏳ line under the counts with the checks it holds. A long list gets ◀ ▶ buttons that only the asker can use, for 30 minutes after their last use. |
 | `/apmedia check <title> [at] [slot]` | The bound player, or the owner | Counts a title by hand: finished, or with `at:` (`45m`, `1h30m`, `1:30:00`) its checkpoints up to that time. |
 | `/apmedia redeem <title> [slot]` | The bound player | Spends a Wild Ticket on a locked title. On a show it opens the episodes of that title's step, and on a playlist that one part, while its unlock's copies go on counting from part 1. |
 | `/apmedia ff <title> [slot]` | The bound player | Spends a Fast Forward on a title: its first checkpoint not earned yet, at any distance, or under `timesanity_strict` the next 10 minutes counted as heard. Never a watch, a track or a finish. |
 | `/apmedia snackbar [buy] [slot]` | The bound player | The slot's snacks, the Snack Bar's price and the trades left; with `buy:`, one trade for a Fast Forward or a Remote Control. A Remote Control bought while a trap is at work goes straight to it. |
 | `/apmedia announce <on\|off> [slot]` | The bound player | Turns the slot's lines in the channel on or off. Refusals and other problems are posted either way. |
+| `/apmedia switch [name] [on] [slot]` | The bound player | The slot's opt-ins. With no name it lists each switch and what it does, with a name alone it shows that one, and with `on:` (prefix: `on`, `off`, `yes`, `no`, `true`, `false`, `1` or `0`) it sets it. The one switch so far is `intro` (also `skip intro`), **Skip Intro as heard** (**Timesanity**, above). `name:` is suggested as you type, with each switch's state. |
+| `/apmedia help` | Anyone | The sub-help that `!apmedia ?` shows, privately. |
 
 Where the slot is optional, leaving it out picks your only linked slot; `status` then shows all of
 yours.
@@ -1844,7 +1906,10 @@ named without seasons; 24 by default) are options of their own, and the rarer se
 `snack_bar_price`, `trap_percentage` and the seven trap weights (`buffering_weight`,
 `rights_expired_weight`, `commercial_break_weight`, `shuffle_mode_weight`, `rewind_weight`,
 `intermission_weight`, `slow_motion_weight`), as in
-`more:wild_tickets=3 strict=true trap_percentage=20`. A `trap_percentage` above 0 with every
+`more:wild_tickets=3 strict=true trap_percentage=20`. `more:` completes as you type: `key=` for
+each key not given yet, then a toggle's `true` and `false`, a choice's values, or a range's
+default, minimum and maximum (and the number typed, while it is in range), each suggestion the
+whole field as it would read. A `trap_percentage` above 0 with every
 weight at 0 is refused: "trap_percentage 50 makes 34 of the list's 69 filler items traps, but
 every trap weight is 0 (a trap weight above 0, or trap_percentage 0, would help)". The reply says
 how each music playlist went on, a line each after the counts, five at most and then "And 2 more

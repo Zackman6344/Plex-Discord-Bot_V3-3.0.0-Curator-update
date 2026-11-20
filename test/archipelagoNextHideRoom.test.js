@@ -73,7 +73,7 @@ test('suggestNextAll hands hideFinished to the worker as the room\'s goaled slot
 });
 
 test('a release the bot hears is on disk at once, even with release lines filtered out of the channel', async (t) => {
-	// Nothing posts here, and stop-bot.ps1 kills the process, which skips every exit hook.
+	// Nothing posts here, and a forced stop kills the process, which skips every exit hook.
 	const ctx = await setup(t);
 	await baselined(ctx);
 	monitor.setFilter(ctx.watch.id, 'goals', false);

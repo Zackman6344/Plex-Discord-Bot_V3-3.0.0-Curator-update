@@ -110,6 +110,7 @@ test('a new binding gets every default and is keyed by watch and lower-cased slo
 		goalSent: false, announce: true, welcomed: false, lastCredit: null, lastTarget: null, heard: {},
 		itemsSeen: null, held: [], holdUntil: null, holdMs: 0, expired: {}, armed: [], speedRestore: null,
 		ffUsed: 0, rcUsed: 0, snackSpent: 0, bought: { fastForward: 0, remoteControl: 0 }, trades: 0,
+		told: { titles: {}, songsAt: null, episodesAt: null }, switches: {},
 	});
 	assert.strictEqual(apStore.bindingKey(2, 'ZACK'), '2::zack');
 	assert.deepStrictEqual(store.bindings.find(2, 'zack'), b);
@@ -240,6 +241,89 @@ test('a patch may fix a slot\'s case but cannot move a binding to another slot o
 	assert.throws(() => store.bindings.patch(b.key, { slot: 'Other' }), /another watch or slot/);
 	assert.throws(() => store.bindings.patch(b.key, { watchId: 1 }), /another watch or slot/);
 	assert.deepStrictEqual(store.bindings.list().map((x) => x.key), ['0::zack']);
+});
+
+test('told and switches keep only what they can use, and a told key naming a secret survives a restart', () => {
+	const c = clock();
+	const { store, paths } = make({ now: c.now });
+	const told = {
+		titles: {
+			'movie|plex://movie/secret-garden': { gap: [960000, c.t], locked: ['x', c.t] },
+			'show|rk:7': { locked: [0, c.t] },
+			'movie|rk:9': { gap: [-1, c.t] },
+			'': { gap: [1, c.t] },
+		},
+		songsAt: c.t,
+		episodesAt: 'soon',
+	};
+	const switches = { intro: true, music: false, Loud: true, toolongnameforaswitch: true, odd: 'yes' };
+	const b = store.bindings.put(binding({ told, switches }));
+	assert.deepStrictEqual(b.told, {
+		titles: { 'movie|plex://movie/secret-garden': { gap: [960000, c.t] }, 'show|rk:7': { locked: [0, c.t] } },
+		songsAt: c.t,
+		episodesAt: null,
+	});
+	assert.deepStrictEqual(b.switches, { intro: true, music: false });
+	const many = Object.fromEntries('abcdefghijklmnopqrst'.split('').map((name) => [name, true]));
+	assert.strictEqual(Object.keys(store.bindings.put(binding({ switches: many })).switches).length, 16);
+	store.bindings.put(b);
+	const reopened = make({ now: c.now, env: { PLEXBOT_APMEDIA_SLOTS_FILE: paths.PLEXBOT_APMEDIA_SLOTS_FILE } }).store;
+	assert.deepStrictEqual(reopened.bindings.get(b.key).told, b.told);
+	assert.deepStrictEqual(reopened.bindings.get(b.key).switches, b.switches);
+});
+
+test('a locked title played under strict before any line told of it keeps how far it was played', () => {
+	const c = clock();
+	const { store, paths } = make({ now: c.now });
+	const told = {
+		titles: {
+			'movie|rk:11': { locked: [300000, 0, c.t] },
+			'movie|rk:12': { locked: [0, 0, c.t] },
+			'movie|rk:13': { gap: [300000, 0] },
+			'movie|rk:14': { locked: [300000, -1] },
+			'movie|rk:15': { locked: [300000, 0] },
+		},
+	};
+	const b = store.bindings.put(binding({ told }));
+	assert.deepStrictEqual(b.told.titles, { 'movie|rk:11': { locked: [300000, 0, c.t] } });
+	const reopened = make({ now: c.now, env: { PLEXBOT_APMEDIA_SLOTS_FILE: paths.PLEXBOT_APMEDIA_SLOTS_FILE } }).store;
+	assert.deepStrictEqual(reopened.bindings.get(b.key).told.titles, b.told.titles);
+});
+
+test('told forgets a line told or a reach written more than 7 days ago and keeps the 500 most recent titles', () => {
+	const c = clock();
+	const t0 = c.t;
+	const { store } = make({ now: c.now });
+	const WEEK = 7 * 24 * 60 * 60 * 1000;
+	const told = {
+		titles: {
+			'movie|rk:21': { gap: [60000, c.t - WEEK], locked: [120000, c.t - WEEK - 1] },
+			'movie|rk:22': { gap: [60000, c.t - WEEK - 1] },
+			'movie|rk:23': { locked: [300000, 0, c.t] },
+			'movie|rk:24': { locked: [300000, 0, c.t - WEEK - 1] },
+			'movie|rk:25': { locked: [300000, 0, c.t - WEEK] },
+		},
+		songsAt: c.t - WEEK - 1,
+	};
+	const b = store.bindings.put(binding({ told }));
+	assert.deepStrictEqual(b.told, {
+		titles: {
+			'movie|rk:21': { gap: [60000, c.t - WEEK] },
+			'movie|rk:23': { locked: [300000, 0, c.t] },
+			'movie|rk:25': { locked: [300000, 0, c.t - WEEK] },
+		},
+		songsAt: null,
+		episodesAt: null,
+	});
+	assert.strictEqual(store.bindings.put(binding({ told: { songsAt: c.t - WEEK } })).told.songsAt, c.t - WEEK);
+	const many = { 'movie|rk:1': { locked: [5000, 0, c.t] } };
+	for (let i = 2; i <= 501; i += 1) many[`movie|rk:${i}`] = { gap: [0, c.t - 1000 + i] };
+	const kept = Object.keys(store.bindings.put(binding({ told: { titles: many } })).told.titles);
+	assert.strictEqual(kept.length, 500);
+	assert.deepStrictEqual([kept.includes('movie|rk:1'), kept.includes('movie|rk:2'), kept.includes('movie|rk:501')], [true, false, true], 'the oldest goes');
+	assert.strictEqual(kept[0], 'movie|rk:1', 'the rest keep their order');
+	c.t += 1;
+	assert.deepStrictEqual(store.bindings.put(b).told.titles, { 'movie|rk:23': { locked: [300000, 0, t0] } });
 });
 
 test('bindings survive a restart, and their file is durable with an hourly backup', () => {

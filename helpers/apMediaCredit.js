@@ -487,6 +487,21 @@ function rangeOf(span, event) {
 }
 
 /**
+ * How far along its entry's own timeline one event was heard: the start of the hit's track or part
+ * plus the event's toMs, held inside that track or part. Null when the event carries no stretch (a
+ * Plex history row, a finished bookmark) or an empty one, or the hit's role does not fit its entry.
+ * @param {{entry: object, role: 'whole'|'track'|'part', index: number}} hit
+ * @param {{fromMs?: number, toMs?: number}} event
+ * @returns {number|null}
+ */
+function playedTo(hit, event) {
+	if (!hit || !hit.entry || typeof hit.entry !== 'object' || !event) return null;
+	const span = spanOf(hit, derive(hit.entry));
+	const range = span ? rangeOf(span, event) : null;
+	return range ? range.hi : null;
+}
+
+/**
  * The location ids one hit earns from one event (spec 5.3). Deduped; main locations first in
  * play order, then checkpoints ascending. The span of a track or part is read from the entry, so
  * a hit's own startMs/endMs are informational.
@@ -597,6 +612,20 @@ function walk(ranges, gapMs, floorMs) {
  */
 function heardThrough(ranges, gapMs = HEARD_GAP_MS, floorMs = 0) {
 	return walk(cleanRanges(ranges), gapMs, floorMs).reach;
+}
+
+/**
+ * The first gap heardThrough stops at, from floorMs on: where the heard stretch ends, where the next
+ * heard range starts, and the furthest point heard anywhere. Null when no gap is left.
+ * @returns {{reachMs: number, gapEndMs: number, furthestMs: number} | null}
+ */
+function firstGap(ranges, { gapMs = HEARD_GAP_MS, floorMs = 0 } = {}) {
+	const clean = cleanRanges(ranges);
+	const { reach, next } = walk(clean, gapMs, floorMs);
+	if (next >= clean.length) return null;
+	let furthestMs = reach;
+	for (const [, hi] of clean) furthestMs = Math.max(furthestMs, hi);
+	return { reachMs: reach, gapEndMs: clean[next][0], furthestMs };
 }
 
 /**
@@ -805,9 +834,11 @@ module.exports = {
 	hitsFor,
 	hitsForMetadata,
 	locationsFor,
+	playedTo,
 	strictLocations,
 	cleanRanges,
 	heardThrough,
+	firstGap,
 	HEARD_GAP_MS,
 	HEARD_PAD_MAX_MS,
 	HEARD_MAX_RANGES,

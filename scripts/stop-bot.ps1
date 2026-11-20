@@ -11,6 +11,7 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $entry = Join-Path $repoRoot 'index.js'
+. (Join-Path $PSScriptRoot 'stop-bot-pipe.ps1')
 
 Write-Host "Looking for the bot running from: $entry"
 
@@ -25,7 +26,21 @@ if ($procs.Count -eq 0) {
 }
 
 foreach ($p in $procs) {
-    Write-Host ("Stopping node.exe PID {0}" -f $p.ProcessId)
+    Write-Host ("Asking the bot (PID {0}) to shut down by itself..." -f $p.ProcessId)
+    $ask = Request-CleanStop -ProcessId $p.ProcessId -Entry $entry
+    if ($ask.Result -eq 'asked') {
+        if (Wait-Exit -ProcessId $p.ProcessId -TimeoutMs 10000) {
+            Write-Host "  Shut down cleanly." -ForegroundColor Green
+            continue
+        }
+        Write-Host "  Still running after 10 s, so stopping it outright." -ForegroundColor Yellow
+    } elseif ($ask.Result -eq 'old') {
+        Write-Host "  This build cannot be asked to stop, so stopping it outright." -ForegroundColor Yellow
+    } elseif ($ask.Result -eq 'refused') {
+        Write-Host ("  It is not ready to stop by itself yet ({0}), so stopping it outright." -f $ask.Why) -ForegroundColor Yellow
+    } else {
+        Write-Host "  It did not answer on its pipe, so stopping it outright." -ForegroundColor Yellow
+    }
     try {
         Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop
     } catch {

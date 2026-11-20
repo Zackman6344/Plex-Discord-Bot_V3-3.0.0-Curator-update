@@ -65,7 +65,7 @@ function checkGemini() {
 
 async function checkTautulli() {
     if (!config.tautulliEnabled) {
-        return { status: 'disabled', detail: 'tautulliEnabled is false in config/config.js' };
+        return { status: 'disabled', detail: 'tautulliEnabled is off (/config \u2192 Integrations)' };
     }
     if (!config.tautulliApiKey || !config.tautulliUrl) {
         return { status: 'error', detail: 'tautulliEnabled is true but tautulliApiKey or tautulliUrl is empty' };
@@ -79,7 +79,7 @@ async function checkTautulli() {
 
 async function checkPlaynite() {
     if (!config.playniteEnabled) {
-        return { status: 'disabled', detail: 'playniteEnabled is false in config/config.js' };
+        return { status: 'disabled', detail: 'playniteEnabled is off (/config \u2192 Integrations)' };
     }
     const lib = await playnite.getLibrary();
     if (lib && lib.error === 'OFFLINE') {
@@ -94,7 +94,7 @@ async function checkPlaynite() {
 function checkEventServer() {
     const s = eventServer.getStatus();
     if (!s.enabled) {
-        return { status: 'disabled', detail: 'eventServerEnabled is false in config/config.js' };
+        return { status: 'disabled', detail: 'eventServerEnabled is off (/config \u2192 Broadcasts, then a restart)' };
     }
     if (s.listening) {
         return { status: 'ok', detail: `listening on 127.0.0.1:${s.port} (Kometa + Playnite pushes)` };
@@ -105,7 +105,7 @@ function checkEventServer() {
 function checkArchipelago() {
     const s = archipelagoMonitor.getStatus();
     if (!s.enabled) {
-        return { status: 'disabled', detail: 'archipelagoEnabled is false in config/config.js' };
+        return { status: 'disabled', detail: 'archipelagoEnabled is off (/config \u2192 Archipelago)' };
     }
     if (s.total === 0) {
         if (s.gaps && s.gaps.length > 0) {

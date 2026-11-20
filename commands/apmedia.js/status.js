@@ -84,6 +84,10 @@ function block(row, { showUser }) {
 		const start = row.inventoryKnown ? '' : ' (as at the start: the room has not reported its items yet)';
 		lines.push(`> ${row.done} of ${row.total} done, ${goal}. ${row.ready} ready, ${row.locked} locked${start}.`);
 	}
+	if (row.heldBack > 0) {
+		const one = row.heldBack === 1;
+		lines.push(`> \u{1F6A7} ${one ? '1 title has' : `${row.heldBack} titles have`} checkpoints held back by a gap: \`/apmedia progress\` lists ${one ? 'it' : 'them'}.`);
+	}
 	if (row.pending || row.banked) {
 		const parts = [];
 		if (row.pending) parts.push(`${common.plural(row.pending, 'check')} waiting to send`);
@@ -103,6 +107,8 @@ function block(row, { showUser }) {
 		const at = Number(row.lastCredit.at);
 		lines.push(`> Last credit: ${common.bold(row.lastCredit.title)}${Number.isFinite(at) && at > 0 ? ` <t:${Math.floor(at / 1000)}:R>` : ''}.`);
 	}
+	const switchesOn = Array.isArray(row.switches) ? row.switches.filter((s) => s.on) : [];
+	if (switchesOn.length) lines.push(`> Switches on: ${switchesOn.map((s) => `${s.label}${s.from === 'seed' ? ' (from the YAML)' : ''}`).join(', ')}.`);
 	if (row.announce === false) lines.push('> Announcements: off.');
 	return { title, rows: lines };
 }

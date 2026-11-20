@@ -231,7 +231,7 @@ const BINDING_STATES = Object.freeze(['active', 'stale', 'refused', 'orphaned'])
 const CONSENT_STATES = Object.freeze(['pending', 'granted']);
 
 const EVENT_TYPES = Object.freeze(['complete', 'span']);
-const EVENT_SOURCES = Object.freeze(['history', 'session', 'voice', 'book', 'manual']);
+const EVENT_SOURCES = Object.freeze(['history', 'session', 'voice', 'book', 'manual', 'intro']);
 const HIT_ROLES = Object.freeze(['whole', 'track', 'part']);
 
 const VOICE = Object.freeze({ heardFraction: 0.85, naturalMinMs: 30000 });
@@ -340,9 +340,9 @@ function slotNameProblem(name) {
  * generated_at counts for nothing.
  * @typedef {object} CreditEvent
  * @property {'complete'|'span'} type
- * @property {'history'|'session'|'voice'|'book'|'manual'} source
+ * @property {'history'|'session'|'voice'|'book'|'manual'|'intro'} source
  * @property {number} at
- * @property {number} [accountId]   history, session: the Plex account (owner = 1)
+ * @property {number} [accountId]   history, session, intro: the Plex account (owner = 1)
  * @property {string[]} [userIds]   voice, book, manual: Discord user ids
  * @property {number} [ratingKey]   history, session, voice
  * @property {string} [librarySectionID]   history

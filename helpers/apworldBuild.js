@@ -117,9 +117,8 @@ function zipStore(entries) {
 	const parts = [];
 	const central = [];
 	let offset = 0;
-	for (const { name, data } of entries) {
+	for (const { name, data, crc } of entries) {
 		const nameBuf = Buffer.from(name, 'utf8');
-		const crc = crc32(data);
 		const local = Buffer.alloc(30);
 		local.writeUInt32LE(0x04034b50, 0);
 		local.writeUInt16LE(10, 4);
@@ -164,7 +163,7 @@ function zipStore(entries) {
 /**
  * Builds the apworld in memory.
  * @param {{srcDir?: string, worldVersion?: string}} [options]  worldVersion replaces the manifest's
- * @returns {{buffer: Buffer, bytes: number, worldVersion: string, files: string[]}}  files: zip member names
+ * @returns {{buffer: Buffer, bytes: number, worldVersion: string, files: string[], entries: {name: string, crc: number, size: number}[]}}  files: zip member names
  */
 function buildApworld({ srcDir = DEFAULT_SRC, worldVersion } = {}) {
 	const root = path.resolve(srcDir);
@@ -182,10 +181,16 @@ function buildApworld({ srcDir = DEFAULT_SRC, worldVersion } = {}) {
 			data = fs.readFileSync(file.full);
 			if (TEXT_EXTENSIONS.has(path.extname(file.rel).toLowerCase())) data = toLf(data);
 		}
-		return { name: `${APWORLD_NAME}/${file.rel}`, data };
+		return { name: `${APWORLD_NAME}/${file.rel}`, data, crc: crc32(data) };
 	});
 	const buffer = zipStore(entries);
-	return { buffer, bytes: buffer.length, worldVersion: manifest.world_version, files: entries.map((e) => e.name) };
+	return {
+		buffer,
+		bytes: buffer.length,
+		worldVersion: manifest.world_version,
+		files: entries.map((e) => e.name),
+		entries: entries.map((e) => ({ name: e.name, crc: e.crc, size: e.data.length })),
+	};
 }
 
 /** Builds the apworld and writes it to outFile through <outFile>.tmp and a rename. */
@@ -210,36 +215,148 @@ function writeApworld(outFile, options = {}) {
  */
 function readApworldManifest(file) {
 	const buf = fs.readFileSync(file);
+	const entry = readZipDirectory(buf, file).find((e) => e.name.endsWith(MANIFEST));
+	if (!entry) return null;
+	return JSON.parse(readZipMember(buf, entry, file).toString('utf8'));
+}
+
+/**
+ * The central directory of a zip held in memory. Throws when it is not a zip or the directory is
+ * cut short; `label` names the file in those errors.
+ * @returns {{name: string, method: number, crc: number, size: number, compressedSize: number, localOffset: number}[]}
+ */
+function readZipDirectory(buf, label = 'the data') {
 	const endAt = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
-	if (endAt < 0 || endAt + 22 > buf.length) throw new Error(`${file} is not a zip`);
+	if (endAt < 0 || endAt + 22 > buf.length) throw new Error(`${label} is not a zip`);
 	const count = buf.readUInt16LE(endAt + 10);
 	let at = buf.readUInt32LE(endAt + 16);
+	const entries = [];
 	for (let i = 0; i < count; i++) {
-		if (at + 46 > buf.length || buf.readUInt32LE(at) !== 0x02014b50) throw new Error(`${file} has a broken zip directory`);
-		const method = buf.readUInt16LE(at + 10);
-		const size = buf.readUInt32LE(at + 20);
+		if (at + 46 > buf.length || buf.readUInt32LE(at) !== 0x02014b50) throw new Error(`${label} has a broken zip directory`);
 		const nameLen = buf.readUInt16LE(at + 28);
-		const skip = nameLen + buf.readUInt16LE(at + 30) + buf.readUInt16LE(at + 32);
-		const local = buf.readUInt32LE(at + 42);
-		const name = buf.toString('utf8', at + 46, at + 46 + nameLen);
-		at += 46 + skip;
-		if (!name.endsWith(MANIFEST)) continue;
-		if (local + 30 > buf.length || buf.readUInt32LE(local) !== 0x04034b50) throw new Error(`${file} has a broken zip entry`);
-		const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
-		const raw = buf.subarray(start, start + size);
-		const data = method === STORED ? raw : method === 8 ? zlib.inflateRawSync(raw) : null;
-		if (!data) throw new Error(`${file} stores ${name} with zip method ${method}`);
-		return JSON.parse(data.toString('utf8'));
+		entries.push({
+			name: buf.toString('utf8', at + 46, at + 46 + nameLen),
+			method: buf.readUInt16LE(at + 10),
+			crc: buf.readUInt32LE(at + 16),
+			compressedSize: buf.readUInt32LE(at + 20),
+			size: buf.readUInt32LE(at + 24),
+			localOffset: buf.readUInt32LE(at + 42),
+		});
+		at += 46 + nameLen + buf.readUInt16LE(at + 30) + buf.readUInt16LE(at + 32);
 	}
-	return null;
+	return entries;
+}
+
+function readZipMember(buf, entry, label) {
+	const local = entry.localOffset;
+	if (local + 30 > buf.length || buf.readUInt32LE(local) !== 0x04034b50) throw new Error(`${label} has a broken zip entry`);
+	const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
+	const raw = buf.subarray(start, start + entry.compressedSize);
+	const data = entry.method === STORED ? raw : entry.method === 8 ? zlib.inflateRawSync(raw) : null;
+	if (!data) throw new Error(`${label} stores ${entry.name} with zip method ${entry.method}`);
+	return data;
+}
+
+function builtMember(name) {
+	if (name.endsWith('/') || name.endsWith('.pyc')) return false;
+	const parts = name.split('/');
+	if (parts.some((part) => part.startsWith('.'))) return false;
+	return !parts.slice(0, -1).some((part) => SKIPPED_DIRS.has(part));
+}
+
+/**
+ * The installed .apworld at `file` against a buildApworld() result, member by member.
+ * @returns {{state: 'same'|'differs'|'version'|'missing'|'unreadable'|'notzip'|'nomanifest', version: string|null, differ: string[], code: string|null}}
+ */
+function compareInstalled(file, built) {
+	const answer = (state, extra = {}) => ({ state, version: null, differ: [], code: null, ...extra });
+	let buf;
+	try {
+		buf = fs.readFileSync(file);
+	} catch (err) {
+		if (err && err.code === 'ENOENT') return answer('missing');
+		if (err && (err.code === 'EACCES' || err.code === 'EPERM' || err.code === 'EBUSY')) return answer('unreadable', { code: err.code });
+		throw err;
+	}
+	if (buf.equals(built.buffer)) return answer('same', { version: built.worldVersion });
+	let directory;
+	let manifest;
+	try {
+		directory = readZipDirectory(buf, file);
+		const entry = directory.find((e) => e.name.endsWith(MANIFEST));
+		manifest = entry ? JSON.parse(readZipMember(buf, entry, file).toString('utf8')) : null;
+	} catch (err) {
+		return answer('notzip');
+	}
+	if (!manifest || typeof manifest !== 'object') return answer('nomanifest');
+	const version = typeof manifest.world_version === 'string' ? manifest.world_version : null;
+	if (version !== built.worldVersion) return answer('version', { version });
+	const prefix = `${APWORLD_NAME}/`;
+	const short = (name) => (name.startsWith(prefix) ? name.slice(prefix.length) : name);
+	const want = new Map(built.entries.map((e) => [e.name, e]));
+	const differ = new Set();
+	const seen = new Set();
+	for (const entry of directory) {
+		if (!builtMember(entry.name)) continue;
+		seen.add(entry.name);
+		const mine = want.get(entry.name);
+		if (!mine || mine.crc !== entry.crc || mine.size !== entry.size) differ.add(short(entry.name));
+	}
+	for (const name of want.keys()) if (!seen.has(name)) differ.add(short(name));
+	if (differ.size === 0) return answer('same', { version });
+	return answer('differs', { version, differ: [...differ].sort() });
+}
+
+/** Where Archipelago keeps this world under its install folder, or null for a blank folder. */
+function installedApworldPath(dir) {
+	if (typeof dir !== 'string' || !dir.trim()) return null;
+	return path.join(dir.trim(), 'custom_worlds', `${APWORLD_NAME}.apworld`);
+}
+
+let cachedBuild = null;
+const installedCache = new Map();
+
+/**
+ * compareInstalled for the copy under `dir` against this checkout's build, cached by the file's
+ * size and mtime unless `fresh`. Never throws: an error reads as unreadable.
+ */
+function checkInstalled(dir, { fresh = false } = {}) {
+	const file = installedApworldPath(dir);
+	if (!file) return { state: 'missing', version: null, differ: [], code: null };
+	try {
+		let key = null;
+		try {
+			const stat = fs.statSync(file);
+			key = `${file}|${stat.size}|${stat.mtimeMs}`;
+		} catch (err) {
+			if (!err || err.code !== 'ENOENT') throw err;
+		}
+		if (!fresh && key && installedCache.has(key)) return installedCache.get(key);
+		if (!cachedBuild) cachedBuild = buildApworld();
+		const result = compareInstalled(file, cachedBuild);
+		installedCache.clear();
+		if (key) installedCache.set(key, result);
+		return result;
+	} catch (err) {
+		return { state: 'unreadable', version: null, differ: [], code: (err && err.code) || null };
+	}
+}
+
+function resetInstalledCache() {
+	cachedBuild = null;
+	installedCache.clear();
 }
 
 module.exports = {
 	buildApworld,
 	writeApworld,
 	readApworldManifest,
+	readZipDirectory,
+	compareInstalled,
+	installedApworldPath,
+	checkInstalled,
 	checkManifest,
 	crc32,
 	DEFAULT_SRC,
-	_internal: { crc32Fallback, toLf, zipStore, collectFiles },
+	_internal: { crc32Fallback, toLf, zipStore, collectFiles, resetInstalledCache },
 };

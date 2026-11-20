@@ -47,10 +47,30 @@ const LOGIC_UNAVAILABLE = {
 // named `Zack_Word` rendered as `Zack\_Word`, and underscores are everywhere in slot names. The
 // only character that matters is the backtick, which would close the span early.
 const slotLabel = (name) => `\`${String(name || '').replace(/`/g, "'")}\``;
+
+function duplicateText(twin, prefix) {
+    const head = `\uD83E\uDDE9 Watch #${twin.id}`;
+    const as = `(as ${slotLabel(twin.slot)})`;
+    const twice = 'A second watch would post every line twice.';
+    if (twin.status === 'connected') {
+        return `${head} already relays this room here ${as}, so a second one would post every line twice.`;
+    }
+    if (twin.status === 'paused') {
+        const why = twin.detail ? ` (\`${twin.detail}\`)` : '';
+        const other = twin.managed
+            ? '`/config` \u2192 Archipelago changes the slot it watches as.'
+            : `\`${prefix}ap unwatch ${twin.id}\` comes first to watch it as another slot.`;
+        return `${head} follows this room here ${as}, paused since the server refused it${why}: \`${prefix}ap retry ${twin.id}\` reconnects it once that is fixed, and ${other} ${twice}`;
+    }
+    return `${head} follows this room here ${as} and is reconnecting by itself: \`${prefix}ap retry ${twin.id}\` tries again now. ${twice}`;
+}
+
 // Item and location names are shown as text instead. escapeMarkdown alone leaves a masked link
 // [text](url) working, and the Plex Media world names its own after titles a player can write
 // into their YAML.
 const escapeName = (name) => monitor.escapeText(name);
+const NOTE = '\u{1F6A7}';
+const noteOf = (r, name) => (r && r.notes && r.notes[name] ? ` ${NOTE} ${escapeName(r.notes[name])}` : '');
 
 const CATEGORY_HELP = {
     items: 'item sends (and cheated items)',
@@ -545,6 +565,9 @@ module.exports = {
                         return say(`Usage: \`${prefix}ap watch <room url|host:port> <slot name>\``);
                     }
 
+                    const twin = monitor.findWatchFor(target, msg.channel.id);
+                    if (twin) return say(duplicateText(twin, prefix));
+
                     const status = await say(`🧩 Connecting to \`${target}\` as ${slotLabel(slot)}…`);
                     let watch, outcome, detail;
                     try {
@@ -562,9 +585,17 @@ module.exports = {
                     }
 
                     if (outcome === 'connected') {
+                        const watches = monitor.listWatches();
+                        const mine = watches.find(entry => entry.watch.id === watch.id);
+                        const seed = mine && mine.seedName;
+                        const same = seed && watches.find(entry => entry.watch.id !== watch.id
+                            && String(entry.watch.channelId) === String(msg.channel.id) && entry.seedName === seed);
+                        const warning = same
+                            ? `\n\u26A0\uFE0F Watch #${same.watch.id} in this channel follows the same multiworld, so every line now posts twice: \`${prefix}ap unwatch ${watch.id}\` removes this new one.`
+                            : '';
                         return editQuietly(status, 
                             `🟢 **Watch #${watch.id}** — connected to \`${detail}\` as ${slotLabel(watch.slot)}.\n` +
-                            `The room log will appear here. \`${prefix}ap filter ${watch.id} items off\` if it gets noisy.`
+                            `The room log will appear here. \`${prefix}ap filter ${watch.id} items off\` if it gets noisy.` + warning
                         );
                     }
                     if (outcome === 'refused') {
@@ -911,8 +942,9 @@ module.exports = {
                     const sphereName = (s) => (s === null || s === undefined ? 'sphere unknown' : `sphere ${s}`);
                     // Somebody hinted these and is waiting on what they hold, so they lead, marked.
                     // A hinted location in a later sphere says which.
-                    const hintLine = (h, soonest) => `⭐ ${escapeName(h.name)}`
-                        + (h.sphere !== soonest ? ` · ${sphereName(h.sphere)}` : '');
+                    const hintLine = (r, h, soonest) => `⭐ ${escapeName(h.name)}`
+                        + (h.sphere !== soonest ? ` · ${sphereName(h.sphere)}` : '')
+                        + noteOf(r, h.name);
                     const heading = (s) => `_${sphereName(s).replace(/^s/, 'S')}_`;
 
                     // Asked about several, a slot with nothing to do is named in the footer rather
@@ -925,8 +957,8 @@ module.exports = {
                         const hinted = r.hinted || [];
                         const hintedNames = new Set(hinted.map(h => h.name));
                         const entries = [
-                            ...hinted.map(h => hintLine(h, r.sphere)),
-                            ...r.locations.filter(name => !hintedNames.has(name)).map(name => `• ${escapeName(name)}`)
+                            ...hinted.map(h => hintLine(r, h, r.sphere)),
+                            ...r.locations.filter(name => !hintedNames.has(name)).map(name => `• ${escapeName(name)}${noteOf(r, name)}`)
                         ];
                         // "…1 more" takes the line the one name would, so that name is shown.
                         const shown = entries.length === cap + 1 ? cap + 1 : cap;
@@ -992,9 +1024,9 @@ module.exports = {
                         let used = 0;
                         let current = r.sphere;
                         const linesFor = (entry) => {
-                            if (entry.hinted) return [hintLine(entry, r.sphere)];
+                            if (entry.hinted) return [hintLine(r, entry, r.sphere)];
                             const out = entry.sphere !== current ? [heading(entry.sphere)] : [];
-                            out.push(`• ${escapeName(entry.name)}`);
+                            out.push(`• ${escapeName(entry.name)}${noteOf(r, entry.name)}`);
                             return out;
                         };
                         entries.forEach((entry, index) => {
@@ -1071,11 +1103,13 @@ module.exports = {
                         + (couldNotHide ? ' Nothing was left out for slots that have finished: that needs this seed loaded from the Archipelago install.' : '');
                     // Said only on a message that shows a ⭐, which a slot cut for length may not.
                     const footerFor = (body) => `_${lead}Nothing here says what is in them.${leftOutNote}`
-                        + `${String(body).includes('⭐') ? ' ⭐ marks a location somebody has hinted.' : ''}${fallbackNote}${skipped}${idleNote}_`;
+                        + `${String(body).includes('⭐') ? ' ⭐ marks a location somebody has hinted.' : ''}`
+                        + `${String(body).includes(NOTE) ? ` ${NOTE} marks a checkpoint that waits until the gap shown is heard (Timesanity Strict).` : ''}`
+                        + `${fallbackNote}${skipped}${idleNote}_`;
 
                     // 2000 characters is a hard limit and an oversized send is rejected outright.
-                    // Measured with the hint note, the longer of the two footers.
-                    const budget = 1900 - header.length - footerFor('⭐').length;
+                    // Measured with both marks' notes, the longest footer.
+                    const budget = 1900 - header.length - footerFor('⭐' + NOTE).length;
                     const ordered = monitor.orderBySoonest(listedSlots);
                     const message = (body) => [header, body, footerFor(body)].filter(Boolean).join('\n');
                     if (!many) {

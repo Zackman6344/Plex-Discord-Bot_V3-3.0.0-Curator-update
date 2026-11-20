@@ -1678,3 +1678,108 @@ test('!ap help lists nexthide right after next', async () => {
     const msg = await run('help');
     assert.match(said(msg), /`!ap next \[id\] \[slot\]` — [^\n]*\n`!ap nexthide \[on\|off\]` — have your own `!ap next` leave out checks whose items go to slots that have goaled or released\. Off until you turn it on\./);
 });
+
+test('!ap watch of a room this channel already watches names that watch and adds none', async () => {
+    const watch = await addWatch(['ZackWord']);
+    const before = monitor.listWatches().length;
+    const msg = await run('watch', `LOCALHOST:${servers[0].port}`, 'ZackWord');
+    assert.match(said(msg), new RegExp(`Watch #${watch.id} already relays this room here`));
+    assert.strictEqual(monitor.listWatches().length, before);
+});
+
+test('!ap watch of the same room from another channel makes a second watch', async () => {
+    const watch = await addWatch(['ZackWord']);
+    const msg = fakeMessage();
+    msg.channel.id = 'chan-2';
+    await ap.command.process(msg, 'watch', `localhost:${servers[0].port}`, 'ZackWord');
+    const added = monitor.listWatches().find(entry => entry.watch.id !== watch.id && entry.watch.channelId === 'chan-2');
+    if (added) watchIds.push(added.watch.id);
+    assert.ok(added, said(msg));
+    assert.doesNotMatch(said(msg), /already relays/);
+});
+
+test('!ap watch of a room whose watch here is paused names retry and unwatch', async () => {
+    const server = await harness.startFakeServer({ slots: ['ZackWord'], seedName: 'Seed_CMD', refuse: true });
+    servers.push(server);
+    const { watch, outcome } = await monitor.addWatch({ target: `localhost:${server.port}`, slot: 'ZackWord', channelId: 'chan-1' }, 15000);
+    watchIds.push(watch.id);
+    assert.strictEqual(outcome, 'refused');
+    const before = monitor.listWatches().length;
+    const text = said(await run('watch', `localhost:${server.port}`, 'ZackREPO'));
+    assert.ok(text.includes(`Watch #${watch.id} follows this room here (as \`ZackWord\`), paused since the server refused it`), text);
+    assert.ok(text.includes(`\`!ap retry ${watch.id}\` reconnects it once that is fixed, and \`!ap unwatch ${watch.id}\` comes first to watch it as another slot.`), text);
+    assert.strictEqual(monitor.listWatches().length, before);
+});
+
+test('!ap watch of a room whose watch here is reconnecting names retry', async () => {
+    const gone = await startFakeServer(['ZackWord']);
+    await closeServer(gone.wss);
+    const { watch, outcome } = await monitor.addWatch({ target: `localhost:${gone.port}`, slot: 'ZackWord', channelId: 'chan-1' }, 300);
+    watchIds.push(watch.id);
+    assert.strictEqual(outcome, 'pending');
+    const before = monitor.listWatches().length;
+    const text = said(await run('watch', `localhost:${gone.port}`, 'ZackWord'));
+    assert.ok(text.includes(`Watch #${watch.id} follows this room here (as \`ZackWord\`) and is reconnecting by itself: \`!ap retry ${watch.id}\` tries again now.`), text);
+    assert.strictEqual(monitor.listWatches().length, before);
+});
+
+async function watchSecondServer(seedName) {
+    const first = await addWatch(['ZackWord']);
+    const second = await harness.startFakeServer({ slots: ['ZackWord'], seedName });
+    servers.push(second);
+    const edits = [];
+    const msg = fakeMessage();
+    msg.channel.send = async (payload) => { msg.sent.push(payload); return { edit: async (edit) => { edits.push(edit); return {}; } }; };
+    await ap.command.process(msg, 'watch', `localhost:${second.port}`, 'ZackWord');
+    const added = monitor.listWatches().find(entry => entry.watch.id !== first.id);
+    if (added) watchIds.push(added.watch.id);
+    assert.ok(added, said(msg));
+    const final = edits.length ? edits[edits.length - 1].content : '';
+    assert.match(final, new RegExp(`Watch #${added.watch.id}\\*\\* . connected to`));
+    return { first, added, final };
+}
+
+test('!ap watch of a second server on the same seed in one channel warns that lines post twice', async () => {
+    const { first, added, final } = await watchSecondServer('Seed_CMD');
+    assert.ok(final.includes(`Watch #${first.id} in this channel follows the same multiworld, so every line now posts twice: \`!ap unwatch ${added.watch.id}\` removes this new one.`), final);
+});
+
+test('!ap watch of a second server on another seed in one channel adds no warning', async () => {
+    const { final } = await watchSecondServer('Seed_OTHER');
+    assert.doesNotMatch(final, /same multiworld/);
+});
+
+// A describer's note rides on its location's line in every list, and the footer explains the mark
+// only on a message that shows it.
+test('!ap next shows a describer note after its location and explains the mark only where it shows', async (t) => {
+    const MARK = '\u{1F6A7}';
+    const EXPLAIN = ` ${MARK} marks a checkpoint that waits until the gap shown is heard (Timesanity Strict).`;
+    const TAG = 'gap 10:00\u201318:47, heard to 43:37';
+    const noted = (answer, notes) => ({ ...answer, notes });
+    await claimAll(['ZackWord']);
+
+    const one = await askNext(t, answered(noted(
+        logicAnswer('ZackWord', [[1, ['Crate', 'Fast_Times @ 20m']], [2, ['Box']]], 5, { hinted: ['Crate'] }),
+        { 'Fast_Times @ 20m': TAG, Crate: 'held', Box: 'later' })));
+    assert.ok(one.final.includes(`\u2B50 Crate ${MARK} held\n`), one.final);
+    assert.ok(one.final.includes(`\u2022 Fast\\_Times @ 20m ${MARK} ${TAG}\n`), one.final);
+    assert.ok(one.final.includes(`\u2022 Box ${MARK} later\n`), one.final);
+    assert.ok(one.final.includes(`marks a location somebody has hinted.${EXPLAIN}_`), one.final);
+
+    const plain = await askNext(t, answered(logicAnswer('ZackWord', [[1, ['Crate']]], 5)));
+    assert.ok(!plain.final.includes(MARK), plain.final);
+});
+
+test('!ap next across slots shows a describer note on the slot that has it', async (t) => {
+    const MARK = '\u{1F6A7}';
+    const EXPLAIN = ` ${MARK} marks a checkpoint that waits until the gap shown is heard (Timesanity Strict).`;
+    const TAG = 'gap 10:00\u201318:47, heard to 43:37';
+    const noted = (answer, notes) => ({ ...answer, notes });
+    await claimAll(['ZackWord', 'ZackWarhammer']);
+    const many = await askNext(t, answered(
+        noted(inLogic('ZackWord', ['Crate', 'Fast Times @ 20m'], 4), { 'Fast Times @ 20m': TAG }),
+        inLogic('ZackWarhammer', ['Empire'], 3)));
+    assert.ok(many.final.includes(`\u2022 Fast Times @ 20m ${MARK} ${TAG}\n`), many.final);
+    assert.ok(many.final.includes('\u2022 Crate\n'), many.final);
+    assert.ok(many.final.endsWith(`Nothing here says what is in them.${EXPLAIN}_`), many.final);
+});

@@ -44,8 +44,12 @@ const BINDING_FIELDS = new Set([
 	'key', 'watchId', 'slot', 'userId', 'boundAt', 'boundBy', 'seedName', 'state', 'stateDetail',
 	'pending', 'banked', 'redeemed', 'wildUsed', 'goalSent', 'announce', 'welcomed', 'lastCredit', 'lastTarget', 'heard',
 	'itemsSeen', 'held', 'holdUntil', 'holdMs', 'expired', 'armed', 'speedRestore', 'ffUsed', 'rcUsed', 'snackSpent',
-	'bought', 'trades',
+	'bought', 'trades', 'told', 'switches',
 ]);
+const SWITCH_NAME = /^[a-z]{1,16}$/;
+const SWITCHES_MAX = 16;
+const TOLD_MAX = 500;
+const TOLD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 // A voice or book trap waits for a listen at most 12 hours, and a burst arms at most two at once;
 // the cap only keeps a hand-edited file small.
 const ARMED_MAX = 20;
@@ -163,6 +167,66 @@ function expiredMap(value) {
 		if (!key || key.length > HEARD_KEY_MAX || !Number.isFinite(until) || until <= 0) continue;
 		out[key] = until;
 		n += 1;
+	}
+	return out;
+}
+
+/**
+ * `untold` keeps a pair `[ms, 0, writtenAt]` while its ms is above 0: strict keeps how far a locked title was
+ * played before any line told of it. A pair told or written more than TOLD_TTL_MS before `now` is dropped.
+ */
+function toldPair(value, now, untold = false) {
+	if (!Array.isArray(value)) return null;
+	const at = Number(value[0]);
+	const toldAt = Number(value[1]);
+	if (!Number.isFinite(at) || at < 0 || !Number.isFinite(toldAt) || toldAt < 0) return null;
+	const endMs = Number(value[2]);
+	if (toldAt > 0 && value.length > 2 && Number.isFinite(endMs) && endMs > at) return now - toldAt > TOLD_TTL_MS ? null : [at, toldAt, endMs];
+	if (toldAt > 0) return now - toldAt > TOLD_TTL_MS ? null : [at, toldAt];
+	const writtenAt = Number(value[2]);
+	if (!untold || !(at > 0) || !(writtenAt > 0) || now - writtenAt > TOLD_TTL_MS) return null;
+	return [at, 0, writtenAt];
+}
+
+/** The newest time a told title holds, told or written. */
+function toldTime(title) {
+	return Math.max(...[title.gap, title.locked].filter(Boolean).map((pair) => (pair[1] > 0 ? pair[1] : pair[2])));
+}
+
+/** What the slot's lines already told: {titles: {key: {gap?, locked?}}, songsAt, episodesAt}. */
+function toldOf(value, now) {
+	const out = { titles: {}, songsAt: null, episodesAt: null };
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return out;
+	const titles = value.titles && typeof value.titles === 'object' && !Array.isArray(value.titles) ? value.titles : {};
+	let rows = [];
+	for (const [key, raw] of Object.entries(titles)) {
+		if (!key || key.length > HEARD_KEY_MAX || !raw || typeof raw !== 'object') continue;
+		const title = {};
+		const gap = toldPair(raw.gap, now);
+		const locked = toldPair(raw.locked, now, true);
+		if (gap) title.gap = gap;
+		if (locked) title.locked = locked;
+		if (!gap && !locked) continue;
+		rows.push({ key, title, order: rows.length });
+	}
+	if (rows.length > TOLD_MAX) {
+		rows = rows.sort((a, b) => toldTime(b.title) - toldTime(a.title) || a.order - b.order).slice(0, TOLD_MAX);
+		rows.sort((a, b) => a.order - b.order);
+	}
+	for (const { key, title } of rows) out.titles[key] = title;
+	const songsAt = timeOf(value.songsAt);
+	out.songsAt = songsAt !== null && now - songsAt <= TOLD_TTL_MS ? songsAt : null;
+	out.episodesAt = timeOf(value.episodesAt);
+	return out;
+}
+
+/** The slot's switches as its player set them: {name: boolean}. */
+function switchesOf(value) {
+	const out = {};
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return out;
+	for (const [name, on] of Object.entries(value)) {
+		if (Object.keys(out).length >= SWITCHES_MAX) break;
+		if (SWITCH_NAME.test(name) && typeof on === 'boolean') out[name] = on;
 	}
 	return out;
 }
@@ -321,6 +385,8 @@ function shapeBinding(input, now) {
 		snackSpent: countOf(input.snackSpent),
 		bought: boughtOf(input.bought),
 		trades: countOf(input.trades),
+		told: toldOf(input.told, now()),
+		switches: switchesOf(input.switches),
 		...extras(input, BINDING_FIELDS),
 	};
 }

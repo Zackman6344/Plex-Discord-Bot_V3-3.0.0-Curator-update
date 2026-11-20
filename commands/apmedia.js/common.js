@@ -475,6 +475,7 @@ function sendPages(ctx, pages) {
 
 module.exports = {
 	NO_PINGS,
+	QUOTES,
 	prefixOf,
 	ownerId,
 	isOwner,

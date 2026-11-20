@@ -10,7 +10,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { createPms, PmsError, _internal } = require('../helpers/apMediaPlex.js');
+const { createPms, PmsError, MARKER_RECHECK_MS, _internal } = require('../helpers/apMediaPlex.js');
 
 const OWNER = 'OWNER-TOKEN-abcdef123456';
 const BOT = 'BOT-TOKEN-zyxwvu987654';
@@ -263,4 +263,83 @@ test('query keys keep Plex operators readable and values are encoded', () => {
 	assert.strictEqual(_internal.queryOf({ 'viewedAt>': 5, 'album.id!': '1,2', title: 'a b&c', skip: undefined }), 'viewedAt>=5&album.id!=1%2C2&title=a%20b%26c');
 	assert.strictEqual(_internal.withQuery('/a?x=1', { y: 2 }), '/a?x=1&y=2');
 	assert.strictEqual(_internal.withQuery('/a', {}), '/a');
+});
+
+test('metadata asks for markers, once per ratingKey', async () => {
+	const fetch = fakeFetch(() => json({ MediaContainer: { Metadata: [{ ratingKey: '123' }] } }));
+	const pms = createPms({ loadConfig: config(), fetchImpl: fetch });
+	await pms.metadata(123);
+	await pms.metadata('123');
+	assert.strictEqual(fetch.calls.length, 1);
+	const url = new URL(fetch.calls[0].url);
+	assert.strictEqual(url.pathname + url.search, '/library/metadata/123?includeMarkers=1');
+});
+
+test('markersOf maps and sorts the Marker rows and drops a bad one', () => {
+	const { markersOf } = _internal;
+	const item = { Marker: [
+		{ type: 'credits', startTimeOffset: 1200000, endTimeOffset: 1260000, final: true },
+		{ type: 'intro', startTimeOffset: '15000', endTimeOffset: '105000' },
+		{ type: 'intro', startTimeOffset: 50, endTimeOffset: 50 },
+		{ type: 'intro', startTimeOffset: null, endTimeOffset: 9000 },
+		{ type: 'intro', startTimeOffset: 'x', endTimeOffset: 9000 },
+		null,
+	] };
+	assert.deepStrictEqual(markersOf(item), [
+		{ type: 'intro', startMs: 15000, endMs: 105000, final: false },
+		{ type: 'credits', startMs: 1200000, endMs: 1260000, final: true },
+	]);
+	assert.deepStrictEqual(markersOf(null), []);
+	assert.deepStrictEqual(markersOf({}), []);
+	assert.deepStrictEqual(markersOf({ Marker: 'intro' }), []);
+});
+
+test('markers reads the cached item: metadata then markers is one fetch, and a 404 is []', async () => {
+	const fetch = fakeFetch((url) => {
+		if (url.pathname === '/library/metadata/404') return new Response('', { status: 404 });
+		return json({ MediaContainer: { Metadata: [{ ratingKey: '123', Marker: [{ type: 'intro', startTimeOffset: 15000, endTimeOffset: 105000 }] }] } });
+	});
+	const pms = createPms({ loadConfig: config(), fetchImpl: fetch });
+	await pms.metadata(123);
+	assert.deepStrictEqual(await pms.markers(123), [{ type: 'intro', startMs: 15000, endMs: 105000, final: false }]);
+	assert.strictEqual(fetch.calls.length, 1);
+	assert.deepStrictEqual(await pms.markers(404), []);
+	assert.deepStrictEqual(await pms.markers(404), []);
+	assert.strictEqual(fetch.calls.length, 2);
+});
+
+test('an item cached without Marker is read again by markers() after an hour and not before', async () => {
+	let clock = 1000000;
+	let marked = false;
+	const fetch = fakeFetch(() => json({ MediaContainer: { Metadata: [marked
+		? { ratingKey: '7', Marker: [{ type: 'intro', startTimeOffset: 15000, endTimeOffset: 105000 }] }
+		: { ratingKey: '7' }] } }));
+	const pms = createPms({ loadConfig: config(), fetchImpl: fetch, now: () => clock });
+	assert.deepStrictEqual(await pms.markers(7), []);
+	assert.strictEqual(fetch.calls.length, 1);
+	marked = true;
+	clock += MARKER_RECHECK_MS - 1;
+	assert.deepStrictEqual(await pms.markers(7), []);
+	assert.strictEqual(fetch.calls.length, 1, 'not before an hour');
+	clock += 1;
+	assert.deepStrictEqual(await pms.markers(7), [{ type: 'intro', startMs: 15000, endMs: 105000, final: false }]);
+	assert.strictEqual(fetch.calls.length, 2);
+	assert.strictEqual((await pms.metadata(7)).Marker.length, 1, 'the cache entry is replaced');
+	await pms.markers(7);
+	assert.strictEqual(fetch.calls.length, 2);
+});
+
+test('a failed marker re-read leaves the cached item and waits the hour', async () => {
+	let clock = 0;
+	let fail = false;
+	const fetch = fakeFetch(() => (fail ? new Response('', { status: 500 }) : json({ MediaContainer: { Metadata: [{ ratingKey: '8' }] } })));
+	const pms = createPms({ loadConfig: config(), fetchImpl: fetch, now: () => clock });
+	await pms.markers(8);
+	fail = true;
+	clock += MARKER_RECHECK_MS;
+	assert.deepStrictEqual(await pms.markers(8), []);
+	assert.strictEqual(fetch.calls.length, 2);
+	assert.deepStrictEqual(await pms.metadata(8), { ratingKey: '8' });
+	assert.deepStrictEqual(await pms.markers(8), []);
+	assert.strictEqual(fetch.calls.length, 2);
 });

@@ -598,6 +598,36 @@ function hintPingBody({ asker, item, where, slot, priority }) {
         `— it is at ${escapeText(where)}${priority ? ' **(priority)**' : ''}.`;
 }
 
+const describers = new Map();
+
+/**
+ * Let a game describe its own locations in replies. The returned function removes only this
+ * describer, so a game that registered again keeps its newer one.
+ */
+function setGameDescriber(game, describer) {
+    if (typeof game !== 'string') throw new TypeError('setGameDescriber needs a game name');
+    if (!describer || (typeof describer.next !== 'function' && typeof describer.hint !== 'function')) {
+        throw new TypeError('setGameDescriber needs a next or hint function');
+    }
+    describers.set(game, describer);
+    return () => {
+        if (describers.get(game) === describer) describers.delete(game);
+    };
+}
+
+/** Never throws: a describer that fails leaves the reply as it was. */
+function describe(client, slotId, kind, query) {
+    const game = client && client.slotGames ? client.slotGames.get(Number(slotId)) : undefined;
+    const describer = describers.get(game);
+    if (!describer || typeof describer[kind] !== 'function') return null;
+    try {
+        return describer[kind](query);
+    } catch (err) {
+        logger.warn(`[AP] the ${game} describer threw: ${err && err.message ? err.message : err}`);
+        return null;
+    }
+}
+
 /**
  * Tell a claimant when somebody hints an item out of their world.
  *
@@ -1700,6 +1730,48 @@ function startArchipelagoMonitor(client) {
 }
 
 /**
+ * The room a parsed target follows, as a key every watch of that room shares.
+ * @returns {string|null}
+ */
+function roomKey(target) {
+    if (!target) return null;
+    if (target.kind === 'room') {
+        try {
+            const url = new URL(target.roomUrl);
+            return `room:${url.host.toLowerCase()}${url.pathname.replace(/\/+$/, '')}`;
+        } catch (err) {
+            return null;
+        }
+    }
+    if (target.kind === 'direct' && target.host) return `direct:${String(target.host).toLowerCase()}:${target.port}`;
+    return null;
+}
+
+/**
+ * The watch in this channel that already follows the room `raw` names, paused, refused or idle.
+ * A host:port is never matched against a room watch's last address.
+ * @returns {{id: number, label: string, slot: string, status: string, detail: string, managed: boolean}|null}
+ */
+function findWatchFor(raw, channelId) {
+    const key = roomKey(parseTarget(raw));
+    if (!key) return null;
+    for (const state of states.values()) {
+        const watch = state.watch;
+        if (String(watch.channelId) !== String(channelId)) continue;
+        if (roomKey(watch.target) !== key) continue;
+        return {
+            id: watch.id,
+            label: watch.label,
+            slot: watch.slot,
+            status: watch.paused ? 'paused' : state.status,
+            detail: state.detail,
+            managed: !!watch.managed
+        };
+    }
+    return null;
+}
+
+/**
  * Register a new watch and wait briefly for the first connection result, so the user gets
  * "connected" or "that slot doesn't exist" in the same reply instead of silence.
  * @returns {Promise<{watch: Object, outcome: string, detail: string}>}
@@ -2315,6 +2387,16 @@ function hintedIn(client, slotId, done = null) {
         .map(hint => hint.location));
 }
 
+function notesFor(listed, found) {
+    const notes = {};
+    if (!(found instanceof Map)) return notes;
+    for (const l of listed) {
+        const note = found.get(l.id);
+        if (typeof note === 'string' && note.trim()) notes[l.name] = Array.from(note.trim()).slice(0, 48).join('');
+    }
+    return notes;
+}
+
 /**
  * One slot's answer from the logic worker's result.
  *
@@ -2330,6 +2412,9 @@ function hintedIn(client, slotId, done = null) {
  * `options.done`, and is there only when the worker was asked to and did; `open` and every count
  * already leave them out. A worker that ignored the request sends no `hidden`, and then the hints
  * are not thinned either, so a location still listed keeps its star.
+ *
+ * `options.describe(resolved, ids)` is asked once about every listed id, and what its Map says
+ * becomes `notes` (location name -> note, at most 48 characters), there only when it has one.
  */
 function answerFromLogic(client, resolved, result, options = {}) {
     const { slot, slotId } = resolved;
@@ -2351,6 +2436,7 @@ function answerFromLogic(client, resolved, result, options = {}) {
     listed.sort((a, b) => a.sphere - b.sphere || a.name.localeCompare(b.name, undefined, { numeric: true }));
     const inLogic = new Set(listed.map(l => l.id));
     const hinted = listed.filter(l => l.hinted);
+    const notes = notesFor(listed, typeof options.describe === 'function' ? options.describe(resolved, listed.map(l => l.id)) : null);
 
     // The soonest sphere with anything in logic is named and listed; the spheres after it are
     // only counted. Listing them all together read as an arbitrary slice of hundreds of names
@@ -2380,6 +2466,7 @@ function answerFromLogic(client, resolved, result, options = {}) {
         total: listed.length,
         open: result.open,
         ...hidden,
+        ...(Object.keys(notes).length > 0 ? { notes } : {}),
         // A rebuild that failed outright fails every slot alike, which is not this slot's fault.
         ...(result.verified ? {} : { why: /^could not rebuild/.test(String(result.reason || '')) ? 'rebuild-failed' : 'unverified' })
     };
@@ -2524,10 +2611,19 @@ async function answerAll(prep, names, dirs = SPHERE_DIRS, options = {}) {
             logger.warn(`[AP:${label}] logic worker could not answer for ${r.slot}: ${(answer && answer.error) || 'no answer'}`);
         }
     }
+    const watchId = prep.state && prep.state.watch ? prep.state.watch.id : null;
+    const describeNext = (r, ids) => describe(client, r.slotId, 'next', {
+        watchId,
+        seedName: client.seedName,
+        team: client.team,
+        slot: r.slot,
+        slotId: r.slotId,
+        ids
+    });
     return {
         ok: true,
         logic: prep.logic,
-        results: resolved.map(r => (r.ok ? answerFromLogic(client, r, bySlot.get(r.slotId), { done }) : r))
+        results: resolved.map(r => (r.ok ? answerFromLogic(client, r, bySlot.get(r.slotId), { done, describe: describeNext }) : r))
     };
 }
 
@@ -2579,7 +2675,8 @@ function listWatches() {
         // available is false for a host:port watch, which has no web tracker to rebuild from.
         catchup: { available: isRoomWatch(state.watch), ...state.catchupStatus },
         players: state.client.slotsOnTeam().length,
-        finished: state.client.finishedCount
+        finished: state.client.finishedCount,
+        seedName: state.client.seedName || null
     }));
 }
 
@@ -2662,6 +2759,8 @@ module.exports = {
     configGaps,
     CONFIG_WATCH_ID,
     addWatch,
+    roomKey,
+    findWatchFor,
     removeWatch,
     restartWatch,
     setPassword,
@@ -2708,6 +2807,8 @@ module.exports = {
     shouldPing,
     pingFor,
     hintPingBody,
+    setGameDescriber,
+    describe,
     escapeText,
     catchUp,
     catchupTiming,
